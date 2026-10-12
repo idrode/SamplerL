@@ -1,6 +1,7 @@
 //! Motor de audio del sampler. Independiente de la interfaz.
 
 mod engine;
+pub mod notation;
 pub mod offline;
 mod output;
 mod sample;

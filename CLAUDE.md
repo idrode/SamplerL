@@ -93,7 +93,7 @@ Primer objetivo: que `steps(...)` reproduzca los cortes. Después `fx`, `every` 
   - Tests en `engine/tests/slicing.rs` (golpes en posiciones conocidas con ambos detectores, charles más débil que la cola de un bombo) y `engine/tests/synth_break.rs` (los 8 golpes del break sintético a menos de 2 ms; error medido < 0,5 ms). El generador está en `engine/tests/support/synth_break.rs` y lo comparte el ejemplo.
   - Separación mínima entre transitorios: parámetro `DetectOptions::min_gap_seconds` (por defecto 40 ms, `Slices::detect_with`). Se compara entre posiciones ya afinadas, en frames.
 - **Fundidos**: cada voz tiene rampas de entrada y salida de 1,5 ms. Una voz interrumpida (nuevo disparo o `stop`) pasa a una segunda ranura y hace su fundido mientras entra la nueva. Tests en `engine/tests/fades.rs`.
-- **Render offline**: `tui <archivo.wav> --render <salida.wav>` renderiza a 48 kHz sin abrir el dispositivo (WAV PCM 16 bits). Con `--pattern "1 . 3 . ..."` (16 pasos, cortes desde 1, `.` = silencio) y opcionalmente `--slices N --bpm B --bars M --min-gap MS` renderiza exactamente M compases del secuenciador. Código en `engine::offline`.
+- **Render offline**: `tui <archivo.wav> --render <salida.wav>` renderiza a 48 kHz sin abrir el dispositivo (WAV PCM 16 bits). Con `--pattern "1 . 3 . ..."` (16 pasos en mini-notación, ver paso 5) y opcionalmente `--slices N --bpm B --bars M --min-gap MS` renderiza exactamente M compases del secuenciador. Código en `engine::offline`.
 - **Paso 3 hecho.** Secuenciador de 16 pasos (`engine/src/sequencer.rs`):
   - `Pattern::new(sample, &slices, [Option<usize>; 16])` resuelve los cortes a rangos en el hilo de control; el motor recibe un array fijo, sin reservas. Un paso `None` no dispara nada (lo que sonaba sigue).
   - `Controller::{set_pattern, set_bpm, start, stop}`. `set_pattern` y `set_bpm` quedan pendientes y entran en el paso 0 del siguiente compás (o al arrancar). `stop` es inmediato.
@@ -107,8 +107,12 @@ Primer objetivo: que `steps(...)` reproduzca los cortes. Después `fx`, `every` 
   - La voz lee en posición fraccionaria (f64) con interpolación lineal: el pitch cambia la velocidad y la duración, sin time-stretch. Con pitch 0 la salida es idéntica bit a bit a la de antes. El reverse lee de `end-1` a `start`. Los fundidos van en tiempo de salida, así que son simétricos: el reverse es exactamente la inversión temporal del forward.
   - Sin polifonía: el secuenciador es como una pista de tracker, donde cada paso corta al anterior con fundido cruzado. Hará falta más de una voz cuando haya varias pistas.
   - Interpolación lineal: subiendo mucho el pitch habrá aliasing. Si molesta, cambiar a una interpolación mejor (cúbica o sinc corta).
-  - Aún no hay sintaxis en `--pattern` para estos efectos (llega con la mini-notación del paso 5).
   - Tests en `engine/tests/step_effects.rs`.
+- **Paso 5 (mini-notación hecha)** en `engine::notation` (`parse_steps`, `parse_step`), usada por `--pattern`, `PATTERN` del script y (después) Lua. 16 pasos separados por espacios (los espacios de más no cuentan):
+  - `.` silencio; `3` corte 3 (desde 1); `x` = `1`.
+  - Sufijos combinables, en cualquier orden, cada uno una vez: `'` reverse, `^7` / `^-5` / `^0.5` pitch en semitonos, `@0.5` volumen. Ejemplo: `3'^7@0.5`.
+  - Errores con número de paso y token: `paso 11 ("5^"): falta el número después de ^`. Los rangos (ganancia 0–4, pitch ±36) los valida `Pattern::from_steps`.
+  - Tests en `engine/tests/notation.rs` (incluido que un patrón en notación renderiza igual que el construido con `Step`).
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`
 - Pendiente conocido: cpal avisa de un underrun al arrancar el stream (una vez, ~200 ms). PipeWire estaba inactivo y cpal iba directo a ALSA.
 

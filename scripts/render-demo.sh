@@ -7,6 +7,8 @@
 # Variables opcionales (con su valor por defecto):
 #   PATTERN="1 . . 1  . . 3 .  1 . 5 .  . 3 . 6"  SLICES=8  BPM=170  BARS=4  MIN_GAP=40
 #   DETECTOR=flux (o energy)
+# PATTERN usa la mini-notación: 3 corte, . silencio, 3' reverse, 3^7 pitch,
+# 3@0.5 volumen, combinables (3'^7@0.5).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

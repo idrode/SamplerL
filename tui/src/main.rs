@@ -1,14 +1,17 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use engine::{DetectOptions, Detector, Pattern, STEPS, Slices};
+use engine::{DetectOptions, Detector, Pattern, STEPS, Slices, Step};
 
 const USAGE: &str = "\
 uso: tui <archivo.wav> --render <salida.wav>
      tui <archivo.wav> --render <salida.wav> --pattern \"1 . 3 . ...\" \
 [--slices N] [--bpm B] [--bars M] [--min-gap MS] [--detector flux|energy]
 
-  --pattern  16 pasos separados por espacios: número de corte (desde 1) o \".\" (silencio)
+  --pattern  16 pasos separados por espacios (mini-notación):
+               3      corte 3 (desde 1; \"x\" = 1)      .      silencio
+               3'     reverse                         3^7    pitch +7 semitonos (^-5, ^0.5...)
+               3@0.5  volumen (0 a 4)                 3'^7@0.5  combinables, en cualquier orden
   --slices   cortes a detectar (por defecto 8)
   --bpm      tempo (por defecto 120)
   --bars     compases a renderizar (por defecto 4)
@@ -28,7 +31,7 @@ type BoxError = Box<dyn std::error::Error>;
 
 /// Opciones del secuenciador para `--render`.
 struct Sequence {
-    pattern: [Option<usize>; STEPS],
+    pattern: [Option<Step>; STEPS],
     slices: usize,
     bpm: f64,
     bars: u64,
@@ -64,7 +67,11 @@ fn run() -> Result<(), BoxError> {
         match arg.as_str() {
             "--render" => render_to = Some(value()?),
             "--allow-audio" => allow_audio = true,
-            "--pattern" => pattern = Some(parse_pattern(&value()?)?),
+            "--pattern" => {
+                let steps = engine::notation::parse_steps(&value()?)
+                    .map_err(|e| format!("--pattern: {e}"))?;
+                pattern = Some(steps);
+            }
             "--slices" => slices = Some(parse_number::<usize>("--slices", &value()?)?),
             "--bpm" => bpm = Some(parse_number::<f64>("--bpm", &value()?)?),
             "--bars" => bars = Some(parse_number::<u64>("--bars", &value()?)?),
@@ -138,26 +145,6 @@ fn run() -> Result<(), BoxError> {
     }
 }
 
-/// 16 pasos separados por espacios: número de corte desde 1, o "." para silencio.
-fn parse_pattern(text: &str) -> Result<[Option<usize>; STEPS], String> {
-    let steps = text
-        .split_whitespace()
-        .map(|token| match token {
-            "." => Ok(None),
-            _ => match token.parse::<usize>() {
-                Ok(n) if n >= 1 => Ok(Some(n - 1)),
-                _ => Err(format!(
-                    "paso no válido en --pattern: \"{token}\" (usa 1, 2, ... o \".\")"
-                )),
-            },
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let count = steps.len();
-    steps
-        .try_into()
-        .map_err(|_| format!("--pattern necesita {STEPS} pasos, tiene {count}"))
-}
-
 fn parse_number<T: std::str::FromStr>(flag: &str, text: &str) -> Result<T, String> {
     text.parse()
         .map_err(|_| format!("valor no válido para {flag}: \"{text}\""))
@@ -215,7 +202,7 @@ fn render_sequence(path: &str, out: &str, sequence: &Sequence) -> Result<(), Box
         );
     }
 
-    let pattern = Pattern::new(sample, &slices, sequence.pattern).map_err(|e| match e {
+    let pattern = Pattern::from_steps(sample, &slices, sequence.pattern).map_err(|e| match e {
         engine::SendError::NoSuchSlice { index, count } => {
             format!("el patrón usa el corte {} pero solo hay {count}", index + 1)
         }
@@ -241,25 +228,4 @@ fn render_sequence(path: &str, out: &str, sequence: &Sequence) -> Result<(), Box
         frames as f64 / RENDER_RATE as f64
     );
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_one_based_pattern_with_rests() {
-        let steps = parse_pattern("1 . . 1  . . 3 .  1 . 5 .  . 3 . 6").unwrap();
-        assert_eq!(steps[0], Some(0));
-        assert_eq!(steps[1], None);
-        assert_eq!(steps[6], Some(2));
-        assert_eq!(steps[15], Some(5));
-    }
-
-    #[test]
-    fn rejects_bad_patterns() {
-        assert!(parse_pattern("1 . 3").is_err());
-        assert!(parse_pattern("0 . . .  . . . .  . . . .  . . . .").is_err());
-        assert!(parse_pattern("x . . .  . . . .  . . . .  . . . .").is_err());
-    }
 }
