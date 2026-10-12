@@ -193,3 +193,30 @@ fn mutate_follows_its_seed_or_the_load_seed() {
     let again = host().eval(&source, "song.lua", &dir).unwrap();
     assert_eq!(again.tracks[0].bars, *bars);
 }
+
+#[test]
+fn shuffle_follows_its_seed_and_sounds_like_its_pattern() {
+    let dir = fixture("shuffle");
+    let p = "\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\"";
+    let fixed = value(&dir, &format!("shuffle({p}, 3)"));
+    assert_ne!(fixed, "1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .");
+    let mut a: Vec<&str> = fixed.split_whitespace().collect();
+    let mut b: Vec<&str> = "1 . 2 . 3 . 4 . 5 6 2 . 7 . 8 ."
+        .split_whitespace()
+        .collect();
+    a.sort();
+    b.sort();
+    assert_eq!(a, b, "los mismos pasos");
+    let a = render(
+        &dir,
+        &format!("track(\"d\", amen):steps(shuffle({p}, 3))"),
+        1,
+    );
+    let b = render(&dir, &format!("track(\"d\", amen):steps(\"{fixed}\")"), 1);
+    same(&a, &b);
+    // Sin semilla, reproducible con la de la carga.
+    assert_eq!(
+        value(&dir, &format!("shuffle({p})")),
+        value(&dir, &format!("shuffle({p})"))
+    );
+}

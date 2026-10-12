@@ -371,6 +371,32 @@ pub const FUNCTIONS: &[Function] = &[
         ),
     },
     Function {
+        name: "shuffle",
+        receiver: Receiver::Global,
+        signature: "shuffle(patrón [, semilla])",
+        returns: None,
+        summary: "Los mismos 16 pasos en otro orden al azar.",
+        doc: "Conserva cada golpe y cada silencio, solo los cambia de sitio. La semilla \
+              funciona como en `mutate`: con ella, siempre el mismo orden; sin ella, \
+              el azar de la carga (como `chance`).",
+        params: &[
+            Param {
+                name: "patrón",
+                description: "16 pasos en mini-notación",
+            },
+            Param {
+                name: "semilla",
+                description: "número entero; con la misma, el mismo orden",
+            },
+        ],
+        template: "shuffle(\"${1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .}\", ${3})",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             -- Los golpes del break en un orden nuevo, siempre el mismo (semilla 3).\n\
+             track(\"drums\", amen):steps(shuffle(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\", 3))\n",
+        ),
+    },
+    Function {
         name: "slice",
         receiver: Receiver::Sample,
         signature: "sample:slice(n)",

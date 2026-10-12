@@ -522,6 +522,18 @@ impl ScriptHost {
             })?,
         )?;
 
+        let rng = pattern_rng.clone();
+        globals.set(
+            "shuffle",
+            lua.create_function(move |lua, (text, seed): (String, Option<i64>)| {
+                let result = match seed {
+                    Some(seed) => patterns::shuffle(&text, &mut Rng::new(seed as u64)),
+                    None => patterns::shuffle(&text, &mut rng.borrow_mut()),
+                };
+                result.map_err(|e| fail(lua, e))
+            })?,
+        )?;
+
         let st = state.clone();
         globals.set(
             "track",

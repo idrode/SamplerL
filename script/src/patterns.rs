@@ -121,6 +121,16 @@ pub fn mutate(text: &str, p: f64, rng: &mut Rng) -> Result<String, String> {
     Ok(format(&mutated))
 }
 
+/// Los mismos 16 pasos en otro orden al azar (Fisher-Yates).
+pub fn shuffle(text: &str, rng: &mut Rng) -> Result<String, String> {
+    let mut tokens = tokens(text, "shuffle")?;
+    for i in (1..tokens.len()).rev() {
+        let j = ((rng.next_f64() * (i + 1) as f64) as usize).min(i);
+        tokens.swap(i, j);
+    }
+    Ok(format(&tokens))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -207,6 +217,23 @@ mod tests {
             mutate(p, 1.5, &mut Rng::new(3))
                 .unwrap_err()
                 .contains("de 0 a 1")
+        );
+    }
+
+    #[test]
+    fn shuffling_permutes_the_steps_and_follows_the_seed() {
+        let p = "1 2 3 4  5 6 7 8  9 10 11 12  13 14 15 16";
+        let a = shuffle(p, &mut Rng::new(1)).unwrap();
+        assert_eq!(a, shuffle(p, &mut Rng::new(1)).unwrap());
+        assert_ne!(a, shuffle(p, &mut Rng::new(2)).unwrap());
+        assert_ne!(a, p);
+        let mut sorted = tokens(&a, "").unwrap();
+        sorted.sort_by_key(|t| t.parse::<u32>().unwrap());
+        assert_eq!(format(&sorted), p, "los mismos pasos");
+        assert!(
+            shuffle("1 2", &mut Rng::new(1))
+                .unwrap_err()
+                .starts_with("shuffle: ")
         );
     }
 

@@ -429,6 +429,19 @@ track("drums", amen)
   :every(2, function(c) c:steps(mutate(base, 0.3)) end)
 ```
 
+### `shuffle(patrón [, semilla])`
+
+Los mismos 16 pasos en otro orden al azar. Conserva cada golpe y cada silencio, solo los cambia de sitio. La semilla funciona como en `mutate`: con ella, siempre el mismo orden; sin ella, el azar de la carga (como `chance`).
+
+- `patrón`: 16 pasos en mini-notación
+- `semilla`: número entero; con la misma, el mismo orden
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+-- Los golpes del break en un orden nuevo, siempre el mismo (semilla 3).
+track("drums", amen):steps(shuffle("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .", 3))
+```
+
 ### `sample:slice(n)`
 
 Devuelve: cortes.
