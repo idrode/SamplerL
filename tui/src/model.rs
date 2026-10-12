@@ -19,6 +19,8 @@ pub struct ViewModel {
     pub external_change: bool,
     /// Línea de órdenes abierta (F2) y su texto.
     pub prompt: Option<String>,
+    /// Autocompletado abierto.
+    pub completion: Option<CompletionView>,
     /// Nombre del proyecto abierto, si lo hay.
     pub project: Option<String>,
     /// Mensaje informativo de la última acción.
@@ -30,6 +32,20 @@ pub struct ViewModel {
     pub tracks: Vec<TrackView>,
     /// Pista seleccionada (índice en `tracks`).
     pub selected: Option<usize>,
+}
+
+/// Popup de autocompletado.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CompletionView {
+    /// Opciones: nombre y qué es.
+    pub items: Vec<(String, String)>,
+    pub selected: usize,
+    /// Firma y descripción de la opción elegida.
+    pub signature: String,
+    pub description: String,
+    /// Caracteres ya escritos antes del cursor (el popup se alinea con
+    /// ellos).
+    pub prefix_len: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]

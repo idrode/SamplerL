@@ -121,11 +121,45 @@ defecto: si el script llama a `bpm()`, manda el script. Se abre con
 | Esc | Entrar / salir del modo tocar |
 | F2 | Línea de órdenes |
 | F3 | Recargar el archivo si cambió fuera del editor |
+| F4 | Abrir el autocompletado (ver más abajo) |
 | Ctrl-Q | Salir (dos veces si hay cambios sin guardar) |
 
 Con un cambio externo pendiente, Ctrl-S pide un segundo Ctrl-S antes de
 sobrescribir. F3 guarda antes tu texto sin guardar en
 `<nombre>.sin-guardar.lua`.
+
+### Autocompletado
+
+Mientras escribes, junto al cursor sale una lista con lo que puede ir ahí,
+filtrada por lo que llevas escrito, con la firma y la descripción de la
+opción elegida. F4 la abre aunque no hayas escrito nada.
+
+| Tecla | Qué hace |
+| --- | --- |
+| ↑ ↓ | Elegir opción |
+| Tab o Enter | Aceptar |
+| Esc | Cerrar (con la lista abierta, Esc solo la cierra: no entra en modo tocar) |
+| Tab (tras aceptar una función) | Saltar al siguiente parámetro y, tras el último, al final |
+
+Qué ofrece según dónde esté el cursor:
+
+| Dónde | Opciones |
+| --- | --- |
+| Inicio de línea | Funciones globales (`bpm`, `sample`, `track`), variables locales y palabras clave de Lua |
+| Tras `:` | Los métodos del objeto: de sample, de cortes, de pista o del compás de `every` (si no se sabe qué es, todos) |
+| Dentro de `fx("...")` | Los efectos; dentro de la tabla, sus parámetros, y en `type = "..."` sus valores |
+| Dentro de `sample("...")` | Los WAV de la carpeta de muestras (la del proyecto o la del script) |
+| Dentro de `track("...")` | Las pistas ya definidas en el script |
+| Dentro de `chance(p, "...")` | Los efectos de `chance` |
+| Dentro de `steps("...")`, otras cadenas y comentarios | Nada |
+
+Al aceptar una función se inserta con sus parámetros de ejemplo y el
+primero queda marcado: lo que escribas lo sustituye. Por ejemplo, tras
+`track("drums"):f` y Tab queda
+`fx("filter", { type = "lowpass", cutoff = 3000 })` con `filter` marcado;
+Tab pasa a `lowpass`, luego a `3000` y luego al final de la línea. Las
+funciones, efectos y parámetros salen del mismo registro que la sección 4
+de esta guía.
 
 ### Modo tocar (Esc)
 
@@ -151,7 +185,8 @@ proyecto o, si no hay, a la del script.
 
 ### Editor
 
-Los del widget de texto (`ratatui-textarea`): flechas para moverse, Ctrl-U
+Los del widget de texto (`ratatui-textarea`): flechas para moverse, Tab
+indentar (salvo con el autocompletado o un parámetro pendiente), Ctrl-U
 deshacer, Ctrl-R rehacer, Ctrl-C copiar, Ctrl-X cortar, Ctrl-Y pegar,
 Ctrl-K borrar hasta el final de la línea, Ctrl-W borrar la palabra
 anterior, Ctrl-A / Ctrl-E inicio y final de línea, Ctrl-V / Alt-V página

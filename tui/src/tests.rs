@@ -1056,3 +1056,264 @@ fn samples_command_changes_the_sample_folder() {
 fn text_of(app: &mut App) -> String {
     text(&draw(app, 130, 40))
 }
+
+// --- Autocompletado ---
+
+fn special(key: Key) -> Input {
+    Input {
+        key,
+        ..Input::default()
+    }
+}
+
+/// Abre la canción con el cursor en una línea nueva al final.
+fn open_at_end(test: &str) -> (App, Engine) {
+    let (_, mut app, engine) = open(test, Some(SONG));
+    app.editor.move_cursor(ratatui_textarea::CursorMove::Bottom);
+    app.editor.move_cursor(ratatui_textarea::CursorMove::End);
+    type_text(&mut app, "\n");
+    (app, engine)
+}
+
+fn current_line(app: &App) -> String {
+    app.editor.lines()[app.editor.cursor().0].clone()
+}
+
+fn completion_items(app: &App) -> Vec<String> {
+    app.view()
+        .completion
+        .map(|c| c.items.into_iter().map(|(label, _)| label).collect())
+        .unwrap_or_default()
+}
+
+#[test]
+fn completion_filters_by_prefix_while_typing() {
+    let (mut app, _engine) = open_at_end("complete_filter");
+    type_text(&mut app, "t");
+    assert_eq!(completion_items(&app), ["track", "then", "true"]);
+    type_text(&mut app, "r");
+    assert_eq!(completion_items(&app), ["track", "true"]);
+    type_text(&mut app, "a");
+    assert_eq!(completion_items(&app), ["track"]);
+
+    // El popup sale junto al cursor, con la firma y la descripción.
+    let buffer = draw(&mut app, 120, 40);
+    let screen = text(&buffer);
+    let (x, y) = find(&buffer, "completar").unwrap();
+    let (_, cursor_row) = find(&buffer, "5 tra").unwrap();
+    assert_eq!(y, cursor_row + 1, "{screen}");
+    assert!(x < 20, "{screen}");
+    assert!(
+        screen.contains("track(nombre, cortes) / track(nombre) → pista"),
+        "{screen}"
+    );
+    assert!(
+        screen.contains("Define una pista que toca esos cortes"),
+        "{screen}"
+    );
+    assert!(screen.contains("función"), "{screen}");
+    assert!(screen.contains("COMPLETAR: ↑↓ elegir"), "{screen}");
+
+    // Borrar vuelve a ampliar la lista; sin coincidencias se cierra.
+    app.handle(special(Key::Backspace));
+    assert_eq!(completion_items(&app), ["track", "true"]);
+    type_text(&mut app, "x");
+    assert!(app.view().completion.is_none());
+}
+
+#[test]
+fn completion_follows_the_context() {
+    let (mut app, _engine) = open_at_end("complete_context");
+    type_text(&mut app, "track(\"drums\"):");
+    assert_eq!(
+        completion_items(&app),
+        ["steps", "gain", "fx", "every", "chance"]
+    );
+    assert!(text_of(&mut app).contains("método de pista"));
+
+    type_text(&mut app, "fx(\"");
+    assert_eq!(
+        completion_items(&app),
+        ["filter", "lowpass", "highpass", "bitcrush"]
+    );
+    type_text(&mut app, "filter\", { ");
+    app.handle(f(4));
+    assert_eq!(completion_items(&app), ["type", "cutoff", "q"]);
+    app.handle(esc());
+
+    // WAV de la carpeta de muestras y pistas ya definidas.
+    type_text(&mut app, "\nlocal b = sample(\"");
+    assert_eq!(completion_items(&app), ["break.wav"]);
+    app.handle(esc());
+    type_text(&mut app, "\ntrack(\"");
+    assert_eq!(completion_items(&app), ["drums", "kick"]);
+    app.handle(esc());
+
+    // Al inicio de línea, las funciones globales primero.
+    type_text(&mut app, "\n");
+    app.handle(f(4));
+    assert_eq!(&completion_items(&app)[..3], ["bpm", "sample", "track"]);
+    app.handle(esc());
+
+    // Dentro de steps("..."), nada (ni con F4).
+    type_text(&mut app, "track(\"drums\"):steps(\"1 . x");
+    assert!(app.view().completion.is_none());
+    app.handle(f(4));
+    assert!(app.view().completion.is_none());
+    assert_eq!(app.view().message, "nada que completar aquí");
+}
+
+#[test]
+fn arrows_move_the_selection() {
+    let (mut app, _engine) = open_at_end("complete_arrows");
+    type_text(&mut app, "t");
+    let selected = |app: &App| app.view().completion.unwrap().selected;
+    app.handle(special(Key::Down));
+    assert_eq!(selected(&app), 1);
+    assert!(text_of(&mut app).contains("palabra clave de Lua"));
+    app.handle(special(Key::Up));
+    app.handle(special(Key::Up));
+    assert_eq!(selected(&app), 2, "da la vuelta");
+    // Las flechas no mueven el cursor del editor mientras tanto.
+    assert_eq!(current_line(&app), "t");
+}
+
+#[test]
+fn accepting_inserts_the_template_with_marked_parameters() {
+    let (mut app, _engine) = open_at_end("complete_accept");
+    // Enter acepta: queda marcado el parámetro y lo escrito lo sustituye.
+    type_text(&mut app, "bp");
+    app.handle(special(Key::Enter));
+    assert_eq!(current_line(&app), "bpm(170)");
+    assert!(app.view().completion.is_none());
+    type_text(&mut app, "140");
+    assert_eq!(current_line(&app), "bpm(140)");
+
+    // Tab acepta; Tab salta de un parámetro al siguiente.
+    app.editor.move_cursor(ratatui_textarea::CursorMove::End);
+    type_text(&mut app, "\ntrack(\"drums\"):f");
+    app.handle(special(Key::Tab));
+    assert_eq!(
+        current_line(&app),
+        "track(\"drums\"):fx(\"filter\", { type = \"lowpass\", cutoff = 3000 })"
+    );
+    assert_eq!(
+        app.editor.selection_range(),
+        Some(((5, 19), (5, 25))),
+        "filter"
+    );
+    app.handle(special(Key::Tab));
+    type_text(&mut app, "highpass");
+    app.handle(special(Key::Tab));
+    type_text(&mut app, "800");
+    // Tras el último parámetro, Tab lleva al final de la plantilla.
+    app.handle(special(Key::Tab));
+    let line = current_line(&app);
+    assert_eq!(
+        line,
+        "track(\"drums\"):fx(\"filter\", { type = \"highpass\", cutoff = 800 })"
+    );
+    assert_eq!(app.editor.cursor().1, line.chars().count());
+    assert_eq!(app.editor.selection_range(), None);
+    // Ya sin parámetros pendientes, se encadena otro método.
+    type_text(&mut app, ":ga");
+    assert_eq!(completion_items(&app), ["gain"]);
+    app.handle(special(Key::Tab));
+    assert!(current_line(&app).ends_with(":gain(0.8)"));
+
+    // El resultado es código válido: se carga y el panel lo muestra.
+    app.handle(ctrl('s'));
+    let view = app.view();
+    assert!(view.error.is_none(), "{:?}", view.error);
+    assert_eq!(engine::Fx::highpass(800.0), view.tracks[0].fx[0]);
+}
+
+#[test]
+fn accepting_a_name_inside_a_template_keeps_the_marks() {
+    let (mut app, _engine) = open_at_end("complete_name");
+    type_text(&mut app, "track(\"drums\"):fx");
+    app.handle(special(Key::Tab));
+    // Sobre «filter» marcado se escribe «b»: el popup ofrece bitcrush.
+    type_text(&mut app, "b");
+    assert_eq!(completion_items(&app), ["bitcrush"]);
+    app.handle(special(Key::Enter));
+    assert!(current_line(&app).starts_with("track(\"drums\"):fx(\"bitcrush\", {"));
+    // El siguiente parámetro sigue pendiente.
+    app.handle(special(Key::Tab));
+    let ((_, a), (_, b)) = app.editor.selection_range().unwrap();
+    assert_eq!(&current_line(&app)[a..b], "lowpass");
+}
+
+#[test]
+fn esc_closes_the_popup_without_entering_play_mode() {
+    let (mut app, _engine) = open_at_end("complete_esc");
+    type_text(&mut app, "tr");
+    assert!(app.view().completion.is_some());
+    app.handle(esc());
+    let view = app.view();
+    assert!(view.completion.is_none());
+    assert!(!view.playing_mode, "Esc solo cierra el popup");
+    let screen = text_of(&mut app);
+    assert!(!screen.contains("completar"), "{screen}");
+    assert!(!screen.contains("TOCAR"), "{screen}");
+    // Se sigue escribiendo en el editor (y el popup vuelve: «track» tiene
+    // plantilla).
+    type_text(&mut app, "ack");
+    assert_eq!(current_line(&app), "track");
+    assert_eq!(completion_items(&app), ["track"]);
+    app.handle(esc());
+    assert!(!app.view().playing_mode);
+
+    // Sin popup, Esc sí entra en modo tocar, y ahí no se abre.
+    app.handle(esc());
+    assert!(app.view().playing_mode);
+    type_text(&mut app, "tr");
+    app.handle(f(4));
+    let view = app.view();
+    assert!(view.completion.is_none());
+    assert!(view.playing_mode);
+    assert_eq!(current_line(&app), "track");
+}
+
+#[test]
+fn entering_play_mode_never_happens_while_completing() {
+    // Abierto con F4 (sin prefijo), Esc también solo cierra.
+    let (mut app, _engine) = open_at_end("complete_f4_esc");
+    app.handle(f(4));
+    assert!(app.view().completion.is_some());
+    app.handle(esc());
+    assert!(!app.view().playing_mode);
+    // Los pads no disparan nada: «1» se escribe.
+    type_text(&mut app, "1");
+    assert_eq!(current_line(&app), "1");
+}
+
+#[test]
+#[ignore = "solo para ver la pantalla: cargo test -p tui pantalla_autocompletado -- --ignored --nocapture"]
+fn pantalla_autocompletado() {
+    let (mut app, _engine) = open_at_end("pantalla_completar");
+    type_text(&mut app, "track(\"drums\"):fx(\"filter\", { ");
+    app.handle(f(4));
+    app.handle(special(Key::Down));
+    println!("{}", text(&draw(&mut app, 120, 40)));
+}
+
+#[test]
+fn the_popup_goes_below_the_cursor_or_above_if_it_does_not_fit() {
+    let view = crate::model::CompletionView {
+        items: vec![("track".into(), "función".into()); 3],
+        selected: 0,
+        signature: "track(nombre, cortes)".into(),
+        description: "Define una pista.".into(),
+        prefix_len: 2,
+    };
+    let screen = ratatui::layout::Rect::new(0, 0, 100, 40);
+    // 3 opciones + separador + 2 de detalle + bordes = 8 filas.
+    let below = ui::completion_area(&view, 10, 5, screen);
+    assert_eq!((below.x, below.y, below.height), (10, 6, 8));
+    let above = ui::completion_area(&view, 10, 36, screen);
+    assert_eq!((above.y, above.bottom()), (28, 36));
+    // Pegado al borde derecho, se desplaza para caber.
+    let right = ui::completion_area(&view, 95, 5, screen);
+    assert_eq!(right.right(), 100);
+}

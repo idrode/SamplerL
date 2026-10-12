@@ -1,0 +1,704 @@
+//! Autocompletado del editor, sin terminal: a partir del texto y la
+//! posición del cursor decide qué se puede escribir ahí ([`context`]) y lo
+//! filtra por el prefijo ([`Context::matches`]). Las funciones, efectos y
+//! parámetros salen del registro de la API ([`script::api`]).
+//!
+//! Contextos:
+//! - tras `:`, los métodos del objeto (sample, cortes, pista o compás de
+//!   `every`; si no se sabe cuál es, todos);
+//! - dentro de `fx("...")`, los efectos; dentro de su tabla, los parámetros
+//!   del efecto y, en `type = "..."`, sus valores;
+//! - dentro de `sample("...")`, los WAV de la carpeta de muestras;
+//! - dentro de `track("...")`, las pistas ya definidas; dentro de
+//!   `chance(p, "...")`, sus efectos;
+//! - al inicio de línea, funciones globales, variables locales y palabras
+//!   clave (en mitad de una expresión, lo mismo);
+//! - dentro de `steps("...")` (y de cualquier otra cadena o comentario),
+//!   nada.
+
+use script::api::{self, Receiver};
+
+/// Una opción del autocompletado.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Candidate {
+    /// Lo que se muestra y se compara con el prefijo.
+    pub label: String,
+    /// Qué es: «función», «método de pista», «efecto»...
+    pub kind: String,
+    /// Firma o forma de uso (primera línea del detalle).
+    pub signature: String,
+    /// Descripción (segunda parte del detalle).
+    pub description: String,
+    /// Texto que se inserta en lugar del prefijo; los `${...}` son
+    /// parámetros que quedan marcados (ver [`api::expand_template`]).
+    pub insert: String,
+}
+
+/// Lo que se puede escribir en la posición del cursor.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Context {
+    /// Lo ya escrito que se sustituye al aceptar (caracteres antes del
+    /// cursor).
+    pub prefix: String,
+    /// Todas las opciones del contexto, sin filtrar.
+    pub candidates: Vec<Candidate>,
+}
+
+impl Context {
+    /// Opciones que empiezan por el prefijo (sin distinguir mayúsculas).
+    pub fn matches(&self) -> Vec<Candidate> {
+        let prefix = self.prefix.to_lowercase();
+        self.candidates
+            .iter()
+            .filter(|c| c.label.to_lowercase().starts_with(&prefix))
+            .cloned()
+            .collect()
+    }
+}
+
+/// Palabras clave de Lua.
+pub const KEYWORDS: &[&str] = &[
+    "local", "function", "end", "if", "then", "else", "elseif", "for", "in", "do", "while",
+    "repeat", "until", "return", "break", "and", "or", "not", "true", "false", "nil",
+];
+
+/// Profundidad máxima al deducir el tipo de una expresión.
+const MAX_DEPTH: usize = 8;
+
+/// Contexto del cursor en (`row`, `col`), con `col` en caracteres. `wavs`
+/// da los archivos de la carpeta de muestras (solo se llama dentro de
+/// `sample("...")`). `None`: ahí no se completa nada (dentro de
+/// `steps("...")`, otra cadena, un comentario o un número).
+pub fn context(
+    lines: &[String],
+    row: usize,
+    col: usize,
+    wavs: impl FnOnce() -> Vec<String>,
+) -> Option<Context> {
+    let mut before = String::new();
+    for line in lines.iter().take(row) {
+        before.push_str(line);
+        before.push('\n');
+    }
+    let current = lines.get(row).map_or("", String::as_str);
+    before.extend(current.chars().take(col));
+    let scan = Scan::of(&before);
+    let all = lines.join("\n");
+
+    if let Some(quote) = scan.string {
+        let prefix: String = before[quote + 1..].to_string();
+        return string_context(&scan, &before[..quote], prefix, &all, wavs);
+    }
+    if scan.comment {
+        return None;
+    }
+
+    let word_start = before
+        .char_indices()
+        .rev()
+        .take_while(|&(_, c)| is_ident(c))
+        .last()
+        .map_or(before.len(), |(i, _)| i);
+    let prefix = before[word_start..].to_string();
+    if prefix.starts_with(|c: char| c.is_ascii_digit()) {
+        return None;
+    }
+    let head = &scan.code[..word_start];
+    match head.chars().last() {
+        Some(':') => {
+            let receiver = type_of(&scan.code, &head[..head.len() - 1], 0);
+            return Some(Context {
+                prefix,
+                candidates: methods(receiver),
+            });
+        }
+        Some('.') => return None,
+        _ => {}
+    }
+
+    // Clave de la tabla de parámetros de `fx("efecto", { ... })`.
+    if let Some(Frame::Brace { item_start }) = scan.frames.last() {
+        if let Some(effect) = scan.fx_effect()
+            && head[*item_start..].trim().is_empty()
+        {
+            return Some(Context {
+                prefix,
+                candidates: effect.params.iter().map(fx_param).collect(),
+            });
+        }
+        return None;
+    }
+
+    let line_start = head.rsplit('\n').next().unwrap_or("").trim().is_empty();
+    let mut candidates: Vec<Candidate> = api::functions(Receiver::Global).map(function).collect();
+    candidates.extend(locals(&all).into_iter().map(|name| Candidate {
+        label: name.clone(),
+        kind: "variable".into(),
+        signature: format!("local {name}"),
+        description: "variable local del script".into(),
+        insert: name,
+    }));
+    if line_start || !prefix.is_empty() {
+        candidates.extend(KEYWORDS.iter().map(|k| Candidate {
+            label: k.to_string(),
+            kind: "palabra clave".into(),
+            signature: k.to_string(),
+            description: "palabra clave de Lua".into(),
+            insert: k.to_string(),
+        }));
+    }
+    Some(Context { prefix, candidates })
+}
+
+/// Contexto dentro de una cadena: depende de la llamada en la que está.
+fn string_context(
+    scan: &Scan,
+    head: &str,
+    prefix: String,
+    all: &str,
+    wavs: impl FnOnce() -> Vec<String>,
+) -> Option<Context> {
+    let candidates = match scan.frames.last()? {
+        Frame::Paren { name, arg, .. } => match (name.as_str(), *arg) {
+            ("sample", 0) => wavs()
+                .into_iter()
+                .map(|w| Candidate {
+                    label: w.clone(),
+                    kind: "WAV".into(),
+                    signature: format!("sample(\"{w}\")"),
+                    description: "archivo de la carpeta de muestras".into(),
+                    insert: w,
+                })
+                .collect(),
+            ("fx", 0) => api::EFFECTS
+                .iter()
+                .map(|e| Candidate {
+                    label: e.name.into(),
+                    kind: "efecto".into(),
+                    signature: format!(
+                        "fx(\"{}\", {{ {} }})",
+                        e.name,
+                        e.params
+                            .iter()
+                            .map(|p| p.name)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                    description: e.summary.into(),
+                    insert: e.name.into(),
+                })
+                .collect(),
+            ("track", 0) => track_names(all)
+                .into_iter()
+                .map(|n| Candidate {
+                    label: n.clone(),
+                    kind: "pista".into(),
+                    signature: format!("track(\"{n}\")"),
+                    description: "pista definida en el script".into(),
+                    insert: n,
+                })
+                .collect(),
+            ("chance", 1) => api::CHANCE_EFFECTS
+                .iter()
+                .map(|e| Candidate {
+                    label: e.name.into(),
+                    kind: "efecto de chance".into(),
+                    signature: match e.value {
+                        Some(v) => format!("chance(p, \"{}\", {v})", e.name),
+                        None => format!("chance(p, \"{}\")", e.name),
+                    },
+                    description: e.summary.into(),
+                    insert: e.name.into(),
+                })
+                .collect(),
+            _ => return None,
+        },
+        // Valor de un parámetro con valores cerrados: `type = "..."`.
+        Frame::Brace { item_start } => {
+            let effect = scan.fx_effect()?;
+            let item = head[*item_start..].trim();
+            let key = item.strip_suffix('=')?.trim();
+            let param = effect.params.iter().find(|p| p.name == key)?;
+            if param.values.is_empty() {
+                return None;
+            }
+            param
+                .values
+                .iter()
+                .map(|v| Candidate {
+                    label: v.to_string(),
+                    kind: format!("valor de {key}"),
+                    signature: format!("{key} = \"{v}\""),
+                    description: param.description.into(),
+                    insert: v.to_string(),
+                })
+                .collect()
+        }
+    };
+    Some(Context { prefix, candidates })
+}
+
+fn function(f: &api::Function) -> Candidate {
+    let kind = match f.receiver {
+        Receiver::Global => "función".to_string(),
+        r => format!("método de {}", r.label()),
+    };
+    let mut description = f.summary.to_string();
+    for p in f.params {
+        description.push_str(&format!("\n{}: {}", p.name, p.description));
+    }
+    Candidate {
+        label: f.name.into(),
+        kind,
+        signature: f.full_signature(),
+        description,
+        insert: f.template.into(),
+    }
+}
+
+fn fx_param(p: &api::FxParam) -> Candidate {
+    let default = p
+        .default
+        .map_or("obligatorio".to_string(), |d| format!("por defecto {d}"));
+    Candidate {
+        label: p.name.into(),
+        kind: "parámetro".into(),
+        signature: format!("{} = {} ({default})", p.name, p.valid.replace('`', "")),
+        description: p.description.into(),
+        insert: p.template.into(),
+    }
+}
+
+/// Métodos de un receptor; si no se sabe cuál, los de todos (sin repetir
+/// nombres).
+fn methods(receiver: Option<Receiver>) -> Vec<Candidate> {
+    let order = match receiver {
+        Some(r) => vec![r],
+        None => vec![
+            Receiver::Track,
+            Receiver::Slices,
+            Receiver::Sample,
+            Receiver::Bar,
+        ],
+    };
+    let mut out: Vec<Candidate> = Vec::new();
+    for r in order {
+        for f in api::functions(r) {
+            if !out.iter().any(|c| c.label == f.name) {
+                out.push(function(f));
+            }
+        }
+    }
+    out
+}
+
+fn is_ident(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+/// Llamada o tabla abierta en el cursor.
+#[derive(Debug, Clone)]
+enum Frame {
+    Paren {
+        /// Nombre de la función (`fx`, `sample`...).
+        name: String,
+        /// Argumento en el que está el cursor (desde 0).
+        arg: usize,
+        /// Primera cadena de cada argumento, si la hay.
+        strings: Vec<Option<String>>,
+    },
+    Brace {
+        /// Byte donde empieza el elemento actual (tras `{` o `,`).
+        item_start: usize,
+    },
+}
+
+/// Recorrido del texto hasta el cursor.
+struct Scan {
+    /// El texto con los comentarios cambiados por espacios.
+    code: String,
+    /// Llamadas y tablas abiertas.
+    frames: Vec<Frame>,
+    /// Byte de la comilla que abre la cadena en la que está el cursor.
+    string: Option<usize>,
+    /// El cursor está en un comentario.
+    comment: bool,
+}
+
+impl Scan {
+    fn of(text: &str) -> Scan {
+        let mut code = String::with_capacity(text.len());
+        let mut frames: Vec<Frame> = Vec::new();
+        let mut string: Option<(char, usize)> = None;
+        let mut comment = false;
+        let mut chars = text.char_indices().peekable();
+        while let Some((i, c)) = chars.next() {
+            if c == '\n' {
+                // Las cadenas y los comentarios de línea no pasan de línea.
+                string = None;
+                comment = false;
+                code.push(c);
+                continue;
+            }
+            if comment {
+                // Mismos bytes que el original: las posiciones coinciden.
+                code.extend(std::iter::repeat_n(' ', c.len_utf8()));
+                continue;
+            }
+            if let Some((quote, start)) = string {
+                code.push(c);
+                if c == '\\' {
+                    if let Some((_, next)) = chars.next() {
+                        code.push(next);
+                    }
+                } else if c == quote {
+                    string = None;
+                    if let Some(Frame::Paren { arg, strings, .. }) = frames.last_mut() {
+                        if strings.len() <= *arg {
+                            strings.resize(*arg + 1, None);
+                        }
+                        strings[*arg].get_or_insert_with(|| text[start + 1..i].to_string());
+                    }
+                }
+                continue;
+            }
+            match c {
+                '-' if chars.peek().is_some_and(|&(_, n)| n == '-') => {
+                    comment = true;
+                    code.push(' ');
+                    continue;
+                }
+                '"' | '\'' => string = Some((c, i)),
+                '(' => frames.push(Frame::Paren {
+                    name: last_ident(&code),
+                    arg: 0,
+                    strings: Vec::new(),
+                }),
+                '{' => frames.push(Frame::Brace { item_start: i + 1 }),
+                ')' | '}' => {
+                    frames.pop();
+                }
+                ',' => match frames.last_mut() {
+                    Some(Frame::Paren { arg, .. }) => *arg += 1,
+                    Some(Frame::Brace { item_start }) => *item_start = i + 1,
+                    None => {}
+                },
+                _ => {}
+            }
+            code.push(c);
+        }
+        Scan {
+            code,
+            frames,
+            string: string.map(|(_, start)| start),
+            comment,
+        }
+    }
+
+    /// Efecto de la tabla abierta, si es la de `fx("efecto", { ... })`.
+    fn fx_effect(&self) -> Option<&'static api::Effect> {
+        let [.., Frame::Paren { name, arg, strings }, Frame::Brace { .. }] = &self.frames[..]
+        else {
+            return None;
+        };
+        if name != "fx" || *arg != 1 {
+            return None;
+        }
+        api::effect(strings.first()?.as_deref()?)
+    }
+}
+
+/// Identificador al final del texto (sin contar espacios).
+fn last_ident(text: &str) -> String {
+    let trimmed = text.trim_end();
+    let start = trimmed
+        .char_indices()
+        .rev()
+        .take_while(|&(_, c)| is_ident(c))
+        .last()
+        .map_or(trimmed.len(), |(i, _)| i);
+    trimmed[start..].to_string()
+}
+
+/// Tipo de la expresión que acaba al final de `expr` (`code` es todo el
+/// texto, para buscar las variables). `None` si no se sabe.
+fn type_of(code: &str, expr: &str, depth: usize) -> Option<Receiver> {
+    if depth > MAX_DEPTH {
+        return None;
+    }
+    let expr = expr.trim_end();
+    if let Some(open_end) = expr.strip_suffix(')') {
+        // Llamada: buscar el paréntesis que abre.
+        let mut level = 0usize;
+        let mut open = None;
+        for (i, c) in open_end.char_indices().rev() {
+            match c {
+                ')' => level += 1,
+                '(' if level == 0 => {
+                    open = Some(i);
+                    break;
+                }
+                '(' => level -= 1,
+                _ => {}
+            }
+        }
+        let callee = expr[..open?].trim_end();
+        let name = last_ident(callee);
+        let before = &callee[..callee.len() - name.len()];
+        return match before.chars().last() {
+            Some(':') => {
+                let receiver = type_of(code, &before[..before.len() - 1], depth + 1);
+                match receiver {
+                    Some(r) => api::function(r, &name)?.returns,
+                    // Receptor desconocido: lo que devuelva un método con ese
+                    // nombre, si todos coinciden.
+                    None => {
+                        let mut kinds = api::FUNCTIONS
+                            .iter()
+                            .filter(|f| f.receiver != Receiver::Global && f.name == name)
+                            .map(|f| f.returns);
+                        let first = kinds.next()??;
+                        kinds.all(|k| k == Some(first)).then_some(first)
+                    }
+                }
+            }
+            Some('.') => None,
+            _ => api::function(Receiver::Global, &name)?.returns,
+        };
+    }
+    let name = last_ident(expr);
+    if name.is_empty() {
+        return None;
+    }
+    variable_type(code, &name, depth)
+}
+
+/// Tipo de una variable: parámetro de la función de `every` (un compás) o
+/// lo último que se le asignó con `local nombre = ...` o `nombre = ...`.
+fn variable_type(code: &str, name: &str, depth: usize) -> Option<Receiver> {
+    let mut found = None;
+    for line in code.lines() {
+        if function_params(line).is_some_and(|args| args.iter().any(|a| a == name)) {
+            found = Some(Receiver::Bar);
+            continue;
+        }
+        let line = line.trim();
+        let line = line.strip_prefix("local ").unwrap_or(line).trim_start();
+        let Some(rest) = line.strip_prefix(name) else {
+            continue;
+        };
+        let Some(value) = rest.trim_start().strip_prefix('=') else {
+            continue;
+        };
+        if value.starts_with('=') {
+            continue;
+        }
+        found = type_of(code, value, depth + 1);
+    }
+    found
+}
+
+/// Parámetros de una `function(...)` anónima de la línea, si la hay.
+fn function_params(line: &str) -> Option<Vec<String>> {
+    let start = line.find("function")? + "function".len();
+    let rest = line[start..].trim_start().strip_prefix('(')?;
+    let args = &rest[..rest.find(')')?];
+    Some(args.split(',').map(|a| a.trim().to_string()).collect())
+}
+
+/// Variables declaradas con `local` (en orden, sin repetir).
+fn locals(text: &str) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    for (i, _) in text.match_indices("local ") {
+        if text[..i].chars().last().is_some_and(is_ident) {
+            continue;
+        }
+        let rest = text[i + "local ".len()..].trim_start();
+        let rest = rest.strip_prefix("function ").unwrap_or(rest).trim_start();
+        let names_part = rest.split(['=', '(', '\n']).next().unwrap_or("");
+        for name in names_part.split(',') {
+            let name = name.trim();
+            if !name.is_empty() && name.chars().all(is_ident) && !names.iter().any(|n| n == name) {
+                names.push(name.to_string());
+            }
+        }
+    }
+    names
+}
+
+/// Nombres de pista definidos con `track("nombre", ...)` (en orden, sin
+/// repetir).
+pub fn track_names(text: &str) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    for (i, _) in text.match_indices("track(") {
+        if text[..i].chars().last().is_some_and(is_ident) {
+            continue;
+        }
+        let rest = text[i + "track(".len()..].trim_start();
+        let Some(quote) = rest.chars().next().filter(|&c| c == '"' || c == '\'') else {
+            continue;
+        };
+        let Some(end) = rest[1..].find(quote) else {
+            continue;
+        };
+        let name = &rest[1..1 + end];
+        if !name.is_empty() && !name.contains('\n') && !names.iter().any(|n| n == name) {
+            names.push(name.to_string());
+        }
+    }
+    names
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Contexto con el cursor donde está `|`.
+    fn at(text: &str) -> Option<Context> {
+        at_with(text, &[])
+    }
+
+    fn at_with(text: &str, wavs: &[&str]) -> Option<Context> {
+        let lines: Vec<String> = text.lines().map(String::from).collect();
+        let (row, line) = lines
+            .iter()
+            .enumerate()
+            .find(|(_, l)| l.contains('|'))
+            .expect("falta el cursor |");
+        let col = line[..line.find('|').unwrap()].chars().count();
+        let lines: Vec<String> = lines.iter().map(|l| l.replace('|', "")).collect();
+        let wavs: Vec<String> = wavs.iter().map(|w| w.to_string()).collect();
+        context(&lines, row, col, || wavs)
+    }
+
+    fn labels(context: &Context) -> Vec<String> {
+        context.matches().into_iter().map(|c| c.label).collect()
+    }
+
+    const SONG: &str = "bpm(170)\nlocal amen = sample(\"amen.wav\"):slice(8)\n";
+
+    #[test]
+    fn line_start_offers_globals_locals_and_keywords() {
+        let c = at(&format!("{SONG}|")).unwrap();
+        let l = labels(&c);
+        assert_eq!(&l[..3], ["bpm", "sample", "track"]);
+        assert!(l.contains(&"amen".into()), "{l:?}");
+        assert!(l.contains(&"local".into()), "{l:?}");
+        let c = at(&format!("{SONG}tr|")).unwrap();
+        assert_eq!(c.prefix, "tr");
+        assert_eq!(labels(&c), ["track", "true"]);
+    }
+
+    #[test]
+    fn methods_follow_the_type_of_the_receiver() {
+        let c = at(&format!("{SONG}track(\"drums\", amen):|")).unwrap();
+        assert_eq!(
+            labels(&c),
+            ["steps", "gain", "fx", "every", "chance"],
+            "métodos de pista"
+        );
+        assert_eq!(c.matches()[0].kind, "método de pista");
+        let c = at("local s = sample(\"amen.wav\")\ns:|").unwrap();
+        assert_eq!(labels(&c), ["slice"]);
+        let c = at(&format!("{SONG}amen:s|")).unwrap();
+        assert_eq!(labels(&c), ["slice_at"], "cortes");
+        let c = at("sample(\"amen.wav\"):slice(8):|").unwrap();
+        assert_eq!(labels(&c), ["count", "slice_at"]);
+    }
+
+    #[test]
+    fn chains_on_following_lines_and_every_bars() {
+        let text = format!(
+            "{SONG}track(\"drums\", amen)\n  :steps(\"1 . . .  . . . .  . . . .  . . . .\")\n  -- comentario\n  :f|"
+        );
+        let c = at(&text).unwrap();
+        assert_eq!(labels(&c), ["fx"]);
+        let text = format!("{SONG}track(\"drums\", amen):every(4, function(c) c:|) end)");
+        let c = at(&text).unwrap();
+        assert_eq!(labels(&c), ["steps", "reverse", "pitch", "retrig", "gain"]);
+        assert_eq!(c.matches()[0].kind, "método de compás");
+    }
+
+    #[test]
+    fn unknown_receivers_offer_every_method_once() {
+        let c = at("algo:|").unwrap();
+        let l = labels(&c);
+        assert_eq!(l.iter().filter(|n| *n == "steps").count(), 1);
+        assert!(l.contains(&"slice".into()) && l.contains(&"reverse".into()));
+    }
+
+    #[test]
+    fn fx_offers_effects_then_their_parameters_and_values() {
+        let c = at(&format!("{SONG}track(\"d\", amen):fx(\"|")).unwrap();
+        assert_eq!(labels(&c), ["filter", "lowpass", "highpass", "bitcrush"]);
+        let c = at(&format!("{SONG}track(\"d\", amen):fx(\"bit|")).unwrap();
+        assert_eq!(c.prefix, "bit");
+        assert_eq!(labels(&c), ["bitcrush"]);
+
+        let c = at(&format!("{SONG}track(\"d\", amen):fx(\"filter\", {{ |")).unwrap();
+        assert_eq!(labels(&c), ["type", "cutoff", "q"]);
+        assert_eq!(c.matches()[1].insert, "cutoff = ${3000}");
+        let c = at(&format!(
+            "{SONG}track(\"d\", amen):fx(\"bitcrush\", {{ bits = 4, d|"
+        ))
+        .unwrap();
+        assert_eq!(labels(&c), ["downsample"]);
+        // Valor de un parámetro: solo si tiene valores cerrados.
+        let c = at(&format!(
+            "{SONG}track(\"d\", amen):fx(\"filter\", {{ type = \"|"
+        ))
+        .unwrap();
+        assert_eq!(labels(&c), ["lowpass", "highpass"]);
+        assert!(
+            at(&format!(
+                "{SONG}track(\"d\", amen):fx(\"filter\", {{ cutoff = |"
+            ))
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn sample_offers_the_wavs_of_the_sample_folder() {
+        let wavs = ["amen.wav", "think.wav"];
+        let c = at_with("local a = sample(\"|", &wavs).unwrap();
+        assert_eq!(labels(&c), ["amen.wav", "think.wav"]);
+        let c = at_with("local a = sample(\"th|", &wavs).unwrap();
+        assert_eq!(labels(&c), ["think.wav"]);
+        assert_eq!(c.prefix, "th");
+    }
+
+    #[test]
+    fn track_offers_defined_tracks_and_chance_its_effects() {
+        let text =
+            format!("{SONG}track(\"drums\", amen)\ntrack(\"kick\", amen:slice_at(1))\ntrack(\"|");
+        assert_eq!(labels(&at(&text).unwrap()), ["drums", "kick"]);
+        let c = at(&format!("{SONG}track(\"d\", amen):chance(0.2, \"s|")).unwrap();
+        assert!(labels(&c).is_empty());
+        let c = at(&format!("{SONG}track(\"d\", amen):chance(0.2, \"|")).unwrap();
+        assert_eq!(labels(&c), ["retrig", "reverse", "pitch", "gain", "mute"]);
+    }
+
+    #[test]
+    fn nothing_inside_steps_other_strings_comments_or_numbers() {
+        assert!(at(&format!("{SONG}track(\"d\", amen):steps(\"1 . |")).is_none());
+        assert!(at(&format!("{SONG}track(\"d\", amen):steps(\"1 . s|\")")).is_none());
+        assert!(at("print(\"hola |").is_none());
+        assert!(at("-- un comentario tr|").is_none());
+        assert!(at("bpm(17|").is_none());
+        assert!(at("math.fl|").is_none());
+    }
+
+    #[test]
+    fn comments_with_accents_keep_positions() {
+        let c =
+            at("-- línea con tildes: ñandú\ntrack(\"d\", sample(\"a.wav\"):slice(2)):g|").unwrap();
+        assert_eq!(labels(&c), ["gain"]);
+    }
+
+    #[test]
+    fn finds_track_names_and_locals() {
+        let text = "local a, b = 1, 2\nlocal function f() end\ntrack('x', a)\nmytrack(\"no\")\ntrack(\"y\")";
+        assert_eq!(track_names(text), ["x", "y"]);
+        assert_eq!(locals(text), ["a", "b", "f"]);
+    }
+}

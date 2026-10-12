@@ -1,4 +1,5 @@
 mod app;
+mod complete;
 mod model;
 #[cfg(test)]
 mod tests;

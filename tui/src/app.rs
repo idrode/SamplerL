@@ -7,9 +7,12 @@ use std::time::{Duration, Instant};
 
 use engine::{Controller, MAX_TRACKS, Sample, Status};
 use ratatui_textarea::{CursorMove, Input, Key, TextArea};
-use script::{Project, ScriptError, ScriptHost};
+use script::{Project, ScriptError, ScriptHost, api};
 
-use crate::model::{ErrorView, TrackView, TransportView, ViewModel, Waveform, error_line};
+use crate::complete::{self, Candidate};
+use crate::model::{
+    CompletionView, ErrorView, TrackView, TransportView, ViewModel, Waveform, error_line,
+};
 
 /// Plantilla para un script nuevo.
 const TEMPLATE: &str = r#"bpm(170)
@@ -38,6 +41,27 @@ pub enum Mode {
     #[default]
     Edit,
     Play,
+}
+
+/// Autocompletado abierto.
+#[derive(Debug, Clone)]
+struct Completion {
+    /// Lo ya escrito que se sustituye al aceptar.
+    prefix: String,
+    /// Opciones que empiezan por el prefijo (nunca vacío).
+    matches: Vec<Candidate>,
+    selected: usize,
+    /// Abierto con F4: sigue abierto aunque no haya prefijo.
+    manual: bool,
+}
+
+/// Parámetro de una plantilla insertada que falta por rellenar.
+#[derive(Debug, Clone)]
+struct Mark {
+    row: usize,
+    /// Texto entre el parámetro anterior y este.
+    gap: String,
+    text: String,
 }
 
 /// Qué hacer tras una tecla.
@@ -77,6 +101,13 @@ pub struct App {
     /// Resúmenes de forma de onda por sample (se guarda el `Arc` para que la
     /// dirección no se reutilice mientras está en la caché).
     waveforms: HashMap<usize, (Arc<Sample>, Arc<Waveform>)>,
+    /// Autocompletado abierto (popup junto al cursor).
+    completion: Option<Completion>,
+    /// Parámetros de la última plantilla que faltan por rellenar; Tab
+    /// salta al siguiente.
+    marks: Vec<Mark>,
+    /// La selección del editor es un parámetro marcado por una plantilla.
+    mark_selected: bool,
 }
 
 impl App {
@@ -104,6 +135,9 @@ impl App {
             last_external_check: Instant::now(),
             overwrite_armed: false,
             waveforms: HashMap::new(),
+            completion: None,
+            marks: Vec::new(),
+            mark_selected: false,
         };
         app.load();
         Ok(app)
@@ -492,7 +526,199 @@ impl App {
         };
     }
 
+    /// Carpeta donde `sample()` busca los WAV: la del proyecto o la del
+    /// script.
+    fn sample_folder(&self) -> PathBuf {
+        self.host.sample_dir().map_or_else(
+            || self.path.parent().unwrap_or(Path::new(".")).to_path_buf(),
+            Path::to_path_buf,
+        )
+    }
+
+    /// Autocompletado en el cursor. Si no es `manual` (F4), solo se abre
+    /// con algo escrito o justo tras `:` o unas comillas, y no para una
+    /// única opción que ya está escrita entera y no añade nada (una palabra
+    /// clave, sí; una función con su plantilla, no).
+    fn completion_at(&self, manual: bool) -> Option<Completion> {
+        let cursor = self.editor.cursor();
+        let (row, col) = (cursor.0, cursor.1);
+        let folder = self.sample_folder();
+        let context = complete::context(self.editor.lines(), row, col, || list_wavs(&folder))?;
+        let matches = context.matches();
+        if matches.is_empty() {
+            return None;
+        }
+        if !manual {
+            let before: Vec<char> = self.editor.lines()[row].chars().take(col).collect();
+            let trigger = before
+                .len()
+                .checked_sub(context.prefix.chars().count() + 1)
+                .map(|i| before[i]);
+            if context.prefix.is_empty() && !matches!(trigger, Some(':' | '"' | '\'')) {
+                return None;
+            }
+            if matches.len() == 1
+                && matches[0].label == context.prefix
+                && matches[0].insert == context.prefix
+            {
+                return None;
+            }
+        }
+        Some(Completion {
+            prefix: context.prefix,
+            matches,
+            selected: 0,
+            manual,
+        })
+    }
+
+    /// F4: abre el autocompletado aunque no haya nada escrito.
+    pub fn open_completion(&mut self) {
+        self.completion = self.completion_at(true);
+        if self.completion.is_none() {
+            self.message = "nada que completar aquí".into();
+        }
+    }
+
+    /// Tras una tecla que llega al editor: recalcula el autocompletado
+    /// abierto, o lo abre si se escribió algo que lo pide.
+    fn refresh_completion(&mut self, typed: Option<char>) {
+        match self.completion.take() {
+            Some(old) => {
+                let mut next = self.completion_at(old.manual);
+                if let (Some(next), Some(selected)) = (&mut next, old.matches.get(old.selected)) {
+                    next.selected = next
+                        .matches
+                        .iter()
+                        .position(|c| c.label == selected.label)
+                        .unwrap_or(0);
+                }
+                self.completion = next;
+            }
+            None => {
+                if typed.is_some_and(|c| c.is_alphanumeric() || "_:\"'".contains(c)) {
+                    self.completion = self.completion_at(false);
+                }
+            }
+        }
+    }
+
+    fn move_completion(&mut self, down: bool) {
+        if let Some(c) = &mut self.completion {
+            let n = c.matches.len();
+            c.selected = if down {
+                (c.selected + 1) % n
+            } else {
+                (c.selected + n - 1) % n
+            };
+        }
+    }
+
+    /// Sustituye lo escrito por la opción elegida. Las plantillas de las
+    /// funciones dejan marcado el primer parámetro (lo que se escriba lo
+    /// sustituye); Tab salta al siguiente y, tras el último, al final de
+    /// la plantilla.
+    pub fn accept_completion(&mut self) {
+        let Some(completion) = self.completion.take() else {
+            return;
+        };
+        let Some(candidate) = completion.matches.get(completion.selected) else {
+            return;
+        };
+        let cursor = self.editor.cursor();
+        let row = cursor.0;
+        let start = cursor.1 - completion.prefix.chars().count();
+        self.editor.cancel_selection();
+        self.editor
+            .move_cursor(CursorMove::Jump(row as u16, start as u16));
+        self.editor.delete_str(completion.prefix.chars().count());
+        let (text, marks) = api::expand_template(&candidate.insert);
+        self.editor.insert_str(&text);
+        self.message = candidate.signature.clone();
+        if marks.is_empty() {
+            // Un nombre suelto (un efecto dentro de una plantilla, por
+            // ejemplo): se conservan los parámetros pendientes.
+            return;
+        }
+        let chars: Vec<char> = text.chars().collect();
+        let mut end = 0;
+        self.marks = marks
+            .iter()
+            .map(|m| {
+                let mark = Mark {
+                    row,
+                    gap: chars[end..m.start].iter().collect(),
+                    text: chars[m.clone()].iter().collect(),
+                };
+                end = m.end;
+                mark
+            })
+            .collect();
+        // Final de la plantilla: una marca vacía.
+        self.marks.push(Mark {
+            row,
+            gap: chars[end..].iter().collect(),
+            text: String::new(),
+        });
+        self.marks[0].gap.clear();
+        let first = &marks[0];
+        self.select(row, start + first.start, first.len());
+        self.marks.remove(0);
+    }
+
+    /// Selecciona `len` caracteres desde (`row`, `col`): un parámetro. Con
+    /// `len` 0 solo deja ahí el cursor.
+    fn select(&mut self, row: usize, col: usize, len: usize) {
+        self.editor.cancel_selection();
+        self.editor
+            .move_cursor(CursorMove::Jump(row as u16, col as u16));
+        if len == 0 {
+            return;
+        }
+        self.editor.start_selection();
+        self.editor
+            .move_cursor(CursorMove::Jump(row as u16, (col + len) as u16));
+        self.mark_selected = true;
+    }
+
+    /// Marca el siguiente parámetro pendiente: justo tras el cursor si no
+    /// se ha movido, o el primero con ese texto más adelante en la línea.
+    fn next_mark(&mut self) -> bool {
+        if self.marks.is_empty() {
+            return false;
+        }
+        let mark = self.marks.remove(0);
+        let cursor = self.editor.cursor();
+        if cursor.0 != mark.row {
+            self.marks.clear();
+            return false;
+        }
+        let line: Vec<char> = self.editor.lines()[mark.row].chars().collect();
+        let text: Vec<char> = mark.text.chars().collect();
+        let gap: Vec<char> = mark.gap.chars().collect();
+        let col = cursor.1;
+        let exact = line[col.min(line.len())..].starts_with(&gap)
+            && line[(col + gap.len()).min(line.len())..].starts_with(&text);
+        let found = if exact {
+            Some(col + gap.len())
+        } else {
+            (col..line.len()).find(|&i| line[i..].starts_with(&text))
+        };
+        match found {
+            Some(at) => {
+                self.select(mark.row, at, text.len());
+                true
+            }
+            None => {
+                self.marks.clear();
+                false
+            }
+        }
+    }
+
     fn toggle_mode(&mut self) {
+        self.completion = None;
+        self.marks.clear();
         self.mode = match self.mode {
             Mode::Edit => Mode::Play,
             Mode::Play => Mode::Edit,
@@ -532,6 +758,37 @@ impl App {
             }
             return Flow::Continue;
         }
+        // Con el autocompletado abierto, las flechas lo recorren, Tab o
+        // Enter aceptan y Esc solo lo cierra (no entra en modo tocar).
+        if self.completion.is_some() && !input.ctrl && !input.alt {
+            match input.key {
+                Key::Up => return self.then(|app| app.move_completion(false)),
+                Key::Down => return self.then(|app| app.move_completion(true)),
+                Key::Tab | Key::Enter => return self.then(App::accept_completion),
+                Key::Esc => return self.then(|app| app.completion = None),
+                _ => {}
+            }
+        }
+        // Moverse con un parámetro marcado lo deja tal cual (sin extender
+        // la selección).
+        let marked = std::mem::replace(&mut self.mark_selected, false);
+        if marked
+            && matches!(
+                input.key,
+                Key::Left | Key::Right | Key::Up | Key::Down | Key::Home | Key::End
+            )
+        {
+            self.editor.cancel_selection();
+        }
+        // Tab salta al siguiente parámetro de la plantilla (o a su final).
+        if self.mode == Mode::Edit
+            && input.key == Key::Tab
+            && !input.ctrl
+            && !input.alt
+            && self.next_mark()
+        {
+            return Flow::Continue;
+        }
         let quit_armed = std::mem::replace(&mut self.quit_armed, false);
         if (input.key, input.ctrl) != (Key::Char('s'), true) {
             self.overwrite_armed = false;
@@ -552,6 +809,10 @@ impl App {
             (Key::Char('o'), true) => self.next_track(),
             (Key::F(3), _) => self.reload_external(),
             (Key::F(2), _) => self.prompt = Some(String::new()),
+            (Key::F(4), _) if self.mode == Mode::Edit => {
+                self.open_completion();
+                return Flow::Continue;
+            }
             (Key::Esc, _) => self.toggle_mode(),
             (Key::Char(c), false) if self.mode == Mode::Play && !input.alt => {
                 if let Some(index) = PADS.iter().position(|&p| p == c.to_ascii_lowercase()) {
@@ -561,9 +822,22 @@ impl App {
             // En modo tocar el texto no se toca.
             _ if self.mode == Mode::Play => {}
             _ => {
+                let typed = match input.key {
+                    Key::Char(c) if !input.ctrl && !input.alt => Some(c),
+                    _ => None,
+                };
                 self.editor.input(input);
+                self.refresh_completion(typed);
+                return Flow::Continue;
             }
         }
+        // Los atajos cierran el autocompletado.
+        self.completion = None;
+        Flow::Continue
+    }
+
+    fn then(&mut self, f: impl FnOnce(&mut App)) -> Flow {
+        f(self);
         Flow::Continue
     }
 
@@ -639,6 +913,20 @@ impl App {
             file: name,
             dirty: self.dirty(),
             playing_mode: self.mode == Mode::Play,
+            completion: self.completion.as_ref().map(|c| {
+                let selected = &c.matches[c.selected];
+                CompletionView {
+                    items: c
+                        .matches
+                        .iter()
+                        .map(|m| (m.label.clone(), m.kind.clone()))
+                        .collect(),
+                    selected: c.selected,
+                    signature: selected.signature.clone(),
+                    description: selected.description.clone(),
+                    prefix_len: c.prefix.chars().count(),
+                }
+            }),
             external_change: self.external.is_some(),
             prompt: self.prompt.clone(),
             project: self
@@ -652,6 +940,21 @@ impl App {
             selected,
         }
     }
+}
+
+/// Archivos WAV de una carpeta, ordenados.
+fn list_wavs(dir: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut wavs: Vec<String> = entries
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("wav")))
+        .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .collect();
+    wavs.sort();
+    wavs
 }
 
 /// Texto de un script y lo que hay guardado en disco (vacío si no existe:

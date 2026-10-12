@@ -8,10 +8,10 @@ use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::symbols::Marker;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::canvas::{Canvas, Line as CanvasLine};
-use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
 
 use crate::app::App;
-use crate::model::{ViewModel, fx_text, step_text};
+use crate::model::{CompletionView, ViewModel, fx_text, step_text};
 
 pub const ERROR: Color = Color::Red;
 /// Fondo de la línea con error (rojo oscuro de la paleta de 256 colores).
@@ -33,7 +33,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let [left, right] =
         Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(main);
 
-    draw_editor(frame, app, &view, left);
+    let popup = draw_editor(frame, app, &view, left);
     // Motor arriba (una línea por pista), sample y tracker debajo.
     let engine_height = (view.tracks.len() as u16 + 4).clamp(5, 12);
     // El tracker pide sus 16 filas (más cabecera y bordes); el sample se
@@ -49,9 +49,14 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     frame.render_widget(TrackerPanel(&view), tracker_area);
     frame.render_widget(FxPanel(&view), fx);
     frame.render_widget(HelpLine(&view), help);
+    // El autocompletado, encima de todo (puede salirse del editor).
+    if let (Some(completion), Some(area)) = (&view.completion, popup) {
+        frame.render_widget(CompletionPopup(completion), area);
+    }
 }
 
-fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rect) {
+/// Dibuja el editor y devuelve dónde va el autocompletado, si está abierto.
+fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rect) -> Option<Rect> {
     let dirty = if view.dirty { " ●" } else { "" };
     let project = view
         .project
@@ -112,6 +117,19 @@ fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rect) {
         .set_cursor_line_style(Style::new().add_modifier(Modifier::UNDERLINED));
     frame.render_widget(&app.editor, editor_area);
 
+    let popup = view.completion.as_ref().map(|completion| {
+        // Posición del cursor en pantalla (tras dibujar, con el desplazamiento
+        // y los números de línea).
+        let cursor = app.editor.screen_cursor();
+        let (top, left) = app.editor.scroll_offset();
+        let x = editor_area.x
+            + app.editor.line_number_width()
+            + (cursor.col.saturating_sub(left as usize) as u16);
+        let y = editor_area.y + cursor.row.saturating_sub(top as usize) as u16;
+        let x = x.saturating_sub(completion.prefix_len as u16);
+        completion_area(completion, x, y, frame.area())
+    });
+
     // Resaltar la línea del error si está a la vista. `scroll_offset` da la
     // primera línea visible tras dibujar (sin ajuste de línea).
     if let Some(line) = view.error.as_ref().and_then(|e| e.line) {
@@ -129,6 +147,92 @@ fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rect) {
                 Style::new().bg(ERROR_LINE),
             );
         }
+    }
+    popup
+}
+
+/// Opciones visibles a la vez en el autocompletado.
+const COMPLETION_ROWS: usize = 8;
+/// Líneas de detalle (firma y descripción) del autocompletado, como mucho.
+const COMPLETION_DETAIL: usize = 5;
+
+/// Sitio del popup: debajo del cursor (`x`, `y`) si cabe; si no, encima.
+/// Siempre dentro de `screen`.
+pub fn completion_area(view: &CompletionView, x: u16, y: u16, screen: Rect) -> Rect {
+    let widest = view
+        .items
+        .iter()
+        .map(|(label, kind)| label.chars().count() + kind.chars().count() + 3)
+        .chain([view.signature.chars().count()])
+        .max()
+        .unwrap_or(0);
+    let width = (widest as u16 + 2).clamp(44, 72).min(screen.width);
+    // Detalle: la firma y la descripción ajustadas al ancho.
+    let inner = width.saturating_sub(2).max(1) as usize;
+    let detail: usize = std::iter::once(view.signature.as_str())
+        .chain(view.description.lines())
+        .map(|l| l.chars().count().div_ceil(inner).max(1))
+        .sum();
+    let rows = view.items.len().min(COMPLETION_ROWS) as u16;
+    let detail = detail.min(COMPLETION_DETAIL) as u16;
+    let height = (rows + 1 + detail + 2).min(screen.height);
+    let x = x.min(screen.right().saturating_sub(width));
+    let y = if y + 1 + height <= screen.bottom() {
+        y + 1
+    } else {
+        y.saturating_sub(height).max(screen.y)
+    };
+    Rect {
+        x,
+        y,
+        width,
+        height,
+    }
+}
+
+/// Popup de autocompletado: opciones (con la elegida resaltada) y, debajo,
+/// la firma y la descripción de la elegida.
+pub struct CompletionPopup<'a>(pub &'a CompletionView);
+
+impl Widget for CompletionPopup<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let view = self.0;
+        Clear.render(area, buf);
+        let block = Block::bordered()
+            .border_style(Style::new().fg(ACCENT))
+            .title(" completar · ↑↓ Tab/Enter Esc ");
+        let inner = block.inner(area);
+        block.render(area, buf);
+        if inner.height == 0 {
+            return;
+        }
+        let rows = view.items.len().min(COMPLETION_ROWS);
+        // Ventana de opciones que contiene la elegida.
+        let first = view.selected.saturating_sub(rows.saturating_sub(1));
+        let width = inner.width as usize;
+        let mut lines: Vec<Line> = Vec::new();
+        for (i, (label, kind)) in view.items.iter().enumerate().skip(first).take(rows) {
+            let pad = width.saturating_sub(label.chars().count() + kind.chars().count() + 2);
+            let line = Line::from(vec![
+                Span::raw(format!(" {label}{}", " ".repeat(pad))),
+                Span::from(format!("{kind} ")).fg(DIM),
+            ]);
+            lines.push(if i == view.selected {
+                line.style(Style::new().fg(Color::Black).bg(ACCENT))
+            } else {
+                line
+            });
+        }
+        lines.push(Line::from("─".repeat(width)).fg(DIM));
+        let mut detail = vec![Line::from(view.signature.clone()).bold()];
+        detail.extend(view.description.lines().map(|l| Line::from(l.to_string())));
+        let [list, info] =
+            Layout::vertical([Constraint::Length(lines.len() as u16), Constraint::Min(0)])
+                .areas(inner);
+        Paragraph::new(lines).render(list, buf);
+        Paragraph::new(detail)
+            .wrap(Wrap { trim: false })
+            .render(info, buf);
     }
 }
 
@@ -198,11 +302,14 @@ pub struct HelpLine<'a>(pub &'a ViewModel);
 
 impl Widget for HelpLine<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let keys = if self.0.playing_mode {
+        let keys = if self.0.completion.is_some() {
+            "COMPLETAR: ↑↓ elegir · Tab o Enter aceptar · Esc cerrar"
+        } else if self.0.playing_mode {
             "TOCAR: 1-0 q-i cortes de la pista · Ctrl-O pista · Ctrl-T marcha/paro · Esc editor"
         } else {
             "Ctrl-S guardar y cargar · Ctrl-L cargar · Ctrl-T marcha/paro · \
-             Ctrl-G ir al error · Ctrl-O pista · Esc tocar · F2 órdenes · Ctrl-Q salir"
+             Ctrl-G ir al error · Ctrl-O pista · Esc tocar · F2 órdenes · F4 completar · \
+             Ctrl-Q salir"
         };
         if let Some(prompt) = &self.0.prompt {
             Line::from(vec![
