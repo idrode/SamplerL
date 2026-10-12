@@ -368,6 +368,21 @@ track("drums", amen)
 track("drums"):steps("1 . . .  3 . . .  1 . . .  3 . . .")
 ```
 
+### `euclid(k, n [, golpe])`
+
+Patrón euclídeo: k golpes repartidos por igual en n pasos, repetido hasta 16. Devuelve texto en mini-notación para `steps`. Empieza por un golpe (el paso `i` suena si `i·k mod n < k`); para desplazarlo, `rotate`. Si `n` no divide a 16, el ritmo se repite y se corta en el paso 16. El golpe puede ser cualquier paso que suene, con sufijos o una etiqueta.
+
+- `k`: golpes (0 a n)
+- `n`: pasos del ritmo (1 a 16)
+- `golpe`: el paso que suena (por defecto "x", el corte 1)
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+-- "1 . . 1  . . 1 .  1 . . 1  . . 1 ."
+track("kick", amen):steps(euclid(3, 8, "1"))
+track("hats", amen):steps(euclid(5, 16, "2@0.6"))
+```
+
 ### `sample:slice(n)`
 
 Devuelve: cortes.

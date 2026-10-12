@@ -37,6 +37,7 @@ use engine::{
     MAX_TRACKS, Pattern, STEPS, Sample, SendError, Slices, Step, valid_bpm,
 };
 pub mod api;
+pub mod patterns;
 pub mod project;
 mod watch;
 
@@ -471,6 +472,15 @@ impl ScriptHost {
                     labels: labels.clone(),
                     warnings: warnings.clone(),
                 })
+            })?,
+        )?;
+
+        // Funciones de patrones: devuelven texto en mini-notación. Valen
+        // también dentro de `every`.
+        globals.set(
+            "euclid",
+            lua.create_function(|lua, (k, n, hit): (i64, i64, Option<String>)| {
+                patterns::euclid(k, n, hit.as_deref().unwrap_or("x")).map_err(|e| fail(lua, e))
             })?,
         )?;
 

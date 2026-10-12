@@ -256,6 +256,38 @@ pub const FUNCTIONS: &[Function] = &[
         ),
     },
     Function {
+        name: "euclid",
+        receiver: Receiver::Global,
+        signature: "euclid(k, n [, golpe])",
+        returns: None,
+        summary: "Patrón euclídeo: k golpes repartidos por igual en n pasos, repetido hasta 16.",
+        doc: "Devuelve texto en mini-notación para `steps`. Empieza por un golpe (el paso \
+              `i` suena si `i·k mod n < k`); para desplazarlo, `rotate`. Si `n` no \
+              divide a 16, el ritmo se repite y se corta en el paso 16. El golpe \
+              puede ser cualquier paso que suene, con sufijos o una etiqueta.",
+        params: &[
+            Param {
+                name: "k",
+                description: "golpes (0 a n)",
+            },
+            Param {
+                name: "n",
+                description: "pasos del ritmo (1 a 16)",
+            },
+            Param {
+                name: "golpe",
+                description: "el paso que suena (por defecto \"x\", el corte 1)",
+            },
+        ],
+        template: "euclid(${3}, ${8}, \"${x}\")",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             -- \"1 . . 1  . . 1 .  1 . . 1  . . 1 .\"\n\
+             track(\"kick\", amen):steps(euclid(3, 8, \"1\"))\n\
+             track(\"hats\", amen):steps(euclid(5, 16, \"2@0.6\"))\n",
+        ),
+    },
+    Function {
         name: "slice",
         receiver: Receiver::Sample,
         signature: "sample:slice(n)",
