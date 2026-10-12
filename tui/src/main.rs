@@ -14,7 +14,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         sample.frames() as f64 / sample.sample_rate() as f64
     );
 
-    controller.play(sample);
+    controller.play(sample)?;
     while controller.is_playing() {
         std::thread::sleep(Duration::from_millis(50));
         controller.collect_garbage();

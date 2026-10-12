@@ -42,7 +42,7 @@ fn renders_loaded_wav_with_correct_length_and_no_silence() {
     assert_eq!(sample.frames(), expected_frames);
 
     let (mut controller, mut engine) = new_engine();
-    assert!(controller.play(sample));
+    controller.play(sample).unwrap();
 
     // Renderizar en bloques, como haría el callback, más un margen tras el final.
     let total_frames = expected_frames + 4 * BLOCK_FRAMES;

@@ -77,6 +77,21 @@ track("kick", amen:slice_at(1))
 
 Primer objetivo: que `steps(...)` reproduzca los cortes. Después `fx`, `every` y `chance`, uno a uno.
 
+## Estado
+
+- **Paso 1 hecho.** Workspace con `engine` (librería) y `tui` (binario mínimo: `tui <archivo.wav>` reproduce y sale; aún sin ratatui).
+- Decisiones técnicas:
+  - Samples en memoria como estéreo f32 entrelazado (mono se duplica, >2 canales se usan los dos primeros), resampleados al cargar con `rubato::Fft`. La longitud de salida se calcula con enteros porque rubato 5 puede dar un frame de más.
+  - Carga de WAV con `hound`; `symphonia` todavía no se usa.
+  - `new_engine()` devuelve `Controller` (control) y `Engine` (audio). Comandos por cola SPSC lock-free (`rtrb`). Los `Arc<Sample>` que el motor deja de usar vuelven por una segunda cola ("basura") y se liberan en el hilo de control: el callback nunca libera memoria.
+  - Salida con `cpal` 0.18, dispositivo por defecto; el callback convierte formato con un bloque intermedio en la pila.
+  - Test de render offline en `engine/tests/`: se llama a `Engine::process` por bloques sin dispositivo de audio.
+- **Paso 2 hecho.** `Slices::detect(&sample, n)` (`engine/src/slice.rs`): envolvente RMS por saltos de 256 frames con compresión `ln(1 + 100·rms)`, subida positiva como función de detección, máximos locales por encima de un umbral, los `n` más fuertes con separación mínima de 40 ms, y afinado al frame donde empieza el ataque. Los cortes son contiguos (hasta el siguiente transitorio o el final); lo anterior al primer transitorio queda fuera. Si hay menos golpes que `n`, devuelve menos cortes.
+  - `Controller::play_slice(&sample, &slices, i)` resuelve el rango en el hilo de control y envía `Play { sample, start, end }`; el motor solo recorre frames. Errores: `SendError::{QueueFull, NoSuchSlice}`.
+  - Tests en `engine/tests/slicing.rs` con golpes sintéticos en posiciones conocidas (error medido ~0,2–0,3 ms, tolerancia 2 ms).
+  - Sin fundido al final del corte: si la cola del golpe sigue sonando, el corte termina en seco (posible clic). Queda para los efectos del paso 4.
+- Pendiente conocido: cpal avisa de un underrun al arrancar el stream (una vez, ~200 ms). PipeWire estaba inactivo y cpal iba directo a ALSA.
+
 ## Entorno de desarrollo
 
 - Máquina de desarrollo: laptop vieja con Gentoo, x86_64, i7, 12 GB de RAM, GTX 950 (no se usa: todo es terminal, sin drivers propietarios).
