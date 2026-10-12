@@ -1648,3 +1648,13 @@ fn the_help_line_explains_the_function_under_the_cursor() {
     assert!(app.view().playing_mode);
     assert!(app.view().help.is_none());
 }
+
+#[test]
+#[ignore = "solo para ver la pantalla: cargo test -p tui pantalla_paleta -- --ignored --nocapture"]
+fn pantalla_paleta() {
+    let (mut app, _engine) = open_at_end("pantalla_paleta");
+    type_text(&mut app, "track(\"drums\"):steps(\"1 . 5^ .\")");
+    app.handle(f(1));
+    type_query(&mut app, "lin");
+    println!("{}", text(&draw(&mut app, 120, 40)));
+}

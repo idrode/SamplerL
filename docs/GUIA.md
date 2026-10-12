@@ -118,7 +118,7 @@ defecto: si el script llama a `bpm()`, manda el script. Se abre con
 | Ctrl-T o F8 | Marcha / paro del secuenciador |
 | Ctrl-G | Ir a la línea del error |
 | Ctrl-O | Siguiente pista (la de la vista del sample y del modo tocar) |
-| Esc | Entrar / salir del modo tocar |
+| Esc | Entrar / salir del modo tocar (con el autocompletado o la paleta abiertos, solo los cierra) |
 | F1 | Paleta de comandos (ver más abajo) |
 | F2 | Línea de órdenes |
 | F3 | Recargar el archivo si cambió fuera del editor |

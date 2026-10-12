@@ -18,7 +18,10 @@ Estado de `CLAUDE.md` y el uso en `docs/GUIA.md`.
   de ratatui para la interfaz. Nunca la salida de audio real desde Claude
   Code.
 
-## Fase A: editor
+## Fase A: editor ✅
+
+Hecha: ver «Fase A» en el Estado de `CLAUDE.md` y las secciones de atajos,
+paleta, autocompletado y ayuda de `docs/GUIA.md`.
 
 - Deshacer y rehacer.
 - Comentar, duplicar y mover líneas.
