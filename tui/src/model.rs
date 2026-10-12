@@ -7,6 +7,8 @@ use std::sync::Arc;
 
 use engine::{Fx, STEPS, Sample, Step};
 
+pub use crate::diagnose::Diagnostic;
+
 #[derive(Debug, Clone, Default)]
 pub struct ViewModel {
     /// Nombre del archivo del script.
@@ -29,6 +31,9 @@ pub struct ViewModel {
     pub message: String,
     /// Error de la última carga (sigue sonando lo anterior).
     pub error: Option<ErrorView>,
+    /// Problemas de la notación de `steps("...")` en el texto actual (en
+    /// vivo, sin cargar).
+    pub diagnostics: Vec<Diagnostic>,
     pub transport: TransportView,
     /// Pistas en el orden del script.
     pub tracks: Vec<TrackView>,

@@ -1,5 +1,6 @@
 mod app;
 mod complete;
+mod diagnose;
 mod editing;
 mod model;
 mod palette;

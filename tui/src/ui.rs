@@ -16,6 +16,9 @@ use crate::model::{CompletionView, PaletteView, ViewModel, fx_text, step_text};
 pub const ERROR: Color = Color::Red;
 /// Fondo de la línea con error (rojo oscuro de la paleta de 256 colores).
 pub const ERROR_LINE: Color = Color::Indexed(52);
+/// Texto subrayado de un paso con error en `steps("...")`.
+pub const DIAGNOSTIC: Color = Color::LightRed;
+pub const WARNING: Color = Color::Yellow;
 pub const ACCENT: Color = Color::Cyan;
 pub const DIM: Color = Color::DarkGray;
 pub const WAVE: Color = Color::Gray;
@@ -182,10 +185,58 @@ fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rect) -
         }
         None => inner,
     };
+    // Aviso de la notación de `steps("...")`, en vivo, al pie del editor.
+    let editor_area = match view.diagnostics.first() {
+        Some(first) => {
+            let more = match view.diagnostics.len() {
+                1 => String::new(),
+                n => format!(" (+{} más)", n - 1),
+            };
+            let text = format!("⚠ línea {}: {}{more}", first.row + 1, first.message);
+            let lines = text
+                .chars()
+                .count()
+                .div_ceil(editor_area.width.max(1) as usize);
+            let height = (lines as u16).clamp(1, 3);
+            let [editor, warning] =
+                Layout::vertical([Constraint::Min(1), Constraint::Length(height)])
+                    .areas(editor_area);
+            frame.render_widget(
+                Paragraph::new(text).wrap(Wrap { trim: false }).fg(WARNING),
+                warning,
+            );
+            editor
+        }
+        None => editor_area,
+    };
     app.editor.set_line_number_style(Style::new().fg(DIM));
     app.editor
         .set_cursor_line_style(Style::new().add_modifier(Modifier::UNDERLINED));
     frame.render_widget(&app.editor, editor_area);
+
+    // Subrayar los pasos con error de `steps("...")` que estén a la vista.
+    let (top, left) = app.editor.scroll_offset();
+    let text_x = editor_area.x + app.editor.line_number_width();
+    for d in &view.diagnostics {
+        let Some(y) = d
+            .row
+            .checked_sub(top as usize)
+            .filter(|r| *r < editor_area.height as usize)
+        else {
+            continue;
+        };
+        let from = d.cols.start.saturating_sub(left as usize) as u16;
+        let to = d.cols.end.saturating_sub(left as usize) as u16;
+        let x = (text_x + from).min(editor_area.right());
+        let width = (text_x + to).min(editor_area.right()).saturating_sub(x);
+        frame.buffer_mut().set_style(
+            Rect::new(x, editor_area.y + y as u16, width, 1),
+            Style::new()
+                .fg(DIAGNOSTIC)
+                .underline_color(DIAGNOSTIC)
+                .add_modifier(Modifier::UNDERLINED),
+        );
+    }
 
     let popup = view.completion.as_ref().map(|completion| {
         // Posición del cursor en pantalla (tras dibujar, con el desplazamiento

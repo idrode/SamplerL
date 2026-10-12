@@ -249,6 +249,12 @@ Los sufijos se combinan en cualquier orden, cada uno una vez:
 `3'^7@0.5r2` es el corte 3, al revés, una quinta arriba, a media
 intensidad y repetido dos veces.
 
+Mientras escribes, el editor revisa cada `steps("...")` sin esperar a
+guardar: el paso con error sale subrayado en rojo y el aviso (`⚠ línea N:
+...`) aparece al pie del editor. Comprueba la notación, que haya 16 pasos y
+los rangos de volumen, pitch y retrigger; los cortes que no existen se ven
+al cargar.
+
 Ejemplos:
 
 ```lua

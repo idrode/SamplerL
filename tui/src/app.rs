@@ -10,6 +10,7 @@ use ratatui_textarea::{CursorMove, Input, Key, TextArea};
 use script::{Project, ScriptError, ScriptHost, api};
 
 use crate::complete::{self, Candidate};
+use crate::diagnose;
 use crate::editing;
 use crate::model::{
     CompletionView, ErrorView, PaletteView, TrackView, TransportView, ViewModel, Waveform,
@@ -1049,6 +1050,7 @@ impl App {
                 line: error_line(&e.message, &name),
                 message: e.message.clone(),
             }),
+            diagnostics: diagnose::steps_diagnostics(self.editor.lines()),
             file: name,
             dirty: self.dirty(),
             playing_mode: self.mode == Mode::Play,

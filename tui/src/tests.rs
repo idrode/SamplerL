@@ -7,7 +7,7 @@ use engine::{Engine, new_engine, offline};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
-use ratatui::style::Color;
+use ratatui::style::{Color, Modifier};
 use ratatui_textarea::{Input, Key};
 
 use crate::app::{App, Flow};
@@ -1554,4 +1554,53 @@ fn the_amen_snippet_is_a_whole_song() {
     );
     assert_eq!(view.tracks[0].name, "d");
     assert_eq!(view.tracks[0].slices.len(), 2);
+}
+
+// --- Diagnóstico en vivo de steps ---
+
+#[test]
+fn steps_errors_are_underlined_while_typing() {
+    let (mut app, _engine) = open_at_end("diagnose_live");
+    type_text(&mut app, "track(\"drums\"):steps(\"1 . 5^ .  . . . .");
+    // Sin guardar ni cargar: el aviso sale ya.
+    let buffer = draw(&mut app, 120, 40);
+    let screen = text(&buffer);
+    // Al pie del editor, ajustado al ancho.
+    assert!(
+        screen.contains("⚠ línea 5: steps: paso 3 (\"5^\"):"),
+        "{screen}"
+    );
+    assert!(screen.contains("falta el número después"), "{screen}");
+    assert!(app.view().error.is_none(), "no se ha cargado nada");
+    // Solo el paso erróneo va subrayado.
+    let (x, y) = find(&buffer, "5^ .").unwrap();
+    for dx in 0..2 {
+        let cell = &buffer[(x + dx, y)];
+        assert!(cell.modifier.contains(Modifier::UNDERLINED), "{dx}");
+        assert_eq!(cell.fg, ui::DIAGNOSTIC);
+    }
+    // (La línea del cursor va subrayada entera; lo que distingue el paso es
+    // el color.)
+    assert_ne!(buffer[(x + 2, y)].fg, ui::DIAGNOSTIC);
+    assert_ne!(buffer[(x - 2, y)].fg, ui::DIAGNOSTIC);
+
+    // Al corregirlo, queda el aviso de los pasos que faltan, sobre todo el patrón.
+    for _ in 0..13 {
+        app.handle(special(Key::Backspace));
+    }
+    type_text(&mut app, "5 .  . . . .");
+    let view = app.view();
+    assert_eq!(view.diagnostics.len(), 1);
+    assert_eq!(
+        view.diagnostics[0].message,
+        "steps: el patrón necesita 16 pasos, tiene 8"
+    );
+    // Completo y bien: nada.
+    type_text(&mut app, "  1 . . .  1 . . .\")");
+    assert_eq!(
+        current_line(&app),
+        "track(\"drums\"):steps(\"1 . 5 .  . . . .  1 . . .  1 . . .\")"
+    );
+    assert!(app.view().diagnostics.is_empty());
+    assert!(!text_of(&mut app).contains("⚠ línea"));
 }
