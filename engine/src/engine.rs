@@ -27,6 +27,7 @@ enum Command {
         sample: Arc<Sample>,
         start: usize,
         end: usize,
+        playback: Playback,
     },
     /// Patrón para el siguiente compás.
     SetPattern(Pattern),
@@ -38,31 +39,60 @@ enum Command {
     Stop,
 }
 
+/// Cómo se reproduce un rango: ganancia, velocidad de lectura (pitch) y
+/// sentido.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Playback {
+    pub gain: f32,
+    /// Frames del sample por frame de salida: 2.0 es una octava arriba (y
+    /// dura la mitad), 0.5 una octava abajo (y dura el doble).
+    pub rate: f64,
+    pub reverse: bool,
+}
+
+impl Playback {
+    pub const NORMAL: Playback = Playback {
+        gain: 1.0,
+        rate: 1.0,
+        reverse: false,
+    };
+}
+
 struct Voice {
     sample: Arc<Sample>,
     start: usize,
-    pos: usize,
     end: usize,
+    playback: Playback,
+    /// Frames de salida ya renderizados y total que dura la voz.
+    rendered: usize,
+    length: usize,
     fade: usize,
     /// Frames que quedan del fundido de salida forzado (voz interrumpida).
     release: Option<usize>,
 }
 
 impl Voice {
-    fn new(sample: Arc<Sample>, start: usize, end: usize) -> Self {
+    fn new(sample: Arc<Sample>, start: usize, end: usize, playback: Playback) -> Self {
         let fade = ((FADE_SECONDS * sample.sample_rate() as f32) as usize).max(1);
+        // Último frame de salida: el que lee el último frame del rango.
+        let length = match end - start {
+            0 => 0,
+            frames => ((frames - 1) as f64 / playback.rate).floor() as usize + 1,
+        };
         Voice {
             sample,
             start,
-            pos: start,
             end,
+            playback,
+            rendered: 0,
+            length,
             fade,
             release: None,
         }
     }
 
     fn is_active(&self) -> bool {
-        self.pos < self.end && self.release != Some(0)
+        self.rendered < self.length && self.release != Some(0)
     }
 
     /// Empieza un fundido de salida aunque el corte no haya terminado.
@@ -72,11 +102,12 @@ impl Voice {
         }
     }
 
-    /// Ganancia del frame actual: rampa de entrada desde el inicio del corte,
-    /// de salida hacia su final y, si se interrumpió, la del release.
-    fn gain(&self) -> f32 {
-        let from_start = self.pos - self.start;
-        let to_end = self.end - 1 - self.pos;
+    /// Envolvente del frame actual: rampa de entrada desde el inicio de la
+    /// reproducción, de salida hacia su final y, si se interrumpió, la del
+    /// release. En tiempo de salida, así es igual con pitch o reverse.
+    fn envelope(&self) -> f32 {
+        let from_start = self.rendered;
+        let to_end = self.length - 1 - self.rendered;
         let fade = self.fade as f32;
         let mut gain = (from_start.min(to_end) as f32 / fade).min(1.0);
         if let Some(left) = self.release {
@@ -85,14 +116,33 @@ impl Voice {
         gain
     }
 
+    /// Frame del sample para el frame de salida actual, con interpolación
+    /// lineal si la posición cae entre dos frames.
+    fn read(&self) -> (f32, f32) {
+        let offset = self.rendered as f64 * self.playback.rate;
+        let pos = if self.playback.reverse {
+            (self.end - 1) as f64 - offset
+        } else {
+            self.start as f64 + offset
+        };
+        let i0 = pos.floor() as usize;
+        let frac = (pos - i0 as f64) as f32;
+        let (l0, r0) = self.sample.frame(i0);
+        if frac == 0.0 {
+            return (l0, r0);
+        }
+        let (l1, r1) = self.sample.frame((i0 + 1).min(self.end - 1));
+        (l0 + frac * (l1 - l0), r0 + frac * (r1 - r0))
+    }
+
     /// Suma la voz en `out` (entrelazado, `channels` canales).
     fn mix_into(&mut self, out: &mut [f32], channels: usize) {
         for frame in out.chunks_exact_mut(channels) {
             if !self.is_active() {
                 break;
             }
-            let gain = self.gain();
-            let (l, r) = self.sample.frame(self.pos);
+            let gain = self.playback.gain * self.envelope();
+            let (l, r) = self.read();
             match frame {
                 [mono] => *mono += 0.5 * gain * (l + r),
                 [a, b, ..] => {
@@ -101,7 +151,7 @@ impl Voice {
                 }
                 [] => {}
             }
-            self.pos += 1;
+            self.rendered += 1;
             if let Some(left) = &mut self.release {
                 *left -= 1;
             }
@@ -117,6 +167,8 @@ pub enum SendError {
     NoSuchSlice { index: usize, count: usize },
     /// BPM fuera de rango.
     InvalidBpm(f64),
+    /// Parámetro de un paso fuera de rango.
+    InvalidStep { step: usize, reason: &'static str },
 }
 
 impl fmt::Display for SendError {
@@ -125,6 +177,9 @@ impl fmt::Display for SendError {
             SendError::QueueFull => write!(f, "cola de comandos llena"),
             SendError::NoSuchSlice { index, count } => {
                 write!(f, "no existe el corte {index} (hay {count})")
+            }
+            SendError::InvalidStep { step, reason } => {
+                write!(f, "paso {}: {reason}", step + 1)
             }
             SendError::InvalidBpm(bpm) => write!(
                 f,
@@ -211,7 +266,14 @@ impl Controller {
     ) -> Result<(), SendError> {
         let end = range.end.min(sample.frames());
         let start = range.start.min(end);
-        self.send(Command::Play { sample, start, end }, Some(start < end))
+        let playback = Playback::NORMAL;
+        let cmd = Command::Play {
+            sample,
+            start,
+            end,
+            playback,
+        };
+        self.send(cmd, Some(start < end))
     }
 
     /// Cambia el patrón. Entra al empezar el siguiente compás (o al arrancar).
@@ -302,9 +364,12 @@ impl Engine {
 
     fn handle(&mut self, cmd: Command) {
         match cmd {
-            Command::Play { sample, start, end } => {
-                self.trigger(Some(Voice::new(sample, start, end)))
-            }
+            Command::Play {
+                sample,
+                start,
+                end,
+                playback,
+            } => self.trigger(Some(Voice::new(sample, start, end, playback))),
             Command::SetPattern(pattern) => {
                 if let Some(old) = self.transport.pending_pattern.replace(pattern) {
                     self.discard(old.sample);
@@ -325,8 +390,8 @@ impl Engine {
         if let Some(old) = replaced {
             self.discard(old.sample);
         }
-        if let (Some((start, end)), Some(pattern)) = (hit, &self.transport.pattern) {
-            let voice = Voice::new(pattern.sample.clone(), start, end);
+        if let (Some(hit), Some(pattern)) = (hit, &self.transport.pattern) {
+            let voice = Voice::new(pattern.sample.clone(), hit.start, hit.end, hit.playback);
             self.trigger(Some(voice));
         }
     }

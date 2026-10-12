@@ -102,6 +102,13 @@ Primer objetivo: que `steps(...)` reproduzca los cortes. Después `fx`, `every` 
   - `Engine::discard` suelta el `Arc` directamente si el motor guarda otra referencia al mismo sample (solo baja el contador). Así las voces que dispara el secuenciador no llenan la cola de basura.
   - Una sola voz por motor por ahora: el secuenciador y `play_slice` comparten la voz.
   - Tests en `engine/tests/sequencer.rs`: frame exacto de cada paso a 120 y 170 BPM, silencios, loop y cuantización.
+- **Paso 4 empezado.** Volumen, pitch y reverse por paso (falta retrigger/stutter, filtro y bitcrusher):
+  - `Step { slice, gain, semitones, reverse }` (con `Step::new(i).with_gain(g).with_pitch(st).reversed()`) y `Pattern::from_steps(sample, &slices, [Option<Step>; 16])`. Se valida en el hilo de control: ganancia 0–4, pitch ±36 semitonos (`SendError::InvalidStep`).
+  - La voz lee en posición fraccionaria (f64) con interpolación lineal: el pitch cambia la velocidad y la duración, sin time-stretch. Con pitch 0 la salida es idéntica bit a bit a la de antes. El reverse lee de `end-1` a `start`. Los fundidos van en tiempo de salida, así que son simétricos: el reverse es exactamente la inversión temporal del forward.
+  - Sin polifonía: el secuenciador es como una pista de tracker, donde cada paso corta al anterior con fundido cruzado. Hará falta más de una voz cuando haya varias pistas.
+  - Interpolación lineal: subiendo mucho el pitch habrá aliasing. Si molesta, cambiar a una interpolación mejor (cúbica o sinc corta).
+  - Aún no hay sintaxis en `--pattern` para estos efectos (llega con la mini-notación del paso 5).
+  - Tests en `engine/tests/step_effects.rs`.
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`
 - Pendiente conocido: cpal avisa de un underrun al arrancar el stream (una vez, ~200 ms). PipeWire estaba inactivo y cpal iba directo a ALSA.
 
