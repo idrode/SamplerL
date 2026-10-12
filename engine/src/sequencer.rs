@@ -133,7 +133,8 @@ pub fn bar_frames(bpm: f64, sample_rate: u32) -> u64 {
     step_offset(STEPS, bpm, sample_rate)
 }
 
-pub(crate) fn valid_bpm(bpm: f64) -> bool {
+/// Si `bpm` está en el rango admitido (`MIN_BPM`..=`MAX_BPM`).
+pub fn valid_bpm(bpm: f64) -> bool {
     (MIN_BPM..=MAX_BPM).contains(&bpm)
 }
 

@@ -5,6 +5,7 @@ use engine::{DetectOptions, Detector, Pattern, STEPS, Slices, Step};
 
 const USAGE: &str = "\
 uso: tui <archivo.wav> --render <salida.wav>
+     tui --script <canción.lua> --render <salida.wav> [--bars M]
      tui <archivo.wav> --render <salida.wav> --pattern \"1 . 3 . ...\" \
 [--slices N] [--bpm B] [--bars M] [--min-gap MS] [--detector flux|energy]
 
@@ -59,6 +60,7 @@ fn run() -> Result<(), BoxError> {
     let mut bars = None;
     let mut min_gap_ms = None;
     let mut detector = None;
+    let mut script = None;
     while let Some(arg) = args.next() {
         let mut value = || {
             args.next()
@@ -75,6 +77,7 @@ fn run() -> Result<(), BoxError> {
             "--slices" => slices = Some(parse_number::<usize>("--slices", &value()?)?),
             "--bpm" => bpm = Some(parse_number::<f64>("--bpm", &value()?)?),
             "--bars" => bars = Some(parse_number::<u64>("--bars", &value()?)?),
+            "--script" => script = Some(value()?),
             "--detector" => {
                 detector = Some(match value()?.as_str() {
                     "flux" => Detector::Flux,
@@ -103,6 +106,16 @@ fn run() -> Result<(), BoxError> {
             _ if path.is_none() => path = Some(arg),
             _ => return Err(USAGE.into()),
         }
+    }
+    if let Some(script) = script {
+        if path.is_some() || pattern.is_some() || slices.is_some() || min_gap_ms.is_some() {
+            return Err(format!(
+                "con --script, el sample y los patrones van en el script\n{USAGE}"
+            )
+            .into());
+        }
+        let out = render_to.ok_or_else(|| format!("--script necesita --render\n{USAGE}"))?;
+        return render_script(&script, &out, bars.unwrap_or(DEFAULT_BARS));
     }
     let path = path.ok_or(USAGE)?;
 
@@ -225,6 +238,35 @@ fn render_sequence(path: &str, out: &str, sequence: &Sequence) -> Result<(), Box
         sequence.bars,
         sequence.bpm,
         frames,
+        frames as f64 / RENDER_RATE as f64
+    );
+    Ok(())
+}
+
+/// Carga una canción en Lua y renderiza `bars` compases a su tempo.
+fn render_script(path: &str, out: &str, bars: u64) -> Result<(), BoxError> {
+    let mut host = script::ScriptHost::new(RENDER_RATE);
+    let (mut controller, mut engine) = engine::new_engine(RENDER_RATE);
+    let song = host.load_file(&mut controller, std::path::Path::new(path))?;
+    let bpm = song.bpm.unwrap_or(engine::DEFAULT_BPM);
+    for track in &song.tracks {
+        println!(
+            "pista \"{}\": {} ({} cortes)",
+            track.name,
+            track.path.display(),
+            track.slices.len()
+        );
+    }
+    controller.start()?;
+
+    let frames = bars * engine::bar_frames(bpm, RENDER_RATE);
+    if frames > (MAX_RENDER_SECONDS as u64) * RENDER_RATE as u64 {
+        return Err(format!("render demasiado largo (máximo {MAX_RENDER_SECONDS} s)").into());
+    }
+    let audio = engine::offline::render(&mut engine, frames as usize, 2);
+    engine::offline::write_wav(out, &audio, 2, RENDER_RATE)?;
+    println!(
+        "{out}: {bars} compases a {bpm} BPM, {frames} frames ({:.2} s)",
         frames as f64 / RENDER_RATE as f64
     );
     Ok(())

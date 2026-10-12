@@ -5,3 +5,4 @@ edition = "2024"
 
 [dependencies]
 engine = { version = "0.1.0", path = "../engine" }
+script = { version = "0.1.0", path = "../script" }

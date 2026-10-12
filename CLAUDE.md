@@ -55,7 +55,7 @@ Alojar VST, mezclador completo con buses, automatización compleja. No intentarl
 
 ## Ejemplo de la API objetivo (Lua)
 
-Diseño al que apuntar; todavía no existe. Cada llamada solo emite comandos al motor, que los aplica al final del compás.
+Diseño al que apuntar. Ya existen `bpm`, `sample`, `:slice`, `track` y `:steps` (paso 5); faltan `fx`, `every`, `chance`, `gain` y `slice_at`. Cada llamada solo emite comandos al motor, que los aplica al final del compás.
 
 ```lua
 bpm(170)
@@ -114,6 +114,16 @@ Primer objetivo: que `steps(...)` reproduzca los cortes. Después `fx`, `every` 
   - Sufijos combinables, en cualquier orden, cada uno una vez: `'` reverse, `^7` / `^-5` / `^0.5` pitch en semitonos, `@0.5` volumen. Ejemplo: `3'^7@0.5`.
   - Errores con número de paso y token: `paso 11 ("5^"): falta el número después de ^`. Los rangos (ganancia 0–4, pitch ±36) los valida `Pattern::from_steps`.
   - Tests en `engine/tests/notation.rs` (incluido que un patrón en notación renderiza igual que el construido con `Step`).
+- **Paso 5 (Lua hecho)** en el crate `script` (`mlua` 0.12 con Lua 5.4 `vendored`; compila con el gcc del sistema). Depende de `engine`; `tui` depende de los dos.
+  - `ScriptHost::load(controller, fuente, nombre, carpeta)` / `load_file(controller, ruta)`: evalúa el script en un Lua nuevo, construye el modelo `Song { bpm, tracks: Vec<TrackDef> }` y lo envía con `Controller::apply` como un lote: todo entra junto en el siguiente compás. `ScriptHost::song()` es el último modelo válido (lo leerán las vistas).
+  - Si algo falla, no se envía nada y sigue sonando lo anterior. Esto incluye sintaxis, errores de ejecución, notación, corte inexistente, archivo que no existe, pista no definida, BPM fuera de rango, más de 8 pistas o un script que tarda más de 2 s (`set_time_limit`; se corta con un hook cada 10000 instrucciones).
+  - Errores con archivo y línea: `song.lua:3: steps: paso 11 ("5^"): falta el número después de ^`.
+  - API: `bpm(n)`, `sample(ruta)` (relativa a la carpeta del script), `:slice(n)` (detector por defecto; `:count()` da los cortes), `track(nombre, sliced)` define o redefine una pista, `track(nombre)` la recupera, `:steps("...")` en mini-notación (encadenable).
+  - Solo se cargan las librerías `math`, `string`, `table` y `utf8` (sin `io` ni `os`).
+  - Los samples se cachean por ruta y fecha de modificación: recargar no vuelve a decodificar y conserva el mismo `Arc`. Cada nombre de pista conserva su pista del motor entre recargas; las pistas que desaparecen del script se silencian en el compás siguiente.
+  - Render: `cargo run -p tui -- --script scripts/demo.lua --render renders/demo-lua.wav --bars 4` (necesita `renders/synth_break.wav`, que genera `scripts/render-demo.sh`).
+  - Las pistas se suman sin ganancia maestra ni limitador: varias pistas fuertes a la vez pueden saturar (el WAV recorta a ±1).
+  - Tests en `script/tests/lua.rs`: API con dos pistas, `track(nombre)`, recarga cuantizada (patrón y tempo), 11 tipos de error con el audio idéntico al de no haber recargado, caché de samples y pistas estables.
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`
 - Pendiente conocido: cpal avisa de un underrun al arrancar el stream (una vez, ~200 ms). PipeWire estaba inactivo y cpal iba directo a ALSA.
 
