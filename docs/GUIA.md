@@ -109,7 +109,8 @@ Las rutas relativas lo son a la carpeta del proyecto. Con `samples`,
 defecto: si el script llama a `bpm()`, manda el script. Cada `etiqueta`
 nombra un corte: sample (como se escribe en `sample("...")`), número de
 cortes (la `n` de `slice(n)`: con otro número los cortes son otros y no se
-aplica), corte y nombre. Así `steps("kick . snare .")` funciona sin
+aplica, y al cargar se avisa: `⚠ la etiqueta «kick» de amen.wav es de
+slice(8) y este script usa slice(6): no se aplica`), corte y nombre. Así `steps("kick . snare .")` funciona sin
 `:name()` en el script; si el script nombra el mismo corte, manda el
 script. Se abre con
 `tui --edit proyecto.sampler` o con la orden `abrir`.
@@ -814,7 +815,10 @@ song.lua:4: steps: paso 3 ("snre"): la etiqueta "snre" no existe (hay: kick, sna
 ```
 
 Una etiqueta mal escrita o que esa pista no tiene. Con `slice_at` la pista
-solo conoce la etiqueta de su corte.
+solo conoce la etiqueta de su corte. Si la etiqueta está en el proyecto
+pero para otro número de cortes, el mensaje acaba con `; la etiqueta «kick»
+del proyecto es de slice(8) y este script usa slice(6)`: vuelve a
+`slice(8)` o etiqueta de nuevo los cortes.
 
 ```text
 song.lua:3: name(1, "x"): "x" ya es el corte 1 en la notación

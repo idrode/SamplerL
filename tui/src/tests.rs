@@ -1953,3 +1953,43 @@ fn slices_are_selected_from_the_palette_and_the_script_wins() {
     );
     assert_eq!(app.view().tracks[0].label(1), Some("caja"));
 }
+
+#[test]
+fn loading_warns_about_project_labels_for_another_slice_count() {
+    let path = fixture("label_stale", Some(SONG));
+    let dir = path.parent().unwrap().to_path_buf();
+    let project = dir.join("p.sampler");
+    // Etiquetada con slice(4); el script usa slice(2).
+    std::fs::write(
+        &project,
+        "script = song.lua\netiqueta = break.wav 4 1 kick\n",
+    )
+    .unwrap();
+    let (controller, _engine) = new_engine(RATE);
+    let mut app = App::open_project(&project, controller, RATE).unwrap();
+    let view = app.view();
+    assert!(view.error.is_none());
+    assert_eq!(
+        view.message,
+        "cargado: entra en el siguiente compás · ⚠ la etiqueta «kick» de break.wav \
+         es de slice(4) y este script usa slice(2): no se aplica"
+    );
+    let screen = text(&draw(&mut app, 200, 40));
+    assert!(
+        screen.contains("⚠ la etiqueta «kick» de break.wav es de slice(4)"),
+        "{screen}"
+    );
+
+    // Usarla da un error que lo explica.
+    let text = app
+        .text_for_test()
+        .replace("\"1 . 2 .  1 . 2 .", "\"kick . 2 .  1 . 2 .");
+    replace_all(&mut app, &text);
+    app.handle(ctrl('s'));
+    let error = app.view().error.unwrap().message;
+    assert!(
+        error
+            .ends_with("la etiqueta «kick» del proyecto es de slice(4) y este script usa slice(2)"),
+        "{error}"
+    );
+}

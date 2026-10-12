@@ -277,6 +277,9 @@ fn render_script(path: &str, out: &str, bars: u64) -> Result<(), BoxError> {
     let (mut controller, mut engine) = engine::new_engine(RENDER_RATE);
     let song = host.load_file(&mut controller, std::path::Path::new(path))?;
     let bpm = song.bpm.unwrap_or(engine::DEFAULT_BPM);
+    for warning in &song.warnings {
+        eprintln!("aviso: {warning}");
+    }
     for track in &song.tracks {
         println!(
             "pista \"{}\": {} ({} cortes)",
@@ -318,6 +321,9 @@ fn play_script(path: &str) -> Result<(), BoxError> {
             WatchEvent::Unchanged => {}
             WatchEvent::Reloaded => {
                 println!("recargado: entra en el siguiente compás");
+                for warning in host.song().map_or(&[][..], |s| &s.warnings) {
+                    eprintln!("aviso: {warning}");
+                }
                 if !started {
                     controller.start()?;
                     started = true;

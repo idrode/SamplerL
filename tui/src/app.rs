@@ -548,9 +548,12 @@ impl App {
         let base = self.path.parent().unwrap_or(Path::new(".")).to_path_buf();
         let text = self.text();
         match self.host.load(&mut self.controller, &text, &name, &base) {
-            Ok(_) => {
+            Ok(song) => {
                 self.error = None;
                 self.message = "cargado: entra en el siguiente compás".into();
+                for warning in &song.warnings {
+                    self.message.push_str(&format!(" · ⚠ {warning}"));
+                }
                 if !self.started && self.controller.start().is_ok() {
                     self.started = true;
                 }

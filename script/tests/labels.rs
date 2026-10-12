@@ -346,3 +346,87 @@ fn the_live_engine_plays_labels_like_numbers() {
     assert!(a.iter().any(|s| s.abs() > 0.1));
     assert_eq!(a, b);
 }
+
+#[test]
+fn project_labels_for_another_slice_count_are_reported() {
+    let dir = fixture("stale");
+    let mut host = host();
+    let label = |slices, slice, name: &str| SliceLabel {
+        sample: "break8.wav".into(),
+        slices,
+        slice,
+        name: name.into(),
+    };
+    host.set_labels(vec![label(8, 1, "kick")]);
+    let song = host
+        .eval(
+            "local amen = sample(\"break8.wav\"):slice(6)\ntrack(\"d\", amen)",
+            "song.lua",
+            &dir,
+        )
+        .unwrap();
+    assert_eq!(
+        song.warnings,
+        [
+            "la etiqueta «kick» de break8.wav es de slice(8) y este script usa slice(6): no se aplica"
+        ]
+    );
+    // Si se usa en steps, el error lo explica.
+    let e = error(
+        &mut host,
+        &dir,
+        "local amen = sample(\"break8.wav\"):slice(6)\n\
+         track(\"d\", amen):steps(\"kick . . .  . . . .  . . . .  . . . .\")",
+    );
+    assert_eq!(
+        e,
+        "song.lua:2: steps: paso 1 (\"kick\"): la etiqueta \"kick\" no existe \
+         (no hay cortes con etiqueta); la etiqueta «kick» del proyecto es de slice(8) \
+         y este script usa slice(6)"
+    );
+    // También en every y con slice_at.
+    let e = error(
+        &mut host,
+        &dir,
+        "local amen = sample(\"break8.wav\"):slice(6)\n\
+         track(\"d\", amen:slice_at(1)):every(2, function(c) c:steps(\"kick . . .  . . . .  . . . .  . . . .\") end)",
+    );
+    assert!(
+        e.ends_with("es de slice(8) y este script usa slice(6)"),
+        "{e}"
+    );
+
+    // Varias, agrupadas por su slice(n); y sin repetir si se corta dos veces.
+    host.set_labels(vec![
+        label(8, 1, "kick"),
+        label(8, 2, "snare"),
+        label(4, 1, "bombo"),
+    ]);
+    let song = host
+        .eval(
+            "local a = sample(\"break8.wav\"):slice(6)\nlocal b = sample(\"break8.wav\"):slice(6)",
+            "song.lua",
+            &dir,
+        )
+        .unwrap();
+    assert_eq!(
+        song.warnings,
+        [
+            "la etiqueta «bombo» de break8.wav es de slice(4) y este script usa slice(6): no se aplica",
+            "las etiquetas «kick», «snare» de break8.wav son de slice(8) y este script usa slice(6): no se aplican",
+        ]
+    );
+    // Con alguna etiqueta para el mismo slice(n), las de otros no avisan
+    // (serán de otro script).
+    let song = host
+        .eval(
+            "local a = sample(\"break8.wav\"):slice(4)",
+            "song.lua",
+            &dir,
+        )
+        .unwrap();
+    assert!(song.warnings.is_empty(), "{:?}", song.warnings);
+    // Otro sample: nada.
+    let song = host.eval("bpm(120)", "song.lua", &dir).unwrap();
+    assert!(song.warnings.is_empty());
+}
