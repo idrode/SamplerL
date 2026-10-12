@@ -337,7 +337,7 @@ impl Widget for CompletionPopup<'_> {
         Clear.render(area, buf);
         let block = Block::bordered()
             .border_style(Style::new().fg(ACCENT))
-            .title(" completar · ↑↓ Tab/Enter Esc ");
+            .title(" completar · Tab · ↑↓ Enter · Esc ");
         let inner = block.inner(area);
         block.render(area, buf);
         if inner.height == 0 {
@@ -442,7 +442,7 @@ impl Widget for HelpLine<'_> {
         let keys = if self.0.palette.is_some() {
             "PALETA: escribe para filtrar · ↑↓ elegir · Enter ejecutar · Esc cerrar"
         } else if self.0.completion.is_some() {
-            "COMPLETAR: ↑↓ elegir · Tab o Enter aceptar · Esc cerrar"
+            "COMPLETAR: Tab aceptar · ↑↓ elegir y Enter aceptar · Esc cerrar · Enter sin elegir: salto de línea"
         } else if self.0.playing_mode {
             "TOCAR: 1-0 q-i cortes de la pista · Ctrl-O pista · Ctrl-T marcha/paro · F1 paleta · Esc editor"
         } else {

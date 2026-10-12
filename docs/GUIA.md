@@ -191,7 +191,8 @@ opción elegida. F4 la abre aunque no hayas escrito nada.
 | Tecla | Qué hace |
 | --- | --- |
 | ↑ ↓ | Elegir opción |
-| Tab o Enter | Aceptar |
+| Tab | Aceptar |
+| Enter | Aceptar, solo si has elegido con ↑ ↓; si no, cierra la lista y es un salto de línea normal |
 | Esc | Cerrar (con la lista abierta, Esc solo la cierra: no entra en modo tocar) |
 | Tab (tras aceptar una función o un snippet) | Saltar al siguiente campo y, tras el último, al final |
 

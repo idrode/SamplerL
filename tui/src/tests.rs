@@ -1112,7 +1112,7 @@ fn completion_filters_by_prefix_while_typing() {
         "{screen}"
     );
     assert!(screen.contains("función"), "{screen}");
-    assert!(screen.contains("COMPLETAR: ↑↓ elegir"), "{screen}");
+    assert!(screen.contains("COMPLETAR: Tab aceptar"), "{screen}");
 
     // Borrar vuelve a ampliar la lista; sin coincidencias se cierra.
     app.handle(special(Key::Backspace));
@@ -1176,13 +1176,34 @@ fn arrows_move_the_selection() {
     assert_eq!(selected(&app), 2, "da la vuelta");
     // Las flechas no mueven el cursor del editor mientras tanto.
     assert_eq!(current_line(&app), "t");
+    // Escribir después cambia la lista: Enter vuelve a ser salto de línea.
+    type_text(&mut app, "r");
+    assert_eq!(completion_items(&app), ["track", "true"]);
+    app.handle(special(Key::Enter));
+    assert_eq!(current_line(&app), "");
+    assert_eq!(app.editor.lines()[app.editor.cursor().0 - 1], "tr");
 }
 
 #[test]
 fn accepting_inserts_the_template_with_marked_parameters() {
     let (mut app, _engine) = open_at_end("complete_accept");
-    // Enter acepta: queda marcado el parámetro y lo escrito lo sustituye.
+    // Enter sin haber elegido con las flechas: salto de línea normal.
     type_text(&mut app, "bp");
+    assert_eq!(completion_items(&app), ["bpm"]);
+    app.handle(special(Key::Enter));
+    assert!(app.view().completion.is_none());
+    assert_eq!(current_line(&app), "");
+    assert_eq!(app.editor.lines()[app.editor.cursor().0 - 1], "bp");
+    app.handle(special(Key::Backspace));
+    // Tras moverse con las flechas, Enter acepta: queda marcado el
+    // parámetro y lo escrito lo sustituye.
+    type_text(&mut app, "m");
+    assert_eq!(
+        completion_items(&app),
+        ["bpm"],
+        "con plantilla, sigue abierto"
+    );
+    app.handle(special(Key::Down));
     app.handle(special(Key::Enter));
     assert_eq!(current_line(&app), "bpm(170)");
     assert!(app.view().completion.is_none());
@@ -1236,7 +1257,7 @@ fn accepting_a_name_inside_a_template_keeps_the_marks() {
     // Sobre «filter» marcado se escribe «b»: el popup ofrece bitcrush.
     type_text(&mut app, "b");
     assert_eq!(completion_items(&app), ["bitcrush"]);
-    app.handle(special(Key::Enter));
+    app.handle(special(Key::Tab));
     assert!(current_line(&app).starts_with("track(\"drums\"):fx(\"bitcrush\", {"));
     // El siguiente parámetro sigue pendiente.
     app.handle(special(Key::Tab));
@@ -1694,7 +1715,7 @@ fn labels_complete_inside_steps_and_unknown_ones_are_underlined() {
     app.editor.move_cursor(ratatui_textarea::CursorMove::End);
     type_text(&mut app, "\ntrack(\"b\", amen):steps(\"kick . sn");
     assert_eq!(completion_items(&app), ["snare"]);
-    app.handle(special(Key::Enter));
+    app.handle(special(Key::Tab));
     assert_eq!(
         current_line(&app),
         "track(\"b\", amen):steps(\"kick . snare"

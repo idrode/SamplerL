@@ -57,6 +57,9 @@ struct Completion {
     selected: usize,
     /// Abierto con F4: sigue abierto aunque no haya prefijo.
     manual: bool,
+    /// Se ha movido la selección con las flechas: solo entonces Enter
+    /// acepta (si no, es un salto de línea).
+    navigated: bool,
 }
 
 /// Acción compuesta de varios cambios del editor (mover líneas, insertar
@@ -712,6 +715,7 @@ impl App {
             matches,
             selected: 0,
             manual,
+            navigated: false,
         })
     }
 
@@ -748,6 +752,7 @@ impl App {
 
     fn move_completion(&mut self, down: bool) {
         if let Some(c) = &mut self.completion {
+            c.navigated = true;
             let n = c.matches.len();
             c.selected = if down {
                 (c.selected + 1) % n
@@ -1064,13 +1069,19 @@ impl App {
             self.open_palette();
             return Flow::Continue;
         }
-        // Con el autocompletado abierto, las flechas lo recorren, Tab o
-        // Enter aceptan y Esc solo lo cierra (no entra en modo tocar).
-        if self.completion.is_some() && !input.ctrl && !input.alt {
+        // Con el autocompletado abierto, las flechas lo recorren, Tab acepta,
+        // Enter acepta solo tras moverse con las flechas (si no, cierra y es
+        // un salto de línea) y Esc solo lo cierra (no entra en modo tocar).
+        if let Some(completion) = &self.completion
+            && !input.ctrl
+            && !input.alt
+        {
             match input.key {
                 Key::Up => return self.then(|app| app.move_completion(false)),
                 Key::Down => return self.then(|app| app.move_completion(true)),
-                Key::Tab | Key::Enter => return self.then(App::accept_completion),
+                Key::Tab => return self.then(App::accept_completion),
+                Key::Enter if completion.navigated => return self.then(App::accept_completion),
+                Key::Enter => self.completion = None,
                 Key::Esc => return self.then(|app| app.completion = None),
                 _ => {}
             }
