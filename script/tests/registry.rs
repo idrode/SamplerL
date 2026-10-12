@@ -6,6 +6,7 @@
 mod synth;
 
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use engine::offline;
 use script::ScriptHost;
@@ -13,12 +14,18 @@ use script::api::{self, CHANCE_EFFECTS, EFFECTS, FUNCTIONS, Receiver, expand_tem
 
 const RATE: u32 = 48_000;
 
+/// Carpeta con el break sintético como `amen.wav`. Se escribe una sola vez:
+/// los tests van en paralelo y no deben leerlo a medio escribir.
 fn samples() -> PathBuf {
-    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("registry_samples");
-    std::fs::create_dir_all(&dir).unwrap();
-    let (audio, _) = synth::synth_break();
-    offline::write_wav(dir.join("amen.wav"), &audio, 1, synth::RATE).unwrap();
-    dir
+    static DIR: OnceLock<PathBuf> = OnceLock::new();
+    DIR.get_or_init(|| {
+        let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("registry_samples");
+        std::fs::create_dir_all(&dir).unwrap();
+        let (audio, _) = synth::synth_break();
+        offline::write_wav(dir.join("amen.wav"), &audio, 1, synth::RATE).unwrap();
+        dir
+    })
+    .clone()
 }
 
 fn eval(source: &str) {

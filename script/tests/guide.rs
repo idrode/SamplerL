@@ -13,8 +13,10 @@ use script::ScriptHost;
 const RATE: u32 = 48_000;
 const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
 
-fn samples() -> PathBuf {
-    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("guide_samples");
+/// Carpeta con el break sintético como `amen.wav`. Una por test: si dos
+/// tests escriben el mismo archivo a la vez, uno puede leerlo a medias.
+fn samples(test: &str) -> PathBuf {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("guide_samples_{test}"));
     std::fs::create_dir_all(&dir).unwrap();
     let (audio, _) = synth::synth_break();
     offline::write_wav(dir.join("amen.wav"), &audio, 1, synth::RATE).unwrap();
@@ -60,7 +62,7 @@ fn check(source: &str, name: &str, dir: &Path) {
 
 #[test]
 fn every_lua_block_in_the_guide_runs() {
-    let dir = samples();
+    let dir = samples("blocks");
     let guide = std::fs::read_to_string(format!("{ROOT}/docs/GUIA.md")).unwrap();
     let blocks = lua_blocks(&guide);
     assert!(blocks.len() >= 20, "solo {} bloques", blocks.len());
@@ -71,7 +73,7 @@ fn every_lua_block_in_the_guide_runs() {
 
 #[test]
 fn every_example_runs_and_matches_the_guide() {
-    let dir = samples();
+    let dir = samples("examples");
     let guide = std::fs::read_to_string(format!("{ROOT}/docs/GUIA.md")).unwrap();
     let blocks: Vec<String> = lua_blocks(&guide).into_iter().map(|(_, b)| b).collect();
     let mut examples: Vec<PathBuf> = std::fs::read_dir(format!("{ROOT}/scripts/ejemplos"))
