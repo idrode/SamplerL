@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use engine::{Sample, new_engine};
+use engine::{Sample, new_engine, offline};
 
 const SOURCE_RATE: u32 = 44_100;
 const ENGINE_RATE: u32 = 48_000;
@@ -66,4 +66,32 @@ fn renders_loaded_wav_with_correct_length_and_no_silence() {
 
     // Ambos canales iguales (fuente mono duplicada).
     assert!(body.as_chunks::<2>().0.iter().all(|[l, r]| l == r));
+}
+
+#[test]
+fn render_until_stopped_writes_a_readable_wav() {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let input = dir.join("sine_440_render_in.wav");
+    let output = dir.join("sine_440_render_out.wav");
+    write_sine_wav(&input, 0.5);
+
+    let sample = Arc::new(Sample::load_wav(&input, ENGINE_RATE).unwrap());
+    let frames = sample.frames();
+    let (mut controller, mut engine) = new_engine();
+    controller.play(sample).unwrap();
+    let audio = offline::render_until_stopped(&controller, &mut engine, CHANNELS, 10 * frames);
+
+    // Se detiene en el primer bloque tras el final.
+    assert!(audio.len() / CHANNELS >= frames);
+    assert!(audio.len() / CHANNELS < frames + offline::BLOCK_FRAMES);
+
+    offline::write_wav(&output, &audio, CHANNELS as u16, ENGINE_RATE).unwrap();
+    let mut reader = hound::WavReader::open(&output).unwrap();
+    assert_eq!(reader.spec().sample_rate, ENGINE_RATE);
+    assert_eq!(reader.spec().channels as usize, CHANNELS);
+    let read: Vec<i16> = reader.samples::<i16>().map(Result::unwrap).collect();
+    assert_eq!(read.len(), audio.len());
+    for (&r, &a) in read.iter().zip(&audio) {
+        assert!((r as f32 / i16::MAX as f32 - a).abs() <= 1.0 / i16::MAX as f32);
+    }
 }
