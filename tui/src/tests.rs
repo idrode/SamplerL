@@ -1250,19 +1250,86 @@ fn accepting_inserts_the_template_with_marked_parameters() {
 }
 
 #[test]
-fn accepting_a_name_inside_a_template_keeps_the_marks() {
+fn changing_the_effect_regenerates_its_parameters() {
     let (mut app, _engine) = open_at_end("complete_name");
     type_text(&mut app, "track(\"drums\"):fx");
     app.handle(special(Key::Tab));
-    // Sobre «filter» marcado se escribe «b»: el popup ofrece bitcrush.
+    // Sobre «filter» marcado se escribe «b»: el popup ofrece bitcrush, y al
+    // aceptarlo la tabla pasa a ser la de bitcrush.
     type_text(&mut app, "b");
     assert_eq!(completion_items(&app), ["bitcrush"]);
     app.handle(special(Key::Tab));
-    assert!(current_line(&app).starts_with("track(\"drums\"):fx(\"bitcrush\", {"));
-    // El siguiente parámetro sigue pendiente.
+    assert_eq!(
+        current_line(&app),
+        "track(\"drums\"):fx(\"bitcrush\", { bits = 6, downsample = 2 })"
+    );
+    assert_eq!(selection_text(&app), "6");
+    // Un solo Ctrl-Z deshace el cambio de efecto entero; Ctrl-R lo rehace.
+    app.handle(ctrl('z'));
+    assert_eq!(
+        current_line(&app),
+        "track(\"drums\"):fx(\"b\", { type = \"lowpass\", cutoff = 3000 })"
+    );
+    app.handle(ctrl('r'));
+    assert_eq!(
+        current_line(&app),
+        "track(\"drums\"):fx(\"bitcrush\", { bits = 6, downsample = 2 })"
+    );
+    // Tab recorre los parámetros nuevos y acaba tras el `)`.
+    let (mut app, _engine) = open_at_end("complete_name_tabs");
+    type_text(&mut app, "track(\"drums\"):fx");
     app.handle(special(Key::Tab));
-    let ((_, a), (_, b)) = app.editor.selection_range().unwrap();
-    assert_eq!(&current_line(&app)[a..b], "lowpass");
+    type_text(&mut app, "b");
+    app.handle(special(Key::Tab));
+    type_text(&mut app, "4");
+    app.handle(special(Key::Tab));
+    assert_eq!(selection_text(&app), "2");
+    app.handle(special(Key::Tab));
+    assert_eq!(app.editor.cursor().1, current_line(&app).chars().count());
+    assert_eq!(
+        current_line(&app),
+        "track(\"drums\"):fx(\"bitcrush\", { bits = 4, downsample = 2 })"
+    );
+
+    // Escrito entero, el popup sigue abierto para poder regenerar.
+    let (mut app, _engine) = open_at_end("complete_name_full");
+    type_text(&mut app, "track(\"drums\"):fx");
+    app.handle(special(Key::Tab));
+    type_text(&mut app, "lowpass");
+    assert_eq!(completion_items(&app), ["lowpass"]);
+    app.handle(special(Key::Tab));
+    assert_eq!(
+        current_line(&app),
+        "track(\"drums\"):fx(\"lowpass\", { cutoff = 3000 })"
+    );
+    assert_eq!(selection_text(&app), "3000");
+    app.handle(ctrl('s'));
+    assert!(app.view().error.is_none(), "{:?}", app.view().error);
+}
+
+#[test]
+fn choosing_another_effect_with_the_arrows_replaces_the_rest_of_the_name() {
+    let (_, mut app, _engine) = open("complete_fx_line", Some(SONG));
+    let text = format!("{SONG}track(\"drums\"):fx(\"lowpass\", {{ cutoff = 800, q = 2 }})");
+    replace_all(&mut app, &text);
+    // Cursor justo tras las comillas de fx(".
+    let row = app.editor.lines().len() - 1;
+    let col = current_line(&app).find("lowpass").unwrap();
+    app.editor
+        .move_cursor(ratatui_textarea::CursorMove::Jump(row as u16, col as u16));
+    app.handle(f(4));
+    assert_eq!(
+        completion_items(&app),
+        ["filter", "lowpass", "highpass", "bitcrush"]
+    );
+    app.handle(special(Key::Down));
+    app.handle(special(Key::Down));
+    app.handle(special(Key::Enter));
+    assert_eq!(
+        current_line(&app),
+        "track(\"drums\"):fx(\"highpass\", { cutoff = 200 })"
+    );
+    assert_eq!(selection_text(&app), "200");
 }
 
 #[test]

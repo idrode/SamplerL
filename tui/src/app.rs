@@ -703,9 +703,12 @@ impl App {
             if context.prefix.is_empty() && !matches!(trigger, Some(':' | '"' | '\'')) {
                 return None;
             }
+            // (Un efecto escrito entero sigue abierto: aceptarlo regenera
+            // sus parámetros.)
             if matches.len() == 1
                 && matches[0].label == context.prefix
                 && matches[0].insert == context.prefix
+                && matches[0].kind != "efecto"
             {
                 return None;
             }
@@ -775,7 +778,24 @@ impl App {
         };
         self.message = candidate.signature.clone();
         let replace = completion.prefix.chars().count();
-        self.insert_template(replace, &candidate.insert.clone());
+        let insert = candidate.insert.clone();
+        // Un efecto dentro de `fx("...", { ... })`: la tabla se regenera
+        // con los parámetros del efecto nuevo.
+        if let Some(effect) = (candidate.kind == "efecto")
+            .then(|| api::effect(&candidate.label))
+            .flatten()
+        {
+            let fields = self.grouped(|editor| {
+                editing::insert_template(editor, replace, &insert);
+                editing::replace_fx_table(editor, effect.template)
+            });
+            if let Some(fields) = fields {
+                self.marks = fields;
+                self.mark_selected = self.editor.is_selecting();
+            }
+            return;
+        }
+        self.insert_template(replace, &insert);
     }
 
     /// Inserta una plantilla en lugar de los `replace` caracteres antes

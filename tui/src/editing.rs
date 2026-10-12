@@ -88,6 +88,15 @@ pub fn insert_template(editor: &mut TextArea, replace: usize, template: &str) ->
     if marks.is_empty() {
         return None;
     }
+    let mut fields = build_fields("", &text, &marks);
+    editor.move_cursor(CursorMove::Jump(row as u16, start as u16));
+    fields.next(editor);
+    Some(fields)
+}
+
+/// Campos de un texto insertado con sus marcas; `lead` es lo que hay
+/// entre el cursor y el principio del texto. El último es el final.
+fn build_fields(lead: &str, text: &str, marks: &[std::ops::Range<usize>]) -> Fields {
     let chars: Vec<char> = text.chars().collect();
     let mut end = 0;
     let mut fields: Vec<Field> = marks
@@ -101,12 +110,75 @@ pub fn insert_template(editor: &mut TextArea, replace: usize, template: &str) ->
             field
         })
         .collect();
+    if let Some(first) = fields.first_mut() {
+        first.gap.insert_str(0, lead);
+    }
     fields.push(Field {
         gap: chars[end..].iter().collect(),
         text: String::new(),
     });
-    let mut fields = Fields(fields);
-    editor.move_cursor(CursorMove::Jump(row as u16, start as u16));
+    Fields(fields)
+}
+
+/// Con el cursor al final del nombre de un efecto dentro de
+/// `fx("nombre", { ... })`, sustituye la tabla de parámetros que sigue en
+/// la línea por `table` (la plantilla del efecto nuevo, con sus `${...}`)
+/// y selecciona su primer campo. Lo que quede del nombre anterior hasta
+/// las comillas se borra. Si tras el nombre no hay `", { ... }` en la
+/// línea, no toca nada y devuelve `None`.
+pub fn replace_fx_table(editor: &mut TextArea, table: &str) -> Option<Fields> {
+    let (row, col) = (editor.cursor().0, editor.cursor().1);
+    let chars: Vec<char> = editor.lines()[row].chars().collect();
+    let skip_spaces = |mut i: usize| {
+        while chars.get(i) == Some(&' ') {
+            i += 1;
+        }
+        i
+    };
+    // Resto del nombre anterior, comillas, coma y la tabla.
+    let mut name_end = col;
+    while chars
+        .get(name_end)
+        .is_some_and(|c| c.is_ascii_alphanumeric() || *c == '_')
+    {
+        name_end += 1;
+    }
+    if !matches!(chars.get(name_end), Some('"' | '\'')) {
+        return None;
+    }
+    let comma = skip_spaces(name_end + 1);
+    if chars.get(comma) != Some(&',') {
+        return None;
+    }
+    let open = skip_spaces(comma + 1);
+    if chars.get(open) != Some(&'{') {
+        return None;
+    }
+    let mut depth = 0;
+    let close = (open..chars.len()).find(|&i| {
+        match chars[i] {
+            '{' => depth += 1,
+            '}' => depth -= 1,
+            _ => {}
+        }
+        depth == 0
+    })?;
+
+    let (text, marks) = api::expand_template(table);
+    editor.cancel_selection();
+    editor.move_cursor(CursorMove::Jump(row as u16, open as u16));
+    editor.delete_str(close - open + 1);
+    editor.insert_str(&text);
+    editor.move_cursor(CursorMove::Jump(row as u16, col as u16));
+    editor.delete_str(name_end - col);
+    let lead: String = chars[name_end..open].iter().collect();
+    let mut fields = build_fields(&lead, &text, &marks);
+    // El final queda tras el `)` de `fx(...)`, como en su plantilla.
+    if chars.get(close + 1) == Some(&')')
+        && let Some(end) = fields.0.last_mut()
+    {
+        end.gap.push(')');
+    }
     fields.next(editor);
     Some(fields)
 }
@@ -307,6 +379,34 @@ mod tests {
         assert_eq!(fields.next(&mut e), Some(Selected::Field));
         assert_eq!(selected(&e), "b");
         assert!(insert_template(&mut e, 0, "sin campos").is_none());
+    }
+
+    #[test]
+    fn effect_tables_are_regenerated() {
+        let mut e = editor("t:fx(\"bitcrush\", { type = \"lowpass\", cutoff = 3000 }):gain(1)");
+        at(&mut e, 0, 14);
+        let mut fields = replace_fx_table(&mut e, "{ bits = ${6}, downsample = ${2} }").unwrap();
+        assert_eq!(
+            e.lines(),
+            ["t:fx(\"bitcrush\", { bits = 6, downsample = 2 }):gain(1)"]
+        );
+        assert_eq!(selected(&e), "6");
+        assert_eq!(fields.next(&mut e), Some(Selected::Field));
+        assert_eq!(selected(&e), "2");
+        assert_eq!(fields.next(&mut e), Some(Selected::End));
+        let end = e.lines()[0].find("}):").unwrap() + 2;
+        assert_eq!(e.cursor(), (0, end));
+        // El resto del nombre anterior tras el cursor se borra.
+        let mut e = editor("fx(\"highpasster\", { cutoff = 3000 })");
+        at(&mut e, 0, 12);
+        replace_fx_table(&mut e, "{ cutoff = ${200} }").unwrap();
+        assert_eq!(e.lines(), ["fx(\"highpass\", { cutoff = 200 })"]);
+        assert_eq!(selected(&e), "200");
+        // Sin tabla detrás, nada.
+        let mut e = editor("fx(\"lowpass\")");
+        at(&mut e, 0, 11);
+        assert!(replace_fx_table(&mut e, "{ cutoff = ${1} }").is_none());
+        assert_eq!(e.lines(), ["fx(\"lowpass\")"]);
     }
 
     #[test]
