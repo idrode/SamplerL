@@ -456,7 +456,7 @@ impl Widget for HelpLine<'_> {
                 Span::raw(format!("{prompt}█  ")),
                 Span::from(
                     "exportar [archivo.wav] [compases] · guardar [proyecto] · \
-                     abrir proyecto · muestras carpeta · Esc cancelar",
+                     abrir proyecto · muestras carpeta · etiquetar corte nombre · Esc cancelar",
                 )
                 .fg(DIM),
             ])
@@ -490,8 +490,13 @@ impl Widget for SamplePanel<'_> {
             return;
         };
         let seconds = track.sample_frames as f64 / track.sample_rate.max(1) as f64;
+        let selected = view.selected_slice;
+        let chosen = selected.map_or(String::new(), |i| match track.label(i) {
+            Some(label) => format!(" · corte {} {label}", i + 1),
+            None => format!(" · corte {}", i + 1),
+        });
         let block = Block::bordered().title(format!(
-            " sample · {} · {} · {seconds:.2} s · {} cortes ",
+            " sample · {} · {} · {seconds:.2} s · {} cortes{chosen} ",
             track.name,
             track.sample_name,
             track.slices.len()
@@ -550,10 +555,7 @@ impl Widget for SamplePanel<'_> {
         for (i, slice) in track.slices.iter().enumerate() {
             let column = (slice.start as f64 / frames * inner.width as f64).floor() as u16;
             if column < inner.width {
-                let text = match track.label(i) {
-                    Some(label) => format!("{} {label}", i + 1),
-                    None => (i + 1).to_string(),
-                };
+                let text = slice_mark(track, i);
                 let room = (inner.width - column) as usize;
                 buf.set_string(
                     inner.x + column,
@@ -563,6 +565,30 @@ impl Widget for SamplePanel<'_> {
                 );
             }
         }
+        // El corte seleccionado, encima y resaltado.
+        if let Some(i) = selected
+            && let Some(slice) = track.slices.get(i)
+        {
+            let column = (slice.start as f64 / frames * inner.width as f64).floor() as u16;
+            if column < inner.width {
+                let text = slice_mark(track, i);
+                let room = (inner.width - column) as usize;
+                buf.set_string(
+                    inner.x + column,
+                    inner.y,
+                    text.chars().take(room).collect::<String>(),
+                    Style::new().fg(Color::Black).bg(SLICE).bold(),
+                );
+            }
+        }
+    }
+}
+
+/// Texto de la marca de un corte en la vista del sample: `3` o `3 snare`.
+fn slice_mark(track: &crate::model::TrackView, i: usize) -> String {
+    match track.label(i) {
+        Some(label) => format!("{} {label}", i + 1),
+        None => (i + 1).to_string(),
     }
 }
 

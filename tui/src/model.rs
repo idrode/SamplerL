@@ -42,6 +42,8 @@ pub struct ViewModel {
     pub tracks: Vec<TrackView>,
     /// Pista seleccionada (índice en `tracks`).
     pub selected: Option<usize>,
+    /// Corte seleccionado de esa pista (desde 0).
+    pub selected_slice: Option<usize>,
 }
 
 /// Paleta de comandos.

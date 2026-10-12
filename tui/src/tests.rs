@@ -1727,3 +1727,141 @@ fn labels_complete_inside_steps_and_unknown_ones_are_underlined() {
     assert!(view.error.is_none(), "{:?}", view.error);
     assert_eq!(view.tracks[0].label(0), Some("bombo"));
 }
+
+// --- Etiquetar desde la paleta ---
+
+fn palette(app: &mut App, query: &str) {
+    app.handle(f(1));
+    type_query(app, query);
+    app.handle(special(Key::Enter));
+}
+
+#[test]
+fn the_palette_labels_the_slice_played_last() {
+    let (_, mut app, _engine) = open("label_palette", Some(SONG));
+    // Tocar el corte 2 lo selecciona.
+    app.handle(esc());
+    app.handle(key('2'));
+    assert_eq!(app.view().selected_slice, Some(1));
+    app.handle(esc());
+
+    palette(&mut app, "etiquetar");
+    assert_eq!(app.view().prompt.as_deref(), Some("etiquetar 2 "));
+    type_query(&mut app, "snare");
+    app.handle(special(Key::Enter));
+    let view = app.view();
+    assert_eq!(
+        view.message,
+        "corte 2 de drums: «snare» (sin proyecto: se guardará con «guardar»)"
+    );
+    assert_eq!(view.tracks[0].label(1), Some("snare"));
+    // El tracker y la vista del sample lo enseñan ya.
+    let buffer = draw(&mut app, 160, 40);
+    let screen = text(&buffer);
+    assert!(screen.contains("02 snare"), "{screen}");
+    assert!(screen.contains("cortes · corte 2 snare"), "{screen}");
+    // Fila de las marcas: la de debajo del título del panel del sample.
+    let (_, title) = find(&buffer, "cortes · corte 2 snare").unwrap();
+    let row = screen.lines().nth(title as usize + 1).unwrap();
+    let x = row[..row.find("2 snare").unwrap()].chars().count() as u16;
+    assert_eq!(
+        buffer[(x, title + 1)].bg,
+        ui::SLICE,
+        "el seleccionado, resaltado"
+    );
+    // Y se puede usar en steps.
+    let text = app
+        .text_for_test()
+        .replace("\"1 . 2 .  1 . 2 .", "\"1 . snare .  1 . 2 .");
+    replace_all(&mut app, &text);
+    app.handle(ctrl('s'));
+    assert!(app.view().error.is_none(), "{:?}", app.view().error);
+
+    // Tocar suena con su etiqueta en el mensaje.
+    app.handle(esc());
+    app.handle(key('2'));
+    assert_eq!(app.view().message, "▶ drums: corte 2 (snare)");
+}
+
+#[test]
+fn labels_are_saved_in_the_project_and_reopened() {
+    let path = fixture("label_project", Some(SONG));
+    let dir = path.parent().unwrap().to_path_buf();
+    let project = dir.join("p.sampler");
+    std::fs::write(&project, "script = song.lua\nbpm = 100\n").unwrap();
+    let (controller, _engine) = new_engine(RATE);
+    let mut app = App::open_project(&project, controller, RATE).unwrap();
+
+    command(&mut app, "etiquetar 1 kick");
+    assert!(
+        app.view().message.contains("(guardado en"),
+        "{}",
+        app.view().message
+    );
+    let saved = std::fs::read_to_string(&project).unwrap();
+    assert!(saved.contains("etiqueta = break.wav 2 1 kick\n"), "{saved}");
+    assert!(
+        saved.contains("bpm = 100\n"),
+        "el tempo del proyecto no cambia: {saved}"
+    );
+
+    // La pista "kick" es slice_at(1): su corte 1 es el 1 del sample, y la
+    // etiqueta vale para las dos pistas.
+    app.next_track();
+    command(&mut app, "etiquetar 1 bombo");
+    let view = app.view();
+    assert_eq!(view.tracks[1].label(0), Some("bombo"));
+    assert_eq!(view.tracks[0].label(0), Some("bombo"));
+
+    let (controller, _engine) = new_engine(RATE);
+    let reopened = App::open_project(&project, controller, RATE).unwrap();
+    assert_eq!(reopened.view().tracks[0].label(0), Some("bombo"));
+}
+
+#[test]
+fn labeling_errors_are_clear() {
+    let (_, mut app, _engine) = open("label_errors", Some(SONG));
+    let mut check = |line: &str, expected: &str| {
+        command(&mut app, line);
+        let message = app.view().message;
+        assert!(message.contains(expected), "{line}: {message}");
+    };
+    check("etiquetar", "uso: etiquetar corte nombre");
+    check(
+        "etiquetar 2 12",
+        "no se pudo etiquetar: \"12\" es un número",
+    );
+    check("etiquetar 2 x", "ya es el corte 1");
+    check("etiquetar 2 kickr4", "retrigger");
+    check("etiquetar 9 hat", "drums no tiene corte 9 (tiene 2)");
+    check("etiquetar 1 kick", "corte 1 de drums: «kick»");
+    check("etiquetar 2 kick", "la etiqueta \"kick\" ya es del corte 1");
+    check("etiquetar 1", "corte 1 de drums: sin etiqueta");
+    assert_eq!(app.view().tracks[0].label(0), None);
+}
+
+#[test]
+fn slices_are_selected_from_the_palette_and_the_script_wins() {
+    let song = SONG.replace(
+        "local amen = sample(\"break.wav\"):slice(2)",
+        "local amen = sample(\"break.wav\"):slice(2):name(2, \"caja\")",
+    );
+    let (_, mut app, _engine) = open("label_select", Some(&song));
+    palette(&mut app, "corte siguiente");
+    assert_eq!(app.view().selected_slice, Some(1));
+    assert_eq!(app.view().message, "drums: corte 2 (caja) seleccionado");
+    palette(&mut app, "corte siguiente");
+    assert_eq!(app.view().selected_slice, Some(0), "da la vuelta");
+    palette(&mut app, "corte anterior");
+    assert_eq!(app.view().selected_slice, Some(1));
+    // El script nombra ese corte: la etiqueta se guarda, pero manda :name().
+    palette(&mut app, "etiquetar");
+    type_query(&mut app, "snare");
+    app.handle(special(Key::Enter));
+    let message = app.view().message;
+    assert!(
+        message.ends_with("el script lo nombra «caja» con :name() y manda"),
+        "{message}"
+    );
+    assert_eq!(app.view().tracks[0].label(1), Some("caja"));
+}

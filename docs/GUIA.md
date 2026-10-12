@@ -174,6 +174,9 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Recargar del disco | Recarga el archivo si cambió fuera del editor | F3 |
 | Exportar la mezcla | Renderiza la canción entera a `<script>-mezcla.wav` | — |
 | Línea de órdenes | Abre la línea de órdenes (exportar, guardar, abrir, muestras) | F2 |
+| Etiquetar el corte seleccionado | Abre «etiquetar N » para escribir la etiqueta (kick, snare...); se guarda en el proyecto | — |
+| Corte siguiente | Selecciona el corte siguiente de la pista (sin tocarlo) | — |
+| Corte anterior | Selecciona el corte anterior de la pista (sin tocarlo) | — |
 | Salir | Sale (pide confirmación si hay cambios sin guardar) | Ctrl-Q |
 | Snippet: `amen`, `fill`, `ghost`, `intro` | Inserta el snippet en el cursor (ver «Snippets» en la sección 4) | — |
 
@@ -237,6 +240,7 @@ proyecto o, si no hay, a la del script.
 | `guardar [proyecto.sampler]` | Guarda el script y el proyecto |
 | `abrir proyecto.sampler` | Abre un proyecto (`abrir!` descarta los cambios sin guardar) |
 | `muestras [carpeta]` | Cambia la carpeta de los samples (sin argumento, dice cuál es) |
+| `etiquetar corte [nombre]` | Pone una etiqueta a un corte de la pista seleccionada (sin nombre, la quita). Se guarda en el proyecto abierto y se recarga |
 
 ### Editor
 
@@ -281,6 +285,17 @@ cualquier pista: si una etiqueta no es de esa pista, lo dice la carga.
 
 Con etiquetas, el tracker muestra el nombre en vez del número (`kick^7`) y
 la vista del sample pone cada etiqueta junto al número de su corte.
+
+### Etiquetar cortes desde la interfaz
+
+Sin tocar el script: en el modo tocar, toca el corte (queda seleccionado,
+resaltado en la vista del sample) o elígelo con «Corte siguiente» / «Corte
+anterior» de la paleta. Luego «Etiquetar el corte seleccionado» (F1) abre
+la línea de órdenes con `etiquetar N ` escrito: pon el nombre y Enter. La
+etiqueta se guarda en el proyecto abierto (si no hay, con `guardar`), vale
+para todas las pistas de ese sample cortado igual y se recarga al momento.
+Si el script ya nombra ese corte con `:name()`, manda el script y el
+mensaje lo avisa.
 
 Ejemplos:
 

@@ -34,7 +34,10 @@ paleta, autocompletado y ayuda de `docs/GUIA.md`.
 - Ayuda contextual de la función bajo el cursor.
 - Paleta de comandos filtrable.
 
-## Fase B: etiquetas de corte
+## Fase B: etiquetas de corte ✅
+
+Hecha: ver «Fase B» en el Estado de `CLAUDE.md` y la mini-notación,
+`cortes:name` y los proyectos en `docs/GUIA.md`.
 
 - Etiquetas para los cortes (`kick`, `snare`, `hat`...), guardadas en el
   proyecto.

@@ -97,6 +97,9 @@ pub struct App {
     message: String,
     started: bool,
     selected: usize,
+    /// Corte seleccionado de la pista seleccionada (desde 0): el último
+    /// tocado en el modo tocar o el elegido desde la paleta.
+    selected_slice: usize,
     status: Option<Status>,
     meters: [f32; MAX_TRACKS],
     /// Se pidió salir con cambios sin guardar: otra vez para confirmar.
@@ -144,6 +147,7 @@ impl App {
             message: String::new(),
             started: false,
             selected: 0,
+            selected_slice: 0,
             status: None,
             meters: [0.0; MAX_TRACKS],
             quit_armed: false,
@@ -222,9 +226,11 @@ impl App {
             "abrir" | "open" => self.open_project_command(args.first().copied(), false),
             "abrir!" | "open!" => self.open_project_command(args.first().copied(), true),
             "muestras" | "samples" => self.set_samples(args.first().copied()),
+            "etiquetar" | "label" => self.label_slice(&args),
             other => {
-                self.message =
-                    format!("orden desconocida «{other}» (exportar, guardar, abrir, muestras)");
+                self.message = format!(
+                    "orden desconocida «{other}» (exportar, guardar, abrir, muestras, etiquetar)"
+                );
             }
         }
     }
@@ -304,19 +310,89 @@ impl App {
             .song()
             .and_then(|s| s.bpm)
             .or(self.host.default_bpm());
-        let project = Project {
-            script: self.path.clone(),
-            samples: self.host.sample_dir().map(Path::to_path_buf),
-            bpm,
-            labels: self.host.labels().to_vec(),
-        };
-        self.message = match project.save(&path) {
+        self.message = match self.project_with(bpm).save(&path) {
             Ok(()) => {
                 self.project = Some(path.clone());
                 format!("proyecto guardado en {}", path.display())
             }
             Err(e) => format!("no se pudo guardar el proyecto: {e}"),
         };
+    }
+
+    /// El proyecto con el estado actual (script, samples, etiquetas) y ese
+    /// tempo.
+    fn project_with(&self, bpm: Option<f64>) -> Project {
+        Project {
+            script: self.path.clone(),
+            samples: self.host.sample_dir().map(Path::to_path_buf),
+            bpm,
+            labels: self.host.labels().to_vec(),
+        }
+    }
+
+    /// `etiquetar corte [nombre]`: pone (o, sin nombre, quita) la etiqueta
+    /// de un corte de la pista seleccionada. Se guarda en el proyecto abierto
+    /// (si no hay, con `guardar`) y se recarga para que se vea y se pueda usar
+    /// en `steps`.
+    fn label_slice(&mut self, args: &[&str]) {
+        let usage = "uso: etiquetar corte nombre (sin nombre la quita)";
+        let Some(slice) = args.first().and_then(|a| a.parse::<usize>().ok()) else {
+            self.message = usage.into();
+            return;
+        };
+        let name = args.get(1).copied();
+        if args.len() > 2 {
+            self.message = usage.into();
+            return;
+        }
+        let Some(track) = self.host.song().and_then(|s| s.tracks.get(self.selected)) else {
+            self.message = "no hay pistas".into();
+            return;
+        };
+        let (track_name, origin) = (track.name.clone(), track.origin.clone());
+        let Some(&index) = slice.checked_sub(1).and_then(|i| origin.indices.get(i)) else {
+            self.message = format!(
+                "{track_name} no tiene corte {slice} (tiene {})",
+                origin.indices.len()
+            );
+            return;
+        };
+        if let Err(e) = self
+            .host
+            .set_label(&origin.sample, origin.count, index + 1, name)
+        {
+            self.message = format!("no se pudo etiquetar: {e}");
+            return;
+        }
+        let saved = match self.project.clone() {
+            Some(path) => match self.project_with(self.host.default_bpm()).save(&path) {
+                Ok(()) => format!(" (guardado en {})", path.display()),
+                Err(e) => format!(" (no se pudo guardar el proyecto: {e})"),
+            },
+            None => " (sin proyecto: se guardará con «guardar»)".into(),
+        };
+        self.load();
+        let what = match name {
+            Some(name) => format!("«{name}»"),
+            None => "sin etiqueta".into(),
+        };
+        let mut message = format!("corte {slice} de {track_name}: {what}{saved}");
+        // Si el script nombra ese corte con :name(), manda el script.
+        let now = self
+            .host
+            .song()
+            .and_then(|s| s.tracks.iter().find(|t| t.name == track_name))
+            .and_then(|t| t.labels.get(slice - 1).cloned().flatten());
+        if self.error.is_none() && now.as_deref() != name {
+            message.push_str(&format!(
+                "; el script lo nombra «{}» con :name() y manda",
+                now.unwrap_or_default()
+            ));
+        }
+        if self.error.is_some() {
+            message.push_str("; el script tiene errores: sigue sonando lo anterior");
+        }
+        self.message = message;
     }
 
     /// `abrir proyecto.sampler` (o `abrir!` para descartar cambios).
@@ -545,8 +621,17 @@ impl App {
             track.slices.clone(),
             track.name.clone(),
         );
+        let label = track
+            .labels
+            .get(index)
+            .cloned()
+            .flatten()
+            .map_or(String::new(), |l| format!(" ({l})"));
         self.message = match self.controller.play_slice_on(slot, &sample, &slices, index) {
-            Ok(()) => format!("▶ {name}: corte {}", index + 1),
+            Ok(()) => {
+                self.selected_slice = index;
+                format!("▶ {name}: corte {}{label}", index + 1)
+            }
             Err(engine::SendError::NoSuchSlice { count, .. }) => {
                 format!("{name} no tiene corte {} (tiene {count})", index + 1)
             }
@@ -826,6 +911,9 @@ impl App {
             Action::ReloadExternal => self.reload_external(),
             Action::Export => self.export(&[]),
             Action::Commands => self.prompt = Some(String::new()),
+            Action::LabelSlice => self.start_labeling(),
+            Action::NextSlice => self.select_slice(true),
+            Action::PreviousSlice => self.select_slice(false),
             Action::Quit => {
                 let armed = std::mem::replace(&mut self.quit_armed, false);
                 return self.request_quit(armed);
@@ -903,7 +991,49 @@ impl App {
         let count = self.host.song().map_or(0, |s| s.tracks.len());
         if count > 0 {
             self.selected = (self.selected + 1) % count;
+            self.selected_slice = 0;
         }
+    }
+
+    /// Selecciona el corte siguiente (o el anterior) de la pista
+    /// seleccionada, sin tocarlo.
+    pub fn select_slice(&mut self, forward: bool) {
+        let Some(track) = self.host.song().and_then(|s| s.tracks.get(self.selected)) else {
+            self.message = "no hay pistas".into();
+            return;
+        };
+        let count = track.slices.len().max(1);
+        let current = self.selected_slice.min(count - 1);
+        self.selected_slice = if forward {
+            (current + 1) % count
+        } else {
+            (current + count - 1) % count
+        };
+        let label = track
+            .labels
+            .get(self.selected_slice)
+            .cloned()
+            .flatten()
+            .map_or(String::new(), |l| format!(" ({l})"));
+        self.message = format!(
+            "{}: corte {}{label} seleccionado",
+            track.name,
+            self.selected_slice + 1
+        );
+    }
+
+    /// Abre la línea de órdenes para etiquetar el corte seleccionado.
+    pub fn start_labeling(&mut self) {
+        let Some(track) = self.host.song().and_then(|s| s.tracks.get(self.selected)) else {
+            self.message = "no hay pistas".into();
+            return;
+        };
+        let slice = self
+            .selected_slice
+            .min(track.slices.len().saturating_sub(1))
+            + 1;
+        self.prompt = Some(format!("etiquetar {slice} "));
+        self.message = format!("escribe la etiqueta del corte {slice} de {}", track.name);
     }
 
     /// Atiende una tecla: atajos propios; si no, en modo tocar dispara
@@ -1078,6 +1208,9 @@ impl App {
             })
             .unwrap_or_default();
         let selected = (!tracks.is_empty()).then(|| self.selected.min(tracks.len() - 1));
+        let selected_slice = selected
+            .and_then(|t| tracks[t].slices.len().checked_sub(1))
+            .map(|last| self.selected_slice.min(last));
         ViewModel {
             error: self.error.as_ref().map(|e| ErrorView {
                 line: error_line(&e.message, &name),
@@ -1129,6 +1262,7 @@ impl App {
             transport,
             tracks,
             selected,
+            selected_slice,
         }
     }
 }

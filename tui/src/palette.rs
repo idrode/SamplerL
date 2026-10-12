@@ -25,6 +25,9 @@ pub enum Action {
     ReloadExternal,
     Export,
     Commands,
+    LabelSlice,
+    NextSlice,
+    PreviousSlice,
     Quit,
 }
 
@@ -135,6 +138,24 @@ pub const ACTIONS: &[ActionDef] = &[
         name: "Línea de órdenes",
         description: "Abre la línea de órdenes (exportar, guardar, abrir, muestras)",
         keys: "F2",
+    },
+    ActionDef {
+        action: Action::LabelSlice,
+        name: "Etiquetar el corte seleccionado",
+        description: "Abre «etiquetar N » para escribir la etiqueta (kick, snare...); se guarda en el proyecto",
+        keys: "",
+    },
+    ActionDef {
+        action: Action::NextSlice,
+        name: "Corte siguiente",
+        description: "Selecciona el corte siguiente de la pista (sin tocarlo)",
+        keys: "",
+    },
+    ActionDef {
+        action: Action::PreviousSlice,
+        name: "Corte anterior",
+        description: "Selecciona el corte anterior de la pista (sin tocarlo)",
+        keys: "",
     },
     ActionDef {
         action: Action::Quit,
