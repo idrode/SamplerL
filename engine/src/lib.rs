@@ -8,7 +8,7 @@ mod sample;
 mod sequencer;
 mod slice;
 
-pub use engine::{Controller, Engine, SendError, new_engine};
+pub use engine::{Batch, Controller, Engine, MAX_TRACKS, SendError, new_engine};
 pub use output::{Output, open_output};
 pub use sample::{LoadError, Sample};
 pub use sequencer::{

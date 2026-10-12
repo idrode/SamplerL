@@ -100,12 +100,13 @@ Primer objetivo: que `steps(...)` reproduzca los cortes. Después `fx`, `every` 
   - El paso k cae en `inicio_compás + round(k · frames_por_paso)`, y cada compás empieza donde acabó el anterior. No hay deriva aunque los frames por paso no sean enteros. El bloque de audio se parte en los límites de paso.
   - `new_engine(sample_rate)`: el motor necesita su frecuencia; `open_output` la ajusta a la del dispositivo.
   - `Engine::discard` suelta el `Arc` directamente si el motor guarda otra referencia al mismo sample (solo baja el contador). Así las voces que dispara el secuenciador no llenan la cola de basura.
-  - Una sola voz por motor por ahora: el secuenciador y `play_slice` comparten la voz.
+  - Varias pistas (`MAX_TRACKS` = 8), cada una con su patrón, su voz y su ranura de fundido; suenan a la vez y se suman. `Controller::set_pattern` usa la pista 0; `set_track_pattern(t, Option<Pattern>)` cualquier pista (`None` la silencia). `play*` suena en la pista 0.
+  - Lotes atómicos: `Controller::apply(Batch)` con tempo y patrones de varias pistas. Antes de enviar valida todo y comprueba que cabe en la cola (o no envía nada). El motor guarda los cambios aparte entre `BeginBatch` y `CommitBatch`, así que un lote leído a medias nunca entra a medias en un compás. Tests en `engine/tests/tracks.rs` y en `engine.rs` (lote leído a medias).
   - Tests en `engine/tests/sequencer.rs`: frame exacto de cada paso a 120 y 170 BPM, silencios, loop y cuantización.
 - **Paso 4 empezado.** Volumen, pitch y reverse por paso (falta retrigger/stutter, filtro y bitcrusher):
   - `Step { slice, gain, semitones, reverse }` (con `Step::new(i).with_gain(g).with_pitch(st).reversed()`) y `Pattern::from_steps(sample, &slices, [Option<Step>; 16])`. Se valida en el hilo de control: ganancia 0–4, pitch ±36 semitonos (`SendError::InvalidStep`).
   - La voz lee en posición fraccionaria (f64) con interpolación lineal: el pitch cambia la velocidad y la duración, sin time-stretch. Con pitch 0 la salida es idéntica bit a bit a la de antes. El reverse lee de `end-1` a `start`. Los fundidos van en tiempo de salida, así que son simétricos: el reverse es exactamente la inversión temporal del forward.
-  - Sin polifonía: el secuenciador es como una pista de tracker, donde cada paso corta al anterior con fundido cruzado. Hará falta más de una voz cuando haya varias pistas.
+  - Dentro de una pista no hay polifonía: cada paso corta al anterior con fundido cruzado, como en un tracker.
   - Interpolación lineal: subiendo mucho el pitch habrá aliasing. Si molesta, cambiar a una interpolación mejor (cúbica o sinc corta).
   - Tests en `engine/tests/step_effects.rs`.
 - **Paso 5 (mini-notación hecha)** en `engine::notation` (`parse_steps`, `parse_step`), usada por `--pattern`, `PATTERN` del script y (después) Lua. 16 pasos separados por espacios (los espacios de más no cuentan):

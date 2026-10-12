@@ -137,7 +137,8 @@ pub(crate) fn valid_bpm(bpm: f64) -> bool {
     (MIN_BPM..=MAX_BPM).contains(&bpm)
 }
 
-/// Estado del transporte en el hilo de audio.
+/// Reloj del secuenciador en el hilo de audio: compás, paso y tempo. Los
+/// patrones son de cada pista y viven en el motor.
 pub(crate) struct Transport {
     pub running: bool,
     /// Frames desde que arrancó el transporte.
@@ -147,9 +148,7 @@ pub(crate) struct Transport {
     /// Siguiente paso a disparar dentro del compás.
     step: usize,
     bpm: f64,
-    pub pattern: Option<Pattern>,
-    /// Cambios que esperan al siguiente compás.
-    pub pending_pattern: Option<Pattern>,
+    /// Tempo que espera al siguiente compás.
     pub pending_bpm: Option<f64>,
 }
 
@@ -161,8 +160,6 @@ impl Transport {
             bar_start: 0,
             step: 0,
             bpm: DEFAULT_BPM,
-            pattern: None,
-            pending_pattern: None,
             pending_bpm: None,
         }
     }
@@ -180,27 +177,21 @@ impl Transport {
         self.bar_start + step_offset(self.step, self.bpm, sample_rate)
     }
 
-    /// Avanza al siguiente paso. Al empezar un compás aplica los cambios
-    /// pendientes (cuantización) y devuelve el patrón anterior si se sustituyó,
-    /// para que el motor lo descarte fuera del callback. Devuelve también el
-    /// rango a disparar en este paso, si lo hay.
-    pub fn advance(&mut self, sample_rate: u32) -> (Option<Pattern>, Option<Trigger>) {
-        let mut replaced = None;
-        if self.step == 0 {
-            if let Some(bpm) = self.pending_bpm.take() {
-                self.bpm = bpm;
-            }
-            if let Some(pattern) = self.pending_pattern.take() {
-                replaced = self.pattern.replace(pattern);
-            }
+    /// Avanza al siguiente paso y devuelve el que toca disparar ahora. En el
+    /// paso 0 (inicio de compás) aplica antes el tempo pendiente.
+    pub fn advance(&mut self, sample_rate: u32) -> usize {
+        let step = self.step;
+        if step == 0
+            && let Some(bpm) = self.pending_bpm.take()
+        {
+            self.bpm = bpm;
         }
-        let hit = self.pattern.as_ref().and_then(|p| p.steps[self.step]);
         self.step += 1;
         if self.step == STEPS {
             self.bar_start += step_offset(STEPS, self.bpm, sample_rate);
             self.step = 0;
         }
-        (replaced, hit)
+        step
     }
 }
 
