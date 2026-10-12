@@ -111,7 +111,7 @@ fn plays_a_slice_by_number() {
     let slices = Slices::detect(&sample, 8);
     let slice = slices.get(2).unwrap();
 
-    let (mut controller, mut engine) = new_engine();
+    let (mut controller, mut engine) = new_engine(RATE);
     controller.play_slice(&sample, &slices, 2).unwrap();
 
     let block = 512;

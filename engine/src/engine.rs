@@ -6,15 +6,21 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::sample::Sample;
+use crate::sequencer::{Pattern, Transport, valid_bpm};
 use crate::slice::Slices;
 
 const COMMAND_CAPACITY: usize = 64;
-// Cada voz nace de un comando y va a la basura una sola vez, y el controlador
-// la recoge antes de cada envío, así que esto no se llena.
+// A la basura solo va un `Arc` cuando el motor no guarda otra referencia al
+// mismo sample (ver `Engine::discard`), así que las voces que dispara el
+// secuenciador no la llenan: cada elemento sale de un comando y el
+// controlador la recoge antes de cada envío.
 const GARBAGE_CAPACITY: usize = COMMAND_CAPACITY * 2;
 /// Duración de los fundidos de entrada y salida de cada voz.
 const FADE_SECONDS: f32 = 0.0015;
 
+// `Pattern` va dentro del comando y no en una `Box`: liberar la `Box` en el
+// hilo de audio rompería la regla de no liberar memoria en el callback.
+#[allow(clippy::large_enum_variant)]
 enum Command {
     /// Reproduce los frames `start..end` del sample.
     Play {
@@ -22,6 +28,13 @@ enum Command {
         start: usize,
         end: usize,
     },
+    /// Patrón para el siguiente compás.
+    SetPattern(Pattern),
+    /// BPM para el siguiente compás.
+    SetBpm(f64),
+    /// Arranca el secuenciador desde el paso 0.
+    Start,
+    /// Para el secuenciador y la voz que suena.
     Stop,
 }
 
@@ -96,12 +109,14 @@ impl Voice {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SendError {
     /// La cola de comandos está llena; el comando no se envió.
     QueueFull,
     /// El número de corte no existe.
     NoSuchSlice { index: usize, count: usize },
+    /// BPM fuera de rango.
+    InvalidBpm(f64),
 }
 
 impl fmt::Display for SendError {
@@ -111,6 +126,12 @@ impl fmt::Display for SendError {
             SendError::NoSuchSlice { index, count } => {
                 write!(f, "no existe el corte {index} (hay {count})")
             }
+            SendError::InvalidBpm(bpm) => write!(
+                f,
+                "BPM {bpm} fuera de rango ({}-{})",
+                crate::sequencer::MIN_BPM,
+                crate::sequencer::MAX_BPM
+            ),
         }
     }
 }
@@ -130,12 +151,16 @@ pub struct Engine {
     commands: Consumer<Command>,
     garbage: Producer<Arc<Sample>>,
     playing: Arc<AtomicBool>,
+    sample_rate: u32,
+    transport: Transport,
     voice: Option<Voice>,
     /// Voz interrumpida que todavía está haciendo su fundido de salida.
     fading: Option<Voice>,
 }
 
-pub fn new_engine() -> (Controller, Engine) {
+/// Crea el par controlador/motor. `sample_rate` es la frecuencia a la que
+/// renderiza el motor (la de los samples cargados para él).
+pub fn new_engine(sample_rate: u32) -> (Controller, Engine) {
     let (cmd_tx, cmd_rx) = RingBuffer::new(COMMAND_CAPACITY);
     let (garbage_tx, garbage_rx) = RingBuffer::new(GARBAGE_CAPACITY);
     let playing = Arc::new(AtomicBool::new(false));
@@ -149,6 +174,8 @@ pub fn new_engine() -> (Controller, Engine) {
             commands: cmd_rx,
             garbage: garbage_tx,
             playing,
+            sample_rate,
+            transport: Transport::new(),
             voice: None,
             fading: None,
         },
@@ -184,11 +211,30 @@ impl Controller {
     ) -> Result<(), SendError> {
         let end = range.end.min(sample.frames());
         let start = range.start.min(end);
-        self.send(Command::Play { sample, start, end }, start < end)
+        self.send(Command::Play { sample, start, end }, Some(start < end))
     }
 
+    /// Cambia el patrón. Entra al empezar el siguiente compás (o al arrancar).
+    pub fn set_pattern(&mut self, pattern: Pattern) -> Result<(), SendError> {
+        self.send(Command::SetPattern(pattern), None)
+    }
+
+    /// Cambia el tempo. Entra al empezar el siguiente compás (o al arrancar).
+    pub fn set_bpm(&mut self, bpm: f64) -> Result<(), SendError> {
+        if !valid_bpm(bpm) {
+            return Err(SendError::InvalidBpm(bpm));
+        }
+        self.send(Command::SetBpm(bpm), None)
+    }
+
+    /// Arranca el secuenciador en el paso 0, aplicando lo pendiente.
+    pub fn start(&mut self) -> Result<(), SendError> {
+        self.send(Command::Start, Some(true))
+    }
+
+    /// Para el secuenciador y la voz que suena (con fundido).
     pub fn stop(&mut self) -> Result<(), SendError> {
-        self.send(Command::Stop, false)
+        self.send(Command::Stop, Some(false))
     }
 
     pub fn is_playing(&self) -> bool {
@@ -200,29 +246,99 @@ impl Controller {
         while self.garbage.pop().is_ok() {}
     }
 
-    fn send(&mut self, cmd: Command, playing: bool) -> Result<(), SendError> {
+    fn send(&mut self, cmd: Command, playing: Option<bool>) -> Result<(), SendError> {
         self.collect_garbage();
         self.commands.push(cmd).map_err(|_| SendError::QueueFull)?;
         // Estado previsto hasta que el motor procese el comando y lo actualice.
-        self.playing.store(playing, Ordering::Relaxed);
+        if let Some(playing) = playing {
+            self.playing.store(playing, Ordering::Relaxed);
+        }
         Ok(())
     }
 }
 
 impl Engine {
+    pub(crate) fn set_sample_rate(&mut self, sample_rate: u32) {
+        self.sample_rate = sample_rate;
+    }
+
     /// Rellena `out` (entrelazado, `channels` canales) con el siguiente bloque.
     pub fn process(&mut self, out: &mut [f32], channels: usize) {
         while let Ok(cmd) = self.commands.pop() {
-            let new_voice = match cmd {
-                Command::Play { sample, start, end } => Some(Voice::new(sample, start, end)),
-                Command::Stop => None,
-            };
-            if let Some(old) = std::mem::replace(&mut self.voice, new_voice) {
-                self.fade_out(old);
-            }
+            self.handle(cmd);
         }
 
         out.fill(0.0);
+        let frames = out.len() / channels;
+        let mut offset = 0;
+        while offset < frames {
+            let mut n = frames - offset;
+            if self.transport.running {
+                let next = self.transport.next_step_frame(self.sample_rate);
+                if next <= self.transport.frame {
+                    self.step();
+                    continue;
+                }
+                // Partir el bloque en el siguiente paso: disparo exacto al frame.
+                n = n.min((next - self.transport.frame) as usize);
+            }
+            self.mix(
+                &mut out[offset * channels..(offset + n) * channels],
+                channels,
+            );
+            offset += n;
+            if self.transport.running {
+                self.transport.frame += n as u64;
+            }
+        }
+
+        // La voz principal terminada se queda en `self.voice` hasta que otro
+        // comando o paso la reemplace.
+        let playing = self.transport.running
+            || self.voice.as_ref().is_some_and(Voice::is_active)
+            || self.fading.is_some();
+        self.playing.store(playing, Ordering::Relaxed);
+    }
+
+    fn handle(&mut self, cmd: Command) {
+        match cmd {
+            Command::Play { sample, start, end } => {
+                self.trigger(Some(Voice::new(sample, start, end)))
+            }
+            Command::SetPattern(pattern) => {
+                if let Some(old) = self.transport.pending_pattern.replace(pattern) {
+                    self.discard(old.sample);
+                }
+            }
+            Command::SetBpm(bpm) => self.transport.pending_bpm = Some(bpm),
+            Command::Start => self.transport.start(),
+            Command::Stop => {
+                self.transport.running = false;
+                self.trigger(None);
+            }
+        }
+    }
+
+    /// Dispara el paso actual del secuenciador y avanza.
+    fn step(&mut self) {
+        let (replaced, hit) = self.transport.advance(self.sample_rate);
+        if let Some(old) = replaced {
+            self.discard(old.sample);
+        }
+        if let (Some((start, end)), Some(pattern)) = (hit, &self.transport.pattern) {
+            let voice = Voice::new(pattern.sample.clone(), start, end);
+            self.trigger(Some(voice));
+        }
+    }
+
+    /// Sustituye la voz principal; la anterior hace su fundido de salida.
+    fn trigger(&mut self, voice: Option<Voice>) {
+        if let Some(old) = std::mem::replace(&mut self.voice, voice) {
+            self.fade_out(old);
+        }
+    }
+
+    fn mix(&mut self, out: &mut [f32], channels: usize) {
         if let Some(voice) = &mut self.voice {
             voice.mix_into(out, channels);
         }
@@ -234,11 +350,6 @@ impl Engine {
         {
             self.discard(done.sample);
         }
-
-        // La voz principal terminada se queda en `self.voice` hasta que otro
-        // comando la reemplace.
-        let playing = self.voice.as_ref().is_some_and(Voice::is_active) || self.fading.is_some();
-        self.playing.store(playing, Ordering::Relaxed);
     }
 
     /// Pasa una voz interrumpida a la ranura de fundido. Si ya había otra
@@ -254,11 +365,33 @@ impl Engine {
         }
     }
 
-    /// Devuelve un sample al hilo de control para que lo libere allí.
+    /// Suelta un `Arc<Sample>` sin liberar memoria en el hilo de audio. Si el
+    /// motor guarda otra referencia al mismo sample, soltarlo solo baja el
+    /// contador; si no, podría ser la última y se devuelve al hilo de control.
     fn discard(&mut self, sample: Arc<Sample>) {
+        if self.holds(&sample) {
+            drop(sample);
+            return;
+        }
         if let Err(rtrb::PushError::Full(sample)) = self.garbage.push(sample) {
             // No debería ocurrir; antes filtrar memoria que liberarla en el callback.
             std::mem::forget(sample);
         }
+    }
+
+    fn holds(&self, sample: &Arc<Sample>) -> bool {
+        let same = |other: &Arc<Sample>| Arc::ptr_eq(sample, other);
+        self.voice.as_ref().is_some_and(|v| same(&v.sample))
+            || self.fading.as_ref().is_some_and(|v| same(&v.sample))
+            || self
+                .transport
+                .pattern
+                .as_ref()
+                .is_some_and(|p| same(&p.sample))
+            || self
+                .transport
+                .pending_pattern
+                .as_ref()
+                .is_some_and(|p| same(&p.sample))
     }
 }

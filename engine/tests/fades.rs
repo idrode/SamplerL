@@ -41,7 +41,7 @@ fn assert_no_click(audio: &[f32]) {
 #[test]
 fn slice_fades_in_and_out() {
     let sample = constant_sample(RATE as usize / 10);
-    let (mut controller, mut engine) = new_engine();
+    let (mut controller, mut engine) = new_engine(RATE);
     controller.play_range(sample, 1000..3000).unwrap();
     let audio = offline::render(&mut engine, 4000, 2);
 
@@ -58,7 +58,7 @@ fn slice_fades_in_and_out() {
 #[test]
 fn interrupting_a_slice_crossfades_without_clicks() {
     let sample = constant_sample(RATE as usize);
-    let (mut controller, mut engine) = new_engine();
+    let (mut controller, mut engine) = new_engine(RATE);
 
     controller.play_range(sample.clone(), 0..20_000).unwrap();
     let mut audio = offline::render(&mut engine, 3000, 2);
@@ -79,7 +79,7 @@ fn interrupting_a_slice_crossfades_without_clicks() {
 fn rapid_retriggers_stay_bounded() {
     // Retriggers más rápidos que el fundido: nunca más de dos voces.
     let sample = constant_sample(RATE as usize);
-    let (mut controller, mut engine) = new_engine();
+    let (mut controller, mut engine) = new_engine(RATE);
     let mut audio = Vec::new();
     for _ in 0..50 {
         controller.play_range(sample.clone(), 0..10_000).unwrap();

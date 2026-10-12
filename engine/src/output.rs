@@ -21,6 +21,8 @@ pub fn open_output(engine: Engine) -> Result<Output, BoxError> {
     let supported = device.default_output_config()?;
     let format = supported.sample_format();
     let config: StreamConfig = supported.into();
+    let mut engine = engine;
+    engine.set_sample_rate(config.sample_rate);
 
     let stream = match format {
         SampleFormat::F32 => build::<f32>(&device, &config, engine)?,

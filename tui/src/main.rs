@@ -34,7 +34,8 @@ fn load(path: &str, rate: u32) -> Result<Arc<engine::Sample>, engine::LoadError>
 }
 
 fn play(path: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let (mut controller, engine) = engine::new_engine();
+    // `open_output` ajusta la frecuencia del motor a la del dispositivo.
+    let (mut controller, engine) = engine::new_engine(RENDER_RATE);
     let output = engine::open_output(engine)?;
     controller.play(load(path, output.sample_rate)?)?;
     while controller.is_playing() {
@@ -45,7 +46,7 @@ fn play(path: &str) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn render(path: &str, out: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let (mut controller, mut engine) = engine::new_engine();
+    let (mut controller, mut engine) = engine::new_engine(RENDER_RATE);
     controller.play(load(path, RENDER_RATE)?)?;
     let max_frames = MAX_RENDER_SECONDS * RENDER_RATE as usize;
     let audio = engine::offline::render_until_stopped(&controller, &mut engine, 2, max_frames);

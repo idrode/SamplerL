@@ -4,9 +4,11 @@ mod engine;
 pub mod offline;
 mod output;
 mod sample;
+mod sequencer;
 mod slice;
 
 pub use engine::{Controller, Engine, SendError, new_engine};
 pub use output::{Output, open_output};
 pub use sample::{LoadError, Sample};
+pub use sequencer::{DEFAULT_BPM, MAX_BPM, MIN_BPM, Pattern, STEPS};
 pub use slice::Slices;

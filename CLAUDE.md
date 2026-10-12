@@ -89,7 +89,17 @@ Primer objetivo: que `steps(...)` reproduzca los cortes. Después `fx`, `every` 
 - **Paso 2 hecho.** `Slices::detect(&sample, n)` (`engine/src/slice.rs`): envolvente RMS por saltos de 256 frames con compresión `ln(1 + 100·rms)`, subida positiva como función de detección, máximos locales por encima de un umbral, los `n` más fuertes con separación mínima de 40 ms, y afinado al frame donde empieza el ataque. Los cortes son contiguos (hasta el siguiente transitorio o el final); lo anterior al primer transitorio queda fuera. Si hay menos golpes que `n`, devuelve menos cortes.
   - `Controller::play_slice(&sample, &slices, i)` resuelve el rango en el hilo de control y envía `Play { sample, start, end }`; el motor solo recorre frames. Errores: `SendError::{QueueFull, NoSuchSlice}`.
   - Tests en `engine/tests/slicing.rs` con golpes sintéticos en posiciones conocidas (error medido ~0,2–0,3 ms, tolerancia 2 ms).
-  - Sin fundido al final del corte: si la cola del golpe sigue sonando, el corte termina en seco (posible clic). Queda para los efectos del paso 4.
+  - La distancia mínima de 40 ms se compara en saltos de 256 frames redondeando hacia arriba: en la práctica exige entre 40 y ~45 ms.
+- **Fundidos**: cada voz tiene rampas de entrada y salida de 1,5 ms. Una voz interrumpida (nuevo disparo o `stop`) pasa a una segunda ranura y hace su fundido mientras entra la nueva. Tests en `engine/tests/fades.rs`.
+- **Render offline**: `tui <archivo.wav> --render <salida.wav>` renderiza a 48 kHz sin abrir el dispositivo (WAV PCM 16 bits). Código en `engine::offline`.
+- **Paso 3 hecho.** Secuenciador de 16 pasos (`engine/src/sequencer.rs`):
+  - `Pattern::new(sample, &slices, [Option<usize>; 16])` resuelve los cortes a rangos en el hilo de control; el motor recibe un array fijo, sin reservas. Un paso `None` no dispara nada (lo que sonaba sigue).
+  - `Controller::{set_pattern, set_bpm, start, stop}`. `set_pattern` y `set_bpm` quedan pendientes y entran en el paso 0 del siguiente compás (o al arrancar). `stop` es inmediato.
+  - El paso k cae en `inicio_compás + round(k · frames_por_paso)`, y cada compás empieza donde acabó el anterior. No hay deriva aunque los frames por paso no sean enteros. El bloque de audio se parte en los límites de paso.
+  - `new_engine(sample_rate)`: el motor necesita su frecuencia; `open_output` la ajusta a la del dispositivo.
+  - `Engine::discard` suelta el `Arc` directamente si el motor guarda otra referencia al mismo sample (solo baja el contador). Así las voces que dispara el secuenciador no llenan la cola de basura.
+  - Una sola voz por motor por ahora: el secuenciador y `play_slice` comparten la voz.
+  - Tests en `engine/tests/sequencer.rs`: frame exacto de cada paso a 120 y 170 BPM, silencios, loop y cuantización.
 - Pendiente conocido: cpal avisa de un underrun al arrancar el stream (una vez, ~200 ms). PipeWire estaba inactivo y cpal iba directo a ALSA.
 
 ## Entorno de desarrollo

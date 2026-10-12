@@ -41,7 +41,7 @@ fn renders_loaded_wav_with_correct_length_and_no_silence() {
     let expected_frames = ENGINE_RATE as usize / 2;
     assert_eq!(sample.frames(), expected_frames);
 
-    let (mut controller, mut engine) = new_engine();
+    let (mut controller, mut engine) = new_engine(ENGINE_RATE);
     controller.play(sample).unwrap();
 
     // Renderizar en bloques, como haría el callback, más un margen tras el final.
@@ -77,7 +77,7 @@ fn render_until_stopped_writes_a_readable_wav() {
 
     let sample = Arc::new(Sample::load_wav(&input, ENGINE_RATE).unwrap());
     let frames = sample.frames();
-    let (mut controller, mut engine) = new_engine();
+    let (mut controller, mut engine) = new_engine(ENGINE_RATE);
     controller.play(sample).unwrap();
     let audio = offline::render_until_stopped(&controller, &mut engine, CHANNELS, 10 * frames);
 
