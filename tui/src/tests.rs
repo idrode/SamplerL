@@ -271,6 +271,7 @@ fn engine_panel_only_reads_the_view_model() {
             cycle: 4,
             playing_slice: Some(1),
             level: 0.5,
+            ..TrackView::default()
         }],
         selected: Some(0),
         ..ViewModel::default()
@@ -300,4 +301,108 @@ fn pantalla() {
     );
     app.handle(ctrl('s'));
     println!("{}", text(&draw(&mut app, 120, 24)));
+}
+
+fn waveform_view(playing: Option<usize>) -> ViewModel {
+    use crate::model::Waveform;
+    use std::sync::Arc;
+    // Dos bloques: 0.5 en el primer corte y -0.5 en el segundo.
+    let mut mono = vec![0.0f32; 6000];
+    mono[..800].fill(0.5);
+    mono[3000..3800].fill(-0.5);
+    let sample = engine::Sample::from_interleaved(&mono, 1, RATE, RATE).unwrap();
+    ViewModel {
+        tracks: vec![TrackView {
+            name: "drums".into(),
+            sample_name: "break.wav".into(),
+            sample_frames: 6000,
+            sample_rate: RATE,
+            waveform: Arc::new(Waveform::of(&sample)),
+            slices: vec![0..3000, 3000..6000],
+            playing_slice: playing,
+            ..TrackView::default()
+        }],
+        selected: Some(0),
+        ..ViewModel::default()
+    }
+}
+
+fn is_braille(symbol: &str) -> bool {
+    symbol
+        .chars()
+        .next()
+        .is_some_and(|c| ('\u{2801}'..='\u{28FF}').contains(&c))
+}
+
+#[test]
+fn sample_panel_draws_the_waveform_in_braille_with_slices() {
+    let view = waveform_view(Some(1));
+    // 60 celdas útiles de ancho (62 con el borde).
+    let buffer = draw_widget(ui::SamplePanel(&view), 62, 12);
+    let screen = text(&buffer);
+    assert!(
+        screen.contains("sample · drums · break.wav · 0.12 s · 2 cortes"),
+        "{screen}"
+    );
+
+    // Números de los cortes: el 1 al principio y el 2 en la mitad (3000/6000).
+    assert_eq!(buffer[(1, 1)].symbol(), "1");
+    assert_eq!(buffer[(1 + 30, 1)].symbol(), "2");
+    assert_eq!(buffer[(31, 1)].fg, Color::Yellow);
+
+    // Forma de onda en braille: el bloque positivo arriba en el corte 1 y el
+    // negativo abajo en el corte 2.
+    let braille = |x0: u16, x1: u16, y0: u16, y1: u16| {
+        (x0..x1)
+            .flat_map(|x| (y0..y1).map(move |y| (x, y)))
+            .filter(|&p| is_braille(buffer[p].symbol()))
+            .collect::<Vec<_>>()
+    };
+    assert!(
+        !braille(3, 8, 2, 5).is_empty(),
+        "sin bloque positivo:\n{screen}"
+    );
+    assert!(
+        !braille(33, 38, 7, 11).is_empty(),
+        "sin bloque negativo:\n{screen}"
+    );
+    // El corte que suena (el 2) va resaltado; el resto, en gris.
+    assert!(
+        braille(33, 38, 7, 11)
+            .iter()
+            .all(|&p| buffer[p].fg == Color::Cyan)
+    );
+    assert!(
+        braille(3, 8, 2, 5)
+            .iter()
+            .all(|&p| buffer[p].fg == Color::Gray)
+    );
+
+    // Sin corte sonando, nada resaltado.
+    let buffer = draw_widget(ui::SamplePanel(&waveform_view(None)), 62, 12);
+    let area = buffer.area;
+    assert!(
+        (0..area.width)
+            .flat_map(|x| (0..area.height).map(move |y| (x, y)))
+            .all(|p| buffer[p].fg != Color::Cyan)
+    );
+}
+
+#[test]
+fn sample_panel_follows_the_selected_track() {
+    let (_, mut app, _engine) = open("sample", Some(SONG));
+    let screen = text(&draw(&mut app, 120, 24));
+    assert!(
+        screen.contains("sample · drums · break.wav · 0.12 s · 2 cortes"),
+        "{screen}"
+    );
+    app.handle(ctrl('o'));
+    let screen = text(&draw(&mut app, 120, 24));
+    assert!(
+        screen.contains("sample · kick · break.wav · 0.12 s · 1 cortes"),
+        "{screen}"
+    );
+    assert!(screen.contains("›kick"), "{screen}");
+    app.handle(ctrl('o'));
+    assert!(text(&draw(&mut app, 120, 24)).contains("sample · drums"));
 }

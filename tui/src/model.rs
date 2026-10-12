@@ -3,6 +3,9 @@
 //! ([`engine::Status`]) y el estado del editor. Los paneles solo leen esto.
 
 use std::ops::Range;
+use std::sync::Arc;
+
+use engine::Sample;
 
 #[derive(Debug, Clone, Default)]
 pub struct ViewModel {
@@ -37,11 +40,16 @@ pub struct TransportView {
     pub step: Option<usize>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct TrackView {
     pub name: String,
     /// Pista del motor asignada.
     pub slot: Option<usize>,
+    pub sample_name: String,
+    pub sample_frames: usize,
+    pub sample_rate: u32,
+    /// Resumen de la forma de onda del sample.
+    pub waveform: Arc<Waveform>,
     pub slices: Vec<Range<usize>>,
     /// Compases del ciclo (`every`/`chance`).
     pub cycle: usize,
@@ -49,6 +57,54 @@ pub struct TrackView {
     pub playing_slice: Option<usize>,
     /// Medidor de nivel (pico con caída), de 0 a 1.
     pub level: f32,
+}
+
+/// Resumen de una forma de onda: mínimo y máximo (canales mezclados) de
+/// cada tramo de igual longitud. Se calcula una vez por sample; los paneles
+/// lo reescalan a su ancho sin tocar las muestras.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Waveform {
+    pub buckets: Vec<(f32, f32)>,
+}
+
+/// Tramos del resumen de forma de onda.
+pub const WAVEFORM_BUCKETS: usize = 2048;
+
+impl Waveform {
+    pub fn of(sample: &Sample) -> Self {
+        let frames = sample.frames();
+        let count = WAVEFORM_BUCKETS.min(frames.max(1));
+        let buckets = (0..count)
+            .map(|b| {
+                let range =
+                    b * frames / count..((b + 1) * frames / count).max(b * frames / count + 1);
+                range
+                    .filter(|&i| i < frames)
+                    .map(|i| {
+                        let (l, r) = sample.frame(i);
+                        0.5 * (l + r)
+                    })
+                    .fold((f32::MAX, f32::MIN), |(lo, hi), x| (lo.min(x), hi.max(x)))
+            })
+            .map(|(lo, hi)| if lo > hi { (0.0, 0.0) } else { (lo, hi) })
+            .collect();
+        Waveform { buckets }
+    }
+
+    /// Mínimo y máximo de la fracción `[from, to)` del sample (0 a 1).
+    pub fn range(&self, from: f64, to: f64) -> (f32, f32) {
+        let n = self.buckets.len();
+        if n == 0 {
+            return (0.0, 0.0);
+        }
+        let a = ((from * n as f64) as usize).min(n - 1);
+        let b = ((to * n as f64).ceil() as usize).clamp(a + 1, n);
+        self.buckets[a..b]
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(lo, hi), &(l, h)| {
+                (lo.min(l), hi.max(h))
+            })
+    }
 }
 
 /// Línea (desde 1) de un mensaje de error de Lua (`archivo:línea: ...`).
@@ -67,5 +123,20 @@ mod tests {
         assert_eq!(error_line("song.lua:12: steps: ...", "song.lua"), Some(12));
         assert_eq!(error_line("otro.lua:3: x", "song.lua"), None);
         assert_eq!(error_line("song.lua: no existe", "song.lua"), None);
+    }
+
+    #[test]
+    fn waveform_summarizes_min_and_max() {
+        let mut mono = vec![0.0f32; 10_000];
+        mono[2000..3000].fill(0.5);
+        mono[7000..7100].fill(-0.8);
+        let sample = Sample::from_interleaved(&mono, 1, 48_000, 48_000).unwrap();
+        let w = Waveform::of(&sample);
+        assert_eq!(w.buckets.len(), WAVEFORM_BUCKETS);
+        assert_eq!(w.range(0.0, 0.1), (0.0, 0.0));
+        // Los tramos no caen justo en los bordes: un rango interior.
+        assert_eq!(w.range(0.21, 0.29), (0.5, 0.5));
+        assert_eq!(w.range(0.6, 0.8), (-0.8, 0.0));
+        assert_eq!(w.range(0.0, 1.0), (-0.8, 0.5));
     }
 }

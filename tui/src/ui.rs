@@ -5,7 +5,9 @@ use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
+use ratatui::symbols::Marker;
 use ratatui::text::{Line, Span};
+use ratatui::widgets::canvas::{Canvas, Line as CanvasLine};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
 
 use crate::app::App;
@@ -14,6 +16,8 @@ use crate::model::ViewModel;
 pub const ERROR: Color = Color::Red;
 pub const ACCENT: Color = Color::Cyan;
 pub const DIM: Color = Color::DarkGray;
+pub const WAVE: Color = Color::Gray;
+pub const SLICE: Color = Color::Yellow;
 
 /// Dibuja toda la interfaz.
 pub fn draw(frame: &mut Frame, app: &mut App) {
@@ -24,7 +28,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(main);
 
     draw_editor(frame, app, &view, left);
-    frame.render_widget(EnginePanel(&view), right);
+    // Motor arriba (una línea por pista) y sample debajo.
+    let engine_height = (view.tracks.len() as u16 + 4).clamp(5, 12);
+    let [engine_area, sample_area] =
+        Layout::vertical([Constraint::Length(engine_height), Constraint::Min(4)]).areas(right);
+    frame.render_widget(EnginePanel(&view), engine_area);
+    frame.render_widget(SamplePanel(&view), sample_area);
     frame.render_widget(HelpLine(&view), help);
 }
 
@@ -150,5 +159,89 @@ impl Widget for HelpLine<'_> {
             ])
         };
         line.render(area, buf);
+    }
+}
+
+/// Forma de onda del sample de la pista seleccionada, en braille, con los
+/// cortes marcados y el que está sonando resaltado.
+pub struct SamplePanel<'a>(pub &'a ViewModel);
+
+impl Widget for SamplePanel<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let view = self.0;
+        let Some(track) = view.selected.and_then(|i| view.tracks.get(i)) else {
+            Paragraph::new(Line::from("sin pistas").fg(DIM))
+                .block(Block::bordered().title(" sample "))
+                .render(area, buf);
+            return;
+        };
+        let seconds = track.sample_frames as f64 / track.sample_rate.max(1) as f64;
+        let block = Block::bordered().title(format!(
+            " sample · {} · {} · {seconds:.2} s · {} cortes ",
+            track.name,
+            track.sample_name,
+            track.slices.len()
+        ));
+        let inner = block.inner(area);
+        block.render(area, buf);
+        if inner.width < 2 || inner.height < 2 || track.sample_frames == 0 {
+            return;
+        }
+
+        // Resolución en braille: 2 puntos por celda en horizontal.
+        let columns = inner.width as usize * 2;
+        let frames = track.sample_frames as f64;
+        let playing = track
+            .playing_slice
+            .and_then(|i| track.slices.get(i))
+            .map(|r| (r.start as f64 / frames, r.end as f64 / frames));
+        let wave = &track.waveform;
+        Canvas::default()
+            .marker(Marker::Braille)
+            .x_bounds([0.0, columns as f64])
+            .y_bounds([-1.0, 1.0])
+            .paint(|ctx| {
+                for x in 0..columns {
+                    let from = x as f64 / columns as f64;
+                    let to = (x + 1) as f64 / columns as f64;
+                    let (lo, hi) = wave.range(from, to);
+                    let lit = playing.is_some_and(|(a, b)| from < b && to > a);
+                    ctx.draw(&CanvasLine {
+                        x1: x as f64,
+                        y1: lo as f64,
+                        x2: x as f64,
+                        y2: hi as f64,
+                        color: if lit { ACCENT } else { WAVE },
+                    });
+                }
+                // Marcas de los cortes encima.
+                ctx.layer();
+                for slice in &track.slices {
+                    let x = (slice.start as f64 / frames * columns as f64).floor();
+                    ctx.draw(&CanvasLine {
+                        x1: x,
+                        y1: -1.0,
+                        x2: x,
+                        y2: 1.0,
+                        color: SLICE,
+                    });
+                }
+            })
+            .render(inner, buf);
+
+        // Número de cada corte (desde 1) en lo alto de su marca. Se escribe en
+        // el buffer para que caiga en la misma celda que la línea braille
+        // (`ctx.print` redondea la posición de otra forma).
+        for (i, slice) in track.slices.iter().enumerate() {
+            let column = (slice.start as f64 / frames * inner.width as f64).floor() as u16;
+            if column < inner.width {
+                buf.set_string(
+                    inner.x + column,
+                    inner.y,
+                    (i + 1).to_string(),
+                    Style::new().fg(SLICE).bold(),
+                );
+            }
+        }
     }
 }

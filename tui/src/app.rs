@@ -1,12 +1,14 @@
 //! Estado y lógica de la interfaz, sin terminal (se prueba sin pantalla).
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use engine::{Controller, MAX_TRACKS, Status};
+use engine::{Controller, MAX_TRACKS, Sample, Status};
 use ratatui_textarea::{CursorMove, Input, Key, TextArea};
 use script::{ScriptError, ScriptHost};
 
-use crate::model::{ErrorView, TrackView, TransportView, ViewModel, error_line};
+use crate::model::{ErrorView, TrackView, TransportView, ViewModel, Waveform, error_line};
 
 /// Plantilla para un script nuevo.
 const TEMPLATE: &str = r#"bpm(170)
@@ -42,6 +44,9 @@ pub struct App {
     meters: [f32; MAX_TRACKS],
     /// Se pidió salir con cambios sin guardar: otra vez para confirmar.
     quit_armed: bool,
+    /// Resúmenes de forma de onda por sample (se guarda el `Arc` para que la
+    /// dirección no se reutilice mientras está en la caché).
+    waveforms: HashMap<usize, (Arc<Sample>, Arc<Waveform>)>,
 }
 
 impl App {
@@ -67,6 +72,7 @@ impl App {
             status: None,
             meters: [0.0; MAX_TRACKS],
             quit_armed: false,
+            waveforms: HashMap::new(),
         };
         app.load();
         Ok(app)
@@ -120,12 +126,29 @@ impl App {
                 if self.selected >= count {
                     self.selected = 0;
                 }
+                self.update_waveforms();
             }
             Err(e) => {
                 self.message = "error: sigue sonando lo anterior".into();
                 self.error = Some(e);
             }
         }
+    }
+
+    /// Calcula los resúmenes de los samples nuevos y olvida los que ya no se
+    /// usan. Se hace al cargar, no al dibujar.
+    fn update_waveforms(&mut self) {
+        let Some(song) = self.host.song() else { return };
+        let mut next = HashMap::new();
+        for track in &song.tracks {
+            let key = Arc::as_ptr(&track.sample) as usize;
+            let entry = self
+                .waveforms
+                .remove(&key)
+                .unwrap_or_else(|| (track.sample.clone(), Arc::new(Waveform::of(&track.sample))));
+            next.insert(key, entry);
+        }
+        self.waveforms = next;
     }
 
     pub fn toggle_transport(&mut self) {
@@ -244,9 +267,20 @@ impl App {
                         let playing_slice = track_status
                             .and_then(|ts| ts.hit_start)
                             .and_then(|start| t.slices.iter().position(|r| r.start == start));
+                        let waveform = self
+                            .waveforms
+                            .get(&(Arc::as_ptr(&t.sample) as usize))
+                            .map_or_else(Default::default, |(_, w)| w.clone());
                         TrackView {
                             name: t.name.clone(),
                             slot,
+                            sample_name: t
+                                .path
+                                .file_name()
+                                .map_or_else(String::new, |n| n.to_string_lossy().into()),
+                            sample_frames: t.sample.frames(),
+                            sample_rate: t.sample.sample_rate(),
+                            waveform,
                             slices: t.slices.iter().collect(),
                             cycle: t.bars.len(),
                             playing_slice,
