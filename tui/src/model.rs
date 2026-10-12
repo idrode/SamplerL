@@ -17,6 +17,10 @@ pub struct ViewModel {
     pub playing_mode: bool,
     /// El archivo cambió fuera del editor (se ofrece recargar).
     pub external_change: bool,
+    /// Línea de órdenes abierta (F2) y su texto.
+    pub prompt: Option<String>,
+    /// Nombre del proyecto abierto, si lo hay.
+    pub project: Option<String>,
     /// Mensaje informativo de la última acción.
     pub message: String,
     /// Error de la última carga (sigue sonando lo anterior).

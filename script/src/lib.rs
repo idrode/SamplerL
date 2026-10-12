@@ -36,8 +36,10 @@ use engine::{
     Batch, Controller, FilterKind, Fx, MAX_CYCLE_BARS, MAX_FX, MAX_GAIN, MAX_RETRIG, MAX_SEMITONES,
     MAX_TRACKS, Pattern, STEPS, Sample, SendError, Slices, Step, valid_bpm,
 };
+pub mod project;
 mod watch;
 
+pub use project::Project;
 pub use watch::{ScriptWatcher, WatchEvent};
 
 use mlua::{
@@ -160,6 +162,10 @@ pub struct ScriptHost {
     song: Option<Song>,
     /// Semilla de `chance`; `None` usa una distinta en cada evaluación.
     seed: Option<u64>,
+    /// Carpeta de los samples (del proyecto); `None`: la del script.
+    sample_dir: Option<PathBuf>,
+    /// Tempo si el script no llama a `bpm()` (del proyecto).
+    default_bpm: Option<f64>,
 }
 
 impl ScriptHost {
@@ -172,7 +178,29 @@ impl ScriptHost {
             slots: Default::default(),
             song: None,
             seed: None,
+            sample_dir: None,
+            default_bpm: None,
         }
+    }
+
+    /// Carpeta donde `sample()` busca las rutas relativas. `None` (por
+    /// defecto): la carpeta del script.
+    pub fn set_sample_dir(&mut self, dir: Option<PathBuf>) {
+        self.sample_dir = dir;
+    }
+
+    pub fn sample_dir(&self) -> Option<&Path> {
+        self.sample_dir.as_deref()
+    }
+
+    /// Tempo que se usa si el script no llama a `bpm()`. Si lo llama, manda
+    /// el script.
+    pub fn set_default_bpm(&mut self, bpm: Option<f64>) {
+        self.default_bpm = bpm;
+    }
+
+    pub fn default_bpm(&self) -> Option<f64> {
+        self.default_bpm
     }
 
     /// Fija la semilla de `chance` (reproducible). `None`: una nueva cada vez.
@@ -223,26 +251,7 @@ impl ScriptHost {
     ) -> Result<&Song, ScriptError> {
         let song = self.eval(source, name, base_dir)?;
         let slots = self.assign_slots(&song);
-
-        let mut batch = Batch::new();
-        if let Some(bpm) = song.bpm {
-            batch.set_bpm(bpm);
-        }
-        for (slot, assigned) in slots.iter().enumerate() {
-            let pattern = match assigned {
-                Some(name) => {
-                    let track = song.tracks.iter().find(|t| &t.name == name).unwrap();
-                    let pattern =
-                        Pattern::from_bars(track.sample.clone(), &track.slices, &track.bars)
-                            .and_then(|p| p.with_gain(track.gain))
-                            .and_then(|p| p.with_fx(&track.fx))
-                            .map_err(|e| ScriptError::new(format!("pista \"{name}\": {e}")))?;
-                    Some(pattern)
-                }
-                None => None,
-            };
-            batch.set_pattern(slot, pattern);
-        }
+        let batch = song_batch(&song, &slots)?;
         controller
             .apply(batch)
             .map_err(|e| ScriptError::new(format!("no se pudo enviar al motor: {e}")))?;
@@ -294,7 +303,7 @@ impl ScriptHost {
         let (bpm, tracks, expanding) = {
             let mut builder = state.borrow_mut();
             (
-                builder.bpm,
+                builder.bpm.or(self.default_bpm),
                 std::mem::take(&mut builder.tracks),
                 builder.expanding.clone(),
             )
@@ -362,7 +371,10 @@ impl ScriptHost {
         )?;
 
         let cache = cache.clone();
-        let base_dir = base_dir.to_path_buf();
+        let base_dir = self
+            .sample_dir
+            .clone()
+            .unwrap_or_else(|| base_dir.to_path_buf());
         let rate = self.sample_rate;
         let g = guard.clone();
         globals.set(
@@ -442,6 +454,59 @@ impl ScriptHost {
             slots[free] = Some(name);
         }
         slots
+    }
+}
+
+/// Lote que lleva la canción al motor: tempo y el patrón de cada pista en su
+/// ranura (`slots[i]` es el nombre de la pista de la ranura `i`).
+fn song_batch(song: &Song, slots: &[Option<String>; MAX_TRACKS]) -> Result<Batch, ScriptError> {
+    let mut batch = Batch::new();
+    if let Some(bpm) = song.bpm {
+        batch.set_bpm(bpm);
+    }
+    for (slot, assigned) in slots.iter().enumerate() {
+        let pattern = match assigned {
+            Some(name) => {
+                let track = song.tracks.iter().find(|t| &t.name == name).unwrap();
+                let pattern = Pattern::from_bars(track.sample.clone(), &track.slices, &track.bars)
+                    .and_then(|p| p.with_gain(track.gain))
+                    .and_then(|p| p.with_fx(&track.fx))
+                    .map_err(|e| ScriptError::new(format!("pista \"{name}\": {e}")))?;
+                Some(pattern)
+            }
+            None => None,
+        };
+        batch.set_pattern(slot, pattern);
+    }
+    Ok(batch)
+}
+
+impl Song {
+    /// Compases que dura la canción entera: el mínimo común múltiplo de los
+    /// ciclos de sus pistas (con `every`/`chance`), y al menos `min_bars`
+    /// (redondeado a ciclos completos).
+    pub fn length_bars(&self, min_bars: u64) -> u64 {
+        let cycle = self
+            .tracks
+            .iter()
+            .fold(1u64, |acc, t| lcm(acc, t.bars.len().max(1) as u64));
+        cycle * min_bars.div_ceil(cycle).max(1)
+    }
+
+    /// Renderiza `bars` compases de la canción offline, en un motor aparte
+    /// (no toca el que está sonando). Estéreo entrelazado a `sample_rate`.
+    pub fn render(&self, sample_rate: u32, bars: u64) -> Result<Vec<f32>, ScriptError> {
+        let mut slots: [Option<String>; MAX_TRACKS] = Default::default();
+        for (slot, track) in slots.iter_mut().zip(&self.tracks) {
+            *slot = Some(track.name.clone());
+        }
+        let (mut controller, mut engine) = engine::new_engine(sample_rate);
+        let send = |e: SendError| ScriptError::new(format!("motor: {e}"));
+        controller.apply(song_batch(self, &slots)?).map_err(send)?;
+        controller.start().map_err(send)?;
+        let bpm = self.bpm.unwrap_or(engine::DEFAULT_BPM);
+        let frames = bars * engine::bar_frames(bpm, sample_rate);
+        Ok(engine::offline::render(&mut engine, frames as usize, 2))
     }
 }
 

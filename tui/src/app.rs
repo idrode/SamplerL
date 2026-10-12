@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use engine::{Controller, MAX_TRACKS, Sample, Status};
 use ratatui_textarea::{CursorMove, Input, Key, TextArea};
-use script::{ScriptError, ScriptHost};
+use script::{Project, ScriptError, ScriptHost};
 
 use crate::model::{ErrorView, TrackView, TransportView, ViewModel, Waveform, error_line};
 
@@ -50,6 +50,11 @@ pub enum Flow {
 pub struct App {
     pub editor: TextArea<'static>,
     path: PathBuf,
+    /// Proyecto abierto o guardado (`.sampler`), si lo hay.
+    project: Option<PathBuf>,
+    sample_rate: u32,
+    /// Línea de órdenes abierta (F2) y su texto.
+    prompt: Option<String>,
     /// Contenido guardado en disco (para saber si hay cambios).
     saved: String,
     host: ScriptHost,
@@ -77,16 +82,13 @@ pub struct App {
 impl App {
     /// Abre el script (o una plantilla si no existe) y lo carga.
     pub fn open(path: &Path, controller: Controller, sample_rate: u32) -> std::io::Result<App> {
-        let (text, saved) = match std::fs::read_to_string(path) {
-            Ok(text) => (text.clone(), text),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                (TEMPLATE.to_string(), String::new())
-            }
-            Err(e) => return Err(e),
-        };
+        let (text, saved) = read_script(path)?;
         let mut app = App {
             editor: TextArea::new(text.lines().map(String::from).collect()),
             path: path.to_path_buf(),
+            project: None,
+            sample_rate,
+            prompt: None,
             saved,
             host: ScriptHost::new(sample_rate),
             controller,
@@ -105,6 +107,204 @@ impl App {
         };
         app.load();
         Ok(app)
+    }
+
+    /// Abre un proyecto (`.sampler`): su script, su carpeta de samples y su
+    /// tempo por defecto.
+    pub fn open_project(
+        path: &Path,
+        controller: Controller,
+        sample_rate: u32,
+    ) -> Result<App, Box<dyn std::error::Error>> {
+        let project = Project::load(path)?;
+        let mut app = App::open(&project.script, controller, sample_rate)?;
+        app.apply_project(path, &project)?;
+        Ok(app)
+    }
+
+    /// Pone el proyecto en el editor y el motor (entra en el compás
+    /// siguiente, como cualquier carga).
+    fn apply_project(&mut self, path: &Path, project: &Project) -> std::io::Result<()> {
+        let (text, saved) = read_script(&project.script)?;
+        self.editor = TextArea::new(text.lines().map(String::from).collect());
+        self.path = project.script.clone();
+        self.saved = saved;
+        self.external = None;
+        self.overwrite_armed = false;
+        self.project = Some(path.to_path_buf());
+        self.host.set_sample_dir(project.samples.clone());
+        self.host.set_default_bpm(project.bpm);
+        self.load();
+        Ok(())
+    }
+
+    /// Carpeta respecto a la que se resuelven las rutas de las órdenes: la
+    /// del proyecto o, si no hay, la del script.
+    fn base_dir(&self) -> PathBuf {
+        self.project
+            .as_deref()
+            .unwrap_or(&self.path)
+            .parent()
+            .unwrap_or(Path::new("."))
+            .to_path_buf()
+    }
+
+    fn stem(&self) -> String {
+        self.path
+            .file_stem()
+            .map_or_else(|| "canción".into(), |s| s.to_string_lossy().into())
+    }
+
+    /// Ejecuta una orden de la línea de órdenes (F2).
+    pub fn run_command(&mut self, line: &str) {
+        let mut words = line.split_whitespace();
+        let Some(command) = words.next() else { return };
+        let args: Vec<&str> = words.collect();
+        match command {
+            "exportar" | "export" => self.export(&args),
+            "guardar" | "save" => self.save_project(args.first().copied()),
+            "abrir" | "open" => self.open_project_command(args.first().copied(), false),
+            "abrir!" | "open!" => self.open_project_command(args.first().copied(), true),
+            "muestras" | "samples" => self.set_samples(args.first().copied()),
+            other => {
+                self.message =
+                    format!("orden desconocida «{other}» (exportar, guardar, abrir, muestras)");
+            }
+        }
+    }
+
+    /// `exportar [archivo.wav] [compases]`: renderiza offline lo último
+    /// cargado (en un motor aparte, sin tocar lo que suena) y lo guarda.
+    fn export(&mut self, args: &[&str]) {
+        let Some(song) = self.host.song() else {
+            self.message = "no hay nada cargado que exportar".into();
+            return;
+        };
+        let mut name = args
+            .first()
+            .map_or_else(|| format!("{}-mezcla.wav", self.stem()), |a| a.to_string());
+        if Path::new(&name).extension().is_none() {
+            name.push_str(".wav");
+        }
+        let bars = match args.get(1) {
+            Some(text) => match text.parse::<u64>() {
+                Ok(bars) if (1..=256).contains(&bars) => bars,
+                _ => {
+                    self.message = format!("compases no válidos: {text} (1 a 256)");
+                    return;
+                }
+            },
+            None => song.length_bars(4),
+        };
+        let path = self.base_dir().join(&name);
+        let bpm = song.bpm.unwrap_or(engine::DEFAULT_BPM);
+        let result = song
+            .render(self.sample_rate, bars)
+            .map_err(|e| e.to_string())
+            .and_then(|audio| {
+                engine::offline::write_wav(&path, &audio, 2, self.sample_rate)
+                    .map(|()| audio.len() / 2)
+                    .map_err(|e| e.to_string())
+            });
+        let note = if self.dirty() || self.error.is_some() {
+            " (lo último cargado bien, no el texto actual)"
+        } else {
+            ""
+        };
+        self.message = match result {
+            Ok(frames) => format!(
+                "exportado {}: {bars} compases a {bpm} BPM ({:.1} s){note}",
+                path.display(),
+                frames as f64 / self.sample_rate as f64
+            ),
+            Err(e) => format!("no se pudo exportar: {e}"),
+        };
+    }
+
+    /// `guardar [proyecto.sampler]`: guarda el script y el proyecto.
+    fn save_project(&mut self, target: Option<&str>) {
+        let path = match target {
+            Some(name) => {
+                let mut path = self.base_dir().join(name);
+                if path.extension().is_none() {
+                    path.set_extension(script::project::EXTENSION);
+                }
+                path
+            }
+            None => self.project.clone().unwrap_or_else(|| {
+                self.base_dir()
+                    .join(format!("{}.{}", self.stem(), script::project::EXTENSION))
+            }),
+        };
+        if self.dirty() || self.external.is_some() {
+            self.save();
+            if self.external.is_some() || self.dirty() {
+                // `save` pidió confirmación (cambio externo) o falló.
+                return;
+            }
+        }
+        let bpm = self
+            .host
+            .song()
+            .and_then(|s| s.bpm)
+            .or(self.host.default_bpm());
+        let project = Project {
+            script: self.path.clone(),
+            samples: self.host.sample_dir().map(Path::to_path_buf),
+            bpm,
+        };
+        self.message = match project.save(&path) {
+            Ok(()) => {
+                self.project = Some(path.clone());
+                format!("proyecto guardado en {}", path.display())
+            }
+            Err(e) => format!("no se pudo guardar el proyecto: {e}"),
+        };
+    }
+
+    /// `abrir proyecto.sampler` (o `abrir!` para descartar cambios).
+    fn open_project_command(&mut self, target: Option<&str>, force: bool) {
+        let Some(name) = target else {
+            self.message = "uso: abrir proyecto.sampler".into();
+            return;
+        };
+        if self.dirty() && !force {
+            self.message = "hay cambios sin guardar: guárdalos o usa «abrir! ...»".into();
+            return;
+        }
+        let path = self.base_dir().join(name);
+        let result = Project::load(&path)
+            .map_err(|e| e.to_string())
+            .and_then(|project| {
+                self.apply_project(&path, &project)
+                    .map_err(|e| format!("{}: {e}", project.script.display()))
+            });
+        if let Err(e) = result {
+            self.message = format!("no se pudo abrir: {e}");
+        } else if self.error.is_none() {
+            self.message = format!(
+                "proyecto {} abierto: entra en el siguiente compás",
+                path.display()
+            );
+        }
+    }
+
+    /// `muestras carpeta`: carpeta de los samples (y recarga). Sin argumento
+    /// dice cuál es.
+    fn set_samples(&mut self, target: Option<&str>) {
+        match target {
+            None => {
+                self.message = match self.host.sample_dir() {
+                    Some(dir) => format!("samples en {}", dir.display()),
+                    None => "samples junto al script".into(),
+                };
+            }
+            Some(dir) => {
+                let dir = self.base_dir().join(dir);
+                self.host.set_sample_dir(Some(dir));
+                self.load();
+            }
+        }
     }
 
     pub fn file_name(&self) -> String {
@@ -314,6 +514,24 @@ impl App {
     /// Atiende una tecla: atajos propios; si no, en modo tocar dispara
     /// cortes y en modo editor escribe.
     pub fn handle(&mut self, input: Input) -> Flow {
+        if let Some(prompt) = &mut self.prompt {
+            match input.key {
+                Key::Enter => {
+                    let line = self.prompt.take().unwrap_or_default();
+                    self.run_command(&line);
+                }
+                Key::Esc => {
+                    self.prompt = None;
+                    self.message = "orden cancelada".into();
+                }
+                Key::Backspace => {
+                    prompt.pop();
+                }
+                Key::Char(c) if !input.ctrl && !input.alt => prompt.push(c),
+                _ => {}
+            }
+            return Flow::Continue;
+        }
         let quit_armed = std::mem::replace(&mut self.quit_armed, false);
         if (input.key, input.ctrl) != (Key::Char('s'), true) {
             self.overwrite_armed = false;
@@ -333,6 +551,7 @@ impl App {
             (Key::Char('g'), true) => self.goto_error(),
             (Key::Char('o'), true) => self.next_track(),
             (Key::F(3), _) => self.reload_external(),
+            (Key::F(2), _) => self.prompt = Some(String::new()),
             (Key::Esc, _) => self.toggle_mode(),
             (Key::Char(c), false) if self.mode == Mode::Play && !input.alt => {
                 if let Some(index) = PADS.iter().position(|&p| p == c.to_ascii_lowercase()) {
@@ -421,10 +640,28 @@ impl App {
             dirty: self.dirty(),
             playing_mode: self.mode == Mode::Play,
             external_change: self.external.is_some(),
+            prompt: self.prompt.clone(),
+            project: self
+                .project
+                .as_ref()
+                .and_then(|p| p.file_name())
+                .map(|n| n.to_string_lossy().into()),
             message: self.message.clone(),
             transport,
             tracks,
             selected,
         }
+    }
+}
+
+/// Texto de un script y lo que hay guardado en disco (vacío si no existe:
+/// se abre la plantilla, con cambios sin guardar).
+fn read_script(path: &Path) -> std::io::Result<(String, String)> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => Ok((text.clone(), text)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Ok((TEMPLATE.to_string(), String::new()))
+        }
+        Err(e) => Err(e),
     }
 }

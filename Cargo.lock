@@ -2092,6 +2092,7 @@ name = "tui"
 version = "0.1.0"
 dependencies = [
  "engine",
+ "hound",
  "ratatui",
  "ratatui-textarea",
  "script",

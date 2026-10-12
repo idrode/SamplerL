@@ -53,7 +53,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
 fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rect) {
     let dirty = if view.dirty { " ●" } else { "" };
-    let mut block = Block::bordered().title(format!(" {}{dirty} ", view.file));
+    let project = view
+        .project
+        .as_ref()
+        .map_or(String::new(), |p| format!(" · {p}"));
+    let mut block = Block::bordered().title(format!(" {}{dirty}{project} ", view.file));
     if view.external_change {
         block = block.title(
             Line::from(" ⚠ cambiado fuera · F3 recargar ")
@@ -198,8 +202,21 @@ impl Widget for HelpLine<'_> {
             "TOCAR: 1-0 q-i cortes de la pista · Ctrl-O pista · Ctrl-T marcha/paro · Esc editor"
         } else {
             "Ctrl-S guardar y cargar · Ctrl-L cargar · Ctrl-T marcha/paro · \
-             Ctrl-G ir al error · Ctrl-O pista · Esc tocar · Ctrl-Q salir"
+             Ctrl-G ir al error · Ctrl-O pista · Esc tocar · F2 órdenes · Ctrl-Q salir"
         };
+        if let Some(prompt) = &self.0.prompt {
+            Line::from(vec![
+                Span::from("orden> ").fg(ACCENT).bold(),
+                Span::raw(format!("{prompt}█  ")),
+                Span::from(
+                    "exportar [archivo.wav] [compases] · guardar [proyecto] · \
+                     abrir proyecto · muestras carpeta · Esc cancelar",
+                )
+                .fg(DIM),
+            ])
+            .render(area, buf);
+            return;
+        }
         let message = &self.0.message;
         let line = if message.is_empty() {
             Line::from(keys).fg(DIM)

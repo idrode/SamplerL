@@ -852,3 +852,207 @@ fn reverting_the_external_change_clears_the_warning() {
     app.check_external();
     assert!(!app.view().external_change);
 }
+
+fn command(app: &mut App, line: &str) {
+    app.handle(f(2));
+    for c in line.chars() {
+        app.handle(key(c));
+    }
+    app.handle(Input {
+        key: Key::Enter,
+        ..Input::default()
+    });
+}
+
+fn read_wav(path: &Path) -> (hound::WavSpec, Vec<f32>) {
+    let mut reader = hound::WavReader::open(path).unwrap();
+    let samples = reader
+        .samples::<i16>()
+        .map(|s| s.unwrap() as f32 / i16::MAX as f32)
+        .collect();
+    (reader.spec(), samples)
+}
+
+#[test]
+fn f2_opens_a_command_line() {
+    let (_, mut app, _engine) = open("prompt", Some(SONG));
+    let before = app.editor.lines().to_vec();
+    app.handle(f(2));
+    for c in "exportarx".chars() {
+        app.handle(key(c));
+    }
+    app.handle(Input {
+        key: Key::Backspace,
+        ..Input::default()
+    });
+    let screen = text(&draw(&mut app, 130, 40));
+    assert!(screen.contains("orden> exportar█"), "{screen}");
+    // Esc cancela; el editor no recibió nada.
+    app.handle(esc());
+    assert!(app.view().prompt.is_none());
+    assert!(
+        !app.view().playing_mode,
+        "Esc en la orden no cambia de modo"
+    );
+    assert_eq!(app.editor.lines(), before.as_slice());
+
+    command(&mut app, "bailar");
+    assert!(app.view().message.contains("orden desconocida «bailar»"));
+}
+
+#[test]
+fn export_renders_the_mix_to_wav() {
+    let (path, mut app, _engine) = open("export", Some(SONG));
+    command(&mut app, "exportar mezcla.wav 2");
+    let out = path.parent().unwrap().join("mezcla.wav");
+    assert!(
+        app.view().message.contains("2 compases a 120 BPM (4.0 s)"),
+        "{}",
+        app.view().message
+    );
+    let (spec, samples) = read_wav(&out);
+    assert_eq!((spec.channels, spec.sample_rate), (2, RATE));
+    assert_eq!(samples.len() / 2, 2 * 16 * STEP);
+
+    // Lo mismo que renderizar la canción por separado (a 16 bits).
+    let mut host = script::ScriptHost::new(RATE);
+    let (mut c2, _e2) = new_engine(RATE);
+    let song = host
+        .load(&mut c2, SONG, "song.lua", path.parent().unwrap())
+        .unwrap();
+    let reference = song.render(RATE, 2).unwrap();
+    assert!(
+        samples
+            .iter()
+            .zip(&reference)
+            .all(|(a, b)| (a - b.clamp(-1.0, 1.0)).abs() <= 1.0 / i16::MAX as f32)
+    );
+    assert!(samples.iter().any(|&s| s > 0.4));
+
+    // Sin argumentos: <script>-mezcla.wav y la canción entera (al menos 4).
+    command(&mut app, "exportar");
+    let (_, samples) = read_wav(&path.parent().unwrap().join("song-mezcla.wav"));
+    assert_eq!(samples.len() / 2, 4 * 16 * STEP);
+    // Sin extensión se añade .wav; compases inválidos, error.
+    command(&mut app, "exportar corto 1");
+    assert!(path.parent().unwrap().join("corto.wav").exists());
+    command(&mut app, "exportar x.wav 0");
+    assert!(app.view().message.contains("compases no válidos"));
+}
+
+#[test]
+fn export_uses_the_last_good_load() {
+    let (path, mut app, _engine) = open("export_dirty", Some(SONG));
+    replace_all(&mut app, "bpm(\n");
+    app.handle(ctrl('l'));
+    command(&mut app, "exportar ok.wav 1");
+    let message = app.view().message;
+    assert!(message.contains("lo último cargado bien"), "{message}");
+    let (_, samples) = read_wav(&path.parent().unwrap().join("ok.wav"));
+    assert_eq!(samples.len() / 2, 16 * STEP);
+}
+
+#[test]
+fn projects_save_and_open_from_the_command_line() {
+    let (path, mut app, _engine) = open("project", Some(SONG));
+    let dir = path.parent().unwrap().to_path_buf();
+    type_text(&mut app, "-- versión 2\n");
+    command(&mut app, "guardar mi-proyecto");
+    let project = dir.join("mi-proyecto.sampler");
+    let text = std::fs::read_to_string(&project).unwrap();
+    assert_eq!(
+        text,
+        "# proyecto del sampler\nscript = song.lua\nbpm = 120\n"
+    );
+    // Guardar el proyecto guarda también el script.
+    assert!(
+        std::fs::read_to_string(&path)
+            .unwrap()
+            .starts_with("-- versión 2\n")
+    );
+    let screen = text_of(&mut app);
+    assert!(
+        screen.contains("song.lua · mi-proyecto.sampler"),
+        "{screen}"
+    );
+
+    // Otro script en otra carpeta de samples, sin bpm(): toma el del proyecto.
+    std::fs::create_dir_all(dir.join("samples")).unwrap();
+    std::fs::rename(dir.join("break.wav"), dir.join("samples").join("break.wav")).unwrap();
+    let other = "local amen = sample(\"break.wav\"):slice(2)\ntrack(\"solo\", amen):steps(\"2 . . .  . . . .  . . . .  . . . .\")\n";
+    std::fs::write(dir.join("otro.lua"), other).unwrap();
+    std::fs::write(
+        dir.join("otro.sampler"),
+        "script = otro.lua\nsamples = samples\nbpm = 96\n",
+    )
+    .unwrap();
+
+    // Abrir con cambios sin guardar: se niega; con abrir!, sí.
+    type_text(&mut app, "x");
+    command(&mut app, "abrir otro.sampler");
+    assert!(app.view().message.contains("abrir! ..."));
+    command(&mut app, "abrir! otro.sampler");
+    let view = app.view();
+    assert!(
+        view.message.contains("otro.sampler abierto"),
+        "{}",
+        view.message
+    );
+    assert_eq!(view.file, "otro.lua");
+    assert_eq!(view.tracks.len(), 1);
+    assert_eq!(view.tracks[0].name, "solo");
+    assert_eq!(app.editor.lines()[1], other.lines().nth(1).unwrap());
+    assert!(!view.dirty);
+
+    // Exportar usa su tempo (96) y su carpeta.
+    command(&mut app, "exportar");
+    assert!(
+        app.view().message.contains("a 96 BPM"),
+        "{}",
+        app.view().message
+    );
+    assert!(dir.join("otro-mezcla.wav").exists());
+
+    // `guardar` sin nombre reescribe el proyecto abierto.
+    command(&mut app, "guardar");
+    let text = std::fs::read_to_string(dir.join("otro.sampler")).unwrap();
+    assert_eq!(
+        text,
+        "# proyecto del sampler\nscript = otro.lua\nsamples = samples\nbpm = 96\n"
+    );
+}
+
+#[test]
+fn edit_opens_a_project_file_directly() {
+    let path = fixture("project_cli", Some(SONG));
+    let dir = path.parent().unwrap();
+    std::fs::write(dir.join("p.sampler"), "script = song.lua\nbpm = 100\n").unwrap();
+    let (controller, _engine) = new_engine(RATE);
+    let app = App::open_project(&dir.join("p.sampler"), controller, RATE).unwrap();
+    let view = app.view();
+    assert_eq!(view.project.as_deref(), Some("p.sampler"));
+    assert_eq!(view.tracks.len(), 2);
+    let (controller, _engine) = new_engine(RATE);
+    assert!(App::open_project(&dir.join("no.sampler"), controller, RATE).is_err());
+}
+
+#[test]
+fn samples_command_changes_the_sample_folder() {
+    let (path, mut app, _engine) = open("samples_cmd", Some(SONG));
+    let dir = path.parent().unwrap();
+    command(&mut app, "muestras");
+    assert_eq!(app.view().message, "samples junto al script");
+    command(&mut app, "muestras vacía");
+    // En esa carpeta no está break.wav: error en el editor, sigue lo anterior.
+    let view = app.view();
+    assert!(view.error.is_some());
+    assert_eq!(view.tracks.len(), 2);
+    command(&mut app, "muestras .");
+    assert!(app.view().error.is_none());
+    command(&mut app, "muestras");
+    assert!(app.view().message.contains(&dir.display().to_string()));
+}
+
+fn text_of(app: &mut App) -> String {
+    text(&draw(app, 130, 40))
+}

@@ -8,3 +8,6 @@ engine = { version = "0.1.0", path = "../engine" }
 ratatui = "0.30.2"
 ratatui-textarea = "0.9.3"
 script = { version = "0.1.0", path = "../script" }
+
+[dev-dependencies]
+hound = "3.5.1"

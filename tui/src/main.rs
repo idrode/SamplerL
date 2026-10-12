@@ -10,7 +10,7 @@ use std::time::Duration;
 use engine::{DetectOptions, Detector, Pattern, STEPS, Slices, Step};
 
 const USAGE: &str = "\
-uso: tui --edit <canción.lua> [--allow-audio]   (interfaz: editor, sample, tracker, efectos)
+uso: tui --edit <canción.lua | proyecto.sampler> [--allow-audio]   (interfaz)
      tui <archivo.wav> --render <salida.wav>
      tui --script <canción.lua> --render <salida.wav> [--bars M]
      tui --script <canción.lua> --allow-audio     (reproduce y recarga al guardar)
@@ -344,7 +344,14 @@ fn run_editor(path: &std::path::Path, allow_audio: bool) -> Result<(), BoxError>
         sample_rate = RENDER_RATE;
         _audio = None;
     }
-    let mut app = app::App::open(path, controller, sample_rate)?;
+    let is_project = path
+        .extension()
+        .is_some_and(|e| e == script::project::EXTENSION);
+    let mut app = if is_project {
+        app::App::open_project(path, controller, sample_rate)?
+    } else {
+        app::App::open(path, controller, sample_rate)?
+    };
 
     let mut terminal = ratatui::init();
     let result = (|| -> Result<(), BoxError> {
