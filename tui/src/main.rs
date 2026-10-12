@@ -6,6 +6,7 @@ use engine::{DetectOptions, Detector, Pattern, STEPS, Slices, Step};
 const USAGE: &str = "\
 uso: tui <archivo.wav> --render <salida.wav>
      tui --script <canción.lua> --render <salida.wav> [--bars M]
+     tui --script <canción.lua> --allow-audio     (reproduce y recarga al guardar)
      tui <archivo.wav> --render <salida.wav> --pattern \"1 . 3 . ...\" \
 [--slices N] [--bpm B] [--bars M] [--min-gap MS] [--detector flux|energy]
 
@@ -115,8 +116,15 @@ fn run() -> Result<(), BoxError> {
             )
             .into());
         }
-        let out = render_to.ok_or_else(|| format!("--script necesita --render\n{USAGE}"))?;
-        return render_script(&script, &out, bars.unwrap_or(DEFAULT_BARS));
+        return match render_to {
+            Some(out) => render_script(&script, &out, bars.unwrap_or(DEFAULT_BARS)),
+            None if allow_audio => play_script(&script),
+            None => Err(format!(
+                "no se reproduce por la tarjeta de sonido sin --allow-audio; \
+                 para escuchar, renderiza con --render <salida.wav>\n{USAGE}"
+            )
+            .into()),
+        };
     }
     let path = path.ok_or(USAGE)?;
 
@@ -271,4 +279,34 @@ fn render_script(path: &str, out: &str, bars: u64) -> Result<(), BoxError> {
         frames as f64 / RENDER_RATE as f64
     );
     Ok(())
+}
+
+/// Reproduce una canción en Lua por la tarjeta y la recarga al guardarla.
+/// Cada cambio entra en el siguiente compás; si el script falla, se muestra
+/// el error y sigue sonando lo anterior. Solo con `--allow-audio`.
+fn play_script(path: &str) -> Result<(), BoxError> {
+    use script::WatchEvent;
+
+    // `open_output` ajusta la frecuencia del motor a la del dispositivo.
+    let (mut controller, engine) = engine::new_engine(RENDER_RATE);
+    let output = engine::open_output(engine)?;
+    let mut host = script::ScriptHost::new(output.sample_rate);
+    let mut watcher = script::ScriptWatcher::new(path);
+    let mut started = false;
+    println!("{path}: se recarga al guardar (Ctrl-C para salir)");
+    loop {
+        match watcher.poll(&mut host, &mut controller) {
+            WatchEvent::Unchanged => {}
+            WatchEvent::Reloaded => {
+                println!("recargado: entra en el siguiente compás");
+                if !started {
+                    controller.start()?;
+                    started = true;
+                }
+            }
+            WatchEvent::Failed(e) => eprintln!("error (sigue sonando lo anterior): {e}"),
+        }
+        controller.collect_garbage();
+        std::thread::sleep(Duration::from_millis(200));
+    }
 }

@@ -55,7 +55,7 @@ Alojar VST, mezclador completo con buses, automatización compleja. No intentarl
 
 ## Ejemplo de la API objetivo (Lua)
 
-Diseño al que apuntar. Ya existen `bpm`, `sample`, `:slice`, `track` y `:steps` (paso 5); faltan `fx`, `every`, `chance`, `gain` y `slice_at`. Cada llamada solo emite comandos al motor, que los aplica al final del compás.
+Toda esta API existe ya (pasos 4 y 5; ver Estado). Cada llamada solo construye el modelo de estado; el motor aplica los cambios al final del compás.
 
 ```lua
 bpm(170)
@@ -103,27 +103,38 @@ Primer objetivo: que `steps(...)` reproduzca los cortes. Después `fx`, `every` 
   - Varias pistas (`MAX_TRACKS` = 8), cada una con su patrón, su voz y su ranura de fundido; suenan a la vez y se suman. `Controller::set_pattern` usa la pista 0; `set_track_pattern(t, Option<Pattern>)` cualquier pista (`None` la silencia). `play*` suena en la pista 0.
   - Lotes atómicos: `Controller::apply(Batch)` con tempo y patrones de varias pistas. Antes de enviar valida todo y comprueba que cabe en la cola (o no envía nada). El motor guarda los cambios aparte entre `BeginBatch` y `CommitBatch`, así que un lote leído a medias nunca entra a medias en un compás. Tests en `engine/tests/tracks.rs` y en `engine.rs` (lote leído a medias).
   - Tests en `engine/tests/sequencer.rs`: frame exacto de cada paso a 120 y 170 BPM, silencios, loop y cuantización.
-- **Paso 4 empezado.** Volumen, pitch y reverse por paso (falta retrigger/stutter, filtro y bitcrusher):
+- **Paso 4 hecho.** Efectos por paso (volumen, pitch, reverse, retrigger) y por pista (volumen, filtro, bitcrusher):
   - `Step { slice, gain, semitones, reverse }` (con `Step::new(i).with_gain(g).with_pitch(st).reversed()`) y `Pattern::from_steps(sample, &slices, [Option<Step>; 16])`. Se valida en el hilo de control: ganancia 0–4, pitch ±36 semitonos (`SendError::InvalidStep`).
   - La voz lee en posición fraccionaria (f64) con interpolación lineal: el pitch cambia la velocidad y la duración, sin time-stretch. Con pitch 0 la salida es idéntica bit a bit a la de antes. El reverse lee de `end-1` a `start`. Los fundidos van en tiempo de salida, así que son simétricos: el reverse es exactamente la inversión temporal del forward.
   - Dentro de una pista no hay polifonía: cada paso corta al anterior con fundido cruzado, como en un tracker.
   - Interpolación lineal: subiendo mucho el pitch habrá aliasing. Si molesta, cambiar a una interpolación mejor (cúbica o sinc corta).
-  - Tests en `engine/tests/step_effects.rs`.
-- **Paso 5 (mini-notación hecha)** en `engine::notation` (`parse_steps`, `parse_step`), usada por `--pattern`, `PATTERN` del script y (después) Lua. 16 pasos separados por espacios (los espacios de más no cuentan):
+  - Retrigger/stutter por paso (`Step::with_retrig(n)`, `3r4` en la notación, de 1 a 16): el paso se divide en n partes y el corte vuelve a empezar en cada una, con frame exacto (`round(j · duración_paso / n)`). Se programa en el motor como los pasos.
+  - Efectos de pista (`engine/src/fx.rs`): `Pattern::with_fx(&[Fx])`, cadena de hasta 4 que entra con el patrón. `Fx::lowpass/highpass(corte)` (biquad RBJ, 12 dB/oct, `q` configurable) y `Fx::bitcrush(bits, downsample)`. El estado vive en arrays fijos de cada pista; un efecto del mismo tipo en la misma ranura conserva su memoria al cambiar de patrón, y en silencio se vacía.
+  - Volumen de pista: `Pattern::with_gain(g)` (0–4), entra con el patrón. Se suaviza (~5 ms) si la pista suena; si está callada, entra directo.
+  - Mezcla en trozos de hasta 256 frames con buffers estéreo fijos (pista y maestro) dentro de `Engine`: voces → efectos → volumen de pista → maestro → limitador → salida (en mono se promedia).
+  - Limitador (`engine::soft_limit`): recortador suave sin memoria, lineal hasta 0,9 y curva tanh por encima; nunca pasa de ±1 y un NaN se convierte en silencio. No es un limitador con envolvente ni lookahead: si se nota la saturación, añadir uno de verdad.
+  - Tests en `engine/tests/step_effects.rs`, `effects.rs` y `mix.rs` (8 pistas saturadas, suma ~±115, nunca pasan de ±1).
+- **Paso 5 (mini-notación hecha)** en `engine::notation` (`parse_steps`, `parse_step`), usada por `--pattern`, `PATTERN` del script y Lua. 16 pasos separados por espacios (los espacios de más no cuentan):
   - `.` silencio; `3` corte 3 (desde 1); `x` = `1`.
-  - Sufijos combinables, en cualquier orden, cada uno una vez: `'` reverse, `^7` / `^-5` / `^0.5` pitch en semitonos, `@0.5` volumen. Ejemplo: `3'^7@0.5`.
-  - Errores con número de paso y token: `paso 11 ("5^"): falta el número después de ^`. Los rangos (ganancia 0–4, pitch ±36) los valida `Pattern::from_steps`.
+  - Sufijos combinables, en cualquier orden, cada uno una vez: `'` reverse, `^7` / `^-5` / `^0.5` pitch en semitonos, `@0.5` volumen, `r4` retrigger. Ejemplo: `3'^7@0.5r2`.
+  - Errores con número de paso y token: `paso 11 ("5^"): falta el número después de ^`. Los rangos (ganancia 0–4, pitch ±36, retrigger 1–16) los valida `Pattern::from_steps`.
   - Tests en `engine/tests/notation.rs` (incluido que un patrón en notación renderiza igual que el construido con `Step`).
 - **Paso 5 (Lua hecho)** en el crate `script` (`mlua` 0.12 con Lua 5.4 `vendored`; compila con el gcc del sistema). Depende de `engine`; `tui` depende de los dos.
   - `ScriptHost::load(controller, fuente, nombre, carpeta)` / `load_file(controller, ruta)`: evalúa el script en un Lua nuevo, construye el modelo `Song { bpm, tracks: Vec<TrackDef> }` y lo envía con `Controller::apply` como un lote: todo entra junto en el siguiente compás. `ScriptHost::song()` es el último modelo válido (lo leerán las vistas).
   - Si algo falla, no se envía nada y sigue sonando lo anterior. Esto incluye sintaxis, errores de ejecución, notación, corte inexistente, archivo que no existe, pista no definida, BPM fuera de rango, más de 8 pistas o un script que tarda más de 2 s (`set_time_limit`; se corta con un hook cada 10000 instrucciones).
   - Errores con archivo y línea: `song.lua:3: steps: paso 11 ("5^"): falta el número después de ^`.
-  - API: `bpm(n)`, `sample(ruta)` (relativa a la carpeta del script), `:slice(n)` (detector por defecto; `:count()` da los cortes), `track(nombre, sliced)` define o redefine una pista, `track(nombre)` la recupera, `:steps("...")` en mini-notación (encadenable).
+  - API: `bpm(n)`, `sample(ruta)` (relativa a la carpeta del script), `:slice(n)` (detector por defecto; `:count()` da los cortes), `:slice_at(i)` (solo el corte i, desde 1; en el patrón es `1`/`x`), `track(nombre, sliced)` define o redefine una pista, `track(nombre)` la recupera. Métodos de pista, encadenables: `:steps("...")` en mini-notación, `:gain(g)`, `:fx(nombre, {params})`, `:every(n, fn)` y `:chance(p, efecto[, valor])`.
+  - `:fx`: `"filter"` (`type` = `"lowpass"`/`"highpass"`, `cutoff`, `q`), `"lowpass"`/`"highpass"` (`cutoff`, `q`), `"bitcrush"` (`bits` = 8, `downsample` = 1). Una clave desconocida da error (para detectar erratas).
+  - `:every(n, fn)`: como en Tidal, en los compases 0, n, 2n… de la canción se llama `fn(compás)`. El compás admite `steps`, `reverse` (invierte el sentido de cada golpe), `pitch`, `retrig` y `gain`. Llamar a `track`, `bpm` o `sample` dentro da error.
+  - `:chance(p, efecto[, valor])`: cada golpe sufre el efecto con probabilidad p. Efectos: `retrig`/`stutter` n, `reverse`, `pitch` st, `gain` g, `mute`. `ScriptHost::set_seed(Some(s))` hace el azar reproducible (los tests usan una semilla fija); sin semilla cambia en cada carga.
+  - `every` y `chance` se expanden al evaluar a un ciclo de compases (`TrackDef::bars`): longitud = mcm de los `every`, con 16 compases si hay `chance`; máximo 64. El motor (`Pattern::from_bars`) toca `bars[compás_global % longitud]`: es determinista y queda alineado con el compás de la canción aunque se recargue. El azar de `chance` se repite cada 16 compases.
+  - Los patrones que el motor suelta vuelven enteros por la cola de basura, porque llevan memoria propia (sus compases).
   - Solo se cargan las librerías `math`, `string`, `table` y `utf8` (sin `io` ni `os`).
   - Los samples se cachean por ruta y fecha de modificación: recargar no vuelve a decodificar y conserva el mismo `Arc`. Cada nombre de pista conserva su pista del motor entre recargas; las pistas que desaparecen del script se silencian en el compás siguiente.
-  - Render: `cargo run -p tui -- --script scripts/demo.lua --render renders/demo-lua.wav --bars 4` (necesita `renders/synth_break.wav`, que genera `scripts/render-demo.sh`).
-  - Las pistas se suman sin ganancia maestra ni limitador: varias pistas fuertes a la vez pueden saturar (el WAV recorta a ±1).
-  - Tests en `script/tests/lua.rs`: API con dos pistas, `track(nombre)`, recarga cuantizada (patrón y tempo), 11 tipos de error con el audio idéntico al de no haber recargado, caché de samples y pistas estables.
+  - Render: `cargo run -p tui -- --script scripts/demo.lua --render renders/demo-lua.wav --bars 8` (necesita `renders/synth_break.wav`, que genera `scripts/render-demo.sh`). `scripts/demo.lua` usa toda la API.
+  - Recarga automática al guardar (`script/src/watch.rs`): `ScriptWatcher::poll(host, controller)` lee el archivo y, si su contenido cambió, lo carga con `ScriptHost::load`. Mismas garantías: entra entero en el compás siguiente y, si falla, sigue sonando lo anterior. Compara contenido, no fecha, así que un guardado a medias da un error y el siguiente sondeo recoge la versión completa. Los errores de lectura (archivo borrado un momento) se informan una vez. Un script que falló no se reintenta hasta que cambie. Sin dependencias nuevas (sondeo, no `notify`).
+  - `tui --script canción.lua --allow-audio` reproduce y recarga al guardar (sondeo cada 200 ms). Claude Code no lo ha ejecutado nunca: abre la tarjeta.
+  - Tests en `script/tests/lua.rs`: API con dos pistas, `track(nombre)`, recarga cuantizada (patrón y tempo), 11 tipos de error con el audio idéntico al de no haber recargado, caché de samples y pistas estables. Además, en `script/tests/api.rs`: el ejemplo de CLAUDE.md tal cual, `slice_at`, `every`, `chance` con semilla, `fx` igual que en el motor y 16 errores de la API con línea y audio intacto. Y en `script/tests/watch.rs`: recarga al guardar cuantizada, guardado a medias, error de ejecución, archivo borrado y sin reintento hasta que cambie.
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`
 - Pendiente conocido: cpal avisa de un underrun al arrancar el stream (una vez, ~200 ms). PipeWire estaba inactivo y cpal iba directo a ALSA.
 

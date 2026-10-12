@@ -36,6 +36,10 @@ use engine::{
     Batch, Controller, FilterKind, Fx, MAX_CYCLE_BARS, MAX_FX, MAX_GAIN, MAX_RETRIG, MAX_SEMITONES,
     MAX_TRACKS, Pattern, STEPS, Sample, SendError, Slices, Step, valid_bpm,
 };
+mod watch;
+
+pub use watch::{ScriptWatcher, WatchEvent};
+
 use mlua::{
     Function, HookTriggers, Lua, LuaOptions, StdLib, Table, UserData, UserDataMethods, UserDataRef,
     Value, VmState,
