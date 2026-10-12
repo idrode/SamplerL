@@ -285,8 +285,10 @@ struct Track {
     retrig: Option<Retrig>,
 }
 
-/// Retrigger en curso: el paso que empezó en `start` y dura `length` frames
-/// se divide en `count` partes; ya se han disparado `done`.
+/// Disparos pendientes de una pista: el golpe empieza en `start` (el
+/// frame del paso más su retraso) y dura `length` frames (los del paso);
+/// se divide en `count` partes (retrigger) y ya se han disparado `done`.
+/// Un golpe retrasado empieza con `done` = 0.
 #[derive(Clone, Copy)]
 struct Retrig {
     hit: Trigger,
@@ -664,6 +666,9 @@ impl Engine {
             {
                 let track = &mut self.tracks[t];
                 let old = std::mem::replace(&mut track.pattern, change);
+                // Los disparos pendientes eran del patrón anterior (quizá de
+                // otro sample): no se mezclan con el nuevo.
+                track.retrig = None;
                 // Si la pista está callada, el volumen nuevo entra ya, sin
                 // suavizado: el primer golpe suena con él desde el principio.
                 if !track.voice.as_ref().is_some_and(Voice::is_active) && track.fading.is_none() {
@@ -681,16 +686,32 @@ impl Engine {
                 .pattern
                 .as_ref()
                 .and_then(|p| p.bars[(bar % p.bars.len() as u64) as usize][step]);
-            // Los subdisparos de un retrigger caben dentro de su paso.
-            self.tracks[t].retrig = hit.filter(|h| h.retrig > 1).map(|hit| Retrig {
-                hit,
-                count: hit.retrig,
-                done: 1,
-                start: now,
-                length: next - now,
-            });
-            if let Some(hit) = hit {
+            let Some(hit) = hit else {
+                // Un paso vacío no corta los subdisparos pendientes de un
+                // golpe retrasado del paso anterior.
+                continue;
+            };
+            let length = next - now;
+            let delay = (hit.delay as f64 * length as f64).round() as u64;
+            if delay == 0 {
+                // Los subdisparos de un retrigger caben dentro de su paso.
+                self.tracks[t].retrig = (hit.retrig > 1).then_some(Retrig {
+                    hit,
+                    count: hit.retrig,
+                    done: 1,
+                    start: now,
+                    length,
+                });
                 self.play_hit(t, hit);
+            } else {
+                // Retrasado: se dispara (con sus subdisparos) al llegar a su frame.
+                self.tracks[t].retrig = Some(Retrig {
+                    hit,
+                    count: hit.retrig,
+                    done: 0,
+                    start: now + delay,
+                    length,
+                });
             }
         }
     }

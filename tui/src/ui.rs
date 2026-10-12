@@ -698,8 +698,12 @@ impl Widget for FxPanel<'_> {
             } else {
                 name
             };
+            let mut title = vec![name];
+            if track.swing > 50.0 {
+                title.push(Span::from(format!(" · swing {}", track.swing)).fg(DIM));
+            }
             let mut lines = vec![
-                Line::from(name),
+                Line::from(title),
                 Line::from(vec![
                     Span::raw(format!("vol {:.2} ", track.gain)),
                     Span::from(meter(

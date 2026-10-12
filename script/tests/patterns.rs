@@ -256,3 +256,45 @@ fn scale_melodies_sound_like_the_pitched_pattern() {
     assert!(error(&dir, "scale(\"minor\", \"H\")").contains("tónica no válida"));
     assert!(error(&dir, "scale(\"minor\"):pitch(0)").contains("pitch(0): el grado 0 no existe"));
 }
+
+/// Frames donde arranca un golpe en el canal izquierdo.
+fn onsets(audio: &[f32]) -> Vec<usize> {
+    let left: Vec<f32> = audio.iter().step_by(2).copied().collect();
+    (1..left.len())
+        .filter(|&i| left[i - 1] == 0.0 && left[i] != 0.0)
+        .map(|i| i - 1)
+        .collect()
+}
+
+/// A 120 BPM, 6000 frames por paso.
+const STEP: usize = 6000;
+
+#[test]
+fn swing_delays_offbeats_by_exact_frames() {
+    let dir = fixture("swing");
+    let steps = "track(\"d\", amen):steps(\"1 2 1 2  1 2 1 2  1 2 1 2  1 2 1 2\")";
+    for (percent, delay) in [(50, 0), (58, 960), (66, 1920), (75, 3000)] {
+        let got = onsets(&render(&dir, &format!("{steps}:swing({percent})"), 1));
+        let expected: Vec<usize> = (0..16)
+            .map(|k| k * STEP + if k % 2 == 1 { delay } else { 0 })
+            .collect();
+        assert_eq!(got, expected, "swing({percent})");
+    }
+    // 50 es lo mismo que no ponerlo.
+    same(
+        &render(&dir, &format!("{steps}:swing(50)"), 2),
+        &render(&dir, steps, 2),
+    );
+    // Se aplica también a los compases de every.
+    let got = onsets(&render(
+        &dir,
+        "track(\"d\", amen):steps(\"1 . . .  . . . .  . . . .  . . . .\")\
+         :every(2, function(c) c:steps(\". 2 . .  . . . .  . . . .  . . . .\") end):swing(66)",
+        2,
+    ));
+    assert_eq!(got, vec![STEP + 1920, 16 * STEP]);
+    assert_eq!(
+        error(&dir, "track(\"d\", amen):swing(80)"),
+        "song.lua:3: swing(80): va de 50 (recto) a 75"
+    );
+}

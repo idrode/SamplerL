@@ -1236,6 +1236,7 @@ impl App {
                             gain: t.gain,
                             fx: t.fx.clone(),
                             labels: t.labels.clone(),
+                            swing: t.swing,
                         }
                     })
                     .collect()

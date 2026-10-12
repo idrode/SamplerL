@@ -842,11 +842,15 @@ mod tests {
     #[test]
     fn methods_follow_the_type_of_the_receiver() {
         let c = at(&format!("{SONG}track(\"drums\", amen):|")).unwrap();
+        let track: Vec<String> = api::functions(Receiver::Track)
+            .map(|f| f.name.to_string())
+            .collect();
         assert_eq!(
             labels(&c),
-            ["steps", "gain", "fx", "every", "chance"],
-            "métodos de pista"
+            track,
+            "métodos de pista, en el orden del registro"
         );
+        assert!(track.starts_with(&["steps".into(), "gain".into()]));
         assert_eq!(c.matches()[0].kind, "método de pista");
         let c = at("local s = sample(\"amen.wav\")\ns:|").unwrap();
         assert_eq!(labels(&c), ["slice"]);

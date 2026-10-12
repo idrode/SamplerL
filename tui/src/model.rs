@@ -113,6 +113,8 @@ pub struct TrackView {
     pub fx: Vec<Fx>,
     /// Etiqueta de cada corte (si la tiene).
     pub labels: Vec<Option<String>>,
+    /// Swing en porcentaje (50 = recto; 0 si no se ha dicho).
+    pub swing: f32,
 }
 
 impl TrackView {

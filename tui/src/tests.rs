@@ -1125,10 +1125,10 @@ fn completion_filters_by_prefix_while_typing() {
 fn completion_follows_the_context() {
     let (mut app, _engine) = open_at_end("complete_context");
     type_text(&mut app, "track(\"drums\"):");
-    assert_eq!(
-        completion_items(&app),
-        ["steps", "gain", "fx", "every", "chance"]
-    );
+    let track: Vec<String> = script::api::functions(script::api::Receiver::Track)
+        .map(|f| f.name.to_string())
+        .collect();
+    assert_eq!(completion_items(&app), track);
     assert!(text_of(&mut app).contains("método de pista"));
 
     type_text(&mut app, "fx(\"");
@@ -1995,4 +1995,17 @@ fn loading_warns_about_project_labels_for_another_slice_count() {
             .ends_with("la etiqueta «kick» del proyecto es de slice(4) y este script usa slice(2)"),
         "{error}"
     );
+}
+
+#[test]
+fn the_fx_panel_shows_the_swing() {
+    let song = SONG.replace(
+        "track(\"kick\", amen:slice_at(1)):steps(\"x . . .  x . . .  x . . .  x . . .\")",
+        "track(\"kick\", amen:slice_at(1)):steps(\"x . . .  x . . .  x . . .  x . . .\"):swing(62)",
+    );
+    let (_, mut app, _engine) = open("swing_panel", Some(&song));
+    assert!(app.view().error.is_none(), "{:?}", app.view().error);
+    let screen = text(&draw(&mut app, 120, 40));
+    assert!(screen.contains("kick · swing 62"), "{screen}");
+    assert!(!screen.contains("drums · swing"), "{screen}");
 }

@@ -702,6 +702,29 @@ pub const FUNCTIONS: &[Function] = &[
         ),
     },
     Function {
+        name: "swing",
+        receiver: Receiver::Track,
+        signature: "pista:swing(porcentaje)",
+        returns: Some(Receiver::Track),
+        summary: "Swing: retrasa los contratiempos de semicorchea (pasos 2, 4, 6...).",
+        doc: "El porcentaje es el de las cajas de ritmos (MPC): dónde cae el \
+              contratiempo dentro de cada par de semicorcheas. 50 es recto, 54-58 \
+              un swing suave, 66 casi tresillo y 75 el máximo (el contratiempo a \
+              medio paso). Se aplica después de `every`, `chance` y `fill`, al \
+              frame exacto y igual en cada pasada.",
+        params: &[Param {
+            name: "porcentaje",
+            description: "de 50 (recto) a 75",
+        }],
+        template: "swing(${58})",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             track(\"drums\", amen)\n  \
+             :steps(\"1 2 2 2  3 2 4 2  5 6 2 2  7 2 8 2\")\n  \
+             :swing(62)\n",
+        ),
+    },
+    Function {
         name: "fx",
         receiver: Receiver::Track,
         signature: "pista:fx(nombre, parámetros)",

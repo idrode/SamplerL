@@ -58,6 +58,11 @@ const HOOK_INSTRUCTIONS: u32 = 10_000;
 /// `shuffle` sin semilla propia.
 const PATTERN_SEED: u64 = 0x5eed_0f9a_77e2_a5c3;
 
+/// Swing recto (sin retraso).
+const STRAIGHT_SWING: f32 = 50.0;
+/// Swing máximo: el contratiempo, a medio paso.
+const MAX_SWING: f32 = 75.0;
+
 /// Compases que se tiran los dados de `chance` antes de repetirse.
 pub const CHANCE_CYCLE_BARS: u64 = 16;
 
@@ -95,6 +100,8 @@ pub struct TrackDef {
     pub fx: Vec<Fx>,
     /// Etiqueta de cada corte de la pista (`labels[i]`, corte `i` desde 0).
     pub labels: Vec<Option<String>>,
+    /// Swing (`:swing()`), en porcentaje estilo MPC: 50 es recto.
+    pub swing: f32,
     /// De qué sample y qué `slice(n)` salen los cortes (para etiquetarlos
     /// desde la interfaz y guardarlo en el proyecto).
     pub origin: SliceOrigin,
@@ -580,6 +587,7 @@ impl ScriptHost {
                                     gain: 1.0,
                                     fx: Vec::new(),
                                     labels: Vec::new(),
+                                    swing: STRAIGHT_SWING,
                                     origin: source.origin.clone(),
                                 },
                                 labels: source.labels.clone(),
@@ -811,8 +819,25 @@ fn expand(track: TrackBuild, rng: &mut Rng) -> Result<TrackDef, ScriptError> {
         }
         bars.push(steps);
     }
+    // Swing: los contratiempos de semicorchea (pasos 2, 4, 6... desde 1)
+    // se retrasan.
+    let swing = swing_delay(def.swing);
+    if swing > 0.0 {
+        for bar in &mut bars {
+            for step in bar.iter_mut().skip(1).step_by(2).flatten() {
+                step.delay = (step.delay + swing).min(engine::MAX_DELAY);
+            }
+        }
+    }
     def.bars = bars;
     Ok(def)
+}
+
+/// Retraso (en pasos) de los contratiempos con un swing en porcentaje
+/// estilo MPC: el contratiempo cae en ese porcentaje del par de
+/// semicorcheas (50 = recto, 66 ≈ tresillo, 75 = máximo).
+fn swing_delay(percent: f32) -> f32 {
+    (2.0 * percent / 100.0 - 1.0).max(0.0)
 }
 
 fn apply_chance(slot: &mut Option<Step>, effect: Chance) {
@@ -1263,6 +1288,18 @@ impl UserData for TrackHandle {
                 return Err(fail(lua, SendError::InvalidTrackGain(gain)));
             }
             this.with_track(|t| t.def.gain = gain);
+            Ok(this.clone())
+        });
+
+        // `:swing(p)`: swing en porcentaje estilo MPC (50 recto, 75 máximo).
+        methods.add_method("swing", |lua, this, percent: f32| {
+            if !(STRAIGHT_SWING..=MAX_SWING).contains(&percent) {
+                return Err(fail(
+                    lua,
+                    format!("swing({percent}): va de 50 (recto) a 75"),
+                ));
+            }
+            this.with_track(|t| t.def.swing = percent);
             Ok(this.clone())
         });
 

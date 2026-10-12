@@ -569,6 +569,21 @@ local amen = sample("amen.wav"):slice(8)
 track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 ."):gain(0.7)
 ```
 
+### `pista:swing(porcentaje)`
+
+Devuelve: pista.
+
+Swing: retrasa los contratiempos de semicorchea (pasos 2, 4, 6...). El porcentaje es el de las cajas de ritmos (MPC): dónde cae el contratiempo dentro de cada par de semicorcheas. 50 es recto, 54-58 un swing suave, 66 casi tresillo y 75 el máximo (el contratiempo a medio paso). Se aplica después de `every`, `chance` y `fill`, al frame exacto y igual en cada pasada.
+
+- `porcentaje`: de 50 (recto) a 75
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen)
+  :steps("1 2 2 2  3 2 4 2  5 6 2 2  7 2 8 2")
+  :swing(62)
+```
+
 ### `pista:fx(nombre, parámetros)`
 
 Devuelve: pista.

@@ -20,6 +20,9 @@ pub const MAX_GAIN: f32 = 4.0;
 pub const MAX_SEMITONES: f32 = 36.0;
 /// Repeticiones máximas de un paso con retrigger.
 pub const MAX_RETRIG: u8 = 16;
+/// Retraso máximo de un golpe, en fracción de paso: siempre suena antes
+/// del paso siguiente.
+pub const MAX_DELAY: f32 = 0.9;
 /// Compases máximos del ciclo de variantes de un patrón.
 pub const MAX_CYCLE_BARS: usize = 64;
 
@@ -38,6 +41,9 @@ pub struct Step {
     /// Retrigger/stutter: el paso se divide en `retrig` partes iguales y el
     /// corte vuelve a empezar en cada una. 1 = sin retrigger.
     pub retrig: u8,
+    /// Retraso del golpe (swing, humanize), en fracción de paso: de 0 a
+    /// `MAX_DELAY`. El motor lo pasa a frames con la duración del paso.
+    pub delay: f32,
 }
 
 impl Step {
@@ -48,7 +54,12 @@ impl Step {
             semitones: 0.0,
             reverse: false,
             retrig: 1,
+            delay: 0.0,
         }
+    }
+
+    pub fn with_delay(self, delay: f32) -> Self {
+        Step { delay, ..self }
     }
 
     pub fn with_retrig(self, retrig: u8) -> Self {
@@ -78,6 +89,8 @@ pub(crate) struct Trigger {
     pub end: usize,
     pub playback: Playback,
     pub retrig: u8,
+    /// Retraso en fracción de paso.
+    pub delay: f32,
 }
 
 /// Patrón de un compás. Los pasos se resuelven a rangos de frames y
@@ -187,6 +200,9 @@ fn resolve_bar(
         if !(1..=MAX_RETRIG).contains(&step.retrig) {
             return Err(invalid("retrigger fuera de rango (1 a 16)"));
         }
+        if !(0.0..=MAX_DELAY).contains(&step.delay) {
+            return Err(invalid("retraso fuera de rango (0 a 0,9 pasos)"));
+        }
         *slot = Some(Trigger {
             start: range.start,
             end: range.end.min(sample.frames()),
@@ -196,6 +212,7 @@ fn resolve_bar(
                 reverse: step.reverse,
             },
             retrig: step.retrig,
+            delay: step.delay,
         });
     }
     Ok(resolved)
