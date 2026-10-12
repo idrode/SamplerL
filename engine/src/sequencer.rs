@@ -105,6 +105,10 @@ pub struct Pattern {
     pub(crate) gain: f32,
     /// Efectos de la pista, en orden.
     pub(crate) fx: [Option<Fx>; MAX_FX],
+    /// Silenciada desde el script (`:mute()`); se suma al mute en vivo.
+    pub(crate) mute: bool,
+    /// En solo desde el script (`:solo()`); se suma al solo en vivo.
+    pub(crate) solo: bool,
 }
 
 impl Pattern {
@@ -146,7 +150,20 @@ impl Pattern {
             bars: resolved,
             gain: 1.0,
             fx: [None; MAX_FX],
+            mute: false,
+            solo: false,
         })
+    }
+
+    /// Pista silenciada (entra con el patrón, al empezar el compás).
+    pub fn with_mute(self, mute: bool) -> Self {
+        Pattern { mute, ..self }
+    }
+
+    /// Pista en solo: si alguna pista está en solo, solo suenan las que lo
+    /// están (entra con el patrón).
+    pub fn with_solo(self, solo: bool) -> Self {
+        Pattern { solo, ..self }
     }
 
     /// Cadena de efectos de la pista (hasta `MAX_FX`, en orden). Entra con el

@@ -106,6 +106,23 @@ fn the_audio_thread_never_allocates() {
         }
     });
     assert_eq!(n, 0, "reservas al cambiar de patrón");
+    // Mute y solo en vivo, y un patrón con mute del script.
+    controller.set_mute(0, true).unwrap();
+    controller.set_solo(1, true).unwrap();
+    let muted = Pattern::from_bars(sample.clone(), &slices, &bars[..1])
+        .unwrap()
+        .with_mute(true)
+        .with_solo(true);
+    controller.set_track_pattern(2, Some(muted)).unwrap();
+    let n = counted(|| {
+        for _ in 0..400 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas con mute y solo");
+    controller.set_mute(0, false).unwrap();
+    controller.set_solo(1, false).unwrap();
+
     controller.stop().unwrap();
     controller.start().unwrap();
     let n = counted(|| {

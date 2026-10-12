@@ -115,6 +115,20 @@ pub struct TrackView {
     pub labels: Vec<Option<String>>,
     /// Swing en porcentaje (50 = recto; 0 si no se ha dicho).
     pub swing: f32,
+    /// Silenciada (por el script o en vivo).
+    pub mute: bool,
+    /// En solo (por el script o en vivo).
+    pub solo: bool,
+}
+
+impl ViewModel {
+    /// Si la pista `i` se oye: sin mute y, si alguna está en solo, en solo.
+    pub fn audible(&self, i: usize) -> bool {
+        let any_solo = self.tracks.iter().any(|t| t.solo);
+        self.tracks
+            .get(i)
+            .is_some_and(|t| !t.mute && (!any_solo || t.solo))
+    }
 }
 
 impl TrackView {

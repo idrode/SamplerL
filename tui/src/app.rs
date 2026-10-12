@@ -103,6 +103,11 @@ pub struct App {
     /// Corte seleccionado de la pista seleccionada (desde 0): el último
     /// tocado en el modo tocar o el elegido desde la paleta.
     selected_slice: usize,
+    /// Mute y solo en vivo, por nombre de pista (sobreviven a las recargas).
+    muted: Vec<String>,
+    soloed: Vec<String>,
+    /// Lo último enviado al motor por pista: (mute, solo).
+    sent_mix: [(bool, bool); MAX_TRACKS],
     status: Option<Status>,
     meters: [f32; MAX_TRACKS],
     /// Se pidió salir con cambios sin guardar: otra vez para confirmar.
@@ -151,6 +156,9 @@ impl App {
             started: false,
             selected: 0,
             selected_slice: 0,
+            muted: Vec::new(),
+            soloed: Vec::new(),
+            sent_mix: [(false, false); MAX_TRACKS],
             status: None,
             meters: [0.0; MAX_TRACKS],
             quit_armed: false,
@@ -456,6 +464,12 @@ impl App {
         text
     }
 
+    /// Estado del motor (los picos se vacían al leerlo).
+    #[cfg(test)]
+    pub fn controller_status_for_test(&self) -> engine::Status {
+        self.controller.status()
+    }
+
     #[cfg(test)]
     pub fn text_for_test(&self) -> String {
         self.text()
@@ -562,6 +576,7 @@ impl App {
                     self.selected = 0;
                 }
                 self.update_waveforms();
+                self.sync_mix();
             }
             Err(e) => {
                 self.message = "error: sigue sonando lo anterior".into();
@@ -940,6 +955,9 @@ impl App {
             Action::Export => self.export(&[]),
             Action::Commands => self.prompt = Some(String::new()),
             Action::LabelSlice => self.start_labeling(),
+            Action::Mute => self.toggle_live(false),
+            Action::Solo => self.toggle_live(true),
+            Action::ClearMuteSolo => self.clear_live(),
             Action::NextSlice => self.select_slice(true),
             Action::PreviousSlice => self.select_slice(false),
             Action::Quit => {
@@ -1009,7 +1027,9 @@ impl App {
             Mode::Play => Mode::Edit,
         };
         self.message = match self.mode {
-            Mode::Play => "modo tocar: 1-0 y q-i disparan cortes · Esc vuelve al editor",
+            Mode::Play => {
+                "modo tocar: 1-0 y q-i disparan cortes · m mute · s solo · Esc vuelve al editor"
+            }
             Mode::Edit => "modo editor",
         }
         .into();
@@ -1021,6 +1041,70 @@ impl App {
             self.selected = (self.selected + 1) % count;
             self.selected_slice = 0;
         }
+    }
+
+    /// Envía al motor el mute y el solo en vivo de cada pista (solo lo que
+    /// ha cambiado: las pistas pueden haber cambiado de sitio al recargar).
+    fn sync_mix(&mut self) {
+        let mut want = [(false, false); MAX_TRACKS];
+        if let Some(song) = self.host.song() {
+            for track in &song.tracks {
+                if let Some(slot) = self.host.track_slot(&track.name) {
+                    want[slot] = (
+                        self.muted.contains(&track.name),
+                        self.soloed.contains(&track.name),
+                    );
+                }
+            }
+        }
+        for (slot, &(mute, solo)) in want.iter().enumerate() {
+            if mute != self.sent_mix[slot].0 && self.controller.set_mute(slot, mute).is_ok() {
+                self.sent_mix[slot].0 = mute;
+            }
+            if solo != self.sent_mix[slot].1 && self.controller.set_solo(slot, solo).is_ok() {
+                self.sent_mix[slot].1 = solo;
+            }
+        }
+    }
+
+    /// Mute (o, con `solo`, solo) en vivo de la pista seleccionada: entra ya,
+    /// sin esperar al compás.
+    pub fn toggle_live(&mut self, solo: bool) {
+        let Some(name) = self
+            .host
+            .song()
+            .and_then(|s| s.tracks.get(self.selected))
+            .map(|t| t.name.clone())
+        else {
+            self.message = "no hay pistas".into();
+            return;
+        };
+        let list = if solo {
+            &mut self.soloed
+        } else {
+            &mut self.muted
+        };
+        let on = match list.iter().position(|n| *n == name) {
+            Some(i) => {
+                list.remove(i);
+                false
+            }
+            None => {
+                list.push(name.clone());
+                true
+            }
+        };
+        self.sync_mix();
+        let what = if solo { "solo" } else { "mute" };
+        self.message = format!("{name}: {what} {}", if on { "sí" } else { "no" });
+    }
+
+    /// Quita todos los mute y solo en vivo.
+    pub fn clear_live(&mut self) {
+        self.muted.clear();
+        self.soloed.clear();
+        self.sync_mix();
+        self.message = "sin mute ni solo en vivo".into();
     }
 
     /// Selecciona el corte siguiente (o el anterior) de la pista
@@ -1153,6 +1237,10 @@ impl App {
             (Key::Char(c), false) if self.mode == Mode::Play && !input.alt => {
                 if let Some(index) = PADS.iter().position(|&p| p == c.to_ascii_lowercase()) {
                     self.play_pad(index);
+                } else if c == 'm' {
+                    self.toggle_live(false);
+                } else if c == 's' {
+                    self.toggle_live(true);
                 }
             }
             // En modo tocar el texto no se toca.
@@ -1237,6 +1325,8 @@ impl App {
                             fx: t.fx.clone(),
                             labels: t.labels.clone(),
                             swing: t.swing,
+                            mute: t.mute || self.muted.contains(&t.name),
+                            solo: t.solo || self.soloed.contains(&t.name),
                         }
                     })
                     .collect()

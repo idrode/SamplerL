@@ -175,6 +175,9 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Recargar del disco | Recarga el archivo si cambió fuera del editor | F3 |
 | Exportar la mezcla | Renderiza la canción entera a `<script>-mezcla.wav` | — |
 | Línea de órdenes | Abre la línea de órdenes (exportar, guardar, abrir, muestras) | F2 |
+| Mute de la pista | Silencia la pista seleccionada, o la vuelve a dejar sonar (en vivo, sin esperar al compás) | m (modo tocar) |
+| Solo de la pista | Pone la pista seleccionada en solo, o se lo quita (en vivo) | s (modo tocar) |
+| Quitar mute y solo | Quita todos los mute y solo en vivo (los del script siguen) | — |
 | Etiquetar el corte seleccionado | Abre «etiquetar N » para escribir la etiqueta (kick, snare...); se guarda en el proyecto | — |
 | Corte siguiente | Selecciona el corte siguiente de la pista (sin tocarlo) | — |
 | Corte anterior | Selecciona el corte anterior de la pista (sin tocarlo) | — |
@@ -235,9 +238,20 @@ de esta guía.
 | --- | --- |
 | 1 2 3 4 5 6 7 8 9 0 | cortes 1 a 10 |
 | q w e r t y u i | cortes 11 a 18 |
+| m | mute de la pista seleccionada (en vivo, sin esperar al compás) |
+| s | solo de la pista seleccionada (en vivo) |
 
 El corte suena al instante (no espera al compás), con el volumen y los
 efectos de la pista, y corta lo que sonaba en ella. El texto no se toca.
+
+`m` y `s` (o «Mute de la pista» y «Solo de la pista» en la paleta) son el
+mute y el solo en vivo: entran ya, con un fundido de 5 ms para que no
+haya clic, y las voces siguen su curso (al quitar el mute suena por donde
+iba). Se suman a `:mute()` y `:solo()` del script, que entran al compás.
+Mientras alguna pista está en solo, solo suenan las que lo están; un mute
+gana a un solo. El tracker marca la pista con `M` o `S` y atenúa las que
+no se oyen; el panel de efectos pone `MUTE`, `SOLO` o «(solo de otra)».
+Sobreviven a las recargas (van por el nombre de la pista).
 
 ### Línea de órdenes (F2)
 
@@ -627,6 +641,34 @@ track("drums", amen)
   :steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
   :fill("roll", 4)
   :fill("pitch", 8, 2, 7)
+```
+
+### `pista:mute([sí])`
+
+Devuelve: pista.
+
+Silencia la pista (sigue avanzando, no se oye). `mute(false)` la deja sonar. Entra al empezar el compás, como cualquier cambio del script. Desde la interfaz hay además un mute en vivo, inmediato (paleta o `m` en el modo tocar), que se suma a este: la pista calla si cualquiera de los dos lo pide.
+
+- `sí`: `true` (por defecto) silencia; `false` no
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+track("kick", amen:slice_at(1)):steps("x . . .  x . . .  x . . .  x . . ."):mute()
+```
+
+### `pista:solo([sí])`
+
+Devuelve: pista.
+
+Pone la pista en solo: mientras alguna lo esté, solo suenan las que están en solo. Como `mute`: entra al compás y se suma al solo en vivo de la interfaz (paleta o `s` en el modo tocar). Un mute gana a un solo.
+
+- `sí`: `true` (por defecto) la pone en solo; `false` no
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 ."):solo()
+track("kick", amen:slice_at(1)):steps("x . . .  x . . .  x . . .  x . . .")
 ```
 
 ### `pista:fx(nombre, parámetros)`

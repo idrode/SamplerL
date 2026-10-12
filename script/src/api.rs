@@ -837,6 +837,46 @@ pub const FUNCTIONS: &[Function] = &[
         ),
     },
     Function {
+        name: "mute",
+        receiver: Receiver::Track,
+        signature: "pista:mute([sí])",
+        returns: Some(Receiver::Track),
+        summary: "Silencia la pista (sigue avanzando, no se oye). `mute(false)` la deja sonar.",
+        doc: "Entra al empezar el compás, como cualquier cambio del script. Desde \
+              la interfaz hay además un mute en vivo, inmediato (paleta o `m` en el \
+              modo tocar), que se suma a este: la pista calla si cualquiera de los \
+              dos lo pide.",
+        params: &[Param {
+            name: "sí",
+            description: "`true` (por defecto) silencia; `false` no",
+        }],
+        template: "mute()",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             track(\"drums\", amen):steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\")\n\
+             track(\"kick\", amen:slice_at(1)):steps(\"x . . .  x . . .  x . . .  x . . .\"):mute()\n",
+        ),
+    },
+    Function {
+        name: "solo",
+        receiver: Receiver::Track,
+        signature: "pista:solo([sí])",
+        returns: Some(Receiver::Track),
+        summary: "Pone la pista en solo: mientras alguna lo esté, solo suenan las que están en solo.",
+        doc: "Como `mute`: entra al compás y se suma al solo en vivo de la interfaz \
+              (paleta o `s` en el modo tocar). Un mute gana a un solo.",
+        params: &[Param {
+            name: "sí",
+            description: "`true` (por defecto) la pone en solo; `false` no",
+        }],
+        template: "solo()",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             track(\"drums\", amen):steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\"):solo()\n\
+             track(\"kick\", amen:slice_at(1)):steps(\"x . . .  x . . .  x . . .  x . . .\")\n",
+        ),
+    },
+    Function {
         name: "fx",
         receiver: Receiver::Track,
         signature: "pista:fx(nombre, parámetros)",

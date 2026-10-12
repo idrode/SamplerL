@@ -444,7 +444,7 @@ impl Widget for HelpLine<'_> {
         } else if self.0.completion.is_some() {
             "COMPLETAR: Tab aceptar · ↑↓ elegir y Enter aceptar · Esc cerrar · Enter sin elegir: salto de línea"
         } else if self.0.playing_mode {
-            "TOCAR: 1-0 q-i cortes de la pista · Ctrl-O pista · Ctrl-T marcha/paro · F1 paleta · Esc editor"
+            "TOCAR: 1-0 q-i cortes · m mute · s solo · Ctrl-O pista · Ctrl-T marcha/paro · F1 paleta · Esc editor"
         } else {
             "Ctrl-S guardar y cargar · Ctrl-L cargar · Ctrl-T marcha/paro · \
              Ctrl-G ir al error · Ctrl-O pista · Esc tocar · F1 paleta · F2 órdenes · \
@@ -614,9 +614,21 @@ impl Widget for TrackerPanel<'_> {
         // Cabecera con los nombres de las pistas.
         let mut header = vec![Span::raw("   ")];
         for (i, track) in view.tracks.iter().enumerate() {
-            let name: String = track.name.chars().take(TRACKER_COLUMN - 1).collect();
-            let span = Span::from(format!("{name:<TRACKER_COLUMN$}"));
-            header.push(if view.selected == Some(i) {
+            // Con mute o solo, la marca al final del nombre.
+            let mark = match (track.mute, track.solo) {
+                (true, _) => " M",
+                (false, true) => " S",
+                _ => "",
+            };
+            let name: String = track
+                .name
+                .chars()
+                .take(TRACKER_COLUMN - 1 - mark.len())
+                .collect();
+            let span = Span::from(format!("{:<TRACKER_COLUMN$}", format!("{name}{mark}")));
+            header.push(if !view.audible(i) {
+                span.fg(DIM)
+            } else if view.selected == Some(i) {
                 span.fg(ACCENT).bold()
             } else {
                 span.bold()
@@ -635,14 +647,15 @@ impl Widget for TrackerPanel<'_> {
         };
         for (row, step) in (first..engine::STEPS).take(visible).enumerate() {
             let mut spans = vec![Span::from(format!("{step:02} ")).fg(DIM)];
-            for track in &view.tracks {
+            for (i, track) in view.tracks.iter().enumerate() {
                 let cell = &track.steps[step];
                 let cell_text: String = step_text(cell, &track.labels)
                     .chars()
                     .take(TRACKER_COLUMN - 1)
                     .collect();
                 let text = format!("{cell_text:<TRACKER_COLUMN$}");
-                spans.push(if cell.is_some() {
+                // Las pistas que no se oyen (mute, o solo de otra), atenuadas.
+                spans.push(if cell.is_some() && view.audible(i) {
                     Span::raw(text)
                 } else {
                     Span::from(text).fg(DIM)
@@ -699,6 +712,13 @@ impl Widget for FxPanel<'_> {
                 name
             };
             let mut title = vec![name];
+            if track.mute {
+                title.push(Span::from(" MUTE").fg(Color::Black).bg(ERROR));
+            } else if track.solo {
+                title.push(Span::from(" SOLO").fg(Color::Black).bg(Color::Yellow));
+            } else if !view.audible(i) {
+                title.push(Span::from(" (solo de otra)").fg(DIM));
+            }
             if track.swing > 50.0 {
                 title.push(Span::from(format!(" · swing {}", track.swing)).fg(DIM));
             }

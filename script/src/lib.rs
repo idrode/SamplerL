@@ -109,6 +109,10 @@ pub struct TrackDef {
     pub swing: f32,
     /// Humanize (`:humanize()`).
     pub humanize: Option<Humanize>,
+    /// Silenciada (`:mute()`).
+    pub mute: bool,
+    /// En solo (`:solo()`).
+    pub solo: bool,
     /// De qué sample y qué `slice(n)` salen los cortes (para etiquetarlos
     /// desde la interfaz y guardarlo en el proyecto).
     pub origin: SliceOrigin,
@@ -611,6 +615,8 @@ impl ScriptHost {
                                     labels: Vec::new(),
                                     swing: STRAIGHT_SWING,
                                     humanize: None,
+                                    mute: false,
+                                    solo: false,
                                     origin: source.origin.clone(),
                                 },
                                 labels: source.labels.clone(),
@@ -678,6 +684,7 @@ fn song_batch(song: &Song, slots: &[Option<String>; MAX_TRACKS]) -> Result<Batch
                 let pattern = Pattern::from_bars(track.sample.clone(), &track.slices, &track.bars)
                     .and_then(|p| p.with_gain(track.gain))
                     .and_then(|p| p.with_fx(&track.fx))
+                    .map(|p| p.with_mute(track.mute).with_solo(track.solo))
                     .map_err(|e| ScriptError::new(format!("pista \"{name}\": {e}")))?;
                 Some(pattern)
             }
@@ -1445,6 +1452,16 @@ impl UserData for TrackHandle {
                 Ok(this.clone())
             },
         );
+
+        // `:mute([sí])` y `:solo([sí])`: entran con el patrón, al compás.
+        methods.add_method("mute", |_, this, on: Option<bool>| {
+            this.with_track(|t| t.def.mute = on.unwrap_or(true));
+            Ok(this.clone())
+        });
+        methods.add_method("solo", |_, this, on: Option<bool>| {
+            this.with_track(|t| t.def.solo = on.unwrap_or(true));
+            Ok(this.clone())
+        });
 
         // `:fx(nombre, { parámetros })`: añade un efecto a la cadena.
         methods.add_method(

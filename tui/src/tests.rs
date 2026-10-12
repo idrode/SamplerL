@@ -2009,3 +2009,58 @@ fn the_fx_panel_shows_the_swing() {
     assert!(screen.contains("kick · swing 62"), "{screen}");
     assert!(!screen.contains("drums · swing"), "{screen}");
 }
+
+// --- Mute y solo ---
+
+#[test]
+fn mute_and_solo_from_the_palette_and_keys_show_and_silence() {
+    let (_, mut app, mut engine) = open("mute_solo", Some(SONG));
+    // Mute de "drums" desde la paleta.
+    palette(&mut app, "mute de la pista");
+    assert_eq!(app.view().message, "drums: mute sí");
+    let screen = text(&draw(&mut app, 120, 40));
+    assert!(screen.contains("drums M"), "{screen}");
+    assert!(screen.contains("drums MUTE"), "{screen}");
+    // El motor la calla ya: la pista 1 no da nivel, la 2 sí.
+    offline::render(&mut engine, 2 * STEP, 2);
+    let status = app.controller_status_for_test();
+    assert_eq!(status.tracks[0].peak, 0.0);
+    assert!(status.tracks[1].peak > 0.1);
+
+    // Sobrevive a recargar.
+    app.handle(ctrl('l'));
+    assert!(app.view().tracks[0].mute);
+
+    // Solo de "kick" con la tecla s del modo tocar: drums sigue muda y
+    // kick suena; quitar todo deja las dos.
+    app.handle(esc());
+    app.handle(ctrl('o'));
+    app.handle(key('s'));
+    assert_eq!(app.view().message, "kick: solo sí");
+    let screen = text(&draw(&mut app, 120, 40));
+    assert!(screen.contains("kick S"), "{screen}");
+    assert!(screen.contains("kick SOLO"), "{screen}");
+    app.handle(key('m'));
+    assert_eq!(app.view().message, "kick: mute sí");
+    assert!(!app.view().audible(1));
+    palette(&mut app, "quitar mute");
+    let view = app.view();
+    assert!(view.audible(0) && view.audible(1));
+    app.controller_status_for_test();
+    offline::render(&mut engine, 16 * STEP, 2);
+    let status = app.controller_status_for_test();
+    assert!(status.tracks[0].peak > 0.1 && status.tracks[1].peak > 0.1);
+}
+
+#[test]
+fn script_mute_and_solo_show_and_dim_the_others() {
+    let song = SONG.replace(
+        "track(\"kick\", amen:slice_at(1)):steps(\"x . . .  x . . .  x . . .  x . . .\")",
+        "track(\"kick\", amen:slice_at(1)):steps(\"x . . .  x . . .  x . . .  x . . .\"):solo()",
+    );
+    let (_, mut app, _engine) = open("script_solo", Some(&song));
+    let view = app.view();
+    assert!(view.tracks[1].solo && !view.audible(0));
+    let screen = text(&draw(&mut app, 120, 40));
+    assert!(screen.contains("drums (solo de otra)"), "{screen}");
+}

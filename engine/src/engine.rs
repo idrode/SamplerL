@@ -55,6 +55,10 @@ enum Command {
     Start,
     /// Para el secuenciador y la voz que suena.
     Stop,
+    /// Mute en vivo de una pista (inmediato, no espera al compás).
+    SetMute { track: usize, on: bool },
+    /// Solo en vivo de una pista (inmediato).
+    SetSolo { track: usize, on: bool },
 }
 
 /// Cómo se reproduce un rango: ganancia, velocidad de lectura (pitch) y
@@ -283,6 +287,14 @@ struct Track {
     fx: [FxState; MAX_FX],
     /// Subdisparos pendientes del paso actual (retrigger).
     retrig: Option<Retrig>,
+    /// Mute y solo en vivo (desde la interfaz).
+    live_mute: bool,
+    live_solo: bool,
+    /// Ganancia de mute/solo que se acerca a 0 o 1 (sin clics).
+    audible: f32,
+    /// La voz acaba de empezar desde el silencio: el mute/solo entra de
+    /// golpe (no hay nada que suavizar).
+    fresh: bool,
 }
 
 /// Disparos pendientes de una pista: el golpe empieza en `start` (el
@@ -317,7 +329,21 @@ impl Default for Track {
             gain: 1.0,
             fx: [FxState::Off; MAX_FX],
             retrig: None,
+            live_mute: false,
+            live_solo: false,
+            audible: 1.0,
+            fresh: false,
         }
+    }
+}
+
+impl Track {
+    fn muted(&self) -> bool {
+        self.live_mute || self.pattern.as_ref().is_some_and(|p| p.mute)
+    }
+
+    fn soloed(&self) -> bool {
+        self.live_solo || self.pattern.as_ref().is_some_and(|p| p.solo)
     }
 }
 
@@ -499,6 +525,24 @@ impl Controller {
         self.send(Command::Start, Some(true))
     }
 
+    /// Silencia (o vuelve a dejar sonar) una pista ya, sin esperar al
+    /// compás. Se suma al `:mute()` del script.
+    pub fn set_mute(&mut self, track: usize, on: bool) -> Result<(), SendError> {
+        if track >= MAX_TRACKS {
+            return Err(SendError::NoSuchTrack(track));
+        }
+        self.send(Command::SetMute { track, on }, None)
+    }
+
+    /// Pone (o quita) una pista en solo ya: si alguna lo está, solo suenan
+    /// esas. Se suma al `:solo()` del script.
+    pub fn set_solo(&mut self, track: usize, on: bool) -> Result<(), SendError> {
+        if track >= MAX_TRACKS {
+            return Err(SendError::NoSuchTrack(track));
+        }
+        self.send(Command::SetSolo { track, on }, None)
+    }
+
     /// Para el secuenciador y las voces que suenan (con fundido).
     pub fn stop(&mut self) -> Result<(), SendError> {
         self.send(Command::Stop, Some(false))
@@ -650,6 +694,8 @@ impl Engine {
                     self.trigger(t, None);
                 }
             }
+            Command::SetMute { track, on } => self.tracks[track].live_mute = on,
+            Command::SetSolo { track, on } => self.tracks[track].live_solo = on,
         }
     }
 
@@ -739,6 +785,11 @@ impl Engine {
     /// Sustituye la voz principal de una pista; la anterior hace su fundido
     /// de salida.
     fn trigger(&mut self, track: usize, voice: Option<Voice>) {
+        let t = &mut self.tracks[track];
+        if voice.is_some() && !t.voice.as_ref().is_some_and(Voice::is_active) && t.fading.is_none()
+        {
+            t.fresh = true;
+        }
         if let Some(old) = std::mem::replace(&mut self.tracks[track].voice, voice) {
             self.fade_out(track, old);
         }
@@ -749,10 +800,18 @@ impl Engine {
     fn mix(&mut self, n: usize) {
         self.master[..2 * n].fill(0.0);
         let smoothing = 1.0 - (-1.0 / (GAIN_SMOOTHING_SECONDS * self.sample_rate as f32)).exp();
+        // Con alguna pista en solo, solo suenan las que lo están.
+        let any_solo = self.tracks.iter().any(Track::soloed);
         for t in 0..MAX_TRACKS {
             let track = &mut self.tracks[t];
             let target = track.pattern.as_ref().map_or(1.0, |p| p.gain);
+            let audible = if track.muted() || (any_solo && !track.soloed()) {
+                0.0
+            } else {
+                1.0
+            };
             if track.voice.is_none() && track.fading.is_none() {
+                track.audible = audible;
                 // En silencio no hay nada que suavizar: el siguiente golpe
                 // empieza ya con el volumen nuevo y los efectos sin memoria.
                 track.gain = target;
@@ -760,6 +819,9 @@ impl Engine {
                     state.reset();
                 }
                 continue;
+            }
+            if std::mem::take(&mut track.fresh) {
+                track.audible = audible;
             }
             let buf = &mut self.track_buf[..2 * n];
             buf.fill(0.0);
@@ -782,7 +844,11 @@ impl Engine {
                 .zip(buf.as_chunks::<2>().0)
             {
                 track.gain += (target - track.gain) * smoothing;
-                let (l, r) = (track.gain * src[0], track.gain * src[1]);
+                // Mute y solo también se suavizan: las voces siguen su curso
+                // (al quitar el mute suenan por donde iban) pero no se oyen.
+                track.audible += (audible - track.audible) * smoothing;
+                let gain = track.gain * track.audible;
+                let (l, r) = (gain * src[0], gain * src[1]);
                 dst[0] += l;
                 dst[1] += r;
                 peak = peak.max(l.abs()).max(r.abs());
