@@ -1,6 +1,8 @@
 mod app;
 mod complete;
+mod editing;
 mod model;
+mod palette;
 #[cfg(test)]
 mod tests;
 mod ui;

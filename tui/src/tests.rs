@@ -1317,3 +1317,142 @@ fn the_popup_goes_below_the_cursor_or_above_if_it_does_not_fit() {
     let right = ui::completion_area(&view, 95, 5, screen);
     assert_eq!(right.right(), 100);
 }
+
+// --- Paleta de comandos y edición de líneas ---
+
+fn type_query(app: &mut App, text: &str) {
+    for c in text.chars() {
+        app.handle(key(c));
+    }
+}
+
+#[test]
+fn f1_opens_a_filterable_command_palette() {
+    let (mut app, _engine) = open_at_end("palette_filter");
+    app.handle(f(1));
+    let screen = text_of(&mut app);
+    assert!(screen.contains("paleta de comandos"), "{screen}");
+    assert!(screen.contains("Deshacer"), "{screen}");
+    assert!(screen.contains("Ctrl-Z o Ctrl-U"), "{screen}");
+    assert!(screen.contains("PALETA: escribe para filtrar"), "{screen}");
+
+    // Escribir filtra (sin tildes) y no toca el texto.
+    type_query(&mut app, "lineas");
+    let view = app.view().palette.unwrap();
+    assert_eq!(view.items.len(), 4);
+    assert_eq!(
+        view.description,
+        "Pone o quita `-- ` en la línea del cursor o en las seleccionadas"
+    );
+    type_query(&mut app, " baj");
+    let names: Vec<String> = app
+        .view()
+        .palette
+        .unwrap()
+        .items
+        .into_iter()
+        .map(|(n, _)| n)
+        .collect();
+    assert_eq!(names, ["Bajar líneas"]);
+    assert_eq!(current_line(&app), "");
+    // Sin coincidencias lo dice.
+    type_query(&mut app, "zzz");
+    assert!(text_of(&mut app).contains("ninguna acción coincide"));
+}
+
+#[test]
+fn the_palette_runs_line_actions_and_remembers_the_last() {
+    let (_, mut app, _engine) = open("palette_run", Some(SONG));
+    // Cursor en la línea 1 ("bpm(120)").
+    app.handle(f(1));
+    type_query(&mut app, "duplicar");
+    app.handle(special(Key::Enter));
+    assert!(app.view().palette.is_none());
+    assert_eq!(&app.editor.lines()[..2], ["bpm(120)", "bpm(120)"]);
+
+    // Comentar, bajar y subir.
+    app.handle(f(1));
+    type_query(&mut app, "comentar");
+    app.handle(special(Key::Enter));
+    assert_eq!(app.editor.lines()[1], "-- bpm(120)");
+    app.handle(f(1));
+    type_query(&mut app, "bajar");
+    app.handle(special(Key::Enter));
+    assert_eq!(app.editor.lines()[2], "-- bpm(120)");
+    // La última acción sale la primera: F1 y Enter la repite.
+    app.handle(f(1));
+    assert_eq!(app.view().palette.unwrap().items[0].0, "Bajar líneas");
+    app.handle(special(Key::Enter));
+    assert_eq!(app.editor.lines()[3], "-- bpm(120)");
+    app.handle(f(1));
+    type_query(&mut app, "subir");
+    app.handle(special(Key::Down));
+    app.handle(special(Key::Up));
+    app.handle(special(Key::Enter));
+    assert_eq!(app.editor.lines()[2], "-- bpm(120)");
+
+    // Y todo se deshace con Ctrl-Z (y se rehace con la paleta).
+    for _ in 0..5 {
+        app.handle(ctrl('z'));
+    }
+    assert_eq!(app.text_for_test(), SONG);
+    app.handle(ctrl('z'));
+    assert_eq!(app.view().message, "nada que deshacer");
+    app.handle(f(1));
+    type_query(&mut app, "rehacer");
+    app.handle(special(Key::Enter));
+    assert_eq!(&app.editor.lines()[..2], ["bpm(120)", "bpm(120)"]);
+}
+
+#[test]
+fn esc_closes_the_palette_without_entering_play_mode() {
+    let (mut app, _engine) = open_at_end("palette_esc");
+    app.handle(f(1));
+    app.handle(esc());
+    let view = app.view();
+    assert!(view.palette.is_none());
+    assert!(!view.playing_mode);
+    // En modo tocar también se abre, y las teclas filtran (no disparan).
+    app.handle(esc());
+    assert!(app.view().playing_mode);
+    app.handle(f(1));
+    type_query(&mut app, "1q");
+    assert_eq!(app.view().palette.unwrap().query, "1q");
+    app.handle(esc());
+    assert!(app.view().playing_mode, "sigue en modo tocar");
+}
+
+#[test]
+fn the_palette_can_quit_and_run_editor_actions() {
+    let (_, mut app, _engine) = open("palette_quit", Some(SONG));
+    let run = |app: &mut App, query: &str| {
+        app.handle(f(1));
+        type_query(app, query);
+        app.handle(special(Key::Enter))
+    };
+    assert_eq!(run(&mut app, "marcha"), Flow::Continue);
+    assert_eq!(app.view().message, "parado");
+    assert_eq!(run(&mut app, "salir"), Flow::Quit, "sin cambios sale");
+    type_text(&mut app, "x");
+    assert_eq!(run(&mut app, "salir"), Flow::Continue);
+    assert!(app.view().message.contains("cambios sin guardar"));
+}
+
+#[test]
+fn compound_edits_undo_and_redo_in_one_step() {
+    let (mut app, _engine) = open_at_end("undo_groups");
+    type_text(&mut app, "track(\"drums\"):f");
+    app.handle(special(Key::Tab));
+    assert!(current_line(&app).contains("fx(\"filter\""));
+    // Un solo Ctrl-Z quita la plantilla entera y deja lo escrito.
+    app.handle(ctrl('z'));
+    assert_eq!(current_line(&app), "track(\"drums\"):f");
+    app.handle(ctrl('r'));
+    assert!(current_line(&app).contains("fx(\"filter\""));
+    // Ctrl-U (el deshacer del editor) hace lo mismo.
+    app.handle(ctrl('u'));
+    assert_eq!(current_line(&app), "track(\"drums\"):f");
+    // Lo escrito a mano se deshace como siempre, letra a letra.
+    app.handle(ctrl('u'));
+    assert_eq!(current_line(&app), "track(\"drums\"):");
+}

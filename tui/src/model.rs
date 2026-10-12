@@ -21,6 +21,8 @@ pub struct ViewModel {
     pub prompt: Option<String>,
     /// Autocompletado abierto.
     pub completion: Option<CompletionView>,
+    /// Paleta de comandos abierta.
+    pub palette: Option<PaletteView>,
     /// Nombre del proyecto abierto, si lo hay.
     pub project: Option<String>,
     /// Mensaje informativo de la última acción.
@@ -32,6 +34,18 @@ pub struct ViewModel {
     pub tracks: Vec<TrackView>,
     /// Pista seleccionada (índice en `tracks`).
     pub selected: Option<usize>,
+}
+
+/// Paleta de comandos.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct PaletteView {
+    /// Lo escrito para filtrar.
+    pub query: String,
+    /// Entradas que coinciden: nombre y atajo.
+    pub items: Vec<(String, String)>,
+    pub selected: usize,
+    /// Descripción de la elegida.
+    pub description: String,
 }
 
 /// Popup de autocompletado.

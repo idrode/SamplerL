@@ -119,6 +119,7 @@ defecto: si el script llama a `bpm()`, manda el script. Se abre con
 | Ctrl-G | Ir a la línea del error |
 | Ctrl-O | Siguiente pista (la de la vista del sample y del modo tocar) |
 | Esc | Entrar / salir del modo tocar |
+| F1 | Paleta de comandos (ver más abajo) |
 | F2 | Línea de órdenes |
 | F3 | Recargar el archivo si cambió fuera del editor |
 | F4 | Abrir el autocompletado (ver más abajo) |
@@ -127,6 +128,38 @@ defecto: si el script llama a `bpm()`, manda el script. Se abre con
 Con un cambio externo pendiente, Ctrl-S pide un segundo Ctrl-S antes de
 sobrescribir. F3 guarda antes tu texto sin guardar en
 `<nombre>.sin-guardar.lua`.
+
+### Paleta de comandos (F1)
+
+F1 abre una lista con todas las acciones del editor. Escribe para
+filtrarla (vale cualquier trozo de cada palabra, sin tildes: `baj lin`
+encuentra «Bajar líneas»), elige con ↑ ↓, Enter ejecuta y Esc cierra. La
+última acción usada sale la primera, así que repetirla es F1 y Enter. Las
+acciones nuevas van en la paleta en vez de en atajos de teclado.
+
+<!-- paleta:inicio (generado desde tui/src/palette.rs) -->
+
+| Acción | Qué hace | Atajo |
+| --- | --- | --- |
+| Deshacer | Deshace el último cambio del texto | Ctrl-Z o Ctrl-U |
+| Rehacer | Rehace lo último deshecho | Ctrl-R |
+| Comentar o descomentar líneas | Pone o quita `-- ` en la línea del cursor o en las seleccionadas | — |
+| Duplicar líneas | Copia la línea del cursor (o las seleccionadas) debajo | — |
+| Subir líneas | Mueve la línea del cursor (o las seleccionadas) una arriba | — |
+| Bajar líneas | Mueve la línea del cursor (o las seleccionadas) una abajo | — |
+| Autocompletar | Abre el autocompletado en el cursor | F4 |
+| Guardar y cargar | Guarda el script y lo carga (entra en el siguiente compás) | Ctrl-S |
+| Cargar sin guardar | Carga el texto del editor sin guardarlo | Ctrl-L o F5 |
+| Marcha / paro | Arranca o para el secuenciador | Ctrl-T o F8 |
+| Ir al error | Lleva el cursor a la línea del error | Ctrl-G |
+| Siguiente pista | Selecciona la pista siguiente (vista del sample y modo tocar) | Ctrl-O |
+| Modo tocar | Entra o sale del modo tocar | Esc |
+| Recargar del disco | Recarga el archivo si cambió fuera del editor | F3 |
+| Exportar la mezcla | Renderiza la canción entera a `<script>-mezcla.wav` | — |
+| Línea de órdenes | Abre la línea de órdenes (exportar, guardar, abrir, muestras) | F2 |
+| Salir | Sale (pide confirmación si hay cambios sin guardar) | Ctrl-Q |
+
+<!-- paleta:fin -->
 
 ### Autocompletado
 
@@ -186,8 +219,8 @@ proyecto o, si no hay, a la del script.
 ### Editor
 
 Los del widget de texto (`ratatui-textarea`): flechas para moverse, Tab
-indentar (salvo con el autocompletado o un parámetro pendiente), Ctrl-U
-deshacer, Ctrl-R rehacer, Ctrl-C copiar, Ctrl-X cortar, Ctrl-Y pegar,
+indentar (salvo con el autocompletado o un parámetro pendiente), Ctrl-Z o
+Ctrl-U deshacer, Ctrl-R rehacer, Ctrl-C copiar, Ctrl-X cortar, Ctrl-Y pegar,
 Ctrl-K borrar hasta el final de la línea, Ctrl-W borrar la palabra
 anterior, Ctrl-A / Ctrl-E inicio y final de línea, Ctrl-V / Alt-V página
 abajo y arriba.

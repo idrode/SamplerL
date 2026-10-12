@@ -11,7 +11,7 @@ use ratatui::widgets::canvas::{Canvas, Line as CanvasLine};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
 
 use crate::app::App;
-use crate::model::{CompletionView, ViewModel, fx_text, step_text};
+use crate::model::{CompletionView, PaletteView, ViewModel, fx_text, step_text};
 
 pub const ERROR: Color = Color::Red;
 /// Fondo de la línea con error (rojo oscuro de la paleta de 256 colores).
@@ -52,6 +52,76 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // El autocompletado, encima de todo (puede salirse del editor).
     if let (Some(completion), Some(area)) = (&view.completion, popup) {
         frame.render_widget(CompletionPopup(completion), area);
+    }
+    if let Some(palette) = &view.palette {
+        frame.render_widget(PalettePopup(palette), palette_area(frame.area()));
+    }
+}
+
+/// Filas de opciones visibles en la paleta.
+const PALETTE_ROWS: u16 = 12;
+
+/// Sitio de la paleta: centrada arriba, como mucho 72 columnas.
+pub fn palette_area(screen: Rect) -> Rect {
+    let width = screen.width.saturating_sub(4).min(72);
+    let height = (PALETTE_ROWS + 6).min(screen.height);
+    Rect {
+        x: screen.x + (screen.width - width) / 2,
+        y: screen.y + (screen.height - height).min(2),
+        width,
+        height,
+    }
+}
+
+/// Paleta de comandos: lo escrito, las acciones que coinciden (con su
+/// atajo) y la descripción de la elegida.
+pub struct PalettePopup<'a>(pub &'a PaletteView);
+
+impl Widget for PalettePopup<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let view = self.0;
+        Clear.render(area, buf);
+        let block = Block::bordered()
+            .border_style(Style::new().fg(ACCENT))
+            .title(" paleta de comandos · ↑↓ Enter Esc ");
+        let inner = block.inner(area);
+        block.render(area, buf);
+        if inner.height < 3 {
+            return;
+        }
+        let width = inner.width as usize;
+        let mut lines = vec![
+            Line::from(vec![
+                Span::from("› ").fg(ACCENT).bold(),
+                Span::raw(format!("{}█", view.query)),
+            ]),
+            Line::from("─".repeat(width)).fg(DIM),
+        ];
+        let rows = (inner.height as usize)
+            .saturating_sub(4)
+            .min(PALETTE_ROWS as usize);
+        let first = view.selected.saturating_sub(rows.saturating_sub(1));
+        if view.items.is_empty() {
+            lines.push(Line::from(" ninguna acción coincide").fg(DIM));
+        }
+        for (i, (name, keys)) in view.items.iter().enumerate().skip(first).take(rows) {
+            let pad = width.saturating_sub(name.chars().count() + keys.chars().count() + 2);
+            let line = Line::from(vec![
+                Span::raw(format!(" {name}{}", " ".repeat(pad))),
+                Span::from(format!("{keys} ")).fg(DIM),
+            ]);
+            lines.push(if i == view.selected {
+                line.style(Style::new().fg(Color::Black).bg(ACCENT))
+            } else {
+                line
+            });
+        }
+        while lines.len() < rows + 2 {
+            lines.push(Line::raw(""));
+        }
+        lines.push(Line::from("─".repeat(width)).fg(DIM));
+        lines.push(Line::from(view.description.clone()));
+        Paragraph::new(lines).render(inner, buf);
     }
 }
 
@@ -302,14 +372,16 @@ pub struct HelpLine<'a>(pub &'a ViewModel);
 
 impl Widget for HelpLine<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let keys = if self.0.completion.is_some() {
+        let keys = if self.0.palette.is_some() {
+            "PALETA: escribe para filtrar · ↑↓ elegir · Enter ejecutar · Esc cerrar"
+        } else if self.0.completion.is_some() {
             "COMPLETAR: ↑↓ elegir · Tab o Enter aceptar · Esc cerrar"
         } else if self.0.playing_mode {
-            "TOCAR: 1-0 q-i cortes de la pista · Ctrl-O pista · Ctrl-T marcha/paro · Esc editor"
+            "TOCAR: 1-0 q-i cortes de la pista · Ctrl-O pista · Ctrl-T marcha/paro · F1 paleta · Esc editor"
         } else {
             "Ctrl-S guardar y cargar · Ctrl-L cargar · Ctrl-T marcha/paro · \
-             Ctrl-G ir al error · Ctrl-O pista · Esc tocar · F2 órdenes · F4 completar · \
-             Ctrl-Q salir"
+             Ctrl-G ir al error · Ctrl-O pista · Esc tocar · F1 paleta · F2 órdenes · \
+             F4 completar · Ctrl-Q salir"
         };
         if let Some(prompt) = &self.0.prompt {
             Line::from(vec![

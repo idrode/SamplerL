@@ -10,9 +10,12 @@ use ratatui_textarea::{CursorMove, Input, Key, TextArea};
 use script::{Project, ScriptError, ScriptHost, api};
 
 use crate::complete::{self, Candidate};
+use crate::editing;
 use crate::model::{
-    CompletionView, ErrorView, TrackView, TransportView, ViewModel, Waveform, error_line,
+    CompletionView, ErrorView, PaletteView, TrackView, TransportView, ViewModel, Waveform,
+    error_line,
 };
+use crate::palette::{self, Action, Item};
 
 /// Plantilla para un script nuevo.
 const TEMPLATE: &str = r#"bpm(170)
@@ -53,6 +56,21 @@ struct Completion {
     selected: usize,
     /// Abierto con F4: sigue abierto aunque no haya prefijo.
     manual: bool,
+}
+
+/// Acción compuesta de varios cambios del editor (mover líneas, insertar
+/// una plantilla...): se deshace y se rehace de una vez.
+#[derive(Debug, Clone)]
+struct EditGroup {
+    before: Vec<String>,
+    after: Vec<String>,
+}
+
+/// Paleta de comandos abierta (F1).
+#[derive(Debug, Clone, Default)]
+struct Palette {
+    query: String,
+    selected: usize,
 }
 
 /// Parámetro de una plantilla insertada que falta por rellenar.
@@ -108,6 +126,13 @@ pub struct App {
     marks: Vec<Mark>,
     /// La selección del editor es un parámetro marcado por una plantilla.
     mark_selected: bool,
+    /// Paleta de comandos abierta (F1).
+    palette: Option<Palette>,
+    /// Última entrada usada de la paleta (sale la primera).
+    last_palette: Option<Item>,
+    /// Acciones compuestas que se pueden deshacer y rehacer enteras.
+    undo_groups: Vec<EditGroup>,
+    redo_groups: Vec<EditGroup>,
 }
 
 impl App {
@@ -138,6 +163,10 @@ impl App {
             completion: None,
             marks: Vec::new(),
             mark_selected: false,
+            palette: None,
+            last_palette: None,
+            undo_groups: Vec::new(),
+            redo_groups: Vec::new(),
         };
         app.load();
         Ok(app)
@@ -352,6 +381,11 @@ impl App {
         let mut text = self.editor.lines().join("\n");
         text.push('\n');
         text
+    }
+
+    #[cfg(test)]
+    pub fn text_for_test(&self) -> String {
+        self.text()
     }
 
     pub fn dirty(&self) -> bool {
@@ -628,12 +662,13 @@ impl App {
         let cursor = self.editor.cursor();
         let row = cursor.0;
         let start = cursor.1 - completion.prefix.chars().count();
-        self.editor.cancel_selection();
-        self.editor
-            .move_cursor(CursorMove::Jump(row as u16, start as u16));
-        self.editor.delete_str(completion.prefix.chars().count());
         let (text, marks) = api::expand_template(&candidate.insert);
-        self.editor.insert_str(&text);
+        self.grouped(|editor| {
+            editor.cancel_selection();
+            editor.move_cursor(CursorMove::Jump(row as u16, start as u16));
+            editor.delete_str(completion.prefix.chars().count());
+            editor.insert_str(&text);
+        });
         self.message = candidate.signature.clone();
         if marks.is_empty() {
             // Un nombre suelto (un efecto dentro de una plantilla, por
@@ -716,6 +751,165 @@ impl App {
         }
     }
 
+    /// Entradas de la paleta que coinciden con lo escrito.
+    fn palette_matches(&self) -> Vec<palette::Entry> {
+        let query = self.palette.as_ref().map_or("", |p| p.query.as_str());
+        palette::filter(&palette::entries(self.last_palette), query)
+    }
+
+    /// F1: abre la paleta de comandos.
+    pub fn open_palette(&mut self) {
+        self.completion = None;
+        self.palette = Some(Palette::default());
+    }
+
+    /// Tecla con la paleta abierta: escribir filtra, flechas eligen, Enter
+    /// ejecuta y Esc cierra.
+    fn handle_palette(&mut self, input: Input) -> Flow {
+        let matches = self.palette_matches();
+        let count = matches.len();
+        let Some(palette) = &mut self.palette else {
+            return Flow::Continue;
+        };
+        match input.key {
+            Key::Esc => self.palette = None,
+            Key::Enter => {
+                let entry = matches.get(palette.selected).cloned();
+                self.palette = None;
+                if let Some(entry) = entry {
+                    self.last_palette = Some(entry.item);
+                    return self.run_item(entry.item);
+                }
+            }
+            Key::Up if count > 0 => palette.selected = (palette.selected + count - 1) % count,
+            Key::Down if count > 0 => palette.selected = (palette.selected + 1) % count,
+            Key::Backspace => {
+                palette.query.pop();
+                palette.selected = 0;
+            }
+            Key::Char(c) if !input.ctrl && !input.alt => {
+                palette.query.push(c);
+                palette.selected = 0;
+            }
+            _ => {}
+        }
+        Flow::Continue
+    }
+
+    /// Ejecuta una entrada de la paleta.
+    pub fn run_item(&mut self, item: Item) -> Flow {
+        match item {
+            Item::Action(action) => self.run_action(action),
+        }
+    }
+
+    /// Ejecuta una acción (de la paleta o de un atajo).
+    pub fn run_action(&mut self, action: Action) -> Flow {
+        let edits = matches!(
+            action,
+            Action::Undo
+                | Action::Redo
+                | Action::ToggleComment
+                | Action::DuplicateLines
+                | Action::MoveLinesUp
+                | Action::MoveLinesDown
+        );
+        if edits {
+            self.completion = None;
+            self.marks.clear();
+        }
+        match action {
+            Action::Undo => {
+                if !self.undo() {
+                    self.message = "nada que deshacer".into();
+                }
+            }
+            Action::Redo => {
+                if !self.redo() {
+                    self.message = "nada que rehacer".into();
+                }
+            }
+            Action::ToggleComment => self.grouped(editing::toggle_comment),
+            Action::DuplicateLines => self.grouped(editing::duplicate_lines),
+            Action::MoveLinesUp => {
+                if !self.grouped(|e| editing::move_lines(e, true)) {
+                    self.message = "ya está arriba del todo".into();
+                }
+            }
+            Action::MoveLinesDown => {
+                if !self.grouped(|e| editing::move_lines(e, false)) {
+                    self.message = "ya está abajo del todo".into();
+                }
+            }
+            Action::Complete => self.open_completion(),
+            Action::SaveAndLoad => self.save(),
+            Action::Load => self.load(),
+            Action::Transport => self.toggle_transport(),
+            Action::GotoError => self.goto_error(),
+            Action::NextTrack => self.next_track(),
+            Action::PlayMode => self.toggle_mode(),
+            Action::ReloadExternal => self.reload_external(),
+            Action::Export => self.export(&[]),
+            Action::Commands => self.prompt = Some(String::new()),
+            Action::Quit => {
+                let armed = std::mem::replace(&mut self.quit_armed, false);
+                return self.request_quit(armed);
+            }
+        }
+        Flow::Continue
+    }
+
+    /// Hace una acción compuesta de varios cambios del editor y la apunta
+    /// para deshacerla de una vez.
+    fn grouped<R>(&mut self, f: impl FnOnce(&mut TextArea<'static>) -> R) -> R {
+        let before = self.editor.lines().to_vec();
+        let result = f(&mut self.editor);
+        let after = self.editor.lines().to_vec();
+        if after != before {
+            self.undo_groups.push(EditGroup { before, after });
+            self.redo_groups.clear();
+        }
+        result
+    }
+
+    /// Deshace un cambio. Si el texto es el resultado de una acción
+    /// compuesta, la deshace entera.
+    fn undo(&mut self) -> bool {
+        if let Some(group) = self.undo_groups.pop() {
+            if self.editor.lines() == group.after {
+                while self.editor.lines() != group.before && self.editor.undo() {}
+                self.redo_groups.push(group);
+                return true;
+            }
+            self.undo_groups.push(group);
+        }
+        self.editor.undo()
+    }
+
+    /// Rehace un cambio (una acción compuesta, entera).
+    fn redo(&mut self) -> bool {
+        if let Some(group) = self.redo_groups.pop() {
+            if self.editor.lines() == group.before {
+                while self.editor.lines() != group.after && self.editor.redo() {}
+                self.undo_groups.push(group);
+                return true;
+            }
+            self.redo_groups.push(group);
+        }
+        self.editor.redo()
+    }
+
+    /// Salir: si hay cambios sin guardar, la primera vez solo avisa.
+    fn request_quit(&mut self, armed: bool) -> Flow {
+        if self.dirty() && !armed {
+            self.quit_armed = true;
+            self.message = "hay cambios sin guardar: Ctrl-Q otra vez para salir".into();
+            Flow::Continue
+        } else {
+            Flow::Quit
+        }
+    }
+
     fn toggle_mode(&mut self) {
         self.completion = None;
         self.marks.clear();
@@ -758,6 +952,13 @@ impl App {
             }
             return Flow::Continue;
         }
+        if self.palette.is_some() {
+            return self.handle_palette(input);
+        }
+        if input.key == Key::F(1) {
+            self.open_palette();
+            return Flow::Continue;
+        }
         // Con el autocompletado abierto, las flechas lo recorren, Tab o
         // Enter aceptan y Esc solo lo cierra (no entra en modo tocar).
         if self.completion.is_some() && !input.ctrl && !input.alt {
@@ -794,14 +995,10 @@ impl App {
             self.overwrite_armed = false;
         }
         match (input.key, input.ctrl) {
-            (Key::Char('q'), true) => {
-                if self.dirty() && !quit_armed {
-                    self.quit_armed = true;
-                    self.message = "hay cambios sin guardar: Ctrl-Q otra vez para salir".into();
-                } else {
-                    return Flow::Quit;
-                }
-            }
+            (Key::Char('q'), true) => return self.request_quit(quit_armed),
+            // Deshacer y rehacer pasan por la app (acciones compuestas).
+            (Key::Char('z' | 'u'), true) => return self.run_action(Action::Undo),
+            (Key::Char('r'), true) => return self.run_action(Action::Redo),
             (Key::Char('s'), true) => self.save(),
             (Key::Char('l'), true) | (Key::F(5), _) => self.load(),
             (Key::Char('t'), true) | (Key::F(8), _) => self.toggle_transport(),
@@ -913,6 +1110,17 @@ impl App {
             file: name,
             dirty: self.dirty(),
             playing_mode: self.mode == Mode::Play,
+            palette: self.palette.as_ref().map(|p| {
+                let matches = self.palette_matches();
+                PaletteView {
+                    query: p.query.clone(),
+                    description: matches
+                        .get(p.selected)
+                        .map_or(String::new(), |e| e.description.clone()),
+                    items: matches.into_iter().map(|e| (e.name, e.keys)).collect(),
+                    selected: p.selected,
+                }
+            }),
             completion: self.completion.as_ref().map(|c| {
                 let selected = &c.matches[c.selected];
                 CompletionView {
