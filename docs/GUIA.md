@@ -118,6 +118,7 @@ samples = /home/yo/samples/breaks
 bpm = 170
 etiqueta = amen.wav 8 1 kick
 etiqueta = amen.wav 8 3 snare
+corte = amen.wav 8 3 412.5
 ```
 
 Las rutas relativas lo son a la carpeta del proyecto. Con `samples`,
@@ -128,7 +129,9 @@ cortes (la `n` de `slice(n)`: con otro número los cortes son otros y no se
 aplica, y al cargar se avisa: `⚠ la etiqueta «kick» de amen.wav es de
 slice(8) y este script usa slice(6): no se aplica`), corte y nombre. Así `steps("kick . snare .")` funciona sin
 `:name()` en el script; si el script nombra el mismo corte, manda el
-script. Se abre con
+script. Cada `corte` es un ajuste manual (ver el modo tocar): el corte 3 de
+`slice(8)` empieza en 412,5 ms, diga lo que diga el detector; si no cabe
+entre sus vecinos, la carga lo avisa y no lo aplica. Se abre con
 `tui --edit proyecto.sampler` o con la orden `abrir`.
 
 ## 2. Atajos de teclado
@@ -199,6 +202,9 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Reiniciar medidores | Pone a cero los medidores y quita los avisos de limitador y saturación | — |
 | Etiquetar el corte seleccionado | Abre «etiquetar N » para escribir la etiqueta (kick, snare...); se guarda en el proyecto | — |
 | Preescuchar el corte seleccionado | Lo toca en una voz aparte, sin pasar por la pista ni tocar el script | espacio (modo tocar) |
+| Adelantar el corte 5 ms | Mueve el inicio del corte seleccionado 5 ms antes (se guarda en el proyecto y manda sobre el detector) | , (modo tocar; < 1 ms) |
+| Retrasar el corte 5 ms | Mueve el inicio del corte seleccionado 5 ms después | . (modo tocar; > 1 ms) |
+| Quitar el ajuste del corte | El corte seleccionado vuelve a empezar donde lo pone el detector | — |
 | Corte siguiente | Selecciona el corte siguiente de la pista (sin tocarlo) | — |
 | Corte anterior | Selecciona el corte anterior de la pista (sin tocarlo) | — |
 | Salir | Sale (pide confirmación si hay cambios sin guardar) | Ctrl-Q |
@@ -260,6 +266,8 @@ de esta guía.
 | q w e r t y u i | cortes 11 a 18 |
 | ← → | recorre los cortes de la pista y preescucha cada uno |
 | espacio | preescucha otra vez el corte seleccionado |
+| , . | adelanta o retrasa el inicio del corte seleccionado 5 ms |
+| < > | lo mismo, de 1 en 1 ms |
 | m | mute de la pista seleccionada (en vivo, sin esperar al compás) |
 | s | solo de la pista seleccionada (en vivo) |
 
@@ -271,6 +279,16 @@ la paleta) toca el corte en una voz aparte: no corta lo que suena en las
 pistas, no pasa por su volumen, efectos ni mute, suena también con el
 secuenciador parado y no toca el script. Sirve para buscar el corte que
 quieres (y etiquetarlo o ajustarlo, ver más abajo).
+
+El **ajuste manual de cortes** (`,` `.` `<` `>`, o «Adelantar/Retrasar el
+corte 5 ms» en la paleta) mueve el inicio del corte seleccionado y lo
+preescucha. Se guarda en el proyecto como posición absoluta (`corte =
+amen.wav 8 3 412.5`) y manda sobre el detector: si el detector se equivoca
+o corta tarde un golpe, se corrige a oído. El corte anterior acaba donde
+empieza el ajustado, y no puede acercarse a menos de 1 ms de sus vecinos.
+La vista del sample marca los cortes ajustados con `*` y da la posición
+del seleccionado; «Quitar el ajuste del corte» lo devuelve al detector. En
+Lua, `cortes:move(i, ms)`.
 
 `m` y `s` (o «Mute de la pista» y «Solo de la pista» en la paleta) son el
 mute y el solo en vivo: entran ya, con un fundido de 5 ms para que no
@@ -606,6 +624,22 @@ Pone una etiqueta al corte i para usarla en steps en vez del número. Con la eti
 local amen = sample("amen.wav"):slice(8)
 amen:name(1, "kick"):name(2, "hat"):name(3, "snare")
 track("drums", amen):steps("kick . hat .  snare . hat .  kick kick hat .  snare . hat^7@0.5 .")
+```
+
+### `cortes:move(i, ms)`
+
+Devuelve: cortes.
+
+Ajuste manual: el corte i empieza en ms (desde el principio del sample). Manda sobre el detector; el corte anterior acaba donde empieza este. Tiene que quedar a más de 1 ms de sus vecinos. Cambia la variable, así que hazlo antes de usarla en `track()`. Desde la interfaz, el mismo ajuste se hace con teclas en el modo tocar y se guarda en el proyecto (`corte = amen.wav 8 3 412.5`).
+
+- `i`: número del corte (desde 1)
+- `ms`: dónde empieza, en ms desde el principio del sample
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+-- El charles del corte 2, un poco antes para que entre con su ataque.
+amen:move(2, 205.5)
+track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
 ```
 
 ### `pista:steps(texto)`

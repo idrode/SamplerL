@@ -524,9 +524,11 @@ impl Widget for SamplePanel<'_> {
         };
         let seconds = track.sample_frames as f64 / track.sample_rate.max(1) as f64;
         let selected = view.selected_slice;
-        let chosen = selected.map_or(String::new(), |i| match track.label(i) {
-            Some(label) => format!(" · corte {} {label}", i + 1),
-            None => format!(" · corte {}", i + 1),
+        let chosen = selected.map_or(String::new(), |i| {
+            let at = track.slices.get(i).map_or(0.0, |r| {
+                r.start as f64 * 1000.0 / track.sample_rate.max(1) as f64
+            });
+            format!(" · corte {} {at:.1} ms", slice_mark(track, i))
         });
         let block = Block::bordered().title(format!(
             " sample · {} · {} · {seconds:.2} s · {} cortes{chosen} ",
@@ -619,9 +621,15 @@ impl Widget for SamplePanel<'_> {
 
 /// Texto de la marca de un corte en la vista del sample: `3` o `3 snare`.
 fn slice_mark(track: &crate::model::TrackView, i: usize) -> String {
+    // Un `*` marca los cortes ajustados a mano.
+    let star = if track.adjusted.get(i).copied().unwrap_or(false) {
+        "*"
+    } else {
+        ""
+    };
     match track.label(i) {
-        Some(label) => format!("{} {label}", i + 1),
-        None => (i + 1).to_string(),
+        Some(label) => format!("{}{star} {label}", i + 1),
+        None => format!("{}{star}", i + 1),
     }
 }
 

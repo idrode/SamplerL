@@ -121,3 +121,113 @@ fn detect_bpm_reads_the_synthetic_break() {
         .map_err(|e| e.message);
     assert_eq!(e, Ok(()));
 }
+
+#[test]
+fn slices_moved_by_hand_win_over_the_detector() {
+    use script::{Project, SlicePosition};
+    let dir = fixture("move");
+    let steps = "track(\"d\", amen):steps(\"1 2 3 4  . . . .  . . . .  . . . .\")";
+    // break8: cortes cada 3000 frames (62,5 ms). El corte 2 pasa a 70 ms.
+    let eval = |host: &mut ScriptHost, body: &str| {
+        host.eval(
+            &format!("bpm(120)\nlocal amen = sample(\"break8.wav\"):slice(8)\n{body}"),
+            "song.lua",
+            &dir,
+        )
+        .unwrap_or_else(|e| panic!("{e}"))
+    };
+    let moved = eval(
+        &mut ScriptHost::new(RATE),
+        &format!("amen:move(2, 70)\n{steps}"),
+    );
+    let track = &moved.tracks[0];
+    assert_eq!(track.slices.get(0), Some(0..3360));
+    assert_eq!(track.slices.get(1), Some(3360..6000));
+    assert_eq!(track.adjusted[..3], [false, true, false]);
+
+    // El mismo ajuste desde el proyecto suena idéntico.
+    let mut host = ScriptHost::new(RATE);
+    host.set_positions(vec![SlicePosition {
+        sample: "break8.wav".into(),
+        slices: 8,
+        slice: 2,
+        ms: 70.0,
+    }]);
+    let from_project = eval(&mut host, steps);
+    assert_eq!(from_project.tracks[0].slices, track.slices);
+    assert_eq!(
+        from_project.render(RATE, 1).unwrap(),
+        moved.render(RATE, 1).unwrap()
+    );
+    // Y no suena como sin ajustar: el corte 1 dura más y el 2 empieza tarde.
+    assert_ne!(
+        moved.render(RATE, 1).unwrap(),
+        render(&dir, steps)[..2 * 96_000]
+    );
+    // slice_at conserva la marca.
+    let at = eval(&mut host, "track(\"s\", amen:slice_at(2))");
+    assert_eq!(at.tracks[0].adjusted, vec![true]);
+    assert_eq!(at.tracks[0].slices.get(0), Some(3360..6000));
+
+    // Un ajuste del proyecto que se sale de sus vecinos avisa y no se aplica.
+    host.set_position("break8.wav", 8, 2, Some(200.0));
+    let song = eval(&mut host, steps);
+    assert_eq!(song.tracks[0].slices.get(1), Some(3000..6000));
+    assert_eq!(
+        song.warnings,
+        [
+            "el ajuste del corte 2 de break8.wav (200 ms) se sale de sus vecinos \
+          (1.0 a 124.0 ms): no se aplica"
+        ]
+    );
+    host.set_position("break8.wav", 8, 2, None);
+    assert!(host.positions().is_empty());
+
+    // En Lua, error con línea.
+    let e = ScriptHost::new(RATE)
+        .eval(
+            "local amen = sample(\"break8.wav\"):slice(8)\namen:move(2, 200)",
+            "song.lua",
+            &dir,
+        )
+        .err()
+        .unwrap();
+    assert_eq!(
+        e.message,
+        "song.lua:2: move(2, 200): se sale de sus vecinos (1.0 a 124.0 ms)"
+    );
+
+    // El proyecto los guarda y los lee.
+    let path = dir.join("p.sampler");
+    let project = Project {
+        script: dir.join("song.lua"),
+        samples: None,
+        bpm: None,
+        labels: Vec::new(),
+        positions: vec![SlicePosition {
+            sample: "break8.wav".into(),
+            slices: 8,
+            slice: 2,
+            ms: 70.5,
+        }],
+    };
+    project.save(&path).unwrap();
+    assert!(
+        std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("corte = break8.wav 8 2 70.5\n")
+    );
+    assert_eq!(Project::load(&path).unwrap().positions, project.positions);
+    for (line, expected) in [
+        ("corte = a.wav 8 9 10", "corte no válido"),
+        ("corte = a.wav 8 2 -3", "posición no válida"),
+        (
+            "corte = a.wav 8 2 10\ncorte = a.wav 8 2 20",
+            "ya tiene un ajuste",
+        ),
+    ] {
+        std::fs::write(&path, format!("script = song.lua\n{line}\n")).unwrap();
+        let e = Project::load(&path).unwrap_err().to_string();
+        assert!(e.contains(expected), "{line}: {e}");
+    }
+}

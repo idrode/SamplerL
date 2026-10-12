@@ -744,6 +744,35 @@ pub const FUNCTIONS: &[Function] = &[
         ),
     },
     Function {
+        name: "move",
+        receiver: Receiver::Slices,
+        signature: "cortes:move(i, ms)",
+        returns: Some(Receiver::Slices),
+        summary: "Ajuste manual: el corte i empieza en ms (desde el principio del sample).",
+        doc: "Manda sobre el detector; el corte anterior acaba donde empieza este. \
+              Tiene que quedar a más de 1 ms de sus vecinos. Cambia la variable, \
+              así que hazlo antes de usarla en `track()`. Desde la interfaz, el \
+              mismo ajuste se hace con teclas en el modo tocar y se guarda en el \
+              proyecto (`corte = amen.wav 8 3 412.5`).",
+        params: &[
+            Param {
+                name: "i",
+                description: "número del corte (desde 1)",
+            },
+            Param {
+                name: "ms",
+                description: "dónde empieza, en ms desde el principio del sample",
+            },
+        ],
+        template: "move(${2}, ${200})",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             -- El charles del corte 2, un poco antes para que entre con su ataque.\n\
+             amen:move(2, 205.5)\n\
+             track(\"drums\", amen):steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\")\n",
+        ),
+    },
+    Function {
         name: "steps",
         receiver: Receiver::Track,
         signature: "pista:steps(texto)",

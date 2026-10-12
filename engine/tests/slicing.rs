@@ -252,3 +252,30 @@ fn flux_finds_a_weak_hat_over_a_kick_tail() {
     assert_near(slices.get(0).unwrap().start, 0, "bombo");
     assert_near(slices.get(1).unwrap().start, hat_at, "charles");
 }
+
+#[test]
+fn slice_starts_can_be_moved_by_hand_between_their_neighbours() {
+    let mut mono = vec![0.0f32; 9000];
+    for k in 0..3 {
+        mono[k * 3000..k * 3000 + 300].fill(0.5);
+    }
+    let sample = engine::Sample::from_interleaved(&mono, 1, 48_000, 48_000).unwrap();
+    let slices = engine::Slices::detect(&sample, 3);
+    assert_eq!(
+        slices.iter().collect::<Vec<_>>(),
+        vec![0..3000, 3000..6000, 6000..9000]
+    );
+    let moved = slices.with_start(1, 3500, 48).unwrap();
+    assert_eq!(
+        moved.iter().collect::<Vec<_>>(),
+        vec![0..3500, 3500..6000, 6000..9000]
+    );
+    let first = slices.with_start(0, 100, 48).unwrap();
+    assert_eq!(first.get(0), Some(100..3000));
+    // No puede pasar a sus vecinos (con margen).
+    // (El corte 2 puede adelantarse hasta 1 ms tras el inicio del 1.)
+    assert_eq!(slices.with_start(1, 5990, 48), Err(48..5952));
+    assert_eq!(slices.with_start(1, 10, 48), Err(48..5952));
+    assert_eq!(slices.with_start(2, 8999, 48), Err(3048..8952));
+    assert!(slices.with_start(5, 1, 48).is_err());
+}

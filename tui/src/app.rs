@@ -223,6 +223,7 @@ impl App {
         self.host.set_sample_dir(project.samples.clone());
         self.host.set_default_bpm(project.bpm);
         self.host.set_labels(project.labels.clone());
+        self.host.set_positions(project.positions.clone());
         self.load();
         Ok(())
     }
@@ -370,6 +371,7 @@ impl App {
             samples: self.host.sample_dir().map(Path::to_path_buf),
             bpm,
             labels: self.host.labels().to_vec(),
+            positions: self.host.positions().to_vec(),
         }
     }
 
@@ -407,13 +409,7 @@ impl App {
             self.message = format!("no se pudo etiquetar: {e}");
             return;
         }
-        let saved = match self.project.clone() {
-            Some(path) => match self.project_with(self.host.default_bpm()).save(&path) {
-                Ok(()) => format!(" (guardado en {})", path.display()),
-                Err(e) => format!(" (no se pudo guardar el proyecto: {e})"),
-            },
-            None => " (sin proyecto: se guardará con «guardar»)".into(),
-        };
+        let saved = self.save_project_file();
         self.load();
         let what = match name {
             Some(name) => format!("«{name}»"),
@@ -436,6 +432,76 @@ impl App {
             message.push_str("; el script tiene errores: sigue sonando lo anterior");
         }
         self.message = message;
+    }
+
+    /// Guarda el proyecto abierto (etiquetas y ajustes de cortes) con su
+    /// tempo, sin tocar el script. Devuelve la nota para el mensaje.
+    fn save_project_file(&self) -> String {
+        match self.project.clone() {
+            Some(path) => match self.project_with(self.host.default_bpm()).save(&path) {
+                Ok(()) => format!(" (guardado en {})", path.display()),
+                Err(e) => format!(" (no se pudo guardar el proyecto: {e})"),
+            },
+            None => " (sin proyecto: se guardará con «guardar»)".into(),
+        }
+    }
+
+    /// Mueve el inicio del corte seleccionado `delta_ms` (o, con `None`,
+    /// le quita el ajuste): se guarda en el proyecto como posición
+    /// absoluta, manda sobre el detector, se recarga y se preescucha. No
+    /// puede pasar de sus vecinos.
+    pub fn adjust_slice(&mut self, delta_ms: Option<f64>) {
+        let Some(track) = self.host.song().and_then(|s| s.tracks.get(self.selected)) else {
+            self.message = "no hay pistas".into();
+            return;
+        };
+        let index = self
+            .selected_slice
+            .min(track.slices.len().saturating_sub(1));
+        let (origin, name) = (track.origin.clone(), track.name.clone());
+        let Some(range) = track.slices.get(index) else {
+            return;
+        };
+        let rate = track.sample.sample_rate() as f64;
+        let current = range.start as f64 * 1000.0 / rate;
+        let slice = origin.indices[index] + 1;
+        let previous = self
+            .host
+            .positions()
+            .iter()
+            .find(|p| p.sample == origin.sample && p.slices == origin.count && p.slice == slice)
+            .map(|p| p.ms);
+        // Con la resolución de un frame, redondeado a 0,1 ms.
+        let target = delta_ms.map(|d| ((current + d).max(0.0) * 10.0).round() / 10.0);
+        self.host
+            .set_position(&origin.sample, origin.count, slice, target);
+        self.load();
+        let blocked = format!("el ajuste del corte {slice} de {}", origin.sample);
+        let warning = self
+            .host
+            .song()
+            .and_then(|s| s.warnings.iter().find(|w| w.starts_with(&blocked)).cloned());
+        if let Some(warning) = warning {
+            // Se sale de sus vecinos: se deja como estaba.
+            self.host
+                .set_position(&origin.sample, origin.count, slice, previous);
+            self.load();
+            self.message = format!("no se mueve: {warning}");
+            return;
+        }
+        if self.error.is_some() {
+            self.message = "el script tiene errores: arréglalos antes de ajustar cortes".into();
+            return;
+        }
+        let saved = self.save_project_file();
+        self.preview_selected();
+        self.message = match target {
+            Some(ms) => format!("corte {} de {name}: empieza en {ms} ms{saved}", index + 1),
+            None => format!(
+                "corte {} de {name}: sin ajuste, donde lo pone el detector{saved}",
+                index + 1
+            ),
+        };
     }
 
     /// `abrir proyecto.sampler` (o `abrir!` para descartar cambios).
@@ -997,6 +1063,9 @@ impl App {
             Action::Metronome => self.toggle_metronome(),
             Action::DetectBpm => self.detect_bpm(),
             Action::Preview => self.preview_selected(),
+            Action::SliceEarlier => self.adjust_slice(Some(-5.0)),
+            Action::SliceLater => self.adjust_slice(Some(5.0)),
+            Action::ClearSliceAdjust => self.adjust_slice(None),
             Action::NextSlice => self.select_slice(true),
             Action::PreviousSlice => self.select_slice(false),
             Action::Quit => {
@@ -1406,6 +1475,14 @@ impl App {
                     self.play_pad(index);
                 } else if c == ' ' {
                     self.preview_selected();
+                } else if let Some(delta) = match c {
+                    ',' => Some(-5.0),
+                    '.' => Some(5.0),
+                    '<' => Some(-1.0),
+                    '>' => Some(1.0),
+                    _ => None,
+                } {
+                    self.adjust_slice(Some(delta));
                 } else if c == 'm' {
                     self.toggle_live(false);
                 } else if c == 's' {
@@ -1507,6 +1584,7 @@ impl App {
                             gain: t.gain,
                             fx: t.fx.clone(),
                             labels: t.labels.clone(),
+                            adjusted: t.adjusted.clone(),
                             swing: t.swing,
                             clipping: slot.is_some_and(|s| {
                                 self.track_clip_until[s].is_some_and(|u| Instant::now() < u)

@@ -2243,3 +2243,75 @@ fn arrows_in_play_mode_browse_and_preview_slices() {
     palette(&mut app, "preescuchar");
     assert_eq!(app.view().message, "preescucha drums: corte 2");
 }
+
+// --- Ajuste manual de cortes ---
+
+#[test]
+fn slices_are_nudged_with_keys_and_saved_in_the_project() {
+    let path = fixture("nudge", Some(SONG));
+    let dir = path.parent().unwrap().to_path_buf();
+    let project = dir.join("p.sampler");
+    std::fs::write(&project, "script = song.lua\n").unwrap();
+    let (controller, mut engine) = new_engine(RATE);
+    let mut app = App::open_project(&project, controller, RATE).unwrap();
+    // break.wav: el corte 2 empieza en 3000 (62,5 ms). Se selecciona y se
+    // retrasa 5 ms con «.», y 1 ms con «>».
+    app.handle(esc());
+    app.handle(special(Key::Right));
+    app.handle(key('.'));
+    let view = app.view();
+    assert!(
+        view.message
+            .starts_with("corte 2 de drums: empieza en 67.5 ms (guardado en"),
+        "{}",
+        view.message
+    );
+    assert_eq!(view.tracks[0].slices[1], 3240..6000);
+    assert_eq!(
+        view.tracks[0].slices[0],
+        0..3240,
+        "el anterior acaba donde empieza"
+    );
+    app.handle(key('>'));
+    assert_eq!(app.view().tracks[0].slices[1].start, 3288);
+    let saved = std::fs::read_to_string(&project).unwrap();
+    assert!(saved.contains("corte = break.wav 2 2 68.5\n"), "{saved}");
+    // La vista del sample lo marca con * y da su posición.
+    let screen = text(&draw(&mut app, 160, 40));
+    assert!(screen.contains("corte 2* 68.5 ms"), "{screen}");
+    // Se preescucha al moverlo.
+    let audio = offline::render(&mut engine, 200, 2);
+    assert!(!audio.is_empty());
+
+    // «,» lo adelanta; no puede pasar de su vecino (1 ms tras el corte 1).
+    // (El motor avanza entre teclas, como en tiempo real: cada ajuste es
+    // una recarga y una preescucha en la cola de comandos.)
+    for _ in 0..20 {
+        app.handle(key(','));
+        offline::render(&mut engine, 100, 2);
+    }
+    let view = app.view();
+    // De 5 en 5 ms llega a 3,5 ms; otros 5 se saldrían (el tope es 1 ms
+    // tras el corte 1): se queda donde estaba.
+    assert_eq!(view.tracks[0].slices[1].start, 168);
+    assert!(
+        view.message
+            .starts_with("no se mueve: el ajuste del corte 2"),
+        "{}",
+        view.message
+    );
+
+    // Reabierto, sigue igual; «Quitar el ajuste» lo devuelve al detector.
+    let (controller, _engine) = new_engine(RATE);
+    let mut app = App::open_project(&project, controller, RATE).unwrap();
+    assert_eq!(app.view().tracks[0].slices[1].start, 168);
+    assert_eq!(app.view().tracks[0].adjusted, vec![false, true]);
+    app.select_slice(true);
+    palette(&mut app, "quitar el ajuste");
+    assert_eq!(app.view().tracks[0].slices[1].start, 3000);
+    assert!(
+        !std::fs::read_to_string(&project)
+            .unwrap()
+            .contains("corte =")
+    );
+}

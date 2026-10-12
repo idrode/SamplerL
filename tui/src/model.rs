@@ -134,6 +134,8 @@ pub struct TrackView {
     pub fx: Vec<Fx>,
     /// Etiqueta de cada corte (si la tiene).
     pub labels: Vec<Option<String>>,
+    /// Cortes con el inicio ajustado a mano.
+    pub adjusted: Vec<bool>,
     /// Swing en porcentaje (50 = recto; 0 si no se ha dicho).
     pub swing: f32,
     /// La pista sola pasó de ±1 hace poco.

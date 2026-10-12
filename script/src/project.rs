@@ -7,10 +7,13 @@
 //! samples = samples
 //! bpm = 170
 //! etiqueta = amen.wav 8 1 kick
+//! corte = amen.wav 8 3 412.5
 //! ```
 //!
 //! Cada `etiqueta` es: sample (como en `sample("...")`), número de cortes
-//! (la `n` de `slice(n)`), corte (desde 1) y nombre.
+//! (la `n` de `slice(n)`), corte (desde 1) y nombre. Cada `corte` es un
+//! ajuste manual: el inicio de ese corte en ms, que manda sobre el
+//! detector.
 
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
@@ -28,6 +31,59 @@ pub struct Project {
     pub bpm: Option<f64>,
     /// Etiquetas de corte.
     pub labels: Vec<SliceLabel>,
+    /// Ajustes manuales de cortes.
+    pub positions: Vec<SlicePosition>,
+}
+
+/// Ajuste manual de un corte guardado en el proyecto: dónde empieza, en
+/// ms desde el principio del sample. Manda sobre el detector.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SlicePosition {
+    /// El sample tal como se escribe en `sample("...")`.
+    pub sample: String,
+    /// La `n` de `slice(n)`.
+    pub slices: usize,
+    /// Corte, desde 1.
+    pub slice: usize,
+    /// Inicio en ms.
+    pub ms: f64,
+}
+
+impl SlicePosition {
+    /// Lee `amen.wav 8 3 412.5` (el sample puede tener espacios).
+    fn parse(value: &str) -> Result<SlicePosition, String> {
+        let usage = "se esperaba «corte = sample cortes corte ms»";
+        let mut words = value.rsplitn(4, char::is_whitespace);
+        let ms = words.next().ok_or(usage)?;
+        let slice = words.next().ok_or(usage)?;
+        let slices = words.next().ok_or(usage)?;
+        let sample = words
+            .next()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or(usage)?;
+        let slices: usize = slices
+            .parse()
+            .ok()
+            .filter(|n| (1..=64).contains(n))
+            .ok_or_else(|| format!("número de cortes no válido: {slices}"))?;
+        let slice: usize = slice
+            .parse()
+            .ok()
+            .filter(|i| (1..=slices).contains(i))
+            .ok_or_else(|| format!("corte no válido: {slice} (de 1 a {slices})"))?;
+        let ms: f64 = ms
+            .parse()
+            .ok()
+            .filter(|m: &f64| m.is_finite() && *m >= 0.0)
+            .ok_or_else(|| format!("posición no válida: {ms} (ms desde el principio)"))?;
+        Ok(SlicePosition {
+            sample: sample.to_string(),
+            slices,
+            slice,
+            ms,
+        })
+    }
 }
 
 /// Etiqueta de un corte guardada en el proyecto.
@@ -98,6 +154,7 @@ impl Project {
 
         let (mut script, mut samples, mut bpm) = (None, None, None);
         let mut labels: Vec<SliceLabel> = Vec::new();
+        let mut positions: Vec<SlicePosition> = Vec::new();
         for (i, line) in text.lines().enumerate() {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
@@ -143,11 +200,25 @@ impl Project {
                     }
                     labels.push(label);
                 }
+                "corte" => {
+                    let position = SlicePosition::parse(value).map_err(|e| err(i + 1, e))?;
+                    if positions.iter().any(|p| {
+                        p.sample == position.sample
+                            && p.slices == position.slices
+                            && p.slice == position.slice
+                    }) {
+                        return Err(err(
+                            i + 1,
+                            format!("el corte {} ya tiene un ajuste", position.slice),
+                        ));
+                    }
+                    positions.push(position);
+                }
                 other => {
                     return Err(err(
                         i + 1,
                         format!(
-                            "clave desconocida «{other}» (admite: script, samples, bpm, etiqueta)"
+                            "clave desconocida «{other}» (admite: script, samples, bpm, etiqueta, corte)"
                         ),
                     ));
                 }
@@ -160,6 +231,7 @@ impl Project {
             samples,
             bpm,
             labels,
+            positions,
         })
     }
 
@@ -181,6 +253,12 @@ impl Project {
             text.push_str(&format!(
                 "etiqueta = {} {} {} {}\n",
                 l.sample, l.slices, l.slice, l.name
+            ));
+        }
+        for p in &self.positions {
+            text.push_str(&format!(
+                "corte = {} {} {} {}\n",
+                p.sample, p.slices, p.slice, p.ms
             ));
         }
         std::fs::write(path, text)

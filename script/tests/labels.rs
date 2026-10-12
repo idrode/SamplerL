@@ -279,6 +279,7 @@ fn projects_save_and_load_labels() {
                 name: "snare_2".into(),
             },
         ],
+        positions: Vec::new(),
     };
     project.save(&path).unwrap();
     let text = std::fs::read_to_string(&path).unwrap();

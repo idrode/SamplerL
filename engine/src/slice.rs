@@ -112,6 +112,33 @@ impl Slices {
     pub fn iter(&self) -> impl Iterator<Item = Range<usize>> + '_ {
         self.0.iter().cloned()
     }
+
+    /// Los mismos cortes con el inicio del corte `index` en `start` (ajuste
+    /// manual): el corte anterior acaba donde empieza este. Tiene que
+    /// quedar a más de `min_gap` frames de sus vecinos (y del final del
+    /// sample); si no, `Err` con los límites válidos.
+    pub fn with_start(
+        &self,
+        index: usize,
+        start: usize,
+        min_gap: usize,
+    ) -> Result<Slices, Range<usize>> {
+        let current = self.0.get(index).ok_or(0..0)?;
+        let low = match index {
+            0 => 0,
+            i => self.0[i - 1].start + min_gap,
+        };
+        let high = current.end.saturating_sub(min_gap);
+        if !(low..=high).contains(&start) || low > high {
+            return Err(low..high);
+        }
+        let mut ranges = self.0.clone();
+        ranges[index].start = start;
+        if index > 0 {
+            ranges[index - 1].end = start;
+        }
+        Ok(Slices(ranges))
+    }
 }
 
 /// Posiciones (en frames) de hasta `n` transitorios, ordenadas.

@@ -42,7 +42,7 @@ pub mod project;
 mod watch;
 
 use patterns::Rng;
-pub use project::{Project, SliceLabel};
+pub use project::{Project, SliceLabel, SlicePosition};
 pub use watch::{ScriptWatcher, WatchEvent};
 
 use mlua::{
@@ -108,6 +108,8 @@ pub struct TrackDef {
     pub fx: Vec<Fx>,
     /// Etiqueta de cada corte de la pista (`labels[i]`, corte `i` desde 0).
     pub labels: Vec<Option<String>>,
+    /// Si cada corte tiene el inicio ajustado a mano (proyecto o `:move()`).
+    pub adjusted: Vec<bool>,
     /// Swing (`:swing()`), en porcentaje estilo MPC: 50 es recto.
     pub swing: f32,
     /// Humanize (`:humanize()`).
@@ -228,6 +230,8 @@ pub struct ScriptHost {
     default_bpm: Option<f64>,
     /// Etiquetas de corte del proyecto (las de `:name()` mandan).
     labels: Vec<SliceLabel>,
+    /// Ajustes manuales de cortes del proyecto.
+    positions: Vec<SlicePosition>,
 }
 
 impl ScriptHost {
@@ -243,6 +247,33 @@ impl ScriptHost {
             sample_dir: None,
             default_bpm: None,
             labels: Vec::new(),
+            positions: Vec::new(),
+        }
+    }
+
+    /// Ajustes manuales de cortes del proyecto: al cortar un sample con el
+    /// mismo nombre y número de cortes, esos cortes empiezan donde dicen.
+    pub fn set_positions(&mut self, positions: Vec<SlicePosition>) {
+        self.positions = positions;
+    }
+
+    pub fn positions(&self) -> &[SlicePosition] {
+        &self.positions
+    }
+
+    /// Pone (o quita, con `None`) el ajuste de un corte en los del proyecto.
+    /// Que quepa entre sus vecinos se comprueba al cargar (si no, se avisa
+    /// y no se aplica).
+    pub fn set_position(&mut self, sample: &str, count: usize, slice: usize, ms: Option<f64>) {
+        self.positions
+            .retain(|p| !(p.sample == sample && p.slices == count && p.slice == slice));
+        if let Some(ms) = ms {
+            self.positions.push(SlicePosition {
+                sample: sample.to_string(),
+                slices: count,
+                slice,
+                ms,
+            });
         }
     }
 
@@ -517,6 +548,7 @@ impl ScriptHost {
         let rate = self.sample_rate;
         let g = guard.clone();
         let labels = Rc::new(self.labels.clone());
+        let positions = Rc::new(self.positions.clone());
         let warnings = warnings.clone();
         globals.set(
             "sample",
@@ -530,6 +562,7 @@ impl ScriptHost {
                     path,
                     sample,
                     labels: labels.clone(),
+                    positions: positions.clone(),
                     warnings: warnings.clone(),
                 })
             })?,
@@ -630,6 +663,7 @@ impl ScriptHost {
                                     gain: 1.0,
                                     fx: Vec::new(),
                                     labels: Vec::new(),
+                                    adjusted: source.adjusted.clone(),
                                     swing: STRAIGHT_SWING,
                                     humanize: None,
                                     mute: false,
@@ -1016,6 +1050,19 @@ fn lcm(a: u64, b: u64) -> u64 {
     a / gcd(a, b) * b
 }
 
+/// Separación mínima de un corte ajustado a sus vecinos: 1 ms.
+fn min_slice_gap(sample: &Sample) -> usize {
+    (sample.sample_rate() as usize / 1000).max(1)
+}
+
+fn ms_to_frame(ms: f64, sample: &Sample) -> usize {
+    (ms / 1000.0 * sample.sample_rate() as f64).round() as usize
+}
+
+fn frame_to_ms(frame: usize, sample: &Sample) -> f64 {
+    frame as f64 * 1000.0 / sample.sample_rate() as f64
+}
+
 /// `scale("minor", "C")` en Lua.
 struct ScaleHandle {
     intervals: &'static [i32],
@@ -1052,6 +1099,8 @@ struct SampleHandle {
     sample: Arc<Sample>,
     /// Etiquetas de corte del proyecto.
     labels: Rc<Vec<SliceLabel>>,
+    /// Ajustes manuales de cortes del proyecto.
+    positions: Rc<Vec<SlicePosition>>,
     /// Avisos de la carga.
     warnings: Rc<RefCell<Vec<String>>>,
 }
@@ -1083,7 +1132,31 @@ impl UserData for SampleHandle {
                 ));
             }
             let count = n as usize;
-            let slices = Slices::detect(&this.sample, count);
+            let mut slices = Slices::detect(&this.sample, count);
+            // Ajustes manuales del proyecto: mandan sobre el detector.
+            let mut adjusted = vec![false; slices.len()];
+            for p in this.positions.iter() {
+                if p.sample != this.name || p.slices != count {
+                    continue;
+                }
+                let frame = ms_to_frame(p.ms, &this.sample);
+                match slices.with_start(p.slice - 1, frame, min_slice_gap(&this.sample)) {
+                    Ok(moved) => {
+                        slices = moved;
+                        adjusted[p.slice - 1] = true;
+                    }
+                    Err(_) if p.slice > slices.len() => {}
+                    Err(bounds) => this.warnings.borrow_mut().push(format!(
+                        "el ajuste del corte {} de {} ({} ms) se sale de sus vecinos \
+                         ({:.1} a {:.1} ms): no se aplica",
+                        p.slice,
+                        this.name,
+                        p.ms,
+                        frame_to_ms(bounds.start, &this.sample),
+                        frame_to_ms(bounds.end, &this.sample),
+                    )),
+                }
+            }
             // Etiquetas del proyecto para este sample, pero de otro `slice(n)`:
             // no se aplican (los cortes son otros). Se avisa, y el error de una
             // de ellas en `steps` lo explica.
@@ -1144,6 +1217,7 @@ impl UserData for SampleHandle {
                 slices,
                 labels: Rc::new(RefCell::new(labels)),
                 stale: Rc::new(stale),
+                adjusted,
             })
         });
     }
@@ -1161,6 +1235,8 @@ struct SlicedHandle {
     /// Etiquetas del proyecto de otro `slice(n)` (nombre y su `n`), para
     /// explicar el error si se usan.
     stale: Rc<Vec<(String, usize)>>,
+    /// Cortes con el inicio ajustado a mano.
+    adjusted: Vec<bool>,
 }
 
 impl UserData for SlicedHandle {
@@ -1191,7 +1267,45 @@ impl UserData for SlicedHandle {
                     ..this.origin.clone()
                 },
                 stale: this.stale.clone(),
+                adjusted: vec![this.adjusted[i]],
             })
+        });
+
+        // `:move(i, ms)`: el corte `i` empieza en `ms` (ajuste manual; las
+        // pistas definidas antes con esta variable no lo ven).
+        methods.add_method_mut("move", |lua, this, (index, ms): (i64, f64)| {
+            let count = this.slices.len();
+            let i = usize::try_from(index - 1)
+                .ok()
+                .filter(|&i| i < count)
+                .ok_or_else(|| {
+                    fail(
+                        lua,
+                        format!("move({index}): el corte no existe (hay {count})"),
+                    )
+                })?;
+            if !(ms.is_finite() && ms >= 0.0) {
+                return Err(fail(
+                    lua,
+                    format!("move({index}, {ms}): ms desde el principio (0 o más)"),
+                ));
+            }
+            let frame = ms_to_frame(ms, &this.sample);
+            this.slices = this
+                .slices
+                .with_start(i, frame, min_slice_gap(&this.sample))
+                .map_err(|bounds| {
+                    fail(
+                        lua,
+                        format!(
+                            "move({index}, {ms}): se sale de sus vecinos ({:.1} a {:.1} ms)",
+                            frame_to_ms(bounds.start, &this.sample),
+                            frame_to_ms(bounds.end, &this.sample)
+                        ),
+                    )
+                })?;
+            this.adjusted[i] = true;
+            Ok(this.clone())
         });
 
         // `:name(i, "kick")`: etiqueta el corte `i` para usarla en `steps`

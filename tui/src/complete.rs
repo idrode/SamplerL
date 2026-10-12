@@ -870,7 +870,11 @@ mod tests {
         let c = at(&format!("{SONG}amen:s|")).unwrap();
         assert_eq!(labels(&c), ["slice_at"], "cortes");
         let c = at("sample(\"amen.wav\"):slice(8):|").unwrap();
-        assert_eq!(labels(&c), ["count", "slice_at", "name"]);
+        let slices: Vec<String> = api::functions(Receiver::Slices)
+            .map(|f| f.name.to_string())
+            .collect();
+        assert_eq!(labels(&c), slices, "métodos de cortes, del registro");
+        assert!(slices.starts_with(&["count".into(), "slice_at".into()]));
     }
 
     #[test]
