@@ -410,6 +410,24 @@ pub const FUNCTIONS: &[Function] = &[
         ),
     },
     Function {
+        name: "metronome",
+        receiver: Receiver::Global,
+        signature: "metronome([sí])",
+        returns: None,
+        summary: "Enciende (o, con false, apaga) el metrónomo: un clic en cada pulso.",
+        doc: "El primer pulso del compás lleva acento (más agudo y más fuerte). Es \
+              para tocar y escuchar: el render exportado no lo lleva salvo que se \
+              pida (`exportar ... metronomo`, o `--metronome` en la línea de \
+              comandos). También se enciende y apaga desde la paleta. Sin llamarlo, \
+              se queda como esté.",
+        params: &[Param {
+            name: "sí",
+            description: "`true` (por defecto) lo enciende; `false` lo apaga",
+        }],
+        template: "metronome(${true})",
+        example: Some("bpm(170)\nmetronome(true)\n"),
+    },
+    Function {
         name: "euclid",
         receiver: Receiver::Global,
         signature: "euclid(k, n [, golpe])",

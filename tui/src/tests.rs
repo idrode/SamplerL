@@ -2114,3 +2114,41 @@ fn master_meter_warns_when_the_limiter_acts_and_when_it_saturates() {
     assert!(!view.master.limiting && !view.master.clipping);
     assert!((view.master.db().unwrap() + 6.02).abs() < 0.01, "-6 dB");
 }
+
+// --- Metrónomo ---
+
+#[test]
+fn the_metronome_toggles_from_the_palette_and_stays_out_of_exports() {
+    let (path, mut app, mut engine) = open("metronome", Some(SONG_KICK_ONLY));
+    palette(&mut app, "metrónomo");
+    assert!(app.view().metronome);
+    assert!(text_of(&mut app).contains("♩ clic"));
+    // El motor da el clic. Entre golpe y golpe (pasos 2 y 3: ni kick ni
+    // pulso) hay silencio; en el pulso 2 (paso 4) suenan el kick y el clic.
+    let audio = offline::render(&mut engine, 2 * 24_000, 2);
+    let left: Vec<f32> = audio.iter().step_by(2).copied().collect();
+    assert!(left[13_000..23_000].iter().all(|s| *s == 0.0));
+    assert!(left[24_001..24_100].iter().any(|s| s.abs() > 0.0));
+
+    // exportar no lo lleva; «exportar ... metronomo», sí.
+    let dir = path.parent().unwrap().to_path_buf();
+    command(&mut app, "exportar sin.wav 1");
+    command(&mut app, "exportar con.wav 1 metronomo");
+    assert!(
+        app.view().message.ends_with("con metrónomo"),
+        "{}",
+        app.view().message
+    );
+    let (_, sin) = read_wav(&dir.join("sin.wav"));
+    let (_, con) = read_wav(&dir.join("con.wav"));
+    assert_eq!(sin.len(), con.len());
+    assert_ne!(sin, con);
+    // Sin la pista, lo que queda es el clic: en el silencio entre golpes.
+    assert!(sin[2 * 13_000..2 * 23_000].iter().all(|s| *s == 0.0));
+
+    // metronome(false) en el script lo apaga al cargar.
+    let text = format!("metronome(false)\n{}", app.text_for_test());
+    replace_all(&mut app, &text);
+    app.handle(ctrl('s'));
+    assert!(!app.view().metronome);
+}

@@ -38,6 +38,8 @@ pub struct ViewModel {
     /// Ayuda de la función bajo el cursor (en el modo editor).
     pub help: Option<Help>,
     pub transport: TransportView,
+    /// Metrónomo encendido.
+    pub metronome: bool,
     /// Pistas en el orden del script.
     pub tracks: Vec<TrackView>,
     /// Pista seleccionada (índice en `tracks`).

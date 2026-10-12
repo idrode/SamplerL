@@ -3,6 +3,7 @@
 mod engine;
 mod fx;
 mod limiter;
+pub mod metronome;
 pub mod notation;
 pub mod offline;
 mod output;

@@ -7,6 +7,7 @@ use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::fx::{FxState, MAX_FX};
 use crate::limiter::{LIMIT_THRESHOLD, soft_limit};
+use crate::metronome::Metronome;
 use crate::sample::Sample;
 use crate::sequencer::{Pattern, Transport, Trigger, valid_bpm};
 use crate::slice::Slices;
@@ -59,6 +60,8 @@ enum Command {
     SetMute { track: usize, on: bool },
     /// Solo en vivo de una pista (inmediato).
     SetSolo { track: usize, on: bool },
+    /// Enciende o apaga el metrónomo (inmediato).
+    SetMetronome(bool),
 }
 
 /// Cómo se reproduce un rango: ganancia, velocidad de lectura (pitch) y
@@ -362,6 +365,7 @@ pub struct Engine {
     master: [f32; 2 * CHUNK],
     batch_open: bool,
     staged_bpm: Option<f64>,
+    metronome: Metronome,
 }
 
 /// Crea el par controlador/motor. `sample_rate` es la frecuencia a la que
@@ -390,6 +394,7 @@ pub fn new_engine(sample_rate: u32) -> (Controller, Engine) {
             master: [0.0; 2 * CHUNK],
             batch_open: false,
             staged_bpm: None,
+            metronome: Metronome::default(),
         },
     )
 }
@@ -543,6 +548,12 @@ impl Controller {
         self.send(Command::SetSolo { track, on }, None)
     }
 
+    /// Enciende o apaga el metrónomo: un clic en cada pulso, con acento en
+    /// el primero del compás. Inmediato.
+    pub fn set_metronome(&mut self, on: bool) -> Result<(), SendError> {
+        self.send(Command::SetMetronome(on), None)
+    }
+
     /// Para el secuenciador y las voces que suenan (con fundido).
     pub fn stop(&mut self) -> Result<(), SendError> {
         self.send(Command::Stop, Some(false))
@@ -689,6 +700,7 @@ impl Engine {
             }
             Command::Stop => {
                 self.transport.running = false;
+                self.metronome.stop();
                 for t in 0..MAX_TRACKS {
                     self.tracks[t].retrig = None;
                     self.trigger(t, None);
@@ -696,6 +708,12 @@ impl Engine {
             }
             Command::SetMute { track, on } => self.tracks[track].live_mute = on,
             Command::SetSolo { track, on } => self.tracks[track].live_solo = on,
+            Command::SetMetronome(on) => {
+                self.metronome.enabled = on;
+                if !on {
+                    self.metronome.stop();
+                }
+            }
         }
     }
 
@@ -705,6 +723,7 @@ impl Engine {
         let now = self.transport.frame;
         let (step, bar) = self.transport.advance(self.sample_rate);
         self.status.set_step(bar, step);
+        self.metronome.on_step(step, self.sample_rate);
         let next = self.transport.next_step_frame(self.sample_rate);
         for t in 0..MAX_TRACKS {
             if step == 0
@@ -861,6 +880,7 @@ impl Engine {
                 self.discard(done.sample);
             }
         }
+        self.metronome.mix_into(&mut self.master[..2 * n]);
         // Medidor del master antes del limitador, y cuándo actúa.
         let mut peak = 0.0f32;
         let mut limited = 0u64;

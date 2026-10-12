@@ -427,6 +427,11 @@ impl Widget for EnginePanel<'_> {
                     "   {:.1} BPM   compás {}   paso {step}",
                     t.bpm, t.bar
                 )),
+                if view.metronome {
+                    Span::from("   ♩ clic").fg(Color::Yellow)
+                } else {
+                    Span::raw("")
+                },
             ]),
             master_line(&view.master),
         ];

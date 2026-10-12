@@ -82,7 +82,9 @@ cargo run -p tui -- renders/synth_break.wav --render renders/patron.wav \
 
 Opciones de `--render` con `--pattern`: `--slices N` (cortes a detectar, 8
 por defecto), `--bpm B` (120), `--bars M` (4), `--min-gap MS` (separación
-mínima entre cortes, 40) y `--detector flux|energy` (flux). Imprime los
+mínima entre cortes, 40) y `--detector flux|energy` (flux). `--metronome`
+(también con `--script`) añade el clic del metrónomo al render; sin él, el
+render nunca lo lleva, aunque el script llame a `metronome(true)`. Imprime los
 cortes detectados con su posición en ms.
 
 Desde la interfaz, la orden `exportar` (F2) hace lo mismo con lo que está
@@ -178,6 +180,7 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Mute de la pista | Silencia la pista seleccionada, o la vuelve a dejar sonar (en vivo, sin esperar al compás) | m (modo tocar) |
 | Solo de la pista | Pone la pista seleccionada en solo, o se lo quita (en vivo) | s (modo tocar) |
 | Quitar mute y solo | Quita todos los mute y solo en vivo (los del script siguen) | — |
+| Metrónomo | Enciende o apaga el clic en cada pulso (no entra en lo exportado salvo que se pida) | — |
 | Reiniciar medidores | Pone a cero los medidores y quita los avisos de limitador y saturación | — |
 | Etiquetar el corte seleccionado | Abre «etiquetar N » para escribir la etiqueta (kick, snare...); se guarda en el proyecto | — |
 | Corte siguiente | Selecciona el corte siguiente de la pista (sin tocarlo) | — |
@@ -261,7 +264,7 @@ proyecto o, si no hay, a la del script.
 
 | Orden | Qué hace |
 | --- | --- |
-| `exportar [archivo.wav] [compases]` | Renderiza la mezcla a WAV. Por defecto `<script>-mezcla.wav` y la canción entera (el ciclo de `every`/`chance`, al menos 4 compases) |
+| `exportar [archivo.wav] [compases] [metronomo]` | Renderiza la mezcla a WAV. Por defecto `<script>-mezcla.wav` y la canción entera (el ciclo de `every`/`chance`, al menos 4 compases). Con `metronomo`, lleva el clic; si no, nunca |
 | `guardar [proyecto.sampler]` | Guarda el script y el proyecto |
 | `abrir proyecto.sampler` | Abre un proyecto (`abrir!` descarta los cambios sin guardar) |
 | `muestras [carpeta]` | Cambia la carpeta de los samples (sin argumento, dice cuál es) |
@@ -381,6 +384,17 @@ Define una pista que toca esos cortes, o recupera una ya definida. Con dos argum
 local amen = sample("amen.wav"):slice(8)
 track("drums", amen)
 track("drums"):steps("1 . . .  3 . . .  1 . . .  3 . . .")
+```
+
+### `metronome([sí])`
+
+Enciende (o, con false, apaga) el metrónomo: un clic en cada pulso. El primer pulso del compás lleva acento (más agudo y más fuerte). Es para tocar y escuchar: el render exportado no lo lleva salvo que se pida (`exportar ... metronomo`, o `--metronome` en la línea de comandos). También se enciende y apaga desde la paleta. Sin llamarlo, se queda como esté.
+
+- `sí`: `true` (por defecto) lo enciende; `false` lo apaga
+
+```lua
+bpm(170)
+metronome(true)
 ```
 
 ### `euclid(k, n [, golpe])`

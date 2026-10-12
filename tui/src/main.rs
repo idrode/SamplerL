@@ -16,10 +16,10 @@ use engine::{DetectOptions, Detector, Pattern, STEPS, Slices, Step};
 const USAGE: &str = "\
 uso: tui --edit <canción.lua | proyecto.sampler> [--allow-audio]   (interfaz)
      tui <archivo.wav> --render <salida.wav>
-     tui --script <canción.lua> --render <salida.wav> [--bars M]
+     tui --script <canción.lua> --render <salida.wav> [--bars M] [--metronome]
      tui --script <canción.lua> --allow-audio     (reproduce y recarga al guardar)
      tui <archivo.wav> --render <salida.wav> --pattern \"1 . 3 . ...\" \
-[--slices N] [--bpm B] [--bars M] [--min-gap MS] [--detector flux|energy]
+[--slices N] [--bpm B] [--bars M] [--min-gap MS] [--detector flux|energy] [--metronome]
 
   --pattern  16 pasos separados por espacios (mini-notación):
                3      corte 3 (desde 1; \"x\" = 1)      .      silencio
@@ -31,6 +31,7 @@ uso: tui --edit <canción.lua | proyecto.sampler> [--allow-audio]   (interfaz)
   --bars     compases a renderizar (por defecto 4)
   --min-gap  separación mínima entre cortes en ms (por defecto 40)
   --detector detección de transitorios: flux (flujo espectral, por defecto) o energy
+  --metronome  añade al render el clic del metrónomo (si no, nunca lo lleva)
 
 Sin --render, tui se niega a reproducir por la tarjeta de sonido salvo con
 --allow-audio (ver CLAUDE.md: no usarlo en sesiones automáticas).";
@@ -50,6 +51,7 @@ struct Sequence {
     bpm: f64,
     bars: u64,
     detect: DetectOptions,
+    metronome: bool,
 }
 
 fn main() -> std::process::ExitCode {
@@ -75,6 +77,7 @@ fn run() -> Result<(), BoxError> {
     let mut detector = None;
     let mut script = None;
     let mut edit = None;
+    let mut metronome = false;
     while let Some(arg) = args.next() {
         let mut value = || {
             args.next()
@@ -83,6 +86,7 @@ fn run() -> Result<(), BoxError> {
         match arg.as_str() {
             "--render" => render_to = Some(value()?),
             "--allow-audio" => allow_audio = true,
+            "--metronome" => metronome = true,
             "--pattern" => {
                 let steps = engine::notation::parse_steps(&value()?)
                     .map_err(|e| format!("--pattern: {e}"))?;
@@ -136,7 +140,7 @@ fn run() -> Result<(), BoxError> {
             .into());
         }
         return match render_to {
-            Some(out) => render_script(&script, &out, bars.unwrap_or(DEFAULT_BARS)),
+            Some(out) => render_script(&script, &out, bars.unwrap_or(DEFAULT_BARS), metronome),
             None if allow_audio => play_script(&script),
             None => Err(format!(
                 "no se reproduce por la tarjeta de sonido sin --allow-audio; \
@@ -158,6 +162,7 @@ fn run() -> Result<(), BoxError> {
                 min_gap_seconds: min_gap_ms
                     .map_or(engine::DEFAULT_MIN_GAP_SECONDS, |ms| ms / 1000.0),
             },
+            metronome,
         }),
         None if slices.is_some()
             || bpm.is_some()
@@ -253,6 +258,9 @@ fn render_sequence(path: &str, out: &str, sequence: &Sequence) -> Result<(), Box
     let (mut controller, mut engine) = engine::new_engine(RENDER_RATE);
     controller.set_bpm(sequence.bpm)?;
     controller.set_pattern(pattern)?;
+    if sequence.metronome {
+        controller.set_metronome(true)?;
+    }
     controller.start()?;
 
     let frames = sequence.bars * engine::bar_frames(sequence.bpm, RENDER_RATE);
@@ -272,7 +280,7 @@ fn render_sequence(path: &str, out: &str, sequence: &Sequence) -> Result<(), Box
 }
 
 /// Carga una canción en Lua y renderiza `bars` compases a su tempo.
-fn render_script(path: &str, out: &str, bars: u64) -> Result<(), BoxError> {
+fn render_script(path: &str, out: &str, bars: u64, metronome: bool) -> Result<(), BoxError> {
     let mut host = script::ScriptHost::new(RENDER_RATE);
     let (mut controller, mut engine) = engine::new_engine(RENDER_RATE);
     let song = host.load_file(&mut controller, std::path::Path::new(path))?;
@@ -287,6 +295,10 @@ fn render_script(path: &str, out: &str, bars: u64) -> Result<(), BoxError> {
             track.path.display(),
             track.slices.len()
         );
+    }
+    // El metrónomo del script no entra en el render: solo con --metronome.
+    if metronome {
+        controller.set_metronome(true)?;
     }
     controller.start()?;
 

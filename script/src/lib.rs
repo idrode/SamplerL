@@ -81,6 +81,9 @@ pub struct Song {
     pub bpm: Option<f64>,
     /// Pistas en el orden en que se definieron.
     pub tracks: Vec<TrackDef>,
+    /// Metrónomo pedido con `metronome()`; `None` deja el que haya. No entra
+    /// en el render salvo que se pida ([`Song::render_with_metronome`]).
+    pub metronome: Option<bool>,
     /// Avisos de la carga que no la impiden (por ejemplo, etiquetas del
     /// proyecto que no se aplican porque el script corta el sample en otro
     /// número de cortes).
@@ -408,6 +411,7 @@ impl ScriptHost {
         let pattern_rng = Rc::new(RefCell::new(Rng::new(seed.rotate_left(29) ^ PATTERN_SEED)));
         let state = Rc::new(RefCell::new(Builder {
             bpm: None,
+            metronome: None,
             tracks: Vec::new(),
             expanding: Rc::new(Cell::new(false)),
         }));
@@ -419,10 +423,11 @@ impl ScriptHost {
         self.samples = std::mem::take(&mut *cache.borrow_mut());
         result.map_err(|e| ScriptError::from_lua(&e))?;
 
-        let (bpm, tracks, expanding) = {
+        let (bpm, metronome, tracks, expanding) = {
             let mut builder = state.borrow_mut();
             (
                 builder.bpm.or(self.default_bpm),
+                builder.metronome,
                 std::mem::take(&mut builder.tracks),
                 builder.expanding.clone(),
             )
@@ -451,6 +456,7 @@ impl ScriptHost {
         Ok(Song {
             bpm,
             tracks: expanded?,
+            metronome,
             warnings,
         })
     }
@@ -488,6 +494,17 @@ impl ScriptHost {
                     return Err(fail(lua, SendError::InvalidBpm(bpm)));
                 }
                 st.borrow_mut().bpm = Some(bpm);
+                Ok(())
+            })?,
+        )?;
+
+        let st = state.clone();
+        let g = guard.clone();
+        globals.set(
+            "metronome",
+            lua.create_function(move |lua, on: Option<bool>| {
+                g(lua, "metronome")?;
+                st.borrow_mut().metronome = Some(on.unwrap_or(true));
                 Ok(())
             })?,
         )?;
@@ -710,6 +727,18 @@ impl Song {
     /// Renderiza `bars` compases de la canción offline, en un motor aparte
     /// (no toca el que está sonando). Estéreo entrelazado a `sample_rate`.
     pub fn render(&self, sample_rate: u32, bars: u64) -> Result<Vec<f32>, ScriptError> {
+        self.render_with_metronome(sample_rate, bars, false)
+    }
+
+    /// Como [`Song::render`], con el clic del metrónomo si `metronome`
+    /// (el `metronome()` del script no cuenta: el render solo lo lleva si
+    /// se pide).
+    pub fn render_with_metronome(
+        &self,
+        sample_rate: u32,
+        bars: u64,
+        metronome: bool,
+    ) -> Result<Vec<f32>, ScriptError> {
         let mut slots: [Option<String>; MAX_TRACKS] = Default::default();
         for (slot, track) in slots.iter_mut().zip(&self.tracks) {
             *slot = Some(track.name.clone());
@@ -717,6 +746,9 @@ impl Song {
         let (mut controller, mut engine) = engine::new_engine(sample_rate);
         let send = |e: SendError| ScriptError::new(format!("motor: {e}"));
         controller.apply(song_batch(self, &slots)?).map_err(send)?;
+        if metronome {
+            controller.set_metronome(true).map_err(send)?;
+        }
         controller.start().map_err(send)?;
         let bpm = self.bpm.unwrap_or(engine::DEFAULT_BPM);
         let frames = bars * engine::bar_frames(bpm, sample_rate);
@@ -763,6 +795,7 @@ fn fail(lua: &Lua, message: impl fmt::Display) -> mlua::Error {
 
 struct Builder {
     bpm: Option<f64>,
+    metronome: Option<bool>,
     tracks: Vec<TrackBuild>,
     /// Activo mientras se llaman las funciones de `every`.
     expanding: Rc<Cell<bool>>,

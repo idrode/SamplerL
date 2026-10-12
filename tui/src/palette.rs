@@ -30,6 +30,7 @@ pub enum Action {
     Solo,
     ClearMuteSolo,
     ResetMeters,
+    Metronome,
     NextSlice,
     PreviousSlice,
     Quit,
@@ -159,6 +160,12 @@ pub const ACTIONS: &[ActionDef] = &[
         action: Action::ClearMuteSolo,
         name: "Quitar mute y solo",
         description: "Quita todos los mute y solo en vivo (los del script siguen)",
+        keys: "",
+    },
+    ActionDef {
+        action: Action::Metronome,
+        name: "Metrónomo",
+        description: "Enciende o apaga el clic en cada pulso (no entra en lo exportado salvo que se pida)",
         keys: "",
     },
     ActionDef {

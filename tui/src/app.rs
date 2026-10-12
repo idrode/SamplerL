@@ -106,6 +106,8 @@ pub struct App {
     /// Corte seleccionado de la pista seleccionada (desde 0): el último
     /// tocado en el modo tocar o el elegido desde la paleta.
     selected_slice: usize,
+    /// Metrónomo encendido.
+    metronome: bool,
     /// Mute y solo en vivo, por nombre de pista (sobreviven a las recargas).
     muted: Vec<String>,
     soloed: Vec<String>,
@@ -167,6 +169,7 @@ impl App {
             started: false,
             selected: 0,
             selected_slice: 0,
+            metronome: false,
             muted: Vec::new(),
             soloed: Vec::new(),
             sent_mix: [(false, false); MAX_TRACKS],
@@ -264,6 +267,15 @@ impl App {
     /// `exportar [archivo.wav] [compases]`: renderiza offline lo último
     /// cargado (en un motor aparte, sin tocar lo que suena) y lo guarda.
     fn export(&mut self, args: &[&str]) {
+        // `metronomo` en cualquier sitio añade el clic; el resto, por orden.
+        let click = ["metronomo", "metrónomo", "clic"];
+        let metronome = args.iter().any(|a| click.contains(a));
+        let args: Vec<&str> = args
+            .iter()
+            .copied()
+            .filter(|a| !click.contains(a))
+            .collect();
+        let args = &args[..];
         let Some(song) = self.host.song() else {
             self.message = "no hay nada cargado que exportar".into();
             return;
@@ -287,18 +299,22 @@ impl App {
         let path = self.base_dir().join(&name);
         let bpm = song.bpm.unwrap_or(engine::DEFAULT_BPM);
         let result = song
-            .render(self.sample_rate, bars)
+            .render_with_metronome(self.sample_rate, bars, metronome)
             .map_err(|e| e.to_string())
             .and_then(|audio| {
                 engine::offline::write_wav(&path, &audio, 2, self.sample_rate)
                     .map(|()| audio.len() / 2)
                     .map_err(|e| e.to_string())
             });
-        let note = if self.dirty() || self.error.is_some() {
+        let mut note = if self.dirty() || self.error.is_some() {
             " (lo último cargado bien, no el texto actual)"
         } else {
             ""
-        };
+        }
+        .to_string();
+        if metronome {
+            note.push_str(" con metrónomo");
+        }
         self.message = match result {
             Ok(frames) => format!(
                 "exportado {}: {bars} compases a {bpm} BPM ({:.1} s){note}",
@@ -592,6 +608,9 @@ impl App {
                 }
                 self.update_waveforms();
                 self.sync_mix();
+                if let Some(on) = self.host.song().and_then(|s| s.metronome) {
+                    self.set_metronome(on);
+                }
             }
             Err(e) => {
                 self.message = "error: sigue sonando lo anterior".into();
@@ -974,6 +993,7 @@ impl App {
             Action::Solo => self.toggle_live(true),
             Action::ClearMuteSolo => self.clear_live(),
             Action::ResetMeters => self.reset_meters(),
+            Action::Metronome => self.toggle_metronome(),
             Action::NextSlice => self.select_slice(true),
             Action::PreviousSlice => self.select_slice(false),
             Action::Quit => {
@@ -1113,6 +1133,24 @@ impl App {
         self.sync_mix();
         let what = if solo { "solo" } else { "mute" };
         self.message = format!("{name}: {what} {}", if on { "sí" } else { "no" });
+    }
+
+    /// Enciende o apaga el metrónomo (inmediato).
+    fn set_metronome(&mut self, on: bool) {
+        if on != self.metronome && self.controller.set_metronome(on).is_ok() {
+            self.metronome = on;
+        }
+    }
+
+    pub fn toggle_metronome(&mut self) {
+        let on = !self.metronome;
+        self.set_metronome(on);
+        self.message = if self.metronome {
+            "metrónomo encendido (no entra en lo exportado salvo «exportar ... metronomo»)"
+        } else {
+            "metrónomo apagado"
+        }
+        .into();
     }
 
     /// Vacía los medidores y los avisos de saturación.
@@ -1426,6 +1464,7 @@ impl App {
                 .map(|n| n.to_string_lossy().into()),
             message: self.message.clone(),
             transport,
+            metronome: self.metronome,
             tracks,
             selected,
             selected_slice,

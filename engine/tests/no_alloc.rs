@@ -106,7 +106,8 @@ fn the_audio_thread_never_allocates() {
         }
     });
     assert_eq!(n, 0, "reservas al cambiar de patrón");
-    // Mute y solo en vivo, y un patrón con mute del script.
+    // Mute y solo en vivo, un patrón con mute del script y el metrónomo.
+    controller.set_metronome(true).unwrap();
     controller.set_mute(0, true).unwrap();
     controller.set_solo(1, true).unwrap();
     let muted = Pattern::from_bars(sample.clone(), &slices, &bars[..1])

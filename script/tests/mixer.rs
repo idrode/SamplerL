@@ -46,3 +46,47 @@ fn script_mute_and_solo_sound_like_the_tracks_that_remain() {
         render(&dir, &format!("{A}\n{B}"))
     );
 }
+
+#[test]
+fn the_metronome_only_goes_into_the_render_when_asked() {
+    let dir = fixture("metronome");
+    let source =
+        format!("bpm(120)\nmetronome(true)\nlocal amen = sample(\"break8.wav\"):slice(8)\n{A}");
+    let song = ScriptHost::new(RATE)
+        .eval(&source, "song.lua", &dir)
+        .unwrap();
+    assert_eq!(song.metronome, Some(true));
+    // El metronome() del script no entra en el render.
+    assert_eq!(song.render(RATE, 1).unwrap(), render(&dir, A)[..2 * 96_000]);
+    // Pedido, sí: la diferencia es el clic de cada pulso (el primero, con
+    // acento, más fuerte).
+    let with = song.render_with_metronome(RATE, 1, true).unwrap();
+    let without = song.render(RATE, 1).unwrap();
+    let click: Vec<f32> = with
+        .iter()
+        .zip(&without)
+        .map(|(a, b)| a - b)
+        .step_by(2)
+        .collect();
+    let peak = |at: usize| {
+        click[at..at + 1440]
+            .iter()
+            .fold(0.0f32, |m, s| m.max(s.abs()))
+    };
+    assert!(peak(0) > 0.4, "acento: {}", peak(0));
+    for beat in 1..4 {
+        assert!((0.25..0.35).contains(&peak(beat * 24_000)), "pulso {beat}");
+    }
+    assert!(click[2000..23_000].iter().all(|s| s.abs() < 1e-6));
+    let off = ScriptHost::new(RATE)
+        .eval("metronome(false)", "song.lua", &dir)
+        .unwrap();
+    assert_eq!(off.metronome, Some(false));
+    assert_eq!(
+        ScriptHost::new(RATE)
+            .eval("bpm(120)", "song.lua", &dir)
+            .unwrap()
+            .metronome,
+        None
+    );
+}
