@@ -1051,6 +1051,12 @@ impl App {
                 message: e.message.clone(),
             }),
             diagnostics: diagnose::steps_diagnostics(self.editor.lines()),
+            help: (self.mode == Mode::Edit && self.palette.is_none())
+                .then(|| {
+                    let cursor = self.editor.cursor();
+                    complete::help_at(self.editor.lines(), cursor.0, cursor.1)
+                })
+                .flatten(),
             file: name,
             dirty: self.dirty(),
             playing_mode: self.mode == Mode::Play,

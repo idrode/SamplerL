@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use engine::{Fx, STEPS, Sample, Step};
 
+pub use crate::complete::Help;
 pub use crate::diagnose::Diagnostic;
 
 #[derive(Debug, Clone, Default)]
@@ -34,6 +35,8 @@ pub struct ViewModel {
     /// Problemas de la notación de `steps("...")` en el texto actual (en
     /// vivo, sin cargar).
     pub diagnostics: Vec<Diagnostic>,
+    /// Ayuda de la función bajo el cursor (en el modo editor).
+    pub help: Option<Help>,
     pub transport: TransportView,
     /// Pistas en el orden del script.
     pub tracks: Vec<TrackView>,

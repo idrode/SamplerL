@@ -1604,3 +1604,47 @@ fn steps_errors_are_underlined_while_typing() {
     assert!(app.view().diagnostics.is_empty());
     assert!(!text_of(&mut app).contains("⚠ línea"));
 }
+
+// --- Ayuda contextual ---
+
+#[test]
+fn the_help_line_explains_the_function_under_the_cursor() {
+    let (mut app, _engine) = open_at_end("help_line");
+    type_text(
+        &mut app,
+        "track(\"drums\"):fx(\"bitcrush\", { bits = 4, downsample = ",
+    );
+    assert!(app.view().completion.is_none(), "tras «= » no se abre solo");
+    let screen = text(&draw(&mut app, 140, 40));
+    assert!(screen.contains("ⓘ fx(\"bitcrush\", { ... })"), "{screen}");
+    assert!(
+        screen.contains("downsample: repite cada muestra n veces"),
+        "{screen}"
+    );
+    assert_eq!(
+        app.view().help.unwrap().description,
+        "downsample: repite cada muestra n veces (1–64, por defecto 1)"
+    );
+
+    // Sobre el nombre de una función, su firma y su resumen.
+    app.editor
+        .move_cursor(ratatui_textarea::CursorMove::Jump(0, 1));
+    let screen = text(&draw(&mut app, 140, 40));
+    assert!(
+        screen.contains("ⓘ bpm(n)  Tempo en pulsos por minuto, de 20 a 400."),
+        "{screen}"
+    );
+    // Sobre algo que no es de la API, nada.
+    app.editor
+        .move_cursor(ratatui_textarea::CursorMove::Jump(1, 2));
+    assert!(app.view().help.is_none());
+    assert!(!text(&draw(&mut app, 140, 40)).contains("ⓘ"));
+
+    // En modo tocar no hay ayuda.
+    app.editor
+        .move_cursor(ratatui_textarea::CursorMove::Jump(0, 1));
+    assert!(app.view().help.is_some());
+    app.handle(esc());
+    assert!(app.view().playing_mode);
+    assert!(app.view().help.is_none());
+}

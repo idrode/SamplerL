@@ -185,6 +185,22 @@ fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rect) -
         }
         None => inner,
     };
+    // Ayuda de la función bajo el cursor, en la última línea del editor.
+    let editor_area = match &view.help {
+        Some(help) if editor_area.height > 3 => {
+            let [editor, line] =
+                Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(editor_area);
+            frame.render_widget(
+                Line::from(vec![
+                    Span::from(format!("ⓘ {}", help.signature)).fg(ACCENT),
+                    Span::from(format!("  {}", help.description)).fg(DIM),
+                ]),
+                line,
+            );
+            editor
+        }
+        _ => editor_area,
+    };
     // Aviso de la notación de `steps("...")`, en vivo, al pie del editor.
     let editor_area = match view.diagnostics.first() {
         Some(first) => {

@@ -318,6 +318,8 @@ enum Frame {
         arg: usize,
         /// Primera cadena de cada argumento, si la hay.
         strings: Vec<Option<String>>,
+        /// Si es un método, byte de `code` donde está su `:`.
+        colon: Option<usize>,
     },
     Brace {
         /// Byte donde empieza el elemento actual (tras `{` o `,`).
@@ -381,10 +383,16 @@ impl Scan {
                     continue;
                 }
                 '"' | '\'' => string = Some((c, i)),
-                '(' => frames.push(Frame::Paren {
-                    name: last_ident(&code),
-                    arg: 0,
-                    strings: Vec::new(),
+                '(' => frames.push({
+                    let name = last_ident(&code);
+                    let callee = code.trim_end();
+                    let before = &callee[..callee.len() - name.len()];
+                    Frame::Paren {
+                        colon: before.ends_with(':').then(|| before.len() - 1),
+                        name,
+                        arg: 0,
+                        strings: Vec::new(),
+                    }
                 }),
                 '{' => frames.push(Frame::Brace { item_start: i + 1 }),
                 ')' | '}' => {
@@ -409,7 +417,13 @@ impl Scan {
 
     /// Efecto de la tabla abierta, si es la de `fx("efecto", { ... })`.
     fn fx_effect(&self) -> Option<&'static api::Effect> {
-        let [.., Frame::Paren { name, arg, strings }, Frame::Brace { .. }] = &self.frames[..]
+        let [
+            ..,
+            Frame::Paren {
+                name, arg, strings, ..
+            },
+            Frame::Brace { .. },
+        ] = &self.frames[..]
         else {
             return None;
         };
@@ -417,6 +431,151 @@ impl Scan {
             return None;
         }
         api::effect(strings.first()?.as_deref()?)
+    }
+}
+
+/// Ayuda contextual: qué es lo que hay bajo el cursor.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Help {
+    /// Firma de la función o forma de uso del efecto.
+    pub signature: String,
+    /// Resumen, o el parámetro en el que está el cursor.
+    pub description: String,
+}
+
+/// Ayuda de la función (o el efecto de `fx`) bajo el cursor: la palabra
+/// sobre la que está o, si no, la llamada dentro de la que está, con el
+/// parámetro que toca. `None` si no hay nada de la API.
+pub fn help_at(lines: &[String], row: usize, col: usize) -> Option<Help> {
+    let current = lines.get(row)?;
+    // La palabra bajo el cursor: hasta su final, para que cuente entera.
+    let chars: Vec<char> = current.chars().collect();
+    let mut end = col.min(chars.len());
+    while end < chars.len() && is_ident(chars[end]) {
+        end += 1;
+    }
+    let mut before = String::new();
+    for line in lines.iter().take(row) {
+        before.push_str(line);
+        before.push('\n');
+    }
+    before.extend(chars[..end].iter());
+    let scan = Scan::of(&before);
+    if scan.comment {
+        return None;
+    }
+
+    if scan.string.is_none() {
+        let name = last_ident(&scan.code);
+        let head = &scan.code[..scan.code.len() - name.len()];
+        // Solo si la palabra llega al cursor (no una anterior separada por espacios).
+        if !name.is_empty() && head.len() + name.len() == scan.code.len() {
+            let found = match head.chars().last() {
+                Some(':') => method(&scan.code, &head[..head.len() - 1], &name),
+                Some('.') => None,
+                _ => api::function(Receiver::Global, &name),
+            };
+            if let Some(f) = found {
+                return Some(Help {
+                    signature: f.full_signature(),
+                    description: f.summary.into(),
+                });
+            }
+        }
+    }
+
+    // Dentro de la tabla de `fx("efecto", { ... })`: el efecto y sus parámetros.
+    if let (Some(effect), Some(Frame::Brace { item_start })) =
+        (scan.fx_effect(), scan.frames.last())
+    {
+        let item = &scan.code[*item_start..];
+        let key = item.split('=').next().unwrap_or("").trim();
+        let description = match effect
+            .params
+            .iter()
+            .find(|p| p.name == key && item.contains('='))
+        {
+            Some(p) => format!(
+                "{}: {} ({}{})",
+                p.name,
+                p.description,
+                p.valid.replace('`', ""),
+                p.default
+                    .map_or(", obligatorio".into(), |d| format!(", por defecto {d}"))
+            ),
+            None => format!(
+                "{} Parámetros: {}",
+                effect.summary,
+                effect
+                    .params
+                    .iter()
+                    .map(|p| p.name)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        };
+        return Some(Help {
+            signature: format!("fx(\"{}\", {{ ... }})", effect.name),
+            description,
+        });
+    }
+
+    // La llamada más interior de la API.
+    for frame in scan.frames.iter().rev() {
+        let Frame::Paren {
+            name,
+            arg,
+            strings,
+            colon,
+        } = frame
+        else {
+            continue;
+        };
+        let found = match colon {
+            Some(at) => method(&scan.code, &scan.code[..*at], name),
+            None => api::function(Receiver::Global, name),
+        };
+        let Some(f) = found else { continue };
+        let mut description = match f.params.get(*arg) {
+            Some(p) => format!("{}: {}", p.name, p.description),
+            None => f.summary.into(),
+        };
+        // El efecto elegido en `fx("...")` o `chance(p, "...")`.
+        let chosen = |i: usize| strings.get(i).cloned().flatten();
+        match (f.receiver, f.name) {
+            (Receiver::Track, "fx") => {
+                if let Some(e) = chosen(0).as_deref().and_then(api::effect) {
+                    description = format!("{} · {}: {}", description, e.name, e.summary);
+                }
+            }
+            (Receiver::Track, "chance") => {
+                if let Some(e) = chosen(1).as_deref().and_then(api::chance_effect) {
+                    description = format!("{} · {}: {}", description, e.name, e.summary);
+                }
+            }
+            _ => {}
+        }
+        return Some(Help {
+            signature: f.full_signature(),
+            description,
+        });
+    }
+    None
+}
+
+/// Método `name` del objeto que acaba al final de `receiver`; si no se
+/// sabe qué es, el primero con ese nombre.
+fn method(code: &str, receiver: &str, name: &str) -> Option<&'static api::Function> {
+    match type_of(code, receiver, 0) {
+        Some(r) => api::function(r, name),
+        None => [
+            Receiver::Track,
+            Receiver::Slices,
+            Receiver::Sample,
+            Receiver::Bar,
+        ]
+        .into_iter()
+        .find_map(|r| api::function(r, name)),
     }
 }
 
@@ -709,6 +868,77 @@ mod tests {
         let c =
             at("-- línea con tildes: ñandú\ntrack(\"d\", sample(\"a.wav\"):slice(2)):g|").unwrap();
         assert_eq!(labels(&c), ["gain"]);
+    }
+
+    fn help(text: &str) -> Option<Help> {
+        let lines: Vec<String> = text.lines().map(String::from).collect();
+        let (row, line) = lines
+            .iter()
+            .enumerate()
+            .find(|(_, l)| l.contains('|'))
+            .expect("falta el cursor |");
+        let col = line[..line.find('|').unwrap()].chars().count();
+        let lines: Vec<String> = lines.iter().map(|l| l.replace('|', "")).collect();
+        help_at(&lines, row, col)
+    }
+
+    #[test]
+    fn help_for_the_word_under_the_cursor() {
+        let h = help("b|pm(170)").unwrap();
+        assert_eq!(h.signature, "bpm(n)");
+        assert_eq!(h.description, "Tempo en pulsos por minuto, de 20 a 400.");
+        let h = help(&format!("{SONG}track(\"d\", amen):ga|in(0.5)")).unwrap();
+        assert_eq!(h.signature, "pista:gain(g) → pista");
+        // Mismo nombre en el compás de every: su propia ayuda.
+        let h = help(&format!(
+            "{SONG}track(\"d\", amen):every(2, function(c) c:gain|(1) end)"
+        ))
+        .unwrap();
+        assert_eq!(h.signature, "c:gain(g) → compás");
+        assert!(help("local x| = 1").is_none());
+        assert!(help("-- bpm|").is_none());
+    }
+
+    #[test]
+    fn help_for_the_call_around_the_cursor_and_its_parameter() {
+        let h = help(&format!(
+            "{SONG}track(\"d\", amen):chance(0.2, \"retrig\", |4)"
+        ))
+        .unwrap();
+        assert_eq!(h.signature, "pista:chance(p, efecto [, valor]) → pista");
+        assert_eq!(
+            h.description,
+            "valor: el valor del efecto, si lo lleva · retrig: Retrigger del golpe"
+        );
+        let h = help(&format!("{SONG}track(\"d\", amen):steps(\"1 . |")).unwrap();
+        assert_eq!(h.description, "texto: 16 pasos separados por espacios");
+        let h = help("local a = sample(\"am|").unwrap();
+        assert_eq!(h.signature, "sample(ruta) → sample");
+        // En la tabla de fx: el efecto y, sobre una clave, su rango.
+        let h = help(&format!("{SONG}track(\"d\", amen):fx(\"filter\", {{ |")).unwrap();
+        assert_eq!(h.signature, "fx(\"filter\", { ... })");
+        assert!(
+            h.description.ends_with("Parámetros: type, cutoff, q"),
+            "{}",
+            h.description
+        );
+        let h = help(&format!(
+            "{SONG}track(\"d\", amen):fx(\"filter\", {{ cutoff = |"
+        ))
+        .unwrap();
+        assert_eq!(
+            h.description,
+            "cutoff: frecuencia de corte en Hz (20–20000, obligatorio)"
+        );
+        let h = help(&format!(
+            "{SONG}track(\"d\", amen):fx(\"bitcrush\", {{ bits = 4, downsample = |"
+        ))
+        .unwrap();
+        assert_eq!(
+            h.description,
+            "downsample: repite cada muestra n veces (1–64, por defecto 1)"
+        );
+        assert!(help("print(1, |").is_none());
     }
 
     #[test]

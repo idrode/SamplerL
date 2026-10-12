@@ -129,6 +129,16 @@ Con un cambio externo pendiente, Ctrl-S pide un segundo Ctrl-S antes de
 sobrescribir. F3 guarda antes tu texto sin guardar en
 `<nombre>.sin-guardar.lua`.
 
+### Ayuda contextual
+
+En el modo editor, la última línea del editor (`ⓘ ...`) explica lo que hay
+bajo el cursor: sobre el nombre de una función o un método, su firma y qué
+hace; dentro de una llamada, el parámetro en el que estás (y el efecto
+elegido en `fx("...")` o `chance(p, "...")`); dentro de la tabla de
+`fx("efecto", { ... })`, los parámetros del efecto y, tras `clave =`, el
+rango y el valor por defecto de ese parámetro. Sale del mismo registro que
+la sección 4.
+
 ### Paleta de comandos (F1)
 
 F1 abre una lista con todas las acciones del editor. Escribe para
@@ -388,11 +398,11 @@ El filtro es un biquad de 12 dB/octava; `q = 0.707` es la respuesta más plana y
 | Efecto | Parámetro | Qué es | Por defecto | Valores |
 | --- | --- | --- | --- | --- |
 | `"filter"` | `type` | tipo de filtro | `"lowpass"` | `"lowpass"` o `"highpass"` |
-|  | `cutoff` | frecuencia de corte en Hz (obligatoria) | obligatorio | 20–20000 |
+|  | `cutoff` | frecuencia de corte en Hz | obligatorio | 20–20000 |
 |  | `q` | resonancia | `0.707` | 0.1–20 |
-| `"lowpass"` | `cutoff` | frecuencia de corte en Hz (obligatoria) | obligatorio | 20–20000 |
+| `"lowpass"` | `cutoff` | frecuencia de corte en Hz | obligatorio | 20–20000 |
 |  | `q` | resonancia | `0.707` | 0.1–20 |
-| `"highpass"` | `cutoff` | frecuencia de corte en Hz (obligatoria) | obligatorio | 20–20000 |
+| `"highpass"` | `cutoff` | frecuencia de corte en Hz | obligatorio | 20–20000 |
 |  | `q` | resonancia | `0.707` | 0.1–20 |
 | `"bitcrush"` (o `"bitcrusher"`) | `bits` | resolución | `8` | 1–16 |
 |  | `downsample` | repite cada muestra n veces | `1` | 1–64 |

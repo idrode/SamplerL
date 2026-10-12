@@ -437,7 +437,7 @@ pub const FUNCTIONS: &[Function] = &[
 const FILTER_PARAMS: &[FxParam] = &[
     FxParam {
         name: "cutoff",
-        description: "frecuencia de corte en Hz (obligatoria)",
+        description: "frecuencia de corte en Hz",
         default: None,
         valid: "20–20000",
         values: &[],
