@@ -127,7 +127,7 @@ fn shows_the_script_and_the_engine_state() {
     // Tres pasos de audio: el último disparado es el 2.
     offline::render(&mut engine, 2 * STEP + 100, 2);
     app.tick();
-    let screen = text(&draw(&mut app, 120, 20));
+    let screen = text(&draw(&mut app, 120, 40));
 
     assert!(screen.contains("song.lua"), "{screen}");
     assert!(screen.contains("track(\"drums\", amen)"), "{screen}");
@@ -154,7 +154,7 @@ fn shows_the_script_and_the_engine_state() {
 fn ctrl_s_saves_and_loads() {
     let (path, mut app, mut engine) = open("save", Some(SONG));
     type_text(&mut app, "-- comentario\n");
-    let screen = text(&draw(&mut app, 100, 16));
+    let screen = text(&draw(&mut app, 100, 40));
     assert!(
         screen.contains("song.lua ●"),
         "debería marcar cambios:\n{screen}"
@@ -163,7 +163,7 @@ fn ctrl_s_saves_and_loads() {
     app.handle(ctrl('s'));
     let saved = std::fs::read_to_string(&path).unwrap();
     assert!(saved.starts_with("-- comentario\n"), "{saved}");
-    let screen = text(&draw(&mut app, 100, 16));
+    let screen = text(&draw(&mut app, 100, 40));
     assert!(!screen.contains("song.lua ●"), "{screen}");
 
     // El cambio guardado entra en el motor: sigue sonando bien.
@@ -179,7 +179,7 @@ fn lua_errors_show_in_the_editor_and_keep_playing() {
     replace_all(&mut app, bad);
     app.handle(ctrl('s'));
 
-    let buffer = draw(&mut app, 120, 16);
+    let buffer = draw(&mut app, 120, 40);
     let screen = text(&buffer);
     assert!(
         screen.contains("✗ song.lua:3: steps: el corte 9 no existe"),
@@ -217,7 +217,7 @@ fn lua_errors_show_in_the_editor_and_keep_playing() {
     // Al corregirlo, el error desaparece.
     replace_all(&mut app, SONG);
     app.handle(ctrl('s'));
-    let screen = text(&draw(&mut app, 120, 16));
+    let screen = text(&draw(&mut app, 120, 40));
     assert!(!screen.contains('✗'), "{screen}");
 }
 
@@ -225,7 +225,7 @@ fn lua_errors_show_in_the_editor_and_keep_playing() {
 fn missing_script_opens_a_template_and_quit_asks_if_unsaved() {
     let (path, mut app, _engine) = open("template", None);
     assert!(!path.exists());
-    let screen = text(&draw(&mut app, 100, 16));
+    let screen = text(&draw(&mut app, 100, 40));
     assert!(screen.contains("song.lua ●"), "{screen}");
     // La plantilla usa amen.wav, que no existe: error en el editor.
     assert!(screen.contains("amen.wav"), "{screen}");
@@ -247,7 +247,7 @@ fn ctrl_t_stops_and_starts_the_transport() {
     app.handle(ctrl('t'));
     offline::render(&mut engine, 512, 2);
     app.tick();
-    let screen = text(&draw(&mut app, 100, 16));
+    let screen = text(&draw(&mut app, 100, 40));
     assert!(screen.contains("■ parado"), "{screen}");
     app.handle(ctrl('t'));
     offline::render(&mut engine, 512, 2);
@@ -385,20 +385,20 @@ fn sample_panel_draws_the_waveform_in_braille_with_slices() {
 #[test]
 fn sample_panel_follows_the_selected_track() {
     let (_, mut app, _engine) = open("sample", Some(SONG));
-    let screen = text(&draw(&mut app, 120, 24));
+    let screen = text(&draw(&mut app, 120, 40));
     assert!(
         screen.contains("sample · drums · break.wav · 0.12 s · 2 cortes"),
         "{screen}"
     );
     app.handle(ctrl('o'));
-    let screen = text(&draw(&mut app, 120, 24));
+    let screen = text(&draw(&mut app, 120, 40));
     assert!(
         screen.contains("sample · kick · break.wav · 0.12 s · 1 cortes"),
         "{screen}"
     );
     assert!(screen.contains("›kick"), "{screen}");
     app.handle(ctrl('o'));
-    assert!(text(&draw(&mut app, 120, 24)).contains("sample · drums"));
+    assert!(text(&draw(&mut app, 120, 40)).contains("sample · drums"));
 }
 
 fn tracker_view(step: Option<usize>, running: bool) -> ViewModel {
@@ -517,4 +517,72 @@ track("drums", amen)
     assert!(screen.contains("tracker · compás 1"), "{screen}");
     assert!(screen.contains("00 01 "), "{screen}");
     assert!(screen.contains("04 01 "), "{screen}");
+}
+
+#[test]
+fn fx_panel_shows_gain_level_and_chain_per_track() {
+    use engine::Fx;
+    let view = ViewModel {
+        tracks: vec![
+            TrackView {
+                name: "drums".into(),
+                gain: 0.7,
+                level: 1.0,
+                fx: vec![Fx::lowpass(3000.0), Fx::bitcrush(6, 2)],
+                ..TrackView::default()
+            },
+            TrackView {
+                name: "kick".into(),
+                gain: 2.0,
+                level: 0.0,
+                ..TrackView::default()
+            },
+        ],
+        selected: Some(0),
+        ..ViewModel::default()
+    };
+    let buffer = draw_widget(ui::FxPanel(&view), 60, ui::FX_PANEL_HEIGHT);
+    let screen = text(&buffer);
+    assert!(screen.contains("efectos por pista"), "{screen}");
+    // Cada pista en su columna, con su cadena en orden.
+    let (drums_x, drums_y) = find(&buffer, "drums").unwrap();
+    let (kick_x, kick_y) = find(&buffer, "kick").unwrap();
+    assert_eq!(drums_y, kick_y);
+    assert!(kick_x > drums_x + 20);
+    assert_eq!(buffer[(drums_x, drums_y)].fg, Color::Cyan);
+    let (lp_x, lp_y) = find(&buffer, "› LP 3000 Hz q0.71").unwrap();
+    let (crush_x, crush_y) = find(&buffer, "› crush 6b ÷2").unwrap();
+    assert_eq!((lp_x, crush_x), (drums_x, drums_x));
+    assert_eq!((lp_y, crush_y), (drums_y + 3, drums_y + 4));
+    assert_eq!(find(&buffer, "sin efectos").unwrap().0, kick_x);
+    assert!(screen.contains("vol 0.70"), "{screen}");
+    assert!(screen.contains("vol 2.00"), "{screen}");
+    // Nivel lleno en "drums" y vacío en "kick".
+    let (_, level_y) = find(&buffer, "nivel").unwrap();
+    let row: String = screen.lines().nth(level_y as usize).unwrap().into();
+    assert!(row.contains("nivel ██████████"), "{row}");
+    assert!(row.contains("nivel ░░░░░░░░░░"), "{row}");
+}
+
+#[test]
+fn fx_panel_reads_the_script() {
+    let song = r#"bpm(120)
+local amen = sample("break.wav"):slice(2)
+track("drums", amen)
+  :steps("1 . 2 .  1 . 2 .  1 . 2 .  1 . 2 .")
+  :fx("filter", { type = "highpass", cutoff = 200 })
+  :fx("bitcrush", { bits = 4, downsample = 3 })
+  :gain(0.9)
+track("kick", amen:slice_at(1)):steps("x . . .  x . . .  x . . .  x . . .")
+"#;
+    let (_, mut app, mut engine) = open("fx", Some(song));
+    offline::render(&mut engine, STEP / 2, 2);
+    app.tick();
+    let screen = text(&draw(&mut app, 120, 40));
+    assert!(screen.contains("› HP 200 Hz q0.71"), "{screen}");
+    assert!(screen.contains("› crush 4b ÷3"), "{screen}");
+    assert!(screen.contains("vol 0.90"), "{screen}");
+    assert!(screen.contains("sin efectos"), "{screen}");
+    // El paso 0 sonó en las dos pistas: hay nivel.
+    assert!(!screen.contains("nivel ░░░░░░░░░░░░"), "{screen}");
 }

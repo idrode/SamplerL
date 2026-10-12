@@ -11,7 +11,7 @@ use ratatui::widgets::canvas::{Canvas, Line as CanvasLine};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
 
 use crate::app::App;
-use crate::model::{ViewModel, step_text};
+use crate::model::{ViewModel, fx_text, step_text};
 
 pub const ERROR: Color = Color::Red;
 pub const ACCENT: Color = Color::Cyan;
@@ -22,8 +22,12 @@ pub const SLICE: Color = Color::Yellow;
 /// Dibuja toda la interfaz.
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let view = app.view();
-    let [main, help] =
-        Layout::vertical([Constraint::Min(5), Constraint::Length(1)]).areas(frame.area());
+    let [main, fx, help] = Layout::vertical([
+        Constraint::Min(8),
+        Constraint::Length(FX_PANEL_HEIGHT),
+        Constraint::Length(1),
+    ])
+    .areas(frame.area());
     let [left, right] =
         Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(main);
 
@@ -41,6 +45,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     frame.render_widget(EnginePanel(&view), engine_area);
     frame.render_widget(SamplePanel(&view), sample_area);
     frame.render_widget(TrackerPanel(&view), tracker_area);
+    frame.render_widget(FxPanel(&view), fx);
     frame.render_widget(HelpLine(&view), help);
 }
 
@@ -319,6 +324,64 @@ impl Widget for TrackerPanel<'_> {
                 buf.set_style(row_area, Style::new().bg(Color::Blue));
             }
             line.render(row_area, buf);
+        }
+    }
+}
+
+/// Alto del panel de efectos: nombre, volumen, nivel y hasta 4 efectos.
+pub const FX_PANEL_HEIGHT: u16 = 3 + engine::MAX_FX as u16 + 2;
+/// Ancho mínimo de cada columna del panel de efectos.
+const FX_COLUMN_MIN: u16 = 20;
+
+/// Panel inferior: una columna por pista con su volumen, su nivel y su
+/// cadena de efectos.
+pub struct FxPanel<'a>(pub &'a ViewModel);
+
+impl Widget for FxPanel<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let view = self.0;
+        let block = Block::bordered().title(" efectos por pista ");
+        let inner = block.inner(area);
+        block.render(area, buf);
+        if view.tracks.is_empty() {
+            Line::from("sin pistas").fg(DIM).render(inner, buf);
+            return;
+        }
+        // Tantas columnas como quepan; las pistas que no caben no se dibujan.
+        let fit = (inner.width / FX_COLUMN_MIN).max(1) as usize;
+        let shown = view.tracks.len().min(fit);
+        let columns =
+            Layout::horizontal(vec![Constraint::Ratio(1, shown as u32); shown]).split(inner);
+        for (i, (track, column)) in view.tracks.iter().zip(columns.iter()).enumerate() {
+            let width = column.width.saturating_sub(7).clamp(4, 12) as usize;
+            let name = Span::from(track.name.clone()).bold();
+            let name = if view.selected == Some(i) {
+                name.fg(ACCENT)
+            } else {
+                name
+            };
+            let mut lines = vec![
+                Line::from(name),
+                Line::from(vec![
+                    Span::raw(format!("vol {:.2} ", track.gain)),
+                    Span::from(meter(
+                        track.gain / engine::MAX_GAIN,
+                        width.saturating_sub(4),
+                    ))
+                    .fg(ACCENT),
+                ]),
+                Line::from(vec![
+                    Span::raw("nivel "),
+                    Span::from(meter(track.level, width)).fg(Color::Green),
+                ]),
+            ];
+            if track.fx.is_empty() {
+                lines.push(Line::from("sin efectos").fg(DIM));
+            }
+            for fx in &track.fx {
+                lines.push(Line::from(format!("› {}", fx_text(fx))));
+            }
+            Paragraph::new(lines).render(*column, buf);
         }
     }
 }

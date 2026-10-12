@@ -15,7 +15,7 @@ Sampler + secuenciador para remixes con amen breaks, controlado por código en v
 ## Stack
 
 - Audio: `cpal`. Decodificación: `symphonia` (WAV, MP3, FLAC, OGG) y `hound`. Resampleo: `rubato`.
-- Interfaz: solo terminal (TUI) con `ratatui` + `tui-textarea`. Decisión del usuario: nada de GUI por ahora, experiencia 100% terminal.
+- Interfaz: solo terminal (TUI) con `ratatui` 0.30 + `ratatui-textarea` 0.9 (la continuación de `tui-textarea` dentro de la organización de ratatui; `tui-textarea` 0.7 obligaba a quedarse en ratatui 0.29). Decisión del usuario: nada de GUI por ahora, experiencia 100% terminal.
 - Scripting: mini-notación para patrones (estilo Tidal) + Lua con `mlua` para la lógica. Recarga en caliente.
 - DSP: `fundsp` para synths y efectos cuando toque.
 
@@ -33,13 +33,13 @@ Sampler + secuenciador para remixes con amen breaks, controlado por código en v
 
 Un paso cada vez; probar con tests (audio sintético, renderizado offline) antes de seguir.
 
-1. Motor de audio: cargar un WAV y reproducirlo sin glitches.
-2. Cortes: detección de transitorios, cada corte asignado a una tecla.
-3. Secuenciador de 16 pasos con BPM y loop.
-4. Efectos por paso/pista: volumen, pitch, reverse, retrigger/stutter, filtro, bitcrusher.
-5. Mini-notación + Lua con recarga en caliente.
-6. Interfaz de paneles (editor, sample, tracker vertical, efectos).
-7. Exportar a WAV (render offline) y guardar/cargar proyectos.
+1. ✅ Motor de audio: cargar un WAV y reproducirlo (por la tarjeta solo con `--allow-audio`; queda el aviso de underrun al arrancar, ver Estado).
+2. ✅ Cortes: detección de transitorios (flujo espectral por defecto); cada corte se reproduce por número (`Controller::play_slice`). Asignar cortes a teclas de la interfaz: pendiente.
+3. ✅ Secuenciador de 16 pasos con BPM, loop y cuantización al compás; varias pistas y lotes atómicos.
+4. ✅ Efectos por paso (volumen, pitch, reverse, retrigger/stutter) y por pista (volumen, filtro paso bajo/alto, bitcrusher), con limitador suave al final.
+5. ✅ Mini-notación + Lua (`bpm`, `sample`, `slice`, `slice_at`, `track`, `steps`, `gain`, `fx`, `every`, `chance`) con recarga al compás y recarga automática al guardar.
+6. ✅ Interfaz de paneles en la terminal (`tui --edit`): editor, sample en braille, tracker vertical, efectos por pista y estado del motor.
+7. En parte: el render offline a WAV ya existe (`--render`, también con `--script`). Falta guardar/cargar proyectos (hoy el proyecto es el `.lua` más sus WAV).
 
 ## Ideas para después
 
@@ -75,7 +75,7 @@ track("kick", amen:slice_at(1))
   :gain(0.9)
 ```
 
-Primer objetivo: que `steps(...)` reproduzca los cortes. Después `fx`, `every` y `chance`, uno a uno.
+Hecho: `steps(...)` reproduce los cortes, y `fx`, `every` y `chance` funcionan (ver Estado, paso 5).
 
 ## Estado
 
@@ -135,6 +135,16 @@ Primer objetivo: que `steps(...)` reproduzca los cortes. Después `fx`, `every` 
   - Recarga automática al guardar (`script/src/watch.rs`): `ScriptWatcher::poll(host, controller)` lee el archivo y, si su contenido cambió, lo carga con `ScriptHost::load`. Mismas garantías: entra entero en el compás siguiente y, si falla, sigue sonando lo anterior. Compara contenido, no fecha, así que un guardado a medias da un error y el siguiente sondeo recoge la versión completa. Los errores de lectura (archivo borrado un momento) se informan una vez. Un script que falló no se reintenta hasta que cambie. Sin dependencias nuevas (sondeo, no `notify`).
   - `tui --script canción.lua --allow-audio` reproduce y recarga al guardar (sondeo cada 200 ms). Claude Code no lo ha ejecutado nunca: abre la tarjeta.
   - Tests en `script/tests/lua.rs`: API con dos pistas, `track(nombre)`, recarga cuantizada (patrón y tempo), 11 tipos de error con el audio idéntico al de no haber recargado, caché de samples y pistas estables. Además, en `script/tests/api.rs`: el ejemplo de CLAUDE.md tal cual, `slice_at`, `every`, `chance` con semilla, `fx` igual que en el motor y 16 errores de la API con línea y audio intacto. Y en `script/tests/watch.rs`: recarga al guardar cuantizada, guardado a medias, error de ejecución, archivo borrado y sin reintento hasta que cambie.
+- **Paso 6 hecho.** Interfaz de terminal: `tui --edit canción.lua` (`tui/src/{app,model,ui}.rs`).
+  - Paneles: editor a la izquierda; a la derecha, estado del motor (compacto), sample (forma de onda en braille con los cortes numerados y el que suena resaltado) y tracker vertical (16 filas, una columna por pista, celdas en mini-notación, fila actual resaltada y desplazamiento si no cabe); abajo, efectos por pista (volumen, nivel y cadena de efectos).
+  - Cada panel es un `Widget` que solo lee el `ViewModel` (`tui/src/model.rs`). `App::view()` lo construye con el `Song` del script, la instantánea del motor y el estado del editor. La forma de onda va como resumen mínimo/máximo (2048 tramos) calculado al cargar, no al dibujar.
+  - Estado del motor para la interfaz (`engine/src/status.rs`): `Controller::status()` da marcha, tempo, compás, último paso, último golpe y pico por pista. El hilo de audio solo escribe atómicos sueltos; los picos se acumulan con `fetch_max` y se vacían al leerlos.
+  - Sin `--allow-audio`, el motor avanza con `open_null_output` (un hilo que llama a `process` a ritmo real y tira el audio): se ve todo sin abrir la tarjeta. Con `--allow-audio` usa la tarjeta (no lo ha ejecutado nunca Claude Code).
+  - Teclas: Ctrl-S guardar y cargar, Ctrl-L cargar sin guardar, Ctrl-T marcha/paro, Ctrl-G ir a la línea del error, Ctrl-O siguiente pista, Ctrl-Q salir (dos veces si hay cambios). Elegidas entre las Ctrl+letra que no usa `ratatui-textarea`. Si el archivo no existe, se abre una plantilla.
+  - Errores de Lua en el editor: borde rojo con `✗ error en la línea N · Ctrl-G` y el mensaje completo al pie, ajustado al ancho. Sigue sonando lo anterior.
+  - Tests con el `TestBackend` de ratatui en `tui/src/tests.rs` (paneles con `ViewModel` hechos a mano y la aplicación entera con el motor movido por render offline). `cargo test -p tui pantalla -- --ignored --nocapture` imprime una pantalla para verla.
+  - Con 40 líneas de alto, el tracker no muestra las 16 filas a la vez (se desplaza siguiendo la que suena).
+  - Pendiente: recargar si el `.lua` cambia fuera del editor, resaltar la línea del error dentro del texto y asignar cortes a teclas.
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`
 - Pendiente conocido: cpal avisa de un underrun al arrancar el stream (una vez, ~200 ms). PipeWire estaba inactivo y cpal iba directo a ALSA.
 

@@ -287,6 +287,8 @@ impl App {
                             steps: t.bars.get(bar).copied().unwrap_or(t.steps),
                             playing_slice,
                             level: slot.map_or(0.0, |s| self.meters[s]),
+                            gain: t.gain,
+                            fx: t.fx.clone(),
                         }
                     })
                     .collect()

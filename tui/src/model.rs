@@ -5,7 +5,7 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use engine::{STEPS, Sample, Step};
+use engine::{Fx, STEPS, Sample, Step};
 
 #[derive(Debug, Clone, Default)]
 pub struct ViewModel {
@@ -59,6 +59,10 @@ pub struct TrackView {
     pub playing_slice: Option<usize>,
     /// Medidor de nivel (pico con caída), de 0 a 1.
     pub level: f32,
+    /// Volumen de la pista (lineal).
+    pub gain: f32,
+    /// Efectos de la pista, en orden.
+    pub fx: Vec<Fx>,
 }
 
 /// Resumen de una forma de onda: mínimo y máximo (canales mezclados) de
@@ -137,6 +141,20 @@ pub fn step_text(step: &Option<Step>) -> String {
     text
 }
 
+/// Descripción corta de un efecto.
+pub fn fx_text(fx: &Fx) -> String {
+    match fx {
+        Fx::Filter { kind, cutoff_hz, q } => {
+            let kind = match kind {
+                engine::FilterKind::LowPass => "LP",
+                engine::FilterKind::HighPass => "HP",
+            };
+            format!("{kind} {cutoff_hz:.0} Hz q{q:.2}")
+        }
+        Fx::Bitcrush { bits, downsample } => format!("crush {bits}b ÷{downsample}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -176,5 +194,12 @@ mod tests {
         // Se puede volver a leer con la notación (con el número sin cero a la izquierda).
         let parsed = engine::notation::parse_step("1'^-5@0.5r4").unwrap();
         assert_eq!(parsed, Some(fancy));
+    }
+
+    #[test]
+    fn describes_effects() {
+        assert_eq!(fx_text(&Fx::lowpass(3000.0)), "LP 3000 Hz q0.71");
+        assert_eq!(fx_text(&Fx::highpass(120.5)), "HP 120 Hz q0.71");
+        assert_eq!(fx_text(&Fx::bitcrush(6, 2)), "crush 6b ÷2");
     }
 }
