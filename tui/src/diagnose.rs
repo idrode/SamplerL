@@ -241,10 +241,11 @@ mod tests {
     #[test]
     fn unclosed_strings_comments_and_other_names_are_handled() {
         // Escribiendo: aún sin cerrar la cadena.
-        let d = diagnose(r#":steps("1 . 2 . z"#);
+        let d = diagnose(r#":steps("1 . 2 . ?"#);
         assert_eq!(
             d[0].message,
-            "steps: paso 5 (\"z\"): debe empezar por un número de corte (desde 1), \"x\" o \".\""
+            "steps: paso 5 (\"?\"): debe empezar por un número de corte (desde 1), \
+             una etiqueta, \"x\" o \".\""
         );
         assert!(diagnose(r#"-- :steps("1 . 2")"#).is_empty());
         assert!(diagnose(r#"print(":steps('1')")"#).is_empty());

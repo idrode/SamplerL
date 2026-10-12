@@ -110,3 +110,85 @@ fn notation_renders_the_same_as_built_steps() {
     assert!(audio.iter().any(|&s| s.abs() > 0.3));
     assert_eq!(audio, render(built));
 }
+
+fn labels(names: &[&str]) -> Vec<Option<String>> {
+    names
+        .iter()
+        .map(|n| (!n.is_empty()).then(|| n.to_string()))
+        .collect()
+}
+
+#[test]
+fn labels_stand_for_their_slices_with_the_same_suffixes() {
+    use engine::notation::{parse_step_labeled, parse_steps_labeled};
+    let l = labels(&["kick", "snare", "", "hat"]);
+    let by_name = parse_steps_labeled(
+        "kick . snare .  hat^7@0.5 . kick' .  snare'r2 . hatr4 .  x . 3 kick^-5r2'",
+        &l,
+    )
+    .unwrap();
+    let by_number = parse_steps("1 . 2 .  4^7@0.5 . 1' .  2'r2 . 4r4 .  1 . 3 1^-5r2'")
+        .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(by_name, by_number);
+    let tokens = [
+        "kick",
+        "snare",
+        "hat^7@0.5",
+        "kick'",
+        "snare'r2",
+        "hatr4",
+        "x",
+        "kick^-5r2'",
+    ];
+    let numbers = ["1", "2", "4^7@0.5", "1'", "2'r2", "4r4", "1", "1^-5r2'"];
+    for (t, n) in tokens.iter().zip(numbers) {
+        assert_eq!(
+            parse_step_labeled(t, &l).unwrap(),
+            parse_step(n).unwrap(),
+            "{t}"
+        );
+    }
+}
+
+#[test]
+fn unknown_labels_name_the_step_and_the_known_ones() {
+    use engine::notation::parse_steps_labeled;
+    let l = labels(&["kick", "snare"]);
+    let err = parse_steps_labeled("kick . snre .  . . . .  . . . .  . . . .", &l).unwrap_err();
+    assert_eq!(err.step, Some(3));
+    assert_eq!(
+        err.to_string(),
+        "paso 3 (\"snre\"): la etiqueta \"snre\" no existe (hay: kick, snare)"
+    );
+    let err = parse_steps("kick . . .  . . . .  . . . .  . . . .").unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "paso 1 (\"kick\"): la etiqueta \"kick\" no existe (no hay cortes con etiqueta)"
+    );
+}
+
+#[test]
+fn label_names_cannot_clash_with_the_notation() {
+    use engine::notation::check_label;
+    for good in [
+        "kick", "snare", "hat", "hat2", "open_hat", "_x", "bar", "r", "Kick",
+    ] {
+        assert!(check_label(good).is_ok(), "{good}: {:?}", check_label(good));
+    }
+    let cases = [
+        ("", "vacía"),
+        ("12", "es un número"),
+        ("3kick", "empieza por un número"),
+        ("x", "ya es el corte 1"),
+        ("r4", "retrigger"),
+        ("kickr2", "retrigger"),
+        ("ki ck", "solo letras"),
+        ("kick'", "solo letras"),
+        ("bombo^", "solo letras"),
+        ("caña", "solo letras"),
+    ];
+    for (bad, why) in cases {
+        let err = check_label(bad).unwrap_err();
+        assert!(err.contains(why), "{bad}: {err}");
+    }
+}

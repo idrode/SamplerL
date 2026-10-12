@@ -2,6 +2,8 @@
 //!
 //! - `.` silencio (lo que sonaba sigue sonando).
 //! - `3` corte número 3 (desde 1). `x` equivale a `1`.
+//! - `kick` el corte con esa etiqueta (ver [`parse_steps_labeled`] y
+//!   [`check_label`]). Lleva los mismos sufijos: `kick^7@0.5`, `kick'r2`.
 //! - Sufijos combinables, en cualquier orden y cada uno una vez:
 //!   `'` reverse, `^7` / `^-5` / `^0.5` pitch en semitonos, `@0.5` volumen,
 //!   `r4` retrigger/stutter (el paso se repite 4 veces, de 1 a 16).
@@ -31,8 +33,17 @@ impl fmt::Display for NotationError {
 
 impl std::error::Error for NotationError {}
 
-/// Lee un patrón de 16 pasos.
+/// Lee un patrón de 16 pasos (solo números de corte y `x`).
 pub fn parse_steps(text: &str) -> Result<[Option<Step>; STEPS], NotationError> {
+    parse_steps_labeled(text, &[])
+}
+
+/// Lee un patrón de 16 pasos en el que los cortes también se pueden
+/// nombrar por su etiqueta: `labels[i]` es la del corte `i` (desde 0).
+pub fn parse_steps_labeled(
+    text: &str,
+    labels: &[Option<String>],
+) -> Result<[Option<Step>; STEPS], NotationError> {
     let tokens: Vec<&str> = text.split_whitespace().collect();
     if tokens.len() != STEPS {
         return Err(NotationError {
@@ -43,7 +54,7 @@ pub fn parse_steps(text: &str) -> Result<[Option<Step>; STEPS], NotationError> {
     }
     let mut steps = [None; STEPS];
     for (i, (slot, token)) in steps.iter_mut().zip(&tokens).enumerate() {
-        *slot = parse_step(token).map_err(|message| NotationError {
+        *slot = parse_step_labeled(token, labels).map_err(|message| NotationError {
             step: Some(i + 1),
             token: token.to_string(),
             message,
@@ -54,18 +65,101 @@ pub fn parse_steps(text: &str) -> Result<[Option<Step>; STEPS], NotationError> {
 
 /// Lee un paso: `.`, o corte con sufijos opcionales.
 pub fn parse_step(token: &str) -> Result<Option<Step>, String> {
+    parse_step_labeled(token, &[])
+}
+
+/// Separa la etiqueta del principio de un paso (`kick^7` → `kick`, `^7`).
+/// Un `r` y un número al final de la palabra son el retrigger (`kickr4` →
+/// `kick`, `r4`), por eso ninguna etiqueta puede acabar así. `None` si el
+/// paso no empieza por una letra o `_`.
+pub fn split_label(token: &str) -> Option<(&str, &str)> {
+    if !token.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_') {
+        return None;
+    }
+    let run = token
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .unwrap_or(token.len());
+    let word = &token[..run];
+    let digits = word.len() - word.trim_end_matches(|c: char| c.is_ascii_digit()).len();
+    let end = match word[..word.len() - digits].strip_suffix('r') {
+        Some(base) if digits > 0 && !base.is_empty() => base.len(),
+        _ => run,
+    };
+    Some((&token[..end], &token[end..]))
+}
+
+/// Comprueba que un nombre sirve de etiqueta de corte: letras, números y
+/// `_`, empezando por letra o `_`; ni `x` ni nada que se confunda con la
+/// notación (un número o un final en `r` y un número, como `r4`).
+pub fn check_label(name: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("la etiqueta está vacía".into());
+    }
+    if name.chars().all(|c| c.is_ascii_digit()) {
+        return Err(format!(
+            "\"{name}\" es un número: las etiquetas son nombres"
+        ));
+    }
+    if name.starts_with(|c: char| c.is_ascii_digit()) {
+        return Err(format!(
+            "\"{name}\" empieza por un número (se leería como un corte)"
+        ));
+    }
+    if let Some(c) = name
+        .chars()
+        .find(|c| !(c.is_ascii_alphanumeric() || *c == '_'))
+    {
+        return Err(format!(
+            "\"{name}\" tiene '{c}': solo letras sin tilde, números y _"
+        ));
+    }
+    if name == "x" {
+        return Err("\"x\" ya es el corte 1 en la notación".into());
+    }
+    let retrig_like =
+        name.len() > 1 && name.starts_with('r') && name[1..].chars().all(|c| c.is_ascii_digit());
+    if retrig_like || split_label(name).is_some_and(|(base, _)| base != name) {
+        return Err(format!(
+            "\"{name}\" acaba en r y un número: se confundiría con el retrigger (r4)"
+        ));
+    }
+    Ok(())
+}
+
+/// Como [`parse_step`], pero el corte también puede ser una etiqueta de
+/// `labels` (`labels[i]` es la del corte `i`, desde 0).
+pub fn parse_step_labeled(token: &str, labels: &[Option<String>]) -> Result<Option<Step>, String> {
     if token == "." {
         return Ok(None);
     }
     let mut rest = token;
 
-    let slice = if let Some(after) = rest.strip_prefix('x') {
+    let slice = if let Some((name, after)) = split_label(token) {
         rest = after;
-        1
+        if name == "x" {
+            1
+        } else {
+            match labels.iter().position(|l| l.as_deref() == Some(name)) {
+                Some(i) => i + 1,
+                None => {
+                    let known: Vec<&str> = labels.iter().flatten().map(String::as_str).collect();
+                    return Err(if known.is_empty() {
+                        format!("la etiqueta \"{name}\" no existe (no hay cortes con etiqueta)")
+                    } else {
+                        format!(
+                            "la etiqueta \"{name}\" no existe (hay: {})",
+                            known.join(", ")
+                        )
+                    });
+                }
+            }
+        }
     } else {
         let digits = rest.len() - rest.trim_start_matches(|c: char| c.is_ascii_digit()).len();
         if digits == 0 {
-            return Err("debe empezar por un número de corte (desde 1), \"x\" o \".\"".into());
+            return Err(
+                "debe empezar por un número de corte (desde 1), una etiqueta, \"x\" o \".\"".into(),
+            );
         }
         let n: usize = rest[..digits]
             .parse()
