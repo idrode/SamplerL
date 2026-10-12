@@ -52,6 +52,14 @@ fn value(dir: &Path, expr: &str) -> String {
     }
 }
 
+/// Mismo audio, muestra a muestra (sin imprimir megas si falla).
+fn same(a: &[f32], b: &[f32]) {
+    assert_eq!(a.len(), b.len());
+    if let Some(i) = a.iter().zip(b).position(|(x, y)| x != y) {
+        panic!("el audio difiere en la muestra {i}: {} != {}", a[i], b[i]);
+    }
+}
+
 fn error(dir: &Path, body: &str) -> String {
     match host().eval(&format!("{HEAD}{body}"), "song.lua", dir) {
         Ok(_) => panic!("debería fallar: {body}"),
@@ -73,7 +81,7 @@ fn euclid_sounds_like_the_pattern_it_writes() {
         2,
     );
     assert!(a.iter().any(|s| s.abs() > 0.1));
-    assert_eq!(a, b);
+    same(&a, &b);
     // Dentro de every también.
     let a = render(
         &dir,
@@ -86,7 +94,32 @@ fn euclid_sounds_like_the_pattern_it_writes() {
          :every(2, function(c) c:steps(\"3 . 3 .  3 3 . 3  3 . 3 .  3 3 . 3\") end)",
         2,
     );
-    assert_eq!(a, b);
+    same(&a, &b);
     let e = error(&dir, "track(\"d\", amen):steps(euclid(3, 20))");
     assert_eq!(e, "song.lua:3: euclid(3, 20): n va de 1 a 16");
+}
+
+#[test]
+fn rotate_sounds_like_the_pattern_it_writes() {
+    let dir = fixture("rotate");
+    let p = "\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\"";
+    assert_eq!(
+        value(&dir, &format!("rotate({p}, -4)")),
+        "3 . 4 .  5 6 2 .  7 . 8 .  1 . 2 ."
+    );
+    let a = render(
+        &dir,
+        &format!("track(\"d\", amen):steps(rotate({p}, 3))"),
+        2,
+    );
+    let b = render(
+        &dir,
+        "track(\"d\", amen):steps(\". 8 . 1  . 2 . 3  . 4 . 5  6 2 . 7\")",
+        2,
+    );
+    same(&a, &b);
+    assert_eq!(
+        error(&dir, "rotate(\"1 2\", 1)"),
+        "song.lua:3: rotate(patrón, 1): el patrón necesita 16 pasos, tiene 2"
+    );
 }

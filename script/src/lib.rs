@@ -484,6 +484,13 @@ impl ScriptHost {
             })?,
         )?;
 
+        globals.set(
+            "rotate",
+            lua.create_function(|lua, (text, n): (String, i64)| {
+                patterns::rotate(&text, n).map_err(|e| fail(lua, e))
+            })?,
+        )?;
+
         let st = state.clone();
         globals.set(
             "track",

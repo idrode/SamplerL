@@ -61,6 +61,17 @@ pub fn euclid(k: i64, n: i64, hit: &str) -> Result<String, String> {
     Ok(format(&tokens))
 }
 
+/// Desplaza el patrón `n` pasos: con `n` positivo cada paso suena `n`
+/// pasos más tarde (los del final pasan al principio); negativo, antes.
+pub fn rotate(text: &str, n: i64) -> Result<String, String> {
+    let tokens = tokens(text, &format!("rotate(patrón, {n})"))?;
+    let len = tokens.len() as i64;
+    let rotated: Vec<String> = (0..len)
+        .map(|i| tokens[(i - n).rem_euclid(len) as usize].clone())
+        .collect();
+    Ok(format(&rotated))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -93,6 +104,25 @@ mod tests {
         assert!(euclid(9, 8, "x").unwrap_err().contains("k va de 0 a n (8)"));
         assert!(euclid(3, 8, ".").unwrap_err().contains("el golpe"));
         assert!(euclid(3, 8, "1 2").unwrap_err().contains("el golpe"));
+    }
+
+    #[test]
+    fn rotation_moves_steps_later_or_earlier() {
+        let p = "1 2 3 4  5 6 7 8  9 10 11 12  13 14 15 16";
+        assert_eq!(
+            rotate(p, 1).unwrap(),
+            "16 1 2 3  4 5 6 7  8 9 10 11  12 13 14 15"
+        );
+        assert_eq!(
+            rotate(p, -1).unwrap(),
+            "2 3 4 5  6 7 8 9  10 11 12 13  14 15 16 1"
+        );
+        assert_eq!(rotate(p, 16).unwrap(), p);
+        assert_eq!(rotate(p, 35).unwrap(), rotate(p, 3).unwrap());
+        assert_eq!(
+            rotate("1 .", 1).unwrap_err(),
+            "rotate(patrón, 1): el patrón necesita 16 pasos, tiene 2"
+        );
     }
 
     #[test]

@@ -288,6 +288,33 @@ pub const FUNCTIONS: &[Function] = &[
         ),
     },
     Function {
+        name: "rotate",
+        receiver: Receiver::Global,
+        signature: "rotate(patrón, n)",
+        returns: None,
+        summary: "Desplaza un patrón n pasos: positivo, más tarde; negativo, antes.",
+        doc: "Los pasos que se salen por un lado entran por el otro. Devuelve texto en \
+              mini-notación; se puede combinar con las demás funciones de patrones.",
+        params: &[
+            Param {
+                name: "patrón",
+                description: "16 pasos en mini-notación",
+            },
+            Param {
+                name: "n",
+                description: "pasos que se desplaza (negativo: hacia antes)",
+            },
+        ],
+        template: "rotate(\"${1 . . .  . . . .  . . . .  . . . .}\", ${2})",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             -- El break empezando en su segundo tiempo.\n\
+             track(\"drums\", amen):steps(rotate(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\", -4))\n\
+             -- Un euclídeo que empieza más tarde.\n\
+             track(\"kick\", amen):steps(rotate(euclid(3, 8, \"1\"), 2))\n",
+        ),
+    },
+    Function {
         name: "slice",
         receiver: Receiver::Sample,
         signature: "sample:slice(n)",

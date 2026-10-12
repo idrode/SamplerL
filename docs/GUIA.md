@@ -383,6 +383,21 @@ track("kick", amen):steps(euclid(3, 8, "1"))
 track("hats", amen):steps(euclid(5, 16, "2@0.6"))
 ```
 
+### `rotate(patrón, n)`
+
+Desplaza un patrón n pasos: positivo, más tarde; negativo, antes. Los pasos que se salen por un lado entran por el otro. Devuelve texto en mini-notación; se puede combinar con las demás funciones de patrones.
+
+- `patrón`: 16 pasos en mini-notación
+- `n`: pasos que se desplaza (negativo: hacia antes)
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+-- El break empezando en su segundo tiempo.
+track("drums", amen):steps(rotate("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .", -4))
+-- Un euclídeo que empieza más tarde.
+track("kick", amen):steps(rotate(euclid(3, 8, "1"), 2))
+```
+
 ### `sample:slice(n)`
 
 Devuelve: cortes.
