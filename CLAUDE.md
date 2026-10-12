@@ -100,6 +100,8 @@ Primer objetivo: que `steps(...)` reproduzca los cortes. Después `fx`, `every` 
   - `Engine::discard` suelta el `Arc` directamente si el motor guarda otra referencia al mismo sample (solo baja el contador). Así las voces que dispara el secuenciador no llenan la cola de basura.
   - Una sola voz por motor por ahora: el secuenciador y `play_slice` comparten la voz.
   - Tests en `engine/tests/sequencer.rs`: frame exacto de cada paso a 120 y 170 BPM, silencios, loop y cuantización.
+- **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`
+- Pendiente conocido (detector): la envolvente es de energía total por salto. En la cola de un bombo grave (45 Hz, periodo de ~4 saltos) la energía oscila y puede dar transitorios falsos. Un golpe agudo y débil encima (charles) no se distingue. En el break sintético, los cortes 2 y 7 salen ~22 ms antes de su golpe (192 y 1264 ms en vez de 214 y 1286). Arreglo probable: spectral flux por bandas (FFT).
 - Pendiente conocido: cpal avisa de un underrun al arrancar el stream (una vez, ~200 ms). PipeWire estaba inactivo y cpal iba directo a ALSA.
 
 ## Entorno de desarrollo
