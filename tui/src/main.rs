@@ -4,8 +4,7 @@ use std::time::Duration;
 use engine::{DetectOptions, Detector, Pattern, STEPS, Slices};
 
 const USAGE: &str = "\
-uso: tui <archivo.wav>
-     tui <archivo.wav> --render <salida.wav>
+uso: tui <archivo.wav> --render <salida.wav>
      tui <archivo.wav> --render <salida.wav> --pattern \"1 . 3 . ...\" \
 [--slices N] [--bpm B] [--bars M] [--min-gap MS] [--detector flux|energy]
 
@@ -14,7 +13,10 @@ uso: tui <archivo.wav>
   --bpm      tempo (por defecto 120)
   --bars     compases a renderizar (por defecto 4)
   --min-gap  separación mínima entre cortes en ms (por defecto 40)
-  --detector detección de transitorios: flux (flujo espectral, por defecto) o energy";
+  --detector detección de transitorios: flux (flujo espectral, por defecto) o energy
+
+Sin --render, tui se niega a reproducir por la tarjeta de sonido salvo con
+--allow-audio (ver CLAUDE.md: no usarlo en sesiones automáticas).";
 /// Frecuencia del motor cuando se renderiza sin dispositivo.
 const RENDER_RATE: u32 = 48_000;
 /// Límite del render offline.
@@ -47,6 +49,7 @@ fn run() -> Result<(), BoxError> {
     let mut args = std::env::args().skip(1);
     let mut path = None;
     let mut render_to = None;
+    let mut allow_audio = false;
     let mut pattern = None;
     let mut slices = None;
     let mut bpm = None;
@@ -60,6 +63,7 @@ fn run() -> Result<(), BoxError> {
         };
         match arg.as_str() {
             "--render" => render_to = Some(value()?),
+            "--allow-audio" => allow_audio = true,
             "--pattern" => pattern = Some(parse_pattern(&value()?)?),
             "--slices" => slices = Some(parse_number::<usize>("--slices", &value()?)?),
             "--bpm" => bpm = Some(parse_number::<f64>("--bpm", &value()?)?),
@@ -125,7 +129,12 @@ fn run() -> Result<(), BoxError> {
         (Some(out), Some(sequence)) => render_sequence(&path, &out, &sequence),
         (Some(out), None) => render(&path, &out),
         (None, Some(_)) => Err(format!("--pattern solo funciona con --render\n{USAGE}").into()),
-        (None, None) => play(&path),
+        (None, None) if allow_audio => play(&path),
+        (None, None) => Err(format!(
+            "no se reproduce por la tarjeta de sonido sin --allow-audio; \
+             para escuchar, renderiza con --render <salida.wav>\n{USAGE}"
+        )
+        .into()),
     }
 }
 

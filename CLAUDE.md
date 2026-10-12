@@ -79,7 +79,7 @@ Primer objetivo: que `steps(...)` reproduzca los cortes. Después `fx`, `every` 
 
 ## Estado
 
-- **Paso 1 hecho.** Workspace con `engine` (librería) y `tui` (binario mínimo: `tui <archivo.wav>` reproduce y sale; aún sin ratatui).
+- **Paso 1 hecho.** Workspace con `engine` (librería) y `tui` (binario mínimo: render offline; reproducir por la tarjeta exige `--allow-audio`, ver Notas; aún sin ratatui).
 - Decisiones técnicas:
   - Samples en memoria como estéreo f32 entrelazado (mono se duplica, >2 canales se usan los dos primeros), resampleados al cargar con `rubato::Fft`. La longitud de salida se calcula con enteros porque rubato 5 puede dar un frame de más.
   - Carga de WAV con `hound`; `symphonia` todavía no se usa.
@@ -131,6 +131,8 @@ Primer objetivo: que `steps(...)` reproduzca los cortes. Después `fx`, `every` 
 - Probar el build en ambas arquitecturas de vez en cuando.
 
 ## Notas
+
+- **Salida de audio real: nunca usarla desde Claude Code.** `tui` sin `--render` se niega a reproducir por la tarjeta salvo con `--allow-audio`. Claude Code no debe pasar nunca `--allow-audio` ni abrir el dispositivo de audio por otra vía: se verifica solo con tests y render offline. `--allow-audio` es solo para que el usuario lo use a mano.
 
 - REA (morluto/rea) no se usa en este proyecto: es para ingeniería inversa, no para escribir un sampler.
 - Claude Code no puede oír el resultado: puede renderizar offline y analizar picos, longitud y alineación de cortes; el criterio de "suena bien" es del usuario.
