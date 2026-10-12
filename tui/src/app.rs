@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use engine::{Controller, MAX_TRACKS, Sample, Status};
 use ratatui_textarea::{CursorMove, Input, Key, TextArea};
@@ -18,6 +19,9 @@ local amen = sample("amen.wav"):slice(8)
 track("drums", amen)
   :steps("1 . . 1  . . 3 .  1 . 5 .  . 3 . 6")
 "#;
+
+/// Cada cuánto se mira si el archivo cambió fuera del editor.
+const EXTERNAL_CHECK: Duration = Duration::from_millis(500);
 
 /// Caída del medidor de nivel por refresco.
 const METER_DECAY: f32 = 0.85;
@@ -59,6 +63,12 @@ pub struct App {
     /// Se pidió salir con cambios sin guardar: otra vez para confirmar.
     quit_armed: bool,
     mode: Mode,
+    /// Contenido del disco distinto del último guardado o cargado por el
+    /// editor: el archivo cambió fuera. Se ofrece recargar (F3).
+    external: Option<String>,
+    last_external_check: Instant,
+    /// Ctrl-S con un cambio externo pendiente: otra vez para sobrescribir.
+    overwrite_armed: bool,
     /// Resúmenes de forma de onda por sample (se guarda el `Arc` para que la
     /// dirección no se reutilice mientras está en la caché).
     waveforms: HashMap<usize, (Arc<Sample>, Arc<Waveform>)>,
@@ -88,6 +98,9 @@ impl App {
             meters: [0.0; MAX_TRACKS],
             quit_armed: false,
             mode: Mode::Edit,
+            external: None,
+            last_external_check: Instant::now(),
+            overwrite_armed: false,
             waveforms: HashMap::new(),
         };
         app.load();
@@ -111,8 +124,17 @@ impl App {
         self.text() != self.saved
     }
 
-    /// Guarda el editor en disco y lo carga.
+    /// Guarda el editor en disco y lo carga. Si el archivo cambió fuera,
+    /// pide confirmación antes de sobrescribirlo.
     pub fn save(&mut self) {
+        if self.external.is_some() && !std::mem::replace(&mut self.overwrite_armed, true) {
+            self.message = "el archivo cambió fuera del editor: Ctrl-S otra vez para \
+                            sobrescribirlo, o F3 para recargarlo"
+                .into();
+            return;
+        }
+        self.overwrite_armed = false;
+        self.external = None;
         let text = self.text();
         match std::fs::write(&self.path, &text) {
             Ok(()) => {
@@ -122,6 +144,59 @@ impl App {
             Err(e) => {
                 self.message = format!("no se pudo guardar: {e}");
             }
+        }
+    }
+
+    /// Mira si el archivo cambió fuera del editor (otro editor, `git
+    /// checkout`...). No toca nada: avisa y ofrece recargar con F3.
+    pub fn check_external(&mut self) {
+        let Ok(disk) = std::fs::read_to_string(&self.path) else {
+            return;
+        };
+        if disk == self.saved {
+            self.external = None;
+        } else if self.external.as_ref() != Some(&disk) {
+            self.message =
+                "el archivo cambió fuera del editor: F3 recargar · Ctrl-S sobrescribir".into();
+            self.external = Some(disk);
+            self.overwrite_armed = false;
+        }
+    }
+
+    /// Ruta donde se guarda el texto sin guardar al recargar del disco.
+    pub fn unsaved_backup_path(&self) -> PathBuf {
+        let stem = self
+            .path
+            .file_stem()
+            .map_or_else(|| "script".into(), |s| s.to_string_lossy());
+        self.path.with_file_name(format!("{stem}.sin-guardar.lua"))
+    }
+
+    /// Recarga el archivo cambiado fuera. Si había texto sin guardar, se
+    /// escribe antes en `<nombre>.sin-guardar.lua` para no perderlo.
+    pub fn reload_external(&mut self) {
+        let Some(disk) = self.external.take() else {
+            self.message = "el archivo no ha cambiado fuera del editor".into();
+            return;
+        };
+        let mut note = String::new();
+        if self.dirty() {
+            let backup = self.unsaved_backup_path();
+            if let Err(e) = std::fs::write(&backup, self.text()) {
+                self.external = Some(disk);
+                self.message = format!("no se pudo guardar tu texto en {}: {e}", backup.display());
+                return;
+            }
+            note = format!(" (tu texto sin guardar está en {})", backup.display());
+        }
+        self.editor = TextArea::new(disk.lines().map(String::from).collect());
+        self.saved = disk;
+        self.overwrite_armed = false;
+        self.load();
+        if self.error.is_none() {
+            self.message = format!("recargado del disco{note}");
+        } else {
+            self.message = format!("recargado del disco, con errores{note}");
         }
     }
 
@@ -240,6 +315,9 @@ impl App {
     /// cortes y en modo editor escribe.
     pub fn handle(&mut self, input: Input) -> Flow {
         let quit_armed = std::mem::replace(&mut self.quit_armed, false);
+        if (input.key, input.ctrl) != (Key::Char('s'), true) {
+            self.overwrite_armed = false;
+        }
         match (input.key, input.ctrl) {
             (Key::Char('q'), true) => {
                 if self.dirty() && !quit_armed {
@@ -254,6 +332,7 @@ impl App {
             (Key::Char('t'), true) | (Key::F(8), _) => self.toggle_transport(),
             (Key::Char('g'), true) => self.goto_error(),
             (Key::Char('o'), true) => self.next_track(),
+            (Key::F(3), _) => self.reload_external(),
             (Key::Esc, _) => self.toggle_mode(),
             (Key::Char(c), false) if self.mode == Mode::Play && !input.alt => {
                 if let Some(index) = PADS.iter().position(|&p| p == c.to_ascii_lowercase()) {
@@ -271,6 +350,10 @@ impl App {
 
     /// Lee el estado del motor, actualiza medidores y recoge la basura.
     pub fn tick(&mut self) {
+        if self.last_external_check.elapsed() >= EXTERNAL_CHECK {
+            self.last_external_check = Instant::now();
+            self.check_external();
+        }
         let status = self.controller.status();
         for (meter, track) in self.meters.iter_mut().zip(&status.tracks) {
             *meter = track.peak.max(*meter * METER_DECAY).min(1.0);
@@ -337,6 +420,7 @@ impl App {
             file: name,
             dirty: self.dirty(),
             playing_mode: self.mode == Mode::Play,
+            external_change: self.external.is_some(),
             message: self.message.clone(),
             transport,
             tracks,

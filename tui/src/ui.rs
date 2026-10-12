@@ -54,6 +54,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rect) {
     let dirty = if view.dirty { " ●" } else { "" };
     let mut block = Block::bordered().title(format!(" {}{dirty} ", view.file));
+    if view.external_change {
+        block = block.title(
+            Line::from(" ⚠ cambiado fuera · F3 recargar ")
+                .fg(Color::Black)
+                .bg(Color::Yellow),
+        );
+    }
     if view.playing_mode {
         block = block.title(
             Line::from(" TOCAR · 1-0 q-i · Esc ")

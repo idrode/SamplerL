@@ -693,7 +693,8 @@ fn the_error_line_is_highlighted_in_the_editor() {
     replace_all(&mut app, bad);
     app.handle(ctrl('s'));
     // Cursor al principio: si no, la línea larga se ve desplazada.
-    app.editor.move_cursor(ratatui_textarea::CursorMove::Jump(0, 0));
+    app.editor
+        .move_cursor(ratatui_textarea::CursorMove::Jump(0, 0));
     let buffer = draw(&mut app, 120, 40);
     // Línea 3 en la fila 3 de la pantalla (borde + 2), en todo su ancho
     // dentro del editor; ninguna otra.
@@ -736,4 +737,118 @@ fn the_error_line_follows_the_scroll() {
     app.handle(ctrl('g'));
     let buffer = draw(&mut app, 120, 40);
     assert_eq!(error_rows(&buffer, 5).len(), 1);
+}
+
+fn f(n: u8) -> Input {
+    Input {
+        key: Key::F(n),
+        ..Input::default()
+    }
+}
+
+const SONG_KICK_ONLY: &str = r#"bpm(120)
+local amen = sample("break.wav"):slice(2)
+track("kick", amen:slice_at(1)):steps("x . . .  x . . .  x . . .  x . . .")
+"#;
+
+#[test]
+fn external_change_is_offered_and_reloaded_with_f3() {
+    let (path, mut app, _engine) = open("external", Some(SONG));
+    app.check_external();
+    assert!(!app.view().external_change, "sin cambios fuera");
+
+    std::fs::write(&path, SONG_KICK_ONLY).unwrap();
+    app.check_external();
+    let view = app.view();
+    assert!(view.external_change);
+    assert!(view.message.contains("F3 recargar"), "{}", view.message);
+    let screen = text(&draw(&mut app, 120, 40));
+    assert!(
+        screen.contains("⚠ cambiado fuera · F3 recargar"),
+        "{screen}"
+    );
+    // Aún no se ha tocado nada: el editor y el motor siguen con lo anterior.
+    assert_eq!(app.view().tracks.len(), 2);
+    assert!(app.editor.lines()[2].contains("drums"));
+
+    app.handle(f(3));
+    let view = app.view();
+    assert!(!view.external_change);
+    assert_eq!(view.message, "recargado del disco");
+    assert_eq!(
+        app.editor.lines()[2],
+        SONG_KICK_ONLY.lines().nth(2).unwrap()
+    );
+    assert!(!view.dirty);
+    // Se cargó: ahora solo hay "kick".
+    assert_eq!(view.tracks.len(), 1);
+    assert_eq!(view.tracks[0].name, "kick");
+    // Sin texto sin guardar, no hay copia.
+    assert!(!app.unsaved_backup_path().exists());
+}
+
+#[test]
+fn reloading_keeps_unsaved_text_in_a_backup() {
+    let (path, mut app, _engine) = open("external_dirty", Some(SONG));
+    type_text(&mut app, "-- sin guardar\n");
+    let unsaved = format!("{}\n", app.editor.lines().join("\n"));
+
+    std::fs::write(&path, SONG_KICK_ONLY).unwrap();
+    app.check_external();
+    app.handle(f(3));
+
+    let backup = app.unsaved_backup_path();
+    assert_eq!(backup.file_name().unwrap(), "song.sin-guardar.lua");
+    assert_eq!(std::fs::read_to_string(&backup).unwrap(), unsaved);
+    assert!(
+        app.view().message.contains("song.sin-guardar.lua"),
+        "{}",
+        app.view().message
+    );
+    assert_eq!(
+        app.editor.lines()[2],
+        SONG_KICK_ONLY.lines().nth(2).unwrap()
+    );
+}
+
+#[test]
+fn saving_over_an_external_change_asks_first() {
+    let (path, mut app, _engine) = open("external_save", Some(SONG));
+    type_text(&mut app, "-- mío\n");
+    std::fs::write(&path, SONG_KICK_ONLY).unwrap();
+    app.check_external();
+
+    // Primer Ctrl-S: avisa y no escribe.
+    app.handle(ctrl('s'));
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), SONG_KICK_ONLY);
+    assert!(app.view().message.contains("Ctrl-S otra vez"));
+    // Otra tecla en medio desarma la confirmación.
+    app.handle(Input {
+        key: Key::Down,
+        ..Input::default()
+    });
+    app.handle(ctrl('s'));
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), SONG_KICK_ONLY);
+    // Dos seguidas: sobrescribe.
+    app.handle(ctrl('s'));
+    assert!(
+        std::fs::read_to_string(&path)
+            .unwrap()
+            .starts_with("-- mío\n")
+    );
+    assert!(!app.view().external_change);
+    // Nuestro propio guardado no cuenta como cambio externo.
+    app.check_external();
+    assert!(!app.view().external_change);
+}
+
+#[test]
+fn reverting_the_external_change_clears_the_warning() {
+    let (path, mut app, _engine) = open("external_revert", Some(SONG));
+    std::fs::write(&path, SONG_KICK_ONLY).unwrap();
+    app.check_external();
+    assert!(app.view().external_change);
+    std::fs::write(&path, SONG).unwrap();
+    app.check_external();
+    assert!(!app.view().external_change);
 }

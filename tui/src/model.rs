@@ -15,6 +15,8 @@ pub struct ViewModel {
     pub dirty: bool,
     /// Modo tocar: las teclas disparan cortes en vez de escribir.
     pub playing_mode: bool,
+    /// El archivo cambió fuera del editor (se ofrece recargar).
+    pub external_change: bool,
     /// Mensaje informativo de la última acción.
     pub message: String,
     /// Error de la última carga (sigue sonando lo anterior).
