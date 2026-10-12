@@ -2,6 +2,8 @@
 
 Sampler + secuenciador para remixes con amen breaks, controlado por código en vivo. Proyecto en Rust. El desarrollo se hace en una laptop x86_64 con Gentoo.
 
+Guía de uso (inicio rápido, atajos, mini-notación, API de Lua, recetas y problemas): [docs/GUIA.md](docs/GUIA.md). Sus bloques de Lua y las recetas de `scripts/ejemplos/` se comprueban en `script/tests/guide.rs`: al cambiar la API, actualiza la guía.
+
 ## Idea central
 
 - Panel izquierdo: editor de código. Panel derecho: vistas del estado. Panel inferior: efectos por pista.

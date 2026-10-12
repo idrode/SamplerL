@@ -1,0 +1,635 @@
+# Guía de uso
+
+Sampler de breaks con live coding en la terminal: cortas un break (el amen,
+por ejemplo) en sus golpes, los secuencias con una mini-notación y lo
+controlas todo desde un script de Lua que se recarga en caliente.
+
+Todos los bloques de código Lua de esta guía se comprueban en los tests
+(`cargo test -p script --test guide`): se cargan contra el break sintético
+y deben funcionar sin errores. Las recetas están también como archivos en
+`scripts/ejemplos/`.
+
+## 1. Inicio rápido
+
+### Generar el break sintético
+
+El repositorio no trae samples con derechos. Para probar hay un break
+sintético (bombo, charles y caja, 8 golpes):
+
+```sh
+scripts/render-demo.sh
+```
+
+Genera `renders/synth_break.wav` y, de paso, renderiza una demo en
+`renders/demo.wav`. Si solo quieres el break:
+
+```sh
+cargo run -p engine --example synth_break -- renders/synth_break.wav
+```
+
+Sus 8 cortes son: 1 bombo, 2 charles, 3 caja, 4 charles, 5 bombo, 6 bombo,
+7 caja, 8 charles. Las recetas de esta guía usan esa numeración; con un
+amen de verdad los golpes caen en otros números (mira la vista del sample o
+la lista de cortes que imprime `--render`).
+
+### Usar un sample propio
+
+Solo se leen archivos **WAV** (cualquier frecuencia; se resamplean al
+cargar). `sample("archivo.wav")` busca la ruta relativa a la carpeta del
+script. Pon el WAV junto al `.lua`:
+
+```lua
+bpm(170)
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+```
+
+o crea un proyecto que diga dónde están los samples (ver más abajo).
+
+Recuerda respetar los derechos de los samples si publicas lo que hagas.
+
+### Abrir la interfaz
+
+```sh
+cargo run -p tui -- --edit mi-cancion.lua
+```
+
+Si el archivo no existe, se abre una plantilla. A la izquierda está el
+editor; a la derecha, el estado del motor, la forma de onda del sample y el
+tracker; abajo, los efectos de cada pista. Ctrl-S guarda y carga.
+
+**Sin `--allow-audio` no suena nada**: el motor avanza igual (el tracker se
+mueve), pero el audio se tira. Para oírlo por la tarjeta:
+
+```sh
+cargo run -p tui -- --edit mi-cancion.lua --allow-audio
+```
+
+### Renderizar a WAV
+
+Sin abrir la interfaz, un script de Lua:
+
+```sh
+cargo run -p tui -- --script scripts/ejemplos/01-ritmo-basico.lua --render renders/ritmo.wav --bars 4
+```
+
+Un WAV con un patrón en mini-notación, sin Lua:
+
+```sh
+cargo run -p tui -- renders/synth_break.wav --render renders/patron.wav \
+  --pattern "1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 ." --slices 8 --bpm 170 --bars 4
+```
+
+Opciones de `--render` con `--pattern`: `--slices N` (cortes a detectar, 8
+por defecto), `--bpm B` (120), `--bars M` (4), `--min-gap MS` (separación
+mínima entre cortes, 40) y `--detector flux|energy` (flux). Imprime los
+cortes detectados con su posición en ms.
+
+Desde la interfaz, la orden `exportar` (F2) hace lo mismo con lo que está
+cargado.
+
+Para escuchar en otra máquina: `scp laptop:~/sampler/renders/ritmo.wav .`
+
+### Proyectos
+
+Un proyecto (`.sampler`) es un archivo de texto con el script, la carpeta
+de samples y el tempo:
+
+```text
+# proyecto del sampler
+script = cancion.lua
+samples = /home/yo/samples/breaks
+bpm = 170
+```
+
+Las rutas relativas lo son a la carpeta del proyecto. Con `samples`,
+`sample("amen.wav")` busca en esa carpeta. El `bpm` es el tempo por
+defecto: si el script llama a `bpm()`, manda el script. Se abre con
+`tui --edit proyecto.sampler` o con la orden `abrir`.
+
+## 2. Atajos de teclado
+
+### Interfaz
+
+| Tecla | Qué hace |
+| --- | --- |
+| Ctrl-S | Guardar el script y cargarlo (entra en el siguiente compás) |
+| Ctrl-L o F5 | Cargar el texto del editor sin guardar |
+| Ctrl-T o F8 | Marcha / paro del secuenciador |
+| Ctrl-G | Ir a la línea del error |
+| Ctrl-O | Siguiente pista (la de la vista del sample y del modo tocar) |
+| Esc | Entrar / salir del modo tocar |
+| F2 | Línea de órdenes |
+| F3 | Recargar el archivo si cambió fuera del editor |
+| Ctrl-Q | Salir (dos veces si hay cambios sin guardar) |
+
+Con un cambio externo pendiente, Ctrl-S pide un segundo Ctrl-S antes de
+sobrescribir. F3 guarda antes tu texto sin guardar en
+`<nombre>.sin-guardar.lua`.
+
+### Modo tocar (Esc)
+
+| Teclas | Cortes de la pista seleccionada |
+| --- | --- |
+| 1 2 3 4 5 6 7 8 9 0 | cortes 1 a 10 |
+| q w e r t y u i | cortes 11 a 18 |
+
+El corte suena al instante (no espera al compás), con el volumen y los
+efectos de la pista, y corta lo que sonaba en ella. El texto no se toca.
+
+### Línea de órdenes (F2)
+
+Enter ejecuta y Esc cancela. Las rutas son relativas a la carpeta del
+proyecto o, si no hay, a la del script.
+
+| Orden | Qué hace |
+| --- | --- |
+| `exportar [archivo.wav] [compases]` | Renderiza la mezcla a WAV. Por defecto `<script>-mezcla.wav` y la canción entera (el ciclo de `every`/`chance`, al menos 4 compases) |
+| `guardar [proyecto.sampler]` | Guarda el script y el proyecto |
+| `abrir proyecto.sampler` | Abre un proyecto (`abrir!` descarta los cambios sin guardar) |
+| `muestras [carpeta]` | Cambia la carpeta de los samples (sin argumento, dice cuál es) |
+
+### Editor
+
+Los del widget de texto (`ratatui-textarea`): flechas para moverse, Ctrl-U
+deshacer, Ctrl-R rehacer, Ctrl-C copiar, Ctrl-X cortar, Ctrl-Y pegar,
+Ctrl-K borrar hasta el final de la línea, Ctrl-W borrar la palabra
+anterior, Ctrl-A / Ctrl-E inicio y final de línea, Ctrl-V / Alt-V página
+abajo y arriba.
+
+## 3. Mini-notación
+
+Un patrón son **16 pasos** (semicorcheas de un compás de 4/4) separados por
+espacios. Los espacios de más no cuentan, así que se pueden agrupar por
+tiempos.
+
+| Símbolo | Significado | Ejemplo |
+| --- | --- | --- |
+| `3` | Corte 3 (se cuenta desde 1) | `3` |
+| `.` | Silencio: no dispara nada; lo que sonaba sigue sonando | `.` |
+| `x` | Igual que `1` (cómodo con `slice_at`) | `x` |
+| `'` | Reverse: el corte suena del final al principio | `3'` |
+| `^n` | Pitch en semitonos (signo y decimales, de -36 a 36). Cambia también la duración | `3^7`, `3^-5`, `3^0.5` |
+| `@g` | Volumen del paso (lineal, de 0 a 4) | `3@0.5` |
+| `rN` | Retrigger / stutter: el paso se divide en N partes y el corte vuelve a empezar en cada una (de 1 a 16) | `3r4` |
+
+Los sufijos se combinan en cualquier orden, cada uno una vez:
+`3'^7@0.5r2` es el corte 3, al revés, una quinta arriba, a media
+intensidad y repetido dos veces.
+
+Ejemplos:
+
+```lua
+bpm(170)
+local amen = sample("amen.wav"):slice(8)
+-- Básico, agrupado por tiempos.
+track("a", amen):steps("1 . . 1  . . 3 .  1 . 5 .  . 3 . 6")
+-- Con efectos por paso.
+track("b", amen):steps("1 . 3' .  1^7 . 5@0.5 .  . 3r4 . 6  x . . 7'^-12@0.8")
+```
+
+## 4. API de Lua
+
+El script se ejecuta entero en cada carga. Cada llamada construye el modelo
+de la canción; nada suena hasta que la carga termina bien (ver la sección
+5). Solo están las librerías `math`, `string`, `table` y `utf8` (no `io` ni
+`os`), y un script que tarda más de 2 s se corta.
+
+### `bpm(n)`
+
+Tempo en pulsos por minuto, de 20 a 400. Si no se llama, se mantiene el que
+haya (o el del proyecto).
+
+```lua
+bpm(174)
+```
+
+### `sample(ruta)` → sample
+
+Carga un WAV. La ruta es relativa a la carpeta del script o, en un
+proyecto, a su carpeta `samples`. Recargar el script no vuelve a leer el
+archivo si no ha cambiado.
+
+```lua
+local amen = sample("amen.wav")
+```
+
+### `sample:slice(n)` → cortes
+
+Busca los `n` golpes más fuertes (de 1 a 64) y corta el sample en ellos.
+Si hay menos golpes, devuelve menos cortes. `:count()` dice cuántos hay.
+Usa el detector por flujo espectral con 40 ms de separación mínima.
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+local cuantos = amen:count()
+track("drums", amen):steps("1 . . .  . . . .  1 . . .  . . . .")
+```
+
+### `cortes:slice_at(i)` → cortes
+
+Solo el corte `i` (desde 1), como una fuente de un único corte: en el
+patrón es `1` o `x`.
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+local caja = amen:slice_at(3)
+track("caja", caja):steps(". . . .  x . . .  . . . .  x . . .")
+```
+
+### `track(nombre, cortes)` / `track(nombre)` → pista
+
+Con dos argumentos define (o redefine) una pista que toca esos cortes. Con
+uno, recupera una pista ya definida para seguir configurándola. Hay como
+mucho 8 pistas; suenan a la vez y se suman. Todos los métodos de la pista
+devuelven la pista, así que se pueden encadenar.
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen)
+track("drums"):steps("1 . . .  3 . . .  1 . . .  3 . . .")
+```
+
+### `pista:steps(texto)`
+
+El patrón del compás en mini-notación (sección 3). Los cortes que no
+existen dan error en esa línea.
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+```
+
+### `pista:gain(g)`
+
+Volumen de la pista, lineal de 0 a 4. Se aplica después de los efectos.
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 ."):gain(0.7)
+```
+
+### `pista:fx(nombre, parámetros)`
+
+Añade un efecto a la cadena de la pista (hasta 4, en orden). Un parámetro
+desconocido da error, para pillar las erratas.
+
+| Nombre | Parámetros | Por defecto | Rango |
+| --- | --- | --- | --- |
+| `"filter"` | `type` (`"lowpass"` o `"highpass"`), `cutoff` (Hz), `q` | `type = "lowpass"`, `q = 0.707` | `cutoff` 20–20000 (obligatorio), `q` 0.1–20 |
+| `"lowpass"` | `cutoff`, `q` | `q = 0.707` | igual que `filter` |
+| `"highpass"` | `cutoff`, `q` | `q = 0.707` | igual que `filter` |
+| `"bitcrush"` (o `"bitcrusher"`) | `bits`, `downsample` | `bits = 8`, `downsample = 1` | `bits` 1–16, `downsample` 1–64 |
+
+El filtro es un biquad de 12 dB/octava; `q = 0.707` es la respuesta más
+plana y valores altos resuenan en el corte. El bitcrusher reduce la
+resolución a `bits` y repite cada muestra `downsample` veces (reducción de
+la frecuencia de muestreo, sin filtro: suena sucio a propósito).
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen)
+  :steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+  :fx("filter", { type = "lowpass", cutoff = 3000 })
+  :fx("highpass", { cutoff = 80, q = 0.9 })
+  :fx("bitcrush", { bits = 6, downsample = 2 })
+```
+
+### `pista:every(n, función)`
+
+En los compases 0, n, 2n... de la canción (como en Tidal) se llama a
+`función(compás)`, que puede cambiar ese compás. `n` va de 1 a 64. El
+compás tiene estos métodos, que se pueden encadenar:
+
+| Método | Qué hace |
+| --- | --- |
+| `c:steps(texto)` | Sustituye los pasos del compás |
+| `c:reverse()` | Invierte el sentido de cada golpe (lo que iba al revés vuelve al derecho) |
+| `c:pitch(st)` | Pone el pitch de cada golpe (-36 a 36) |
+| `c:retrig(n)` | Pone el retrigger de cada golpe (1 a 16) |
+| `c:gain(g)` | Pone el volumen de cada golpe (0 a 4); no el de la pista |
+
+Dentro de la función no se puede llamar a `track`, `bpm` ni `sample`.
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen)
+  :steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+  :every(4, function(c) c:reverse() end)
+```
+
+### `pista:chance(p, efecto [, valor])`
+
+Cada golpe sufre el efecto con probabilidad `p` (de 0 a 1).
+
+| Efecto | Valor | Qué hace |
+| --- | --- | --- |
+| `"retrig"` (o `"stutter"`) | n (1 a 16) | Retrigger del golpe |
+| `"reverse"` | — | Invierte su sentido |
+| `"pitch"` | semitonos (-36 a 36) | Pone su pitch |
+| `"gain"` | volumen (0 a 4) | Pone su volumen |
+| `"mute"` | — | Lo quita |
+
+El azar se tira al cargar, para 16 compases que se repiten. Cada carga tira
+otra vez los dados.
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen)
+  :steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+  :chance(0.2, "retrig", 4)
+  :chance(0.1, "mute")
+```
+
+`every` y `chance` se aplican en el orden en que se escriben. La pista
+queda como un ciclo de compases: el mínimo común múltiplo de los `every`,
+con 16 si hay `chance`, hasta 64 (más da error).
+
+## 5. Cuantización, recarga atómica y errores
+
+- **Todo cambio entra al empezar el siguiente compás.** Al guardar (o con
+  Ctrl-L) el compás que suena termina tal cual y el nuevo empieza en su
+  paso 0. Lo mismo con el tempo, el volumen y los efectos.
+- **La recarga es atómica.** El script se evalúa entero en el hilo de
+  control; si todo va bien, el tempo y los patrones de todas las pistas se
+  envían juntos, como un lote, por una cola sin bloqueos. El motor los
+  guarda aparte hasta tener el lote completo, así que nunca suena un compás
+  con la mitad del cambio.
+- **Si hay un error, sigue sonando lo anterior.** Sintaxis, una función mal
+  llamada, notación inválida, un corte que no existe, un archivo que no
+  está, un bucle infinito (se corta a los 2 s): no se envía nada al motor.
+  El error aparece en el editor (borde rojo, mensaje al pie y la línea con
+  fondo rojo); Ctrl-G lleva a ella. Al corregir y guardar, el cambio entra
+  en el compás siguiente.
+- **Las pistas conservan su sitio.** Una pista que sigue en el script
+  sigue en la misma pista del motor; una que desaparece se calla en el
+  compás siguiente.
+- **`every` y `chance` siguen el compás de la canción**, no el de la
+  recarga: `every(4)` cae en los compases 0, 4, 8... aunque recargues a
+  mitad.
+- **Tocar con el teclado no se cuantiza:** el modo tocar es interpretación,
+  no un cambio de código.
+- **Exportar no toca lo que suena:** renderiza en un motor aparte lo último
+  cargado bien (si el texto tiene cambios sin cargar o con error, el
+  mensaje lo avisa).
+
+## 6. Recetas para amen breaks
+
+Las recetas usan los cortes del break sintético (1 bombo, 2 charles, 3
+caja, 4 charles, 5 bombo, 6 bombo, 7 caja, 8 charles). Cada una está en
+`scripts/ejemplos/`; para oírla:
+
+```sh
+scripts/render-demo.sh   # una vez, para tener renders/synth_break.wav
+cargo run -p tui -- --script scripts/ejemplos/01-ritmo-basico.lua --render renders/receta.wav --bars 8
+```
+
+En `scripts/ejemplos/`, `amen.wav` es un enlace al break sintético. Para
+usar tu amen sin tocar los ejemplos, haz un proyecto con
+`script = scripts/ejemplos/01-ritmo-basico.lua` y `samples = <tu carpeta>`.
+
+### Ritmo básico
+
+El break tal cual: cada golpe en su sitio, a tempo de jungle.
+
+```lua
+-- 01-ritmo-basico.lua
+bpm(170)
+local amen = sample("amen.wav"):slice(8)
+
+track("drums", amen)
+  :steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+```
+
+### Variación con every
+
+Un compás de relleno cada 4 y un toque al revés cada 8.
+
+```lua
+-- 02-variacion-every.lua
+bpm(170)
+local amen = sample("amen.wav"):slice(8)
+
+track("drums", amen)
+  :steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+  -- Compases 0, 4, 8...: otro patrón, más cargado al final.
+  :every(4, function(c) c:steps("1 . 2 .  3 . 4 .  5 6 3 3  7 3 7 3") end)
+  -- Compases 0, 8, 16...: además, todo al revés.
+  :every(8, function(c) c:reverse() end)
+```
+
+### Ghost notes con chance
+
+Una segunda pista con cajas muy suaves en los contratiempos, que aparecen y
+desaparecen al azar.
+
+```lua
+-- 03-ghost-notes.lua
+bpm(170)
+local amen = sample("amen.wav"):slice(8)
+
+track("drums", amen)
+  :steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+  :gain(0.8)
+
+track("ghost", amen:slice_at(3))
+  :steps(". x@0.2 . x@0.15  . x@0.2 x@0.1 .  . x@0.2 . x@0.15  . . x@0.2 x@0.1")
+  :chance(0.4, "mute")
+  :fx("lowpass", { cutoff = 4000 })
+```
+
+### Stutter para fills
+
+El último tiempo de cada cuatro compases se rompe en repeticiones cada vez
+más rápidas; además, algún golpe suelto tartamudea.
+
+```lua
+-- 04-stutter-fills.lua
+bpm(170)
+local amen = sample("amen.wav"):slice(8)
+
+track("drums", amen)
+  :steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+  :every(4, function(c) c:steps("1 . 2 .  3 . 4 .  5 6 2 .  3r2 3r4 7r8 7r16") end)
+  :chance(0.1, "stutter", 3)
+```
+
+### Pitch para melodías con cortes
+
+Un solo golpe (la caja) afinado como un instrumento. Subir el pitch acorta
+el golpe; bajarlo lo alarga.
+
+```lua
+-- 05-melodia-pitch.lua
+bpm(170)
+local amen = sample("amen.wav"):slice(8)
+
+track("drums", amen)
+  :steps("1 . . .  . . . .  5 . . .  . . . .")
+  :gain(0.7)
+
+track("melodia", amen:slice_at(3))
+  :steps("x . x^3 .  x^7 . x^5 .  x^12 . x^10 .  x^7 . x^3 x^-5")
+  :gain(0.5)
+```
+
+### Reverse en el último paso del compás
+
+El golpe del último paso va al revés y "aspira" hacia el compás siguiente.
+
+```lua
+-- 06-reverse-final.lua
+bpm(170)
+local amen = sample("amen.wav"):slice(8)
+
+track("drums", amen)
+  :steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 7'")
+```
+
+### Break reordenado
+
+Los mismos golpes en otro orden: la base del jungle. Cambia los números y
+guarda para oír cada versión en el compás siguiente.
+
+```lua
+-- 07-break-reordenado.lua
+bpm(172)
+local amen = sample("amen.wav"):slice(8)
+
+track("drums", amen)
+  :steps("1 . 4 .  7 . 2 3  . 5 6 .  3 . 8 7")
+  :every(2, function(c) c:steps("5 . 1 .  3 . 2 .  1 6 7 .  3 4 3 8") end)
+```
+
+### Varias pistas
+
+Una pista para el break, otra que refuerza el bombo y otra con charles
+agudos y sucios. Cada pista tiene su volumen y sus efectos; el limitador
+del final evita que la suma pase de ±1, pero conviene dejar margen.
+
+```lua
+-- 08-varias-pistas.lua
+bpm(170)
+local amen = sample("amen.wav"):slice(8)
+
+track("drums", amen)
+  :steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+  :fx("filter", { type = "lowpass", cutoff = 6000 })
+  :every(4, function(c) c:reverse() end)
+  :gain(0.7)
+
+track("kick", amen:slice_at(1))
+  :steps("x . . .  . . . .  x . x .  . . . .")
+  :gain(0.4)
+
+track("hats", amen:slice_at(2))
+  :steps(". . x^12 .  . . x^12 .  . . x^12 .  . . x^12 x^12r2")
+  :fx("highpass", { cutoff = 2000 })
+  :fx("bitcrush", { bits = 6, downsample = 2 })
+  :gain(0.3)
+```
+
+## 7. Solución de problemas
+
+### Cortes mal detectados
+
+- **Mira dónde caen.** `--render` con `--pattern` imprime la lista de cortes
+  con su posición en ms, y la interfaz los marca sobre la forma de onda.
+- **Faltan golpes juntos** (flams, redobles): baja la separación mínima con
+  `--min-gap`, por ejemplo `--min-gap 25`. Al revés, si salen cortes de
+  más en un mismo golpe, súbela.
+- **Cortes que caen en la cola de un bombo** o charles débiles que no
+  aparecen: usa el detector por flujo espectral (el de por defecto,
+  `--detector flux`). `--detector energy` es el antiguo y falla justo ahí.
+- **Pedir menos cortes** (`slice(6)` en vez de `slice(8)`) se queda con los
+  golpes más fuertes.
+- En Lua, `:slice(n)` usa siempre el detector por flujo con 40 ms; los
+  ajustes `--min-gap` y `--detector` son de la línea de comandos. Para
+  probarlos, renderiza el WAV con `--pattern` y mira la lista de cortes.
+
+### Saturación
+
+La suma de pistas pasa por un limitador suave: por debajo de 0,9 no toca
+nada y por encima comprime hasta ±1 sin recortar. Si se nota apretado:
+
+- baja el volumen de las pistas con `:gain()`, sobre todo cuando dos pistas
+  tocan el mismo golpe a la vez (break + refuerzo de bombo);
+- baja golpes concretos con `@` (`5@0.6`);
+- recuerda que `@` y `:gain()` llegan hasta 4: más de 1 sube el volumen.
+
+### Errores comunes de Lua
+
+Los errores salen con archivo y línea, en el editor y en la línea de
+comandos. Mientras tanto sigue sonando lo anterior.
+
+```text
+song.lua:2: steps: el patrón necesita 16 pasos, tiene 4
+```
+
+El patrón tiene que tener exactamente 16 pasos. Rellena con `.`.
+
+```text
+song.lua:2: steps: el corte 9 no existe ("drums" tiene 8)
+```
+
+Has pedido un corte mayor que los que hay (o el detector encontró menos
+golpes de los que pediste en `slice(n)`).
+
+```text
+song.lua:2: steps: paso 3 ("5^"): falta el número después de ^
+```
+
+Los sufijos `^`, `@` y `r` necesitan su número pegado: `5^7`, `5@0.5`, `5r4`.
+
+```text
+song.lua:2: la pista "hats" no existe; defínela con track("hats", sample(...):slice(n))
+```
+
+`track("nombre")` con un solo argumento solo recupera pistas ya definidas.
+
+```text
+song.lua:2: argumento 2 no válido: userdata is not expected type
+```
+
+Has pasado a `track()` un `sample(...)` sin cortar: añade `:slice(n)` (o
+`:slice(1)` para el sample entero).
+
+```text
+song.lua:2: argumento 2 no válido: se esperaba f32 y llegó string
+```
+
+Un número entre comillas (`gain("0.5")`). En los métodos (`pista:gain(...)`)
+el argumento 1 es la propia pista, así que el primero tuyo es el 2.
+
+```text
+song.lua:3: fx("filter"): parámetro desconocido "cutof" (admite: type, cutoff, q)
+```
+
+Errata en un parámetro de efecto.
+
+```text
+song.lua:1: .../mi_amen.wav: error leyendo WAV: No such file or directory (os error 2)
+```
+
+El WAV no está donde se busca: junto al script o en la carpeta `samples`
+del proyecto (orden `muestras` para ver cuál es).
+
+```text
+song.lua:3: no se puede llamar a track() dentro de every()
+```
+
+Dentro de `every` solo se modifica el compás que recibe la función.
+
+```text
+pista "d": every/chance dan un ciclo de 77 compases (máximo 64)
+```
+
+`every(7)` y `every(11)` necesitan 77 compases para repetirse. Usa números
+que se lleven bien (2, 4, 8, 16...).
+
+```text
+song.lua:1: ')' expected near <eof>
+```
+
+Error de sintaxis de Lua: falta cerrar un paréntesis, unas comillas o un
+`end`.
