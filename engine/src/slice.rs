@@ -6,12 +6,28 @@ use crate::sample::Sample;
 
 /// Tamaño del salto del análisis de energía (~5 ms a 48 kHz).
 const HOP: usize = 256;
-/// Distancia mínima entre dos transitorios.
-const MIN_GAP_SECONDS: f32 = 0.040;
+/// Separación mínima por defecto entre dos transitorios.
+pub const DEFAULT_MIN_GAP_SECONDS: f32 = 0.040;
 /// Fuerza mínima (subida de energía comprimida) para considerar un transitorio.
 const MIN_STRENGTH: f32 = 0.5;
 /// Compresión logarítmica de la envolvente: ln(1 + K·rms).
 const LOG_K: f32 = 100.0;
+
+/// Parámetros de la detección de transitorios.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DetectOptions {
+    /// Separación mínima entre dos transitorios, en segundos. De dos golpes
+    /// más cercanos se queda el más fuerte.
+    pub min_gap_seconds: f32,
+}
+
+impl Default for DetectOptions {
+    fn default() -> Self {
+        DetectOptions {
+            min_gap_seconds: DEFAULT_MIN_GAP_SECONDS,
+        }
+    }
+}
 
 /// Cortes de un sample: rangos de frames contiguos, ordenados.
 /// El corte `i` va desde su transitorio hasta el siguiente (o el final del sample).
@@ -24,8 +40,13 @@ impl Slices {
     /// ninguno, un único corte con el sample entero. Lo que haya antes del
     /// primer transitorio no pertenece a ningún corte.
     pub fn detect(sample: &Sample, n: usize) -> Self {
+        Self::detect_with(sample, n, &DetectOptions::default())
+    }
+
+    /// Como [`Slices::detect`], con parámetros de detección propios.
+    pub fn detect_with(sample: &Sample, n: usize, options: &DetectOptions) -> Self {
         let frames = sample.frames();
-        let mut starts = detect_onsets(sample, n);
+        let mut starts = detect_onsets(sample, n, options);
         if starts.is_empty() && frames > 0 && n > 0 {
             starts.push(0);
         }
@@ -55,7 +76,7 @@ impl Slices {
 }
 
 /// Posiciones (en frames) de hasta `n` transitorios, ordenadas.
-fn detect_onsets(sample: &Sample, n: usize) -> Vec<usize> {
+fn detect_onsets(sample: &Sample, n: usize, options: &DetectOptions) -> Vec<usize> {
     let frames = sample.frames();
     if n == 0 || frames == 0 {
         return Vec::new();
@@ -95,24 +116,21 @@ fn detect_onsets(sample: &Sample, n: usize) -> Vec<usize> {
         .collect();
     candidates.sort_by(|&a, &b| flux[b].total_cmp(&flux[a]));
 
-    // Los más fuertes primero, respetando la distancia mínima.
-    let min_gap = ((MIN_GAP_SECONDS * sample.sample_rate() as f32) as usize).div_ceil(HOP);
-    let mut chosen: Vec<usize> = Vec::with_capacity(n);
+    // Los más fuertes primero, respetando la separación mínima. Se compara
+    // la posición ya afinada, en frames, para que la separación sea exacta.
+    let min_gap_frames = (options.min_gap_seconds.max(0.0) * sample.sample_rate() as f32) as usize;
+    let min_gap_frames = min_gap_frames.max(1);
+    let mut onsets: Vec<usize> = Vec::with_capacity(n);
     for h in candidates {
-        if chosen.len() == n {
+        if onsets.len() == n {
             break;
         }
-        if chosen.iter().all(|&c| c.abs_diff(h) >= min_gap) {
-            chosen.push(h);
+        let onset = refine(h, frames, &mono);
+        if onsets.iter().all(|&o| o.abs_diff(onset) >= min_gap_frames) {
+            onsets.push(onset);
         }
     }
-
-    let mut onsets: Vec<usize> = chosen
-        .into_iter()
-        .map(|h| refine(h, frames, &mono))
-        .collect();
     onsets.sort_unstable();
-    onsets.dedup();
     onsets
 }
 

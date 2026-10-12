@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use engine::{Sample, SendError, Slices, new_engine};
+use engine::{DetectOptions, Sample, SendError, Slices, new_engine};
 
 const RATE: u32 = 48_000;
 const LENGTH_SECONDS: f32 = 2.4;
@@ -147,4 +147,48 @@ fn plays_a_slice_by_number() {
         controller.play_slice(&sample, &slices, 8),
         Err(SendError::NoSuchSlice { index: 8, count: 8 })
     );
+}
+
+/// Dos golpes a `gap_frames` de distancia, el segundo más débil.
+fn two_close_hits(gap_frames: usize) -> Arc<Sample> {
+    let mut noise = Noise(0x0bad_cafe);
+    let frames = RATE as usize / 2;
+    let mut out = vec![0.0f32; frames];
+    for (start, amp) in [(4800, 0.9), (4800 + gap_frames, 0.6)] {
+        for (i, s) in out[start..].iter_mut().enumerate() {
+            let t = i as f32 / RATE as f32;
+            *s += amp * (-t / 0.01).exp() * noise.next();
+        }
+    }
+    Arc::new(Sample::from_interleaved(&out, 1, RATE, RATE).unwrap())
+}
+
+#[test]
+fn min_gap_is_measured_in_frames_not_analysis_hops() {
+    // 41,7 ms: por encima de los 40 ms por defecto, así que son dos cortes.
+    let sample = two_close_hits(2000);
+    let slices = Slices::detect(&sample, 8);
+    assert_eq!(slices.len(), 2);
+    assert_near(slices.get(0).unwrap().start, 4800, "golpe 1");
+    assert_near(slices.get(1).unwrap().start, 6800, "golpe 2");
+}
+
+#[test]
+fn min_gap_is_configurable() {
+    let sample = two_close_hits(2000);
+    // Con 50 ms de separación mínima solo queda el golpe más fuerte.
+    let wide = DetectOptions {
+        min_gap_seconds: 0.050,
+    };
+    let slices = Slices::detect_with(&sample, 8, &wide);
+    assert_eq!(slices.len(), 1);
+    assert_near(slices.get(0).unwrap().start, 4800, "golpe fuerte");
+
+    // Con 10 ms, dos golpes a 20 ms se separan; con el valor por defecto, no.
+    let closer = two_close_hits(960);
+    assert_eq!(Slices::detect(&closer, 8).len(), 1);
+    let narrow = DetectOptions {
+        min_gap_seconds: 0.010,
+    };
+    assert_eq!(Slices::detect_with(&closer, 8, &narrow).len(), 2);
 }

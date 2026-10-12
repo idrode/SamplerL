@@ -1,18 +1,19 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use engine::{Pattern, STEPS, Slices};
+use engine::{DetectOptions, Pattern, STEPS, Slices};
 
 const USAGE: &str = "\
 uso: tui <archivo.wav>
      tui <archivo.wav> --render <salida.wav>
      tui <archivo.wav> --render <salida.wav> --pattern \"1 . 3 . ...\" \
-[--slices N] [--bpm B] [--bars M]
+[--slices N] [--bpm B] [--bars M] [--min-gap MS]
 
   --pattern  16 pasos separados por espacios: número de corte (desde 1) o \".\" (silencio)
   --slices   cortes a detectar (por defecto 8)
   --bpm      tempo (por defecto 120)
-  --bars     compases a renderizar (por defecto 4)";
+  --bars     compases a renderizar (por defecto 4)
+  --min-gap  separación mínima entre cortes en ms (por defecto 40)";
 /// Frecuencia del motor cuando se renderiza sin dispositivo.
 const RENDER_RATE: u32 = 48_000;
 /// Límite del render offline.
@@ -28,6 +29,7 @@ struct Sequence {
     slices: usize,
     bpm: f64,
     bars: u64,
+    detect: DetectOptions,
 }
 
 fn main() -> std::process::ExitCode {
@@ -48,6 +50,7 @@ fn run() -> Result<(), BoxError> {
     let mut slices = None;
     let mut bpm = None;
     let mut bars = None;
+    let mut min_gap_ms = None;
     while let Some(arg) = args.next() {
         let mut value = || {
             args.next()
@@ -59,6 +62,13 @@ fn run() -> Result<(), BoxError> {
             "--slices" => slices = Some(parse_number::<usize>("--slices", &value()?)?),
             "--bpm" => bpm = Some(parse_number::<f64>("--bpm", &value()?)?),
             "--bars" => bars = Some(parse_number::<u64>("--bars", &value()?)?),
+            "--min-gap" => {
+                let ms = parse_number::<f32>("--min-gap", &value()?)?;
+                if ms.is_nan() || ms < 0.0 {
+                    return Err(format!("--min-gap no puede ser negativo: {ms}").into());
+                }
+                min_gap_ms = Some(ms);
+            }
             "-h" | "--help" => {
                 println!("{USAGE}");
                 return Ok(());
@@ -78,9 +88,16 @@ fn run() -> Result<(), BoxError> {
             slices: slices.unwrap_or(DEFAULT_SLICES),
             bpm: bpm.unwrap_or(engine::DEFAULT_BPM),
             bars: bars.unwrap_or(DEFAULT_BARS),
+            detect: DetectOptions {
+                min_gap_seconds: min_gap_ms
+                    .map_or(engine::DEFAULT_MIN_GAP_SECONDS, |ms| ms / 1000.0),
+            },
         }),
-        None if slices.is_some() || bpm.is_some() || bars.is_some() => {
-            return Err(format!("--slices, --bpm y --bars necesitan --pattern\n{USAGE}").into());
+        None if slices.is_some() || bpm.is_some() || bars.is_some() || min_gap_ms.is_some() => {
+            return Err(format!(
+                "--slices, --bpm, --bars y --min-gap necesitan --pattern\n{USAGE}"
+            )
+            .into());
         }
         None => None,
     };
@@ -154,7 +171,7 @@ fn render(path: &str, out: &str) -> Result<(), BoxError> {
 /// Renderiza exactamente `bars` compases del patrón (el WAV se puede poner en loop).
 fn render_sequence(path: &str, out: &str, sequence: &Sequence) -> Result<(), BoxError> {
     let sample = load(path, RENDER_RATE)?;
-    let slices = Slices::detect(&sample, sequence.slices);
+    let slices = Slices::detect_with(&sample, sequence.slices, &sequence.detect);
     println!(
         "{} cortes detectados (pedidos {}):",
         slices.len(),
