@@ -62,6 +62,14 @@ enum Command {
     SetSolo { track: usize, on: bool },
     /// Enciende o apaga el metrónomo (inmediato).
     SetMetronome(bool),
+    /// Preescucha `start..end` del sample en la voz aparte (inmediato).
+    Preview {
+        sample: Arc<Sample>,
+        start: usize,
+        end: usize,
+    },
+    /// Corta la preescucha (con fundido).
+    StopPreview,
 }
 
 /// Cómo se reproduce un rango: ganancia, velocidad de lectura (pitch) y
@@ -366,6 +374,10 @@ pub struct Engine {
     batch_open: bool,
     staged_bpm: Option<f64>,
     metronome: Metronome,
+    /// Voz de preescucha: aparte de las pistas (sin su volumen, efectos ni
+    /// mute), y la que hace su fundido al ser sustituida.
+    preview: Option<Voice>,
+    preview_fading: Option<Voice>,
 }
 
 /// Crea el par controlador/motor. `sample_rate` es la frecuencia a la que
@@ -395,6 +407,8 @@ pub fn new_engine(sample_rate: u32) -> (Controller, Engine) {
             batch_open: false,
             staged_bpm: None,
             metronome: Metronome::default(),
+            preview: None,
+            preview_fading: None,
         },
     )
 }
@@ -548,6 +562,34 @@ impl Controller {
         self.send(Command::SetSolo { track, on }, None)
     }
 
+    /// Preescucha el corte `index` en una voz aparte: no corta ni pasa por
+    /// ninguna pista (ni su volumen, ni sus efectos, ni su mute), y suena
+    /// también con el secuenciador parado. Inmediato.
+    pub fn preview_slice(
+        &mut self,
+        sample: &Arc<Sample>,
+        slices: &Slices,
+        index: usize,
+    ) -> Result<(), SendError> {
+        let range = slices.get(index).ok_or(SendError::NoSuchSlice {
+            index,
+            count: slices.len(),
+        })?;
+        let end = range.end.min(sample.frames());
+        let start = range.start.min(end);
+        let cmd = Command::Preview {
+            sample: sample.clone(),
+            start,
+            end,
+        };
+        self.send(cmd, Some(start < end))
+    }
+
+    /// Corta la preescucha (con fundido).
+    pub fn stop_preview(&mut self) -> Result<(), SendError> {
+        self.send(Command::StopPreview, None)
+    }
+
     /// Enciende o apaga el metrónomo: un clic en cada pulso, con acento en
     /// el primero del compás. Inmediato.
     pub fn set_metronome(&mut self, on: bool) -> Result<(), SendError> {
@@ -641,7 +683,9 @@ impl Engine {
             || self
                 .tracks
                 .iter()
-                .any(|t| t.voice.as_ref().is_some_and(Voice::is_active) || t.fading.is_some());
+                .any(|t| t.voice.as_ref().is_some_and(Voice::is_active) || t.fading.is_some())
+            || self.preview.as_ref().is_some_and(Voice::is_active)
+            || self.preview_fading.is_some();
         self.playing.store(playing, Ordering::Relaxed);
         self.status
             .set_transport(self.transport.running, self.transport.bpm());
@@ -708,6 +752,17 @@ impl Engine {
             }
             Command::SetMute { track, on } => self.tracks[track].live_mute = on,
             Command::SetSolo { track, on } => self.tracks[track].live_solo = on,
+            Command::Preview { sample, start, end } => {
+                let voice = Voice::new(sample, start, end, Playback::NORMAL);
+                if let Some(old) = self.preview.replace(voice) {
+                    self.fade_preview(old);
+                }
+            }
+            Command::StopPreview => {
+                if let Some(old) = self.preview.take() {
+                    self.fade_preview(old);
+                }
+            }
             Command::SetMetronome(on) => {
                 self.metronome.enabled = on;
                 if !on {
@@ -880,6 +935,19 @@ impl Engine {
                 self.discard(done.sample);
             }
         }
+        // La preescucha, directa al master.
+        let master = &mut self.master[..2 * n];
+        if let Some(voice) = &mut self.preview {
+            voice.mix_into(master);
+        }
+        if let Some(voice) = &mut self.preview_fading {
+            voice.mix_into(master);
+        }
+        if self.preview_fading.as_ref().is_some_and(|v| !v.is_active())
+            && let Some(done) = self.preview_fading.take()
+        {
+            self.discard(done.sample);
+        }
         self.metronome.mix_into(&mut self.master[..2 * n]);
         // Medidor del master antes del limitador, y cuándo actúa.
         let mut peak = 0.0f32;
@@ -906,6 +974,18 @@ impl Engine {
         }
         voice.release();
         if let Some(previous) = self.tracks[track].fading.replace(voice) {
+            self.discard(previous.sample);
+        }
+    }
+
+    /// La voz de preescucha sustituida hace su fundido de salida.
+    fn fade_preview(&mut self, mut voice: Voice) {
+        if !voice.is_active() {
+            self.discard(voice.sample);
+            return;
+        }
+        voice.release();
+        if let Some(previous) = self.preview_fading.replace(voice) {
             self.discard(previous.sample);
         }
     }
@@ -941,7 +1021,11 @@ impl Engine {
                 || same_pattern(&t.pattern)
                 || t.pending.as_ref().is_some_and(same_pattern)
                 || t.staged.as_ref().is_some_and(same_pattern)
-        })
+        }) || self.preview.as_ref().is_some_and(|v| same(&v.sample))
+            || self
+                .preview_fading
+                .as_ref()
+                .is_some_and(|v| same(&v.sample))
     }
 }
 

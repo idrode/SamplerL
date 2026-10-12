@@ -198,6 +198,7 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Metrónomo | Enciende o apaga el clic en cada pulso (no entra en lo exportado salvo que se pida) | — |
 | Reiniciar medidores | Pone a cero los medidores y quita los avisos de limitador y saturación | — |
 | Etiquetar el corte seleccionado | Abre «etiquetar N » para escribir la etiqueta (kick, snare...); se guarda en el proyecto | — |
+| Preescuchar el corte seleccionado | Lo toca en una voz aparte, sin pasar por la pista ni tocar el script | espacio (modo tocar) |
 | Corte siguiente | Selecciona el corte siguiente de la pista (sin tocarlo) | — |
 | Corte anterior | Selecciona el corte anterior de la pista (sin tocarlo) | — |
 | Salir | Sale (pide confirmación si hay cambios sin guardar) | Ctrl-Q |
@@ -257,11 +258,19 @@ de esta guía.
 | --- | --- |
 | 1 2 3 4 5 6 7 8 9 0 | cortes 1 a 10 |
 | q w e r t y u i | cortes 11 a 18 |
+| ← → | recorre los cortes de la pista y preescucha cada uno |
+| espacio | preescucha otra vez el corte seleccionado |
 | m | mute de la pista seleccionada (en vivo, sin esperar al compás) |
 | s | solo de la pista seleccionada (en vivo) |
 
 El corte suena al instante (no espera al compás), con el volumen y los
 efectos de la pista, y corta lo que sonaba en ella. El texto no se toca.
+
+La **preescucha** (← →, espacio, o «Preescuchar el corte seleccionado» en
+la paleta) toca el corte en una voz aparte: no corta lo que suena en las
+pistas, no pasa por su volumen, efectos ni mute, suena también con el
+secuenciador parado y no toca el script. Sirve para buscar el corte que
+quieres (y etiquetarlo o ajustarlo, ver más abajo).
 
 `m` y `s` (o «Mute de la pista» y «Solo de la pista» en la paleta) son el
 mute y el solo en vivo: entran ya, con un fundido de 5 ms para que no

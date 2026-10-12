@@ -2206,3 +2206,40 @@ fn detecting_the_bpm_of_a_one_shot_says_so() {
     );
     assert!(app.view().prompt.is_none());
 }
+
+// --- Preescucha ---
+
+#[test]
+fn arrows_in_play_mode_browse_and_preview_slices() {
+    let (_, mut app, mut engine) = open("preview", Some(SONG));
+    // Parado, para oír solo la preescucha.
+    app.handle(ctrl('t'));
+    offline::render(&mut engine, 2000, 2);
+    let text_before = app.text_for_test();
+    app.handle(esc());
+    app.handle(special(Key::Right));
+    let view = app.view();
+    assert_eq!(view.selected_slice, Some(1));
+    assert_eq!(view.message, "preescucha drums: corte 2");
+    let audio = offline::render(&mut engine, 1000, 2);
+    assert!(
+        audio.iter().any(|s| (s.abs() - 0.25).abs() < 1e-6),
+        "suena el corte 2"
+    );
+    assert!(audio.iter().all(|s| s.abs() < 0.3), "y no el 1");
+    // Ni el texto ni las pistas cambian.
+    assert_eq!(app.text_for_test(), text_before);
+    let status = app.controller_status_for_test();
+    assert!(
+        status.tracks.iter().all(|t| t.peak == 0.0),
+        "no suena por ninguna pista"
+    );
+    // ← da la vuelta; espacio repite.
+    app.handle(special(Key::Left));
+    app.handle(special(Key::Left));
+    assert_eq!(app.view().selected_slice, Some(1));
+    app.handle(key(' '));
+    assert_eq!(app.view().message, "preescucha drums: corte 2");
+    palette(&mut app, "preescuchar");
+    assert_eq!(app.view().message, "preescucha drums: corte 2");
+}

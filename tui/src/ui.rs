@@ -477,7 +477,7 @@ impl Widget for HelpLine<'_> {
         } else if self.0.completion.is_some() {
             "COMPLETAR: Tab aceptar · ↑↓ elegir y Enter aceptar · Esc cerrar · Enter sin elegir: salto de línea"
         } else if self.0.playing_mode {
-            "TOCAR: 1-0 q-i cortes · m mute · s solo · Ctrl-O pista · Ctrl-T marcha/paro · F1 paleta · Esc editor"
+            "TOCAR: 1-0 q-i cortes · ←→ preescucha · m mute · s solo · Ctrl-O pista · Ctrl-T marcha/paro · F1 paleta · Esc editor"
         } else {
             "Ctrl-S guardar y cargar · Ctrl-L cargar · Ctrl-T marcha/paro · \
              Ctrl-G ir al error · Ctrl-O pista · Esc tocar · F1 paleta · F2 órdenes · \

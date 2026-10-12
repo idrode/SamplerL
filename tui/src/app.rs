@@ -996,6 +996,7 @@ impl App {
             Action::ResetMeters => self.reset_meters(),
             Action::Metronome => self.toggle_metronome(),
             Action::DetectBpm => self.detect_bpm(),
+            Action::Preview => self.preview_selected(),
             Action::NextSlice => self.select_slice(true),
             Action::PreviousSlice => self.select_slice(false),
             Action::Quit => {
@@ -1066,7 +1067,7 @@ impl App {
         };
         self.message = match self.mode {
             Mode::Play => {
-                "modo tocar: 1-0 y q-i disparan cortes · m mute · s solo · Esc vuelve al editor"
+                "modo tocar: 1-0 y q-i disparan cortes · ←→ recorren y preescuchan · espacio preescucha · m mute · s solo · Esc vuelve al editor"
             }
             Mode::Edit => "modo editor",
         }
@@ -1266,6 +1267,40 @@ impl App {
         );
     }
 
+    /// Preescucha el corte seleccionado en la voz aparte (no toca las
+    /// pistas ni el script).
+    pub fn preview_selected(&mut self) {
+        let Some(track) = self.host.song().and_then(|s| s.tracks.get(self.selected)) else {
+            self.message = "no hay pistas".into();
+            return;
+        };
+        let index = self
+            .selected_slice
+            .min(track.slices.len().saturating_sub(1));
+        let (sample, slices, name) = (
+            track.sample.clone(),
+            track.slices.clone(),
+            track.name.clone(),
+        );
+        let label = track
+            .labels
+            .get(index)
+            .cloned()
+            .flatten()
+            .map_or(String::new(), |l| format!(" ({l})"));
+        self.message = match self.controller.preview_slice(&sample, &slices, index) {
+            Ok(()) => format!("preescucha {name}: corte {}{label}", index + 1),
+            Err(e) => format!("motor: {e}"),
+        };
+    }
+
+    /// Recorre los cortes (←/→ en el modo tocar): selecciona el siguiente o
+    /// el anterior y lo preescucha.
+    pub fn browse_slice(&mut self, forward: bool) {
+        self.select_slice(forward);
+        self.preview_selected();
+    }
+
     /// Abre la línea de órdenes para etiquetar el corte seleccionado.
     pub fn start_labeling(&mut self) {
         let Some(track) = self.host.song().and_then(|s| s.tracks.get(self.selected)) else {
@@ -1369,12 +1404,16 @@ impl App {
             (Key::Char(c), false) if self.mode == Mode::Play && !input.alt => {
                 if let Some(index) = PADS.iter().position(|&p| p == c.to_ascii_lowercase()) {
                     self.play_pad(index);
+                } else if c == ' ' {
+                    self.preview_selected();
                 } else if c == 'm' {
                     self.toggle_live(false);
                 } else if c == 's' {
                     self.toggle_live(true);
                 }
             }
+            (Key::Left, _) if self.mode == Mode::Play => self.browse_slice(false),
+            (Key::Right, _) if self.mode == Mode::Play => self.browse_slice(true),
             // En modo tocar el texto no se toca.
             _ if self.mode == Mode::Play => {}
             _ => {

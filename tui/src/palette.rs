@@ -32,6 +32,7 @@ pub enum Action {
     ResetMeters,
     Metronome,
     DetectBpm,
+    Preview,
     NextSlice,
     PreviousSlice,
     Quit,
@@ -186,6 +187,12 @@ pub const ACTIONS: &[ActionDef] = &[
         name: "Etiquetar el corte seleccionado",
         description: "Abre «etiquetar N » para escribir la etiqueta (kick, snare...); se guarda en el proyecto",
         keys: "",
+    },
+    ActionDef {
+        action: Action::Preview,
+        name: "Preescuchar el corte seleccionado",
+        description: "Lo toca en una voz aparte, sin pasar por la pista ni tocar el script",
+        keys: "espacio (modo tocar)",
     },
     ActionDef {
         action: Action::NextSlice,

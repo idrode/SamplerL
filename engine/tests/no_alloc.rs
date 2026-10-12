@@ -124,6 +124,24 @@ fn the_audio_thread_never_allocates() {
     controller.set_mute(0, false).unwrap();
     controller.set_solo(1, false).unwrap();
 
+    // Preescucha: varias seguidas (con fundido cruzado) y parada.
+    for i in [0, 1, 0] {
+        controller.preview_slice(&sample, &slices, i).unwrap();
+        let n = counted(|| {
+            for _ in 0..20 {
+                engine.process(&mut out, 2);
+            }
+        });
+        assert_eq!(n, 0, "reservas con preescucha");
+    }
+    controller.stop_preview().unwrap();
+    let n = counted(|| {
+        for _ in 0..20 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas al parar la preescucha");
+
     controller.stop().unwrap();
     controller.start().unwrap();
     let n = counted(|| {
