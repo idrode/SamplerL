@@ -86,8 +86,12 @@ pub struct Rng(u64);
 
 impl Rng {
     pub fn new(seed: u64) -> Self {
-        // El estado no puede ser 0.
-        Rng(seed ^ 0x9e37_79b9_7f4a_7c15 | 1)
+        // Mezcla de splitmix64: semillas parecidas (4 y 5) dan estados muy
+        // distintos. El estado no puede ser 0.
+        let mut z = seed.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        Rng((z ^ (z >> 31)) | 1)
     }
 
     /// Número uniforme en [0, 1).
@@ -252,6 +256,18 @@ mod tests {
                 .unwrap_err()
                 .starts_with("reverse_pattern: ")
         );
+    }
+
+    #[test]
+    fn neighbouring_seeds_give_different_numbers() {
+        // (Antes, 42 y 43 daban lo mismo: solo cambiaba el bit que se fuerza a 1.)
+        for seed in [0u64, 4, 42, 1 << 40] {
+            assert_ne!(
+                Rng::new(seed).next_f64(),
+                Rng::new(seed + 1).next_f64(),
+                "{seed}"
+            );
+        }
     }
 
     #[test]
