@@ -13,6 +13,8 @@ pub struct ViewModel {
     pub file: String,
     /// Hay cambios en el editor sin guardar.
     pub dirty: bool,
+    /// Modo tocar: las teclas disparan cortes en vez de escribir.
+    pub playing_mode: bool,
     /// Mensaje informativo de la última acción.
     pub message: String,
     /// Error de la última carga (sigue sonando lo anterior).

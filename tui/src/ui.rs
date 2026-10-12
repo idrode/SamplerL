@@ -52,6 +52,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rect) {
     let dirty = if view.dirty { " ●" } else { "" };
     let mut block = Block::bordered().title(format!(" {}{dirty} ", view.file));
+    if view.playing_mode {
+        block = block.title(
+            Line::from(" TOCAR · 1-0 q-i · Esc ")
+                .fg(Color::Black)
+                .bg(Color::Yellow),
+        );
+    }
     if let Some(error) = &view.error {
         // El error se muestra en el propio editor: resumen en el borde y
         // mensaje completo al pie, en rojo.
@@ -159,8 +166,12 @@ pub struct HelpLine<'a>(pub &'a ViewModel);
 
 impl Widget for HelpLine<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let keys = "Ctrl-S guardar y cargar · Ctrl-L cargar · Ctrl-T marcha/paro · \
-                    Ctrl-G ir al error · Ctrl-O pista · Ctrl-Q salir";
+        let keys = if self.0.playing_mode {
+            "TOCAR: 1-0 q-i cortes de la pista · Ctrl-O pista · Ctrl-T marcha/paro · Esc editor"
+        } else {
+            "Ctrl-S guardar y cargar · Ctrl-L cargar · Ctrl-T marcha/paro · \
+             Ctrl-G ir al error · Ctrl-O pista · Esc tocar · Ctrl-Q salir"
+        };
         let message = &self.0.message;
         let line = if message.is_empty() {
             Line::from(keys).fg(DIM)

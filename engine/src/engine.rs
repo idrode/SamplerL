@@ -34,6 +34,7 @@ const FADE_SECONDS: f32 = 0.0015;
 enum Command {
     /// Reproduce los frames `start..end` del sample en la pista 0.
     Play {
+        track: usize,
         sample: Arc<Sample>,
         start: usize,
         end: usize,
@@ -379,11 +380,24 @@ impl Controller {
         slices: &Slices,
         index: usize,
     ) -> Result<(), SendError> {
+        self.play_slice_on(0, sample, slices, index)
+    }
+
+    /// Reproduce el corte `index` en la pista `track`, ya (sin esperar al
+    /// compás): para tocar en vivo. Suena con el volumen y los efectos de la
+    /// pista y corta su voz, como un paso del secuenciador.
+    pub fn play_slice_on(
+        &mut self,
+        track: usize,
+        sample: &Arc<Sample>,
+        slices: &Slices,
+        index: usize,
+    ) -> Result<(), SendError> {
         let range = slices.get(index).ok_or(SendError::NoSuchSlice {
             index,
             count: slices.len(),
         })?;
-        self.play_range(sample.clone(), range)
+        self.play_range_on(track, sample.clone(), range)
     }
 
     /// Reproduce los frames `range` del sample (se recorta a su longitud) en
@@ -393,10 +407,24 @@ impl Controller {
         sample: Arc<Sample>,
         range: Range<usize>,
     ) -> Result<(), SendError> {
+        self.play_range_on(0, sample, range)
+    }
+
+    /// Reproduce los frames `range` del sample en la pista `track`, ya.
+    pub fn play_range_on(
+        &mut self,
+        track: usize,
+        sample: Arc<Sample>,
+        range: Range<usize>,
+    ) -> Result<(), SendError> {
+        if track >= MAX_TRACKS {
+            return Err(SendError::NoSuchTrack(track));
+        }
         let end = range.end.min(sample.frames());
         let start = range.start.min(end);
         let playback = Playback::NORMAL;
         let cmd = Command::Play {
+            track,
             sample,
             start,
             end,
@@ -565,11 +593,15 @@ impl Engine {
     fn handle(&mut self, cmd: Command) {
         match cmd {
             Command::Play {
+                track,
                 sample,
                 start,
                 end,
                 playback,
-            } => self.trigger(0, Some(Voice::new(sample, start, end, playback))),
+            } => {
+                self.status.set_hit(track, start);
+                self.trigger(track, Some(Voice::new(sample, start, end, playback)));
+            }
             Command::SetPattern { track, pattern } => {
                 let track = &mut self.tracks[track];
                 let slot = if self.batch_open {

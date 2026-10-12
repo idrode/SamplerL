@@ -22,6 +22,20 @@ track("drums", amen)
 /// Caída del medidor de nivel por refresco.
 const METER_DECAY: f32 = 0.85;
 
+/// Teclas del modo tocar: la fila de números dispara los cortes 1 a 10 y
+/// q-i los cortes 11 a 18.
+pub const PADS: [char; 18] = [
+    '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', 'q', 'w', 'e', 'r', 't', 'y', 'u', 'i',
+];
+
+/// Modo de la interfaz: escribir en el editor o tocar cortes con el teclado.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Mode {
+    #[default]
+    Edit,
+    Play,
+}
+
 /// Qué hacer tras una tecla.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Flow {
@@ -44,6 +58,7 @@ pub struct App {
     meters: [f32; MAX_TRACKS],
     /// Se pidió salir con cambios sin guardar: otra vez para confirmar.
     quit_armed: bool,
+    mode: Mode,
     /// Resúmenes de forma de onda por sample (se guarda el `Arc` para que la
     /// dirección no se reutilice mientras está en la caché).
     waveforms: HashMap<usize, (Arc<Sample>, Arc<Waveform>)>,
@@ -72,6 +87,7 @@ impl App {
             status: None,
             meters: [0.0; MAX_TRACKS],
             quit_armed: false,
+            mode: Mode::Edit,
             waveforms: HashMap::new(),
         };
         app.load();
@@ -178,6 +194,41 @@ impl App {
         }
     }
 
+    /// Dispara ya el corte `index` (desde 0) de la pista seleccionada.
+    pub fn play_pad(&mut self, index: usize) {
+        let Some(track) = self.host.song().and_then(|s| s.tracks.get(self.selected)) else {
+            self.message = "no hay pistas".into();
+            return;
+        };
+        let Some(slot) = self.host.track_slot(&track.name) else {
+            return;
+        };
+        let (sample, slices, name) = (
+            track.sample.clone(),
+            track.slices.clone(),
+            track.name.clone(),
+        );
+        self.message = match self.controller.play_slice_on(slot, &sample, &slices, index) {
+            Ok(()) => format!("▶ {name}: corte {}", index + 1),
+            Err(engine::SendError::NoSuchSlice { count, .. }) => {
+                format!("{name} no tiene corte {} (tiene {count})", index + 1)
+            }
+            Err(e) => format!("motor: {e}"),
+        };
+    }
+
+    fn toggle_mode(&mut self) {
+        self.mode = match self.mode {
+            Mode::Edit => Mode::Play,
+            Mode::Play => Mode::Edit,
+        };
+        self.message = match self.mode {
+            Mode::Play => "modo tocar: 1-0 y q-i disparan cortes · Esc vuelve al editor",
+            Mode::Edit => "modo editor",
+        }
+        .into();
+    }
+
     pub fn next_track(&mut self) {
         let count = self.host.song().map_or(0, |s| s.tracks.len());
         if count > 0 {
@@ -185,15 +236,12 @@ impl App {
         }
     }
 
-    /// Atiende una tecla: atajos propios o, si no, el editor.
+    /// Atiende una tecla: atajos propios; si no, en modo tocar dispara
+    /// cortes y en modo editor escribe.
     pub fn handle(&mut self, input: Input) -> Flow {
         let quit_armed = std::mem::replace(&mut self.quit_armed, false);
-        match input {
-            Input {
-                key: Key::Char('q'),
-                ctrl: true,
-                ..
-            } => {
+        match (input.key, input.ctrl) {
+            (Key::Char('q'), true) => {
                 if self.dirty() && !quit_armed {
                     self.quit_armed = true;
                     self.message = "hay cambios sin guardar: Ctrl-Q otra vez para salir".into();
@@ -201,34 +249,20 @@ impl App {
                     return Flow::Quit;
                 }
             }
-            Input {
-                key: Key::Char('s'),
-                ctrl: true,
-                ..
-            } => self.save(),
-            Input {
-                key: Key::Char('l'),
-                ctrl: true,
-                ..
+            (Key::Char('s'), true) => self.save(),
+            (Key::Char('l'), true) | (Key::F(5), _) => self.load(),
+            (Key::Char('t'), true) | (Key::F(8), _) => self.toggle_transport(),
+            (Key::Char('g'), true) => self.goto_error(),
+            (Key::Char('o'), true) => self.next_track(),
+            (Key::Esc, _) => self.toggle_mode(),
+            (Key::Char(c), false) if self.mode == Mode::Play && !input.alt => {
+                if let Some(index) = PADS.iter().position(|&p| p == c.to_ascii_lowercase()) {
+                    self.play_pad(index);
+                }
             }
-            | Input { key: Key::F(5), .. } => self.load(),
-            Input {
-                key: Key::Char('t'),
-                ctrl: true,
-                ..
-            }
-            | Input { key: Key::F(8), .. } => self.toggle_transport(),
-            Input {
-                key: Key::Char('g'),
-                ctrl: true,
-                ..
-            } => self.goto_error(),
-            Input {
-                key: Key::Char('o'),
-                ctrl: true,
-                ..
-            } => self.next_track(),
-            input => {
+            // En modo tocar el texto no se toca.
+            _ if self.mode == Mode::Play => {}
+            _ => {
                 self.editor.input(input);
             }
         }
@@ -302,6 +336,7 @@ impl App {
             }),
             file: name,
             dirty: self.dirty(),
+            playing_mode: self.mode == Mode::Play,
             message: self.message.clone(),
             transport,
             tracks,

@@ -586,3 +586,95 @@ track("kick", amen:slice_at(1)):steps("x . . .  x . . .  x . . .  x . . .")
     // El paso 0 sonó en las dos pistas: hay nivel.
     assert!(!screen.contains("nivel ░░░░░░░░░░░░"), "{screen}");
 }
+
+fn esc() -> Input {
+    Input {
+        key: Key::Esc,
+        ..Input::default()
+    }
+}
+
+fn left(audio: &[f32]) -> Vec<f32> {
+    audio.iter().step_by(2).copied().collect()
+}
+
+#[test]
+fn play_mode_triggers_slices_from_the_keyboard() {
+    let (_, mut app, mut engine) = open("pads", Some(SONG));
+    // Parado: solo suena lo que se dispara con el teclado.
+    app.handle(ctrl('t'));
+    offline::render(&mut engine, 4096, 2);
+    app.tick();
+    let before = app.editor.lines().to_vec();
+
+    app.handle(esc());
+    assert!(app.view().playing_mode);
+    let screen = text(&draw(&mut app, 120, 40));
+    assert!(screen.contains("TOCAR · 1-0 q-i · Esc"), "{screen}");
+
+    // "2": corte 2 de "drums" (bloque a 0.25), ya, sin esperar al compás.
+    app.handle(key('2'));
+    assert!(app.view().message.contains("▶ drums: corte 2"));
+    let audio = left(&offline::render(&mut engine, 1000, 2));
+    assert!((audio[200] - 0.25).abs() < 1e-3, "{}", audio[200]);
+    app.tick();
+    let view = app.view();
+    assert_eq!(view.tracks[0].playing_slice, Some(1));
+
+    // "1": corte 1 (0.5), cortando el anterior.
+    app.handle(key('1'));
+    let audio = left(&offline::render(&mut engine, 1000, 2));
+    assert!((audio[200] - 0.5).abs() < 1e-3, "{}", audio[200]);
+
+    // "w" sería el corte 12: "drums" solo tiene 2.
+    app.handle(key('w'));
+    assert!(
+        app.view()
+            .message
+            .contains("drums no tiene corte 12 (tiene 2)")
+    );
+
+    // Las teclas no escribieron en el editor.
+    assert_eq!(app.editor.lines(), before.as_slice());
+
+    // Ctrl-O: ahora suena en "kick" (su único corte, el 1 del sample).
+    app.handle(ctrl('o'));
+    app.handle(key('1'));
+    offline::render(&mut engine, 1000, 2);
+    app.tick();
+    let view = app.view();
+    assert_eq!(view.tracks[1].playing_slice, Some(0));
+    assert!(view.message.contains("▶ kick: corte 1"));
+
+    // Esc vuelve al editor: las teclas escriben otra vez.
+    app.handle(esc());
+    app.handle(key('1'));
+    assert!(!app.view().playing_mode);
+    assert_eq!(app.editor.lines()[0], "1bpm(120)");
+}
+
+#[test]
+fn pads_cover_the_number_row_and_q_to_i() {
+    use crate::app::PADS;
+    assert_eq!(PADS.len(), 18);
+    assert_eq!(
+        &PADS[..10],
+        &['1', '2', '3', '4', '5', '6', '7', '8', '9', '0']
+    );
+    assert_eq!(&PADS[10..], &['q', 'w', 'e', 'r', 't', 'y', 'u', 'i']);
+}
+
+#[test]
+fn live_triggers_use_the_track_effects_and_gain() {
+    let song = r#"bpm(120)
+local amen = sample("break.wav"):slice(2)
+track("drums", amen):steps(". . . .  . . . .  . . . .  . . . ."):gain(0.5)
+"#;
+    let (_, mut app, mut engine) = open("pads_gain", Some(song));
+    offline::render(&mut engine, 512, 2);
+    app.handle(esc());
+    app.handle(key('1'));
+    let audio = left(&offline::render(&mut engine, 1000, 2));
+    // Corte 1 (0.5) por el volumen de la pista (0.5).
+    assert!((audio[200] - 0.25).abs() < 1e-3, "{}", audio[200]);
+}
