@@ -73,15 +73,6 @@ struct Palette {
     selected: usize,
 }
 
-/// Parámetro de una plantilla insertada que falta por rellenar.
-#[derive(Debug, Clone)]
-struct Mark {
-    row: usize,
-    /// Texto entre el parámetro anterior y este.
-    gap: String,
-    text: String,
-}
-
 /// Qué hacer tras una tecla.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Flow {
@@ -121,9 +112,9 @@ pub struct App {
     waveforms: HashMap<usize, (Arc<Sample>, Arc<Waveform>)>,
     /// Autocompletado abierto (popup junto al cursor).
     completion: Option<Completion>,
-    /// Parámetros de la última plantilla que faltan por rellenar; Tab
-    /// salta al siguiente.
-    marks: Vec<Mark>,
+    /// Campos de la última plantilla que faltan por rellenar; Tab salta
+    /// al siguiente.
+    marks: editing::Fields,
     /// La selección del editor es un parámetro marcado por una plantilla.
     mark_selected: bool,
     /// Paleta de comandos abierta (F1).
@@ -161,7 +152,7 @@ impl App {
             overwrite_armed: false,
             waveforms: HashMap::new(),
             completion: None,
-            marks: Vec::new(),
+            marks: editing::Fields::default(),
             mark_selected: false,
             palette: None,
             last_palette: None,
@@ -659,95 +650,42 @@ impl App {
         let Some(candidate) = completion.matches.get(completion.selected) else {
             return;
         };
-        let cursor = self.editor.cursor();
-        let row = cursor.0;
-        let start = cursor.1 - completion.prefix.chars().count();
-        let (text, marks) = api::expand_template(&candidate.insert);
-        self.grouped(|editor| {
-            editor.cancel_selection();
-            editor.move_cursor(CursorMove::Jump(row as u16, start as u16));
-            editor.delete_str(completion.prefix.chars().count());
-            editor.insert_str(&text);
-        });
         self.message = candidate.signature.clone();
-        if marks.is_empty() {
-            // Un nombre suelto (un efecto dentro de una plantilla, por
-            // ejemplo): se conservan los parámetros pendientes.
-            return;
-        }
-        let chars: Vec<char> = text.chars().collect();
-        let mut end = 0;
-        self.marks = marks
-            .iter()
-            .map(|m| {
-                let mark = Mark {
-                    row,
-                    gap: chars[end..m.start].iter().collect(),
-                    text: chars[m.clone()].iter().collect(),
-                };
-                end = m.end;
-                mark
-            })
-            .collect();
-        // Final de la plantilla: una marca vacía.
-        self.marks.push(Mark {
-            row,
-            gap: chars[end..].iter().collect(),
-            text: String::new(),
-        });
-        self.marks[0].gap.clear();
-        let first = &marks[0];
-        self.select(row, start + first.start, first.len());
-        self.marks.remove(0);
+        let replace = completion.prefix.chars().count();
+        self.insert_template(replace, &candidate.insert.clone());
     }
 
-    /// Selecciona `len` caracteres desde (`row`, `col`): un parámetro. Con
-    /// `len` 0 solo deja ahí el cursor.
-    fn select(&mut self, row: usize, col: usize, len: usize) {
-        self.editor.cancel_selection();
-        self.editor
-            .move_cursor(CursorMove::Jump(row as u16, col as u16));
-        if len == 0 {
-            return;
+    /// Inserta una plantilla en lugar de los `replace` caracteres antes
+    /// del cursor (se deshace de una vez). Si tiene campos, el primero
+    /// queda marcado; si no (un nombre suelto, como un efecto escrito sobre
+    /// un campo), se conservan los campos pendientes.
+    fn insert_template(&mut self, replace: usize, template: &str) {
+        if let Some(fields) =
+            self.grouped(|editor| editing::insert_template(editor, replace, template))
+        {
+            self.marks = fields;
+            self.mark_selected = self.editor.is_selecting();
         }
-        self.editor.start_selection();
-        self.editor
-            .move_cursor(CursorMove::Jump(row as u16, (col + len) as u16));
-        self.mark_selected = true;
     }
 
-    /// Marca el siguiente parámetro pendiente: justo tras el cursor si no
-    /// se ha movido, o el primero con ese texto más adelante en la línea.
-    fn next_mark(&mut self) -> bool {
-        if self.marks.is_empty() {
-            return false;
-        }
-        let mark = self.marks.remove(0);
-        let cursor = self.editor.cursor();
-        if cursor.0 != mark.row {
-            self.marks.clear();
-            return false;
-        }
-        let line: Vec<char> = self.editor.lines()[mark.row].chars().collect();
-        let text: Vec<char> = mark.text.chars().collect();
-        let gap: Vec<char> = mark.gap.chars().collect();
-        let col = cursor.1;
-        let exact = line[col.min(line.len())..].starts_with(&gap)
-            && line[(col + gap.len()).min(line.len())..].starts_with(&text);
-        let found = if exact {
-            Some(col + gap.len())
-        } else {
-            (col..line.len()).find(|&i| line[i..].starts_with(&text))
+    /// Inserta un snippet en el cursor.
+    pub fn insert_snippet(&mut self, name: &str) {
+        let Some(snippet) = api::snippet(name) else {
+            return;
         };
-        match found {
-            Some(at) => {
-                self.select(mark.row, at, text.len());
+        self.completion = None;
+        self.insert_template(0, snippet.template);
+        self.message = format!("snippet {name}: Tab salta al siguiente campo");
+    }
+
+    /// Marca el siguiente campo pendiente.
+    fn next_mark(&mut self) -> bool {
+        match self.marks.next(&mut self.editor) {
+            Some(selected) => {
+                self.mark_selected = selected == editing::Selected::Field;
                 true
             }
-            None => {
-                self.marks.clear();
-                false
-            }
+            None => false,
         }
     }
 
@@ -800,6 +738,10 @@ impl App {
     pub fn run_item(&mut self, item: Item) -> Flow {
         match item {
             Item::Action(action) => self.run_action(action),
+            Item::Snippet(name) => {
+                self.insert_snippet(name);
+                Flow::Continue
+            }
         }
     }
 

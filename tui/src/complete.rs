@@ -11,8 +11,8 @@
 //! - dentro de `sample("...")`, los WAV de la carpeta de muestras;
 //! - dentro de `track("...")`, las pistas ya definidas; dentro de
 //!   `chance(p, "...")`, sus efectos;
-//! - al inicio de línea, funciones globales, variables locales y palabras
-//!   clave (en mitad de una expresión, lo mismo);
+//! - al inicio de línea, funciones globales, snippets, variables locales y
+//!   palabras clave (en mitad de una expresión, lo mismo sin snippets);
 //! - dentro de `steps("...")` (y de cualquier otra cadena o comentario),
 //!   nada.
 
@@ -131,6 +131,18 @@ pub fn context(
 
     let line_start = head.rsplit('\n').next().unwrap_or("").trim().is_empty();
     let mut candidates: Vec<Candidate> = api::functions(Receiver::Global).map(function).collect();
+    if line_start {
+        candidates.extend(api::SNIPPETS.iter().map(|s| {
+            let (text, _) = api::expand_template(s.template);
+            Candidate {
+                label: s.name.into(),
+                kind: "snippet".into(),
+                signature: format!("snippet {}", s.name),
+                description: format!("{}\n{}", s.summary, text.lines().next().unwrap_or("")),
+                insert: s.template.into(),
+            }
+        }));
+    }
     candidates.extend(locals(&all).into_iter().map(|name| Candidate {
         label: name.clone(),
         kind: "variable".into(),
@@ -584,9 +596,13 @@ mod tests {
         assert_eq!(&l[..3], ["bpm", "sample", "track"]);
         assert!(l.contains(&"amen".into()), "{l:?}");
         assert!(l.contains(&"local".into()), "{l:?}");
+        assert!(l.contains(&"ghost".into()), "snippets: {l:?}");
         let c = at(&format!("{SONG}tr|")).unwrap();
         assert_eq!(c.prefix, "tr");
         assert_eq!(labels(&c), ["track", "true"]);
+        // En mitad de una expresión no hay snippets.
+        let c = at("local x = gh|").unwrap();
+        assert!(labels(&c).is_empty());
     }
 
     #[test]

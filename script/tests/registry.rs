@@ -10,7 +10,9 @@ use std::sync::OnceLock;
 
 use engine::offline;
 use script::ScriptHost;
-use script::api::{self, CHANCE_EFFECTS, EFFECTS, FUNCTIONS, Receiver, expand_template, functions};
+use script::api::{
+    self, CHANCE_EFFECTS, EFFECTS, FUNCTIONS, Receiver, SNIPPETS, expand_template, functions,
+};
 
 const RATE: u32 = 48_000;
 
@@ -211,4 +213,17 @@ fn unknown_effect_errors_list_the_registry() {
             .contains("no existe (filter, lowpass, highpass, bitcrush)"),
         "{err}"
     );
+}
+
+#[test]
+fn every_snippet_runs_after_what_it_requires() {
+    for snippet in SNIPPETS {
+        let (text, marks) = expand_template(snippet.template);
+        assert!(!marks.is_empty(), "{}: sin campos", snippet.name);
+        let source = format!("{}{text}", snippet.requires);
+        eval(&source);
+        assert!(api::snippet(snippet.name).is_some());
+    }
+    let names: Vec<&str> = SNIPPETS.iter().map(|s| s.name).collect();
+    assert_eq!(names, ["amen", "fill", "ghost", "intro"]);
 }

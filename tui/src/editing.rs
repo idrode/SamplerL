@@ -1,9 +1,156 @@
-//! Operaciones de edición sobre el [`TextArea`], sin terminal: comentar,
-//! duplicar y mover líneas. Todo se hace con las operaciones del propio
-//! editor (`insert_str`, `delete_str`), así que deshacer y rehacer
-//! funcionan con ellas.
+//! Operaciones de edición sobre el [`TextArea`], sin terminal: insertar
+//! plantillas con campos (autocompletado y snippets) y saltar entre ellos,
+//! y comentar, duplicar y mover líneas. Todo se hace con las operaciones
+//! del propio editor (`insert_str`, `delete_str`), así que deshacer y
+//! rehacer funcionan con ellas.
 
 use ratatui_textarea::{CursorMove, TextArea};
+use script::api;
+
+/// Campo pendiente de una plantilla insertada.
+#[derive(Debug, Clone, PartialEq)]
+struct Field {
+    /// Texto entre el campo anterior (o el inicio) y este; puede tener
+    /// saltos de línea.
+    gap: String,
+    /// Texto del campo (vacío: el final de la plantilla).
+    text: String,
+}
+
+/// Campos de la última plantilla que faltan por rellenar.
+#[derive(Debug, Clone, Default)]
+pub struct Fields(Vec<Field>);
+
+impl Fields {
+    #[cfg(test)]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn clear(&mut self) {
+        self.0.clear();
+    }
+
+    /// Va al siguiente campo y lo selecciona (lo que se escriba lo
+    /// sustituye). Lo busca justo tras el cursor si el texto intermedio no
+    /// ha cambiado o, si no, en el resto del texto. Devuelve si había uno
+    /// y lo encontró; si no lo encuentra, olvida los pendientes.
+    pub fn next(&mut self, editor: &mut TextArea) -> Option<Selected> {
+        if self.0.is_empty() {
+            return None;
+        }
+        let field = self.0.remove(0);
+        let rest = text_from_cursor(editor);
+        let at = if rest.starts_with(&format!("{}{}", field.gap, field.text)) {
+            Some(field.gap.chars().count())
+        } else if field.text.is_empty() {
+            None
+        } else {
+            rest.find(&field.text)
+                .map(|byte| rest[..byte].chars().count())
+        };
+        let Some(at) = at else {
+            self.0.clear();
+            return None;
+        };
+        let (row, col) = advance(editor, at);
+        Some(select(editor, row, col, field.text.chars().count()))
+    }
+}
+
+/// Si quedó texto seleccionado al ir a un campo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Selected {
+    /// Un campo con texto, seleccionado.
+    Field,
+    /// El final de la plantilla: solo el cursor.
+    End,
+}
+
+/// Sustituye los `replace` caracteres antes del cursor por la plantilla
+/// (con sus `${...}`, ver [`api::expand_template`]). Las líneas nuevas
+/// llevan la sangría de la actual. Si tiene campos, selecciona el primero
+/// y devuelve los demás (con el final de la plantilla como último); si no,
+/// `None`.
+pub fn insert_template(editor: &mut TextArea, replace: usize, template: &str) -> Option<Fields> {
+    let (row, col) = (editor.cursor().0, editor.cursor().1);
+    let indent: String = editor.lines()[row]
+        .chars()
+        .take_while(|c| c.is_whitespace())
+        .collect();
+    let template = template.replace('\n', &format!("\n{indent}"));
+    let (text, marks) = api::expand_template(&template);
+    let start = col.saturating_sub(replace);
+    editor.cancel_selection();
+    editor.move_cursor(CursorMove::Jump(row as u16, start as u16));
+    editor.delete_str(col - start);
+    editor.insert_str(&text);
+    if marks.is_empty() {
+        return None;
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let mut end = 0;
+    let mut fields: Vec<Field> = marks
+        .iter()
+        .map(|m| {
+            let field = Field {
+                gap: chars[end..m.start].iter().collect(),
+                text: chars[m.clone()].iter().collect(),
+            };
+            end = m.end;
+            field
+        })
+        .collect();
+    fields.push(Field {
+        gap: chars[end..].iter().collect(),
+        text: String::new(),
+    });
+    let mut fields = Fields(fields);
+    editor.move_cursor(CursorMove::Jump(row as u16, start as u16));
+    fields.next(editor);
+    Some(fields)
+}
+
+/// Texto desde el cursor hasta el final.
+fn text_from_cursor(editor: &TextArea) -> String {
+    let (row, col) = (editor.cursor().0, editor.cursor().1);
+    let lines = editor.lines();
+    let mut text: String = lines[row].chars().skip(col).collect();
+    for line in &lines[row + 1..] {
+        text.push('\n');
+        text.push_str(line);
+    }
+    text
+}
+
+/// Posición `chars` caracteres después del cursor (los saltos de línea
+/// cuentan uno).
+fn advance(editor: &TextArea, chars: usize) -> (usize, usize) {
+    let (mut row, mut col) = (editor.cursor().0, editor.cursor().1);
+    let lines = editor.lines();
+    let mut left = chars;
+    loop {
+        let len = lines[row].chars().count();
+        if col + left <= len || row + 1 == lines.len() {
+            return (row, (col + left).min(len));
+        }
+        left -= len - col + 1;
+        row += 1;
+        col = 0;
+    }
+}
+
+/// Selecciona `len` caracteres desde (`row`, `col`), en la misma línea.
+fn select(editor: &mut TextArea, row: usize, col: usize, len: usize) -> Selected {
+    editor.cancel_selection();
+    editor.move_cursor(CursorMove::Jump(row as u16, col as u16));
+    if len == 0 {
+        return Selected::End;
+    }
+    editor.start_selection();
+    editor.move_cursor(CursorMove::Jump(row as u16, (col + len) as u16));
+    Selected::Field
+}
 
 /// Filas afectadas: las de la selección o la del cursor.
 fn selected_rows(editor: &TextArea) -> (usize, usize) {
@@ -122,6 +269,44 @@ mod tests {
 
     fn at(editor: &mut TextArea, row: usize, col: usize) {
         editor.move_cursor(CursorMove::Jump(row as u16, col as u16));
+    }
+
+    fn selected(editor: &TextArea) -> String {
+        let ((r1, c1), (r2, c2)) = editor.selection_range().expect("sin selección");
+        assert_eq!(r1, r2);
+        editor.lines()[r1].chars().skip(c1).take(c2 - c1).collect()
+    }
+
+    #[test]
+    fn templates_select_each_field_across_lines() {
+        let mut e = editor("  am");
+        at(&mut e, 0, 4);
+        let mut fields = insert_template(&mut e, 2, "a(${1})\nb(\"${x}\")\n${end}").unwrap();
+        // Las líneas nuevas llevan la sangría de la actual.
+        assert_eq!(e.lines(), ["  a(1)", "  b(\"x\")", "  end"]);
+        assert_eq!(selected(&e), "1");
+        e.insert_str("22");
+        assert_eq!(fields.next(&mut e), Some(Selected::Field));
+        assert_eq!(selected(&e), "x");
+        assert_eq!(fields.next(&mut e), Some(Selected::Field));
+        assert_eq!(selected(&e), "end");
+        assert_eq!(fields.next(&mut e), Some(Selected::End));
+        assert_eq!(e.cursor(), (2, 5));
+        assert!(fields.is_empty());
+        assert_eq!(fields.next(&mut e), None);
+    }
+
+    #[test]
+    fn fields_are_found_further_on_if_the_text_changed() {
+        let mut e = editor("");
+        let mut fields = insert_template(&mut e, 0, "f(${a}, ${b})").unwrap();
+        e.cancel_selection();
+        at(&mut e, 0, 2);
+        e.insert_str("zz, ");
+        assert_eq!(e.lines(), ["f(zz, a, b)"]);
+        assert_eq!(fields.next(&mut e), Some(Selected::Field));
+        assert_eq!(selected(&e), "b");
+        assert!(insert_template(&mut e, 0, "sin campos").is_none());
     }
 
     #[test]

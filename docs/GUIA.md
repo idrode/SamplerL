@@ -158,6 +158,7 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Exportar la mezcla | Renderiza la canción entera a `<script>-mezcla.wav` | — |
 | Línea de órdenes | Abre la línea de órdenes (exportar, guardar, abrir, muestras) | F2 |
 | Salir | Sale (pide confirmación si hay cambios sin guardar) | Ctrl-Q |
+| Snippet: `amen`, `fill`, `ghost`, `intro` | Inserta el snippet en el cursor (ver «Snippets» en la sección 4) | — |
 
 <!-- paleta:fin -->
 
@@ -172,13 +173,13 @@ opción elegida. F4 la abre aunque no hayas escrito nada.
 | ↑ ↓ | Elegir opción |
 | Tab o Enter | Aceptar |
 | Esc | Cerrar (con la lista abierta, Esc solo la cierra: no entra en modo tocar) |
-| Tab (tras aceptar una función) | Saltar al siguiente parámetro y, tras el último, al final |
+| Tab (tras aceptar una función o un snippet) | Saltar al siguiente campo y, tras el último, al final |
 
 Qué ofrece según dónde esté el cursor:
 
 | Dónde | Opciones |
 | --- | --- |
-| Inicio de línea | Funciones globales (`bpm`, `sample`, `track`), variables locales y palabras clave de Lua |
+| Inicio de línea | Funciones globales (`bpm`, `sample`, `track`), snippets (`amen`, `fill`, `ghost`, `intro`), variables locales y palabras clave de Lua |
 | Tras `:` | Los métodos del objeto: de sample, de cortes, de pista o del compás de `every` (si no se sabe qué es, todos) |
 | Dentro de `fx("...")` | Los efectos; dentro de la tabla, sus parámetros, y en `type = "..."` sus valores |
 | Dentro de `sample("...")` | Los WAV de la carpeta de muestras (la del proyecto o la del script) |
@@ -190,7 +191,10 @@ Al aceptar una función se inserta con sus parámetros de ejemplo y el
 primero queda marcado: lo que escribas lo sustituye. Por ejemplo, tras
 `track("drums"):f` y Tab queda
 `fx("filter", { type = "lowpass", cutoff = 3000 })` con `filter` marcado;
-Tab pasa a `lowpass`, luego a `3000` y luego al final de la línea. Las
+Tab pasa a `lowpass`, luego a `3000` y luego al final de la línea. Los
+snippets funcionan igual, en varias líneas (las nuevas llevan la sangría de
+la actual); están en la sección 4 y también en la paleta. Aceptar algo se
+deshace de una vez con Ctrl-Z. Las
 funciones, efectos y parámetros salen del mismo registro que la sección 4
 de esta guía.
 
@@ -446,6 +450,56 @@ track("drums", amen)
   :steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
   :chance(0.2, "retrig", 4)
   :chance(0.1, "mute")
+```
+
+### Snippets
+
+Trozos de script con campos para rellenar. Se insertan desde el autocompletado (escribiendo su nombre al inicio de una línea) o desde la paleta de comandos; Tab salta de un campo al siguiente.
+
+| Snippet | Qué inserta |
+| --- | --- |
+| `amen` | Tempo, el break cortado y una pista que lo toca en orden. |
+| `fill` | Relleno con stutter al final de cada N compases en una pista existente. |
+| `ghost` | Pista de ghost notes: un golpe muy suave en contratiempos que aparece al azar. |
+| `intro` | Pista de intro: pocos golpes, filtrada y más baja. |
+
+`amen`:
+
+```lua
+bpm(170)
+local amen = sample("amen.wav"):slice(8)
+
+track("drums", amen)
+  :steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+```
+
+`fill` (las primeras líneas son lo que necesita tener antes):
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+track("drums")
+  :every(4, function(c) c:steps("1 . 2 .  3 . 4 .  5 6 2 .  3r2 3r4 7r8 7r16") end)
+```
+
+`ghost` (las primeras líneas son lo que necesita tener antes):
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+track("ghost", amen:slice_at(3))
+  :steps(". x@0.2 . x@0.15  . x@0.2 x@0.1 .  . x@0.2 . x@0.15  . . x@0.2 x@0.1")
+  :chance(0.4, "mute")
+  :fx("lowpass", { cutoff = 4000 })
+```
+
+`intro` (las primeras líneas son lo que necesita tener antes):
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+track("intro", amen)
+  :steps("1 . . .  . . . .  1 . . .  . . . .")
+  :fx("lowpass", { cutoff = 800 })
+  :gain(0.8)
 ```
 
 <!-- api:fin -->

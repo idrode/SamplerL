@@ -1,7 +1,10 @@
 //! Paleta de comandos (F1): todas las acciones del editor en una lista que
 //! se filtra escribiendo. Las acciones nuevas van aquí en vez de gastar
 //! atajos de teclado. La tabla de la paleta de `docs/GUIA.md` se genera
-//! desde [`ACTIONS`] (ver [`guide_markdown`]).
+//! desde [`ACTIONS`] y los snippets del registro de la API (ver
+//! [`guide_markdown`]).
+
+use script::api;
 
 /// Acción de la paleta.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,6 +148,8 @@ pub const ACTIONS: &[ActionDef] = &[
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Item {
     Action(Action),
+    /// Insertar un snippet del registro de la API.
+    Snippet(&'static str),
 }
 
 /// Entrada de la paleta.
@@ -167,6 +172,12 @@ pub fn entries(last: Option<Item>) -> Vec<Entry> {
             keys: a.keys.into(),
         })
         .collect();
+    all.extend(api::SNIPPETS.iter().map(|s| Entry {
+        item: Item::Snippet(s.name),
+        name: format!("Snippet: {}", s.name),
+        description: s.summary.into(),
+        keys: String::new(),
+    }));
     if let Some(i) = all.iter().position(|e| Some(e.item) == last) {
         let entry = all.remove(i);
         all.insert(0, entry);
@@ -218,6 +229,14 @@ fn guide_markdown() -> String {
         let keys = if a.keys.is_empty() { "—" } else { a.keys };
         out.push_str(&format!("| {} | {} | {keys} |\n", a.name, a.description));
     }
+    let names: Vec<String> = api::SNIPPETS
+        .iter()
+        .map(|s| format!("`{}`", s.name))
+        .collect();
+    out.push_str(&format!(
+        "| Snippet: {} | Inserta el snippet en el cursor (ver «Snippets» en la sección 4) | — |\n",
+        names.join(", ")
+    ));
     out
 }
 
@@ -255,7 +274,8 @@ mod tests {
             ]
         );
         assert_eq!(names(&filter(&all, "BAJ lin")), ["Bajar líneas"]);
-        assert_eq!(filter(&all, "").len(), ACTIONS.len());
+        assert_eq!(filter(&all, "").len(), ACTIONS.len() + api::SNIPPETS.len());
+        assert_eq!(names(&filter(&all, "snip gho")), ["Snippet: ghost"]);
         assert!(filter(&all, "nada de nada").is_empty());
     }
 
@@ -263,7 +283,8 @@ mod tests {
     fn the_last_action_goes_first() {
         let all = entries(Some(Item::Action(Action::MoveLinesDown)));
         assert_eq!(all[0].name, "Bajar líneas");
-        assert_eq!(all.len(), ACTIONS.len());
+        let all = entries(Some(Item::Snippet("fill")));
+        assert_eq!(all[0].name, "Snippet: fill");
     }
 
     #[test]

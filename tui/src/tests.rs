@@ -1456,3 +1456,102 @@ fn compound_edits_undo_and_redo_in_one_step() {
     app.handle(ctrl('u'));
     assert_eq!(current_line(&app), "track(\"drums\"):");
 }
+
+// --- Snippets ---
+
+fn selection_text(app: &App) -> String {
+    let ((r1, c1), (r2, c2)) = app.editor.selection_range().expect("sin selección");
+    assert_eq!(r1, r2);
+    app.editor.lines()[r1]
+        .chars()
+        .skip(c1)
+        .take(c2 - c1)
+        .collect()
+}
+
+#[test]
+fn snippets_from_the_completion_jump_between_fields_with_tab() {
+    let (mut app, _engine) = open_at_end("snippet_ghost");
+    type_text(&mut app, "gh");
+    assert_eq!(completion_items(&app), ["ghost"]);
+    assert!(text_of(&mut app).contains("snippet"));
+    app.handle(special(Key::Tab));
+    let lines = app.editor.lines().to_vec();
+    assert_eq!(lines[4], "track(\"ghost\", amen:slice_at(3))");
+    assert_eq!(lines[7], "  :fx(\"lowpass\", { cutoff = 4000 })");
+    assert_eq!(selection_text(&app), "ghost");
+
+    type_text(&mut app, "fantasma");
+    app.handle(special(Key::Tab));
+    assert_eq!(selection_text(&app), "3");
+    type_text(&mut app, "2");
+    app.handle(special(Key::Tab));
+    assert!(selection_text(&app).starts_with(". x@0.2"));
+    app.handle(special(Key::Tab));
+    assert_eq!(selection_text(&app), "0.4");
+    app.handle(special(Key::Tab));
+    assert_eq!(selection_text(&app), "4000");
+    type_text(&mut app, "3000");
+    // Tras el último campo, al final del snippet.
+    app.handle(special(Key::Tab));
+    assert_eq!(app.editor.selection_range(), None);
+    assert_eq!(app.editor.cursor(), (8, 0));
+
+    let lines = app.editor.lines().to_vec();
+    assert_eq!(lines[4], "track(\"fantasma\", amen:slice_at(2))");
+    assert_eq!(lines[7], "  :fx(\"lowpass\", { cutoff = 3000 })");
+    app.handle(ctrl('s'));
+    let view = app.view();
+    assert!(view.error.is_none(), "{:?}", view.error);
+    assert_eq!(view.tracks.len(), 3);
+    assert_eq!(view.tracks[2].name, "fantasma");
+}
+
+#[test]
+fn snippets_from_the_palette_are_indented_and_undone_at_once() {
+    let (mut app, _engine) = open_at_end("snippet_palette");
+    type_text(&mut app, "  ");
+    app.handle(f(1));
+    type_query(&mut app, "snippet intro");
+    app.handle(special(Key::Enter));
+    let lines = app.editor.lines().to_vec();
+    assert_eq!(lines[4], "  track(\"intro\", amen)");
+    assert_eq!(
+        lines[5],
+        "    :steps(\"1 . . .  . . . .  1 . . .  . . . .\")"
+    );
+    assert_eq!(selection_text(&app), "intro");
+    assert!(app.view().message.starts_with("snippet intro"));
+    app.handle(ctrl('z'));
+    assert_eq!(current_line(&app), "  ");
+    assert_eq!(app.editor.lines().len(), 5);
+}
+
+#[test]
+fn the_amen_snippet_is_a_whole_song() {
+    let (_, mut app, _engine) = open("snippet_amen", Some(""));
+    app.handle(f(1));
+    type_query(&mut app, "snippet amen");
+    app.handle(special(Key::Enter));
+    // Se rellenan los campos: tempo, archivo, cortes, pista y patrón.
+    for value in [
+        "120",
+        "break.wav",
+        "2",
+        "d",
+        "1 . 2 .  1 . 2 .  1 . 2 .  1 . 2 .",
+    ] {
+        type_text(&mut app, value);
+        app.handle(special(Key::Tab));
+    }
+    app.handle(ctrl('s'));
+    let view = app.view();
+    assert!(
+        view.error.is_none(),
+        "{:?}\n{}",
+        view.error,
+        app.text_for_test()
+    );
+    assert_eq!(view.tracks[0].name, "d");
+    assert_eq!(view.tracks[0].slices.len(), 2);
+}

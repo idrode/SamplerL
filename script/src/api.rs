@@ -113,6 +113,20 @@ pub struct ChanceEffect {
     pub summary: &'static str,
 }
 
+/// Snippet: un trozo de script con campos (`${...}`) que se rellenan
+/// saltando con Tab.
+#[derive(Debug, Clone, Copy)]
+pub struct Snippet {
+    pub name: &'static str,
+    pub summary: &'static str,
+    /// Plantilla (varias líneas; las siguientes llevan la sangría de la
+    /// primera al insertarse).
+    pub template: &'static str,
+    /// Lo que tiene que haber antes en el script para que funcione (se
+    /// muestra en la guía y se usa en los tests).
+    pub requires: &'static str,
+}
+
 /// Funciones globales y métodos, en el orden de la guía.
 pub const FUNCTIONS: &[Function] = &[
     Function {
@@ -533,6 +547,51 @@ pub const CHANCE_EFFECTS: &[ChanceEffect] = &[
     },
 ];
 
+/// Snippets, por nombre.
+pub const SNIPPETS: &[Snippet] = &[
+    Snippet {
+        name: "amen",
+        summary: "Tempo, el break cortado y una pista que lo toca en orden.",
+        template: "bpm(${170})\n\
+                   local amen = sample(\"${amen.wav}\"):slice(${8})\n\
+                   \n\
+                   track(\"${drums}\", amen)\n  \
+                   :steps(\"${1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .}\")\n",
+        requires: "",
+    },
+    Snippet {
+        name: "fill",
+        summary: "Relleno con stutter al final de cada N compases en una pista existente.",
+        template: "track(\"${drums}\")\n  \
+                   :every(${4}, function(c) c:steps(\"${1 . 2 .  3 . 4 .  5 6 2 .  3r2 3r4 7r8 7r16}\") end)\n",
+        requires: "local amen = sample(\"amen.wav\"):slice(8)\n\
+                   track(\"drums\", amen):steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\")\n",
+    },
+    Snippet {
+        name: "ghost",
+        summary: "Pista de ghost notes: un golpe muy suave en contratiempos que aparece al azar.",
+        template: "track(\"${ghost}\", amen:slice_at(${3}))\n  \
+                   :steps(\"${. x@0.2 . x@0.15  . x@0.2 x@0.1 .  . x@0.2 . x@0.15  . . x@0.2 x@0.1}\")\n  \
+                   :chance(${0.4}, \"mute\")\n  \
+                   :fx(\"lowpass\", { cutoff = ${4000} })\n",
+        requires: "local amen = sample(\"amen.wav\"):slice(8)\n",
+    },
+    Snippet {
+        name: "intro",
+        summary: "Pista de intro: pocos golpes, filtrada y más baja.",
+        template: "track(\"${intro}\", amen)\n  \
+                   :steps(\"${1 . . .  . . . .  1 . . .  . . . .}\")\n  \
+                   :fx(\"lowpass\", { cutoff = ${800} })\n  \
+                   :gain(${0.8})\n",
+        requires: "local amen = sample(\"amen.wav\"):slice(8)\n",
+    },
+];
+
+/// Snippet por nombre.
+pub fn snippet(name: &str) -> Option<&'static Snippet> {
+    SNIPPETS.iter().find(|s| s.name == name)
+}
+
 /// Funciones de un receptor.
 pub fn functions(receiver: Receiver) -> impl Iterator<Item = &'static Function> {
     FUNCTIONS.iter().filter(move |f| f.receiver == receiver)
@@ -661,6 +720,31 @@ pub fn guide_markdown() -> String {
         if let Some(example) = f.example {
             out.push_str(&format!("```lua\n{example}```\n\n"));
         }
+    }
+    out.push_str(
+        "### Snippets\n\n\
+         Trozos de script con campos para rellenar. Se insertan desde el \
+         autocompletado (escribiendo su nombre al inicio de una línea) o desde \
+         la paleta de comandos; Tab salta de un campo al siguiente.\n\n\
+         | Snippet | Qué inserta |\n| --- | --- |\n",
+    );
+    for snippet in SNIPPETS {
+        out.push_str(&format!(
+            "| {} | {} |\n",
+            code(snippet.name),
+            snippet.summary
+        ));
+    }
+    out.push('\n');
+    for snippet in SNIPPETS {
+        let (text, _) = expand_template(snippet.template);
+        out.push_str(&format!("`{}`", snippet.name));
+        if snippet.requires.is_empty() {
+            out.push_str(":\n\n");
+        } else {
+            out.push_str(" (las primeras líneas son lo que necesita tener antes):\n\n");
+        }
+        out.push_str(&format!("```lua\n{}{text}```\n\n", snippet.requires));
     }
     out.truncate(out.trim_end().len());
     out.push('\n');
