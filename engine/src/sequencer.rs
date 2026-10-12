@@ -51,6 +51,12 @@ pub(crate) fn frames_per_step(bpm: f64, sample_rate: u32) -> f64 {
     sample_rate as f64 * 60.0 / (bpm * STEPS_PER_BEAT)
 }
 
+/// Frames de un compás a `bpm` y `sample_rate`, con el mismo redondeo que
+/// usa el transporte.
+pub fn bar_frames(bpm: f64, sample_rate: u32) -> u64 {
+    step_offset(STEPS, bpm, sample_rate)
+}
+
 pub(crate) fn valid_bpm(bpm: f64) -> bool {
     (MIN_BPM..=MAX_BPM).contains(&bpm)
 }
