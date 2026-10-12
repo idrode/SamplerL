@@ -12,7 +12,8 @@ uso: tui <archivo.wav> --render <salida.wav>
   --pattern  16 pasos separados por espacios (mini-notación):
                3      corte 3 (desde 1; \"x\" = 1)      .      silencio
                3'     reverse                         3^7    pitch +7 semitonos (^-5, ^0.5...)
-               3@0.5  volumen (0 a 4)                 3'^7@0.5  combinables, en cualquier orden
+               3@0.5  volumen (0 a 4)                 3r4    retrigger/stutter (1 a 16)
+               3'^7@0.5r2  combinables, en cualquier orden
   --slices   cortes a detectar (por defecto 8)
   --bpm      tempo (por defecto 120)
   --bars     compases a renderizar (por defecto 4)

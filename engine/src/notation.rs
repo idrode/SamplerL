@@ -3,7 +3,8 @@
 //! - `.` silencio (lo que sonaba sigue sonando).
 //! - `3` corte número 3 (desde 1). `x` equivale a `1`.
 //! - Sufijos combinables, en cualquier orden y cada uno una vez:
-//!   `'` reverse, `^7` / `^-5` / `^0.5` pitch en semitonos, `@0.5` volumen.
+//!   `'` reverse, `^7` / `^-5` / `^0.5` pitch en semitonos, `@0.5` volumen,
+//!   `r4` retrigger/stutter (el paso se repite 4 veces, de 1 a 16).
 //!
 //! Ejemplo: `"1 . 3' .  1^7 . 5@0.5 .  . 3'^-12@0.8 . x  . . . ."`.
 
@@ -78,6 +79,7 @@ pub fn parse_step(token: &str) -> Result<Option<Step>, String> {
 
     let mut step = Step::new(slice - 1);
     let (mut seen_reverse, mut seen_pitch, mut seen_gain) = (false, false, false);
+    let mut seen_retrig = false;
     while let Some(c) = rest.chars().next() {
         rest = &rest[c.len_utf8()..];
         match c {
@@ -97,9 +99,20 @@ pub fn parse_step(token: &str) -> Result<Option<Step>, String> {
                 step.gain = value;
                 rest = after;
             }
+            'r' => {
+                once(&mut seen_retrig, "retrigger (r)")?;
+                let digits =
+                    rest.len() - rest.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+                let count: u8 = rest[..digits]
+                    .parse()
+                    .map_err(|_| "falta el número de repeticiones después de r (1 a 16)")?;
+                step.retrig = count;
+                rest = &rest[digits..];
+            }
             other => {
                 return Err(format!(
-                    "carácter inesperado '{other}' (efectos: ' reverse, ^n pitch, @n volumen)"
+                    "carácter inesperado '{other}' \
+                     (efectos: ' reverse, ^n pitch, @n volumen, rN retrigger)"
                 ));
             }
         }

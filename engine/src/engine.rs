@@ -5,9 +5,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use rtrb::{Consumer, Producer, RingBuffer};
 
+use crate::fx::{FxState, MAX_FX};
 use crate::limiter::soft_limit;
 use crate::sample::Sample;
-use crate::sequencer::{Pattern, Transport, valid_bpm};
+use crate::sequencer::{Pattern, Transport, Trigger, valid_bpm};
 use crate::slice::Slices;
 
 const COMMAND_CAPACITY: usize = 64;
@@ -182,6 +183,8 @@ pub enum SendError {
     NoSuchTrack(usize),
     /// Volumen de pista fuera de rango.
     InvalidTrackGain(f32),
+    /// Efecto de pista con parámetros fuera de rango.
+    InvalidFx(&'static str),
 }
 
 impl fmt::Display for SendError {
@@ -191,6 +194,7 @@ impl fmt::Display for SendError {
             SendError::NoSuchSlice { index, count } => {
                 write!(f, "no existe el corte {index} (hay {count})")
             }
+            SendError::InvalidFx(reason) => write!(f, "efecto: {reason}"),
             SendError::InvalidTrackGain(gain) => {
                 write!(f, "volumen de pista {gain} fuera de rango (0 a 4)")
             }
@@ -256,6 +260,29 @@ struct Track {
     fading: Option<Voice>,
     /// Volumen actual, que se acerca suavemente al del patrón.
     gain: f32,
+    /// Estado de los efectos del patrón actual.
+    fx: [FxState; MAX_FX],
+    /// Subdisparos pendientes del paso actual (retrigger).
+    retrig: Option<Retrig>,
+}
+
+/// Retrigger en curso: el paso que empezó en `start` y dura `length` frames
+/// se divide en `count` partes; ya se han disparado `done`.
+#[derive(Clone, Copy)]
+struct Retrig {
+    hit: Trigger,
+    count: u8,
+    done: u8,
+    start: u64,
+    length: u64,
+}
+
+impl Retrig {
+    /// Frame del siguiente subdisparo: round(done · length / count).
+    fn next_frame(&self) -> u64 {
+        let count = self.count as u64;
+        self.start + (self.done as u64 * self.length * 2 + count) / (2 * count)
+    }
 }
 
 impl Default for Track {
@@ -267,6 +294,8 @@ impl Default for Track {
             voice: None,
             fading: None,
             gain: 1.0,
+            fx: [FxState::Off; MAX_FX],
+            retrig: None,
         }
     }
 }
@@ -459,13 +488,27 @@ impl Engine {
         while offset < frames {
             let mut n = (frames - offset).min(CHUNK);
             if self.transport.running {
+                let now = self.transport.frame;
                 let next = self.transport.next_step_frame(self.sample_rate);
-                if next <= self.transport.frame {
+                if next <= now {
                     self.step();
                     continue;
                 }
-                // Partir el bloque en el siguiente paso: disparo exacto al frame.
-                n = n.min((next - self.transport.frame) as usize);
+                if let Some(t) = (0..MAX_TRACKS)
+                    .find(|&t| self.tracks[t].retrig.is_some_and(|r| r.next_frame() <= now))
+                {
+                    self.fire_retrig(t);
+                    continue;
+                }
+                // Partir el bloque en el siguiente paso o subdisparo: disparo
+                // exacto al frame.
+                let next_retrig = self
+                    .tracks
+                    .iter()
+                    .filter_map(|t| t.retrig.map(|r| r.next_frame()))
+                    .min()
+                    .unwrap_or(u64::MAX);
+                n = n.min((next.min(next_retrig) - now) as usize);
             }
             self.mix(n);
             write_out(
@@ -529,10 +572,16 @@ impl Engine {
                     }
                 }
             }
-            Command::Start => self.transport.start(),
+            Command::Start => {
+                self.transport.start();
+                for track in &mut self.tracks {
+                    track.retrig = None;
+                }
+            }
             Command::Stop => {
                 self.transport.running = false;
                 for t in 0..MAX_TRACKS {
+                    self.tracks[t].retrig = None;
                     self.trigger(t, None);
                 }
             }
@@ -542,7 +591,9 @@ impl Engine {
     /// Dispara el paso actual del secuenciador en todas las pistas y avanza.
     /// Al empezar un compás, antes aplica los patrones pendientes.
     fn step(&mut self) {
+        let now = self.transport.frame;
         let step = self.transport.advance(self.sample_rate);
+        let next = self.transport.next_step_frame(self.sample_rate);
         for t in 0..MAX_TRACKS {
             if step == 0
                 && let Some(change) = self.tracks[t].pending.take()
@@ -554,18 +605,46 @@ impl Engine {
                 if !track.voice.as_ref().is_some_and(Voice::is_active) && track.fading.is_none() {
                     track.gain = track.pattern.as_ref().map_or(1.0, |p| p.gain);
                 }
+                for (i, state) in track.fx.iter_mut().enumerate() {
+                    let fx = track.pattern.as_ref().and_then(|p| p.fx[i]);
+                    *state = state.update(fx, self.sample_rate);
+                }
                 if let Some(old) = old {
                     self.discard(old.sample);
                 }
             }
-            let voice = self.tracks[t].pattern.as_ref().and_then(|p| {
-                p.steps[step]
-                    .map(|hit| Voice::new(p.sample.clone(), hit.start, hit.end, hit.playback))
+            let hit = self.tracks[t].pattern.as_ref().and_then(|p| p.steps[step]);
+            // Los subdisparos de un retrigger caben dentro de su paso.
+            self.tracks[t].retrig = hit.filter(|h| h.retrig > 1).map(|hit| Retrig {
+                hit,
+                count: hit.retrig,
+                done: 1,
+                start: now,
+                length: next - now,
             });
-            if voice.is_some() {
-                self.trigger(t, voice);
+            if let Some(hit) = hit {
+                self.play_hit(t, hit);
             }
         }
+    }
+
+    /// Siguiente subdisparo del retrigger de la pista `t`.
+    fn fire_retrig(&mut self, t: usize) {
+        let Some(mut retrig) = self.tracks[t].retrig else {
+            return;
+        };
+        retrig.done += 1;
+        self.tracks[t].retrig = (retrig.done < retrig.count).then_some(retrig);
+        self.play_hit(t, retrig.hit);
+    }
+
+    /// Dispara `hit` con el sample del patrón actual de la pista.
+    fn play_hit(&mut self, t: usize, hit: Trigger) {
+        let Some(pattern) = &self.tracks[t].pattern else {
+            return;
+        };
+        let voice = Voice::new(pattern.sample.clone(), hit.start, hit.end, hit.playback);
+        self.trigger(t, Some(voice));
     }
 
     /// Sustituye la voz principal de una pista; la anterior hace su fundido
@@ -586,8 +665,11 @@ impl Engine {
             let target = track.pattern.as_ref().map_or(1.0, |p| p.gain);
             if track.voice.is_none() && track.fading.is_none() {
                 // En silencio no hay nada que suavizar: el siguiente golpe
-                // empieza ya con el volumen nuevo.
+                // empieza ya con el volumen nuevo y los efectos sin memoria.
                 track.gain = target;
+                for state in &mut track.fx {
+                    state.reset();
+                }
                 continue;
             }
             let buf = &mut self.track_buf[..2 * n];
@@ -597,6 +679,9 @@ impl Engine {
             }
             if let Some(fading) = &mut track.fading {
                 fading.mix_into(buf);
+            }
+            for state in &mut track.fx {
+                state.process(buf);
             }
 
             let master = &mut self.master[..2 * n];

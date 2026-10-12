@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use crate::engine::{Playback, SendError};
+use crate::fx::{Fx, MAX_FX};
 use crate::sample::Sample;
 use crate::slice::Slices;
 
@@ -17,6 +18,8 @@ pub const DEFAULT_BPM: f64 = 120.0;
 pub const MAX_GAIN: f32 = 4.0;
 /// Transposición máxima de un paso, en semitonos (arriba o abajo).
 pub const MAX_SEMITONES: f32 = 36.0;
+/// Repeticiones máximas de un paso con retrigger.
+pub const MAX_RETRIG: u8 = 16;
 
 /// Un paso del patrón: qué corte suena y cómo.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -30,6 +33,9 @@ pub struct Step {
     pub semitones: f32,
     /// Reproducir el corte del final al principio.
     pub reverse: bool,
+    /// Retrigger/stutter: el paso se divide en `retrig` partes iguales y el
+    /// corte vuelve a empezar en cada una. 1 = sin retrigger.
+    pub retrig: u8,
 }
 
 impl Step {
@@ -39,7 +45,12 @@ impl Step {
             gain: 1.0,
             semitones: 0.0,
             reverse: false,
+            retrig: 1,
         }
+    }
+
+    pub fn with_retrig(self, retrig: u8) -> Self {
+        Step { retrig, ..self }
     }
 
     pub fn with_gain(self, gain: f32) -> Self {
@@ -64,6 +75,7 @@ pub(crate) struct Trigger {
     pub start: usize,
     pub end: usize,
     pub playback: Playback,
+    pub retrig: u8,
 }
 
 /// Patrón de un compás. Los pasos se resuelven a rangos de frames y
@@ -74,6 +86,8 @@ pub struct Pattern {
     pub(crate) steps: [Option<Trigger>; STEPS],
     /// Volumen de la pista (lineal), aplicado después de sus voces.
     pub(crate) gain: f32,
+    /// Efectos de la pista, en orden.
+    pub(crate) fx: [Option<Fx>; MAX_FX],
 }
 
 impl Pattern {
@@ -107,6 +121,9 @@ impl Pattern {
             if !(-MAX_SEMITONES..=MAX_SEMITONES).contains(&step.semitones) {
                 return Err(invalid("pitch fuera de rango (-36 a 36 semitonos)"));
             }
+            if !(1..=MAX_RETRIG).contains(&step.retrig) {
+                return Err(invalid("retrigger fuera de rango (1 a 16)"));
+            }
             *slot = Some(Trigger {
                 start: range.start,
                 end: range.end.min(sample.frames()),
@@ -115,13 +132,32 @@ impl Pattern {
                     rate: 2f64.powf(step.semitones as f64 / 12.0),
                     reverse: step.reverse,
                 },
+                retrig: step.retrig,
             });
         }
         Ok(Pattern {
             sample,
             steps: resolved,
             gain: 1.0,
+            fx: [None; MAX_FX],
         })
+    }
+
+    /// Cadena de efectos de la pista (hasta `MAX_FX`, en orden). Entra con el
+    /// patrón, al empezar el compás.
+    pub fn with_fx(mut self, chain: &[Fx]) -> Result<Self, SendError> {
+        if chain.len() > MAX_FX {
+            return Err(SendError::InvalidFx(
+                "demasiados efectos (máximo 4 por pista)",
+            ));
+        }
+        let mut slots = [None; MAX_FX];
+        for (slot, fx) in slots.iter_mut().zip(chain) {
+            fx.validate().map_err(SendError::InvalidFx)?;
+            *slot = Some(*fx);
+        }
+        self.fx = slots;
+        Ok(self)
     }
 
     /// Volumen de la pista que toca este patrón (lineal, de 0 a `MAX_GAIN`).
