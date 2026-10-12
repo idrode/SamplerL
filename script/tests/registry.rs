@@ -229,3 +229,13 @@ fn every_snippet_runs_after_what_it_requires() {
     let names: Vec<&str> = SNIPPETS.iter().map(|s| s.name).collect();
     assert_eq!(names, ["amen", "fill", "ghost", "intro"]);
 }
+
+#[test]
+fn every_fill_effect_exists() {
+    let mut source = String::from(PRELUDE);
+    for e in api::FILL_EFFECTS {
+        let value = if e.value.is_some() { ", 2" } else { "" };
+        source.push_str(&format!("t:fill(\"{}\", 2, 4{value})\n", e.name));
+    }
+    eval(&source);
+}

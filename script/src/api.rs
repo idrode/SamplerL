@@ -199,6 +199,44 @@ pub struct Snippet {
     pub requires: &'static str,
 }
 
+/// Efecto de `:fill(efecto, n [, pasos [, valor]])`.
+#[derive(Debug, Clone, Copy)]
+pub struct FillEffect {
+    pub name: &'static str,
+    /// Qué es el valor, su rango y su valor por defecto; `None`: no lleva.
+    pub value: Option<&'static str>,
+    pub summary: &'static str,
+}
+
+/// Efectos de `:fill`.
+pub const FILL_EFFECTS: &[FillEffect] = &[
+    FillEffect {
+        name: "stutter",
+        value: Some("retrigger, 1 a 16 (4)"),
+        summary: "Repite el último golpe en cada paso del relleno, con retrigger",
+    },
+    FillEffect {
+        name: "roll",
+        value: None,
+        summary: "Como stutter, cada vez más rápido: retrigger 2, 4, 8, 16",
+    },
+    FillEffect {
+        name: "reverse",
+        value: None,
+        summary: "Invierte el sentido de los golpes del relleno",
+    },
+    FillEffect {
+        name: "pitch",
+        value: Some("semitonos, -36 a 36 (12)"),
+        summary: "Sube (o baja) los golpes del relleno",
+    },
+    FillEffect {
+        name: "mute",
+        value: None,
+        summary: "Silencio: un corte antes del compás siguiente",
+    },
+];
+
 /// Escala para `scale(nombre, tónica)`: intervalos en semitonos desde la
 /// tónica.
 #[derive(Debug, Clone, Copy)]
@@ -760,6 +798,45 @@ pub const FUNCTIONS: &[Function] = &[
         ),
     },
     Function {
+        name: "fill",
+        receiver: Receiver::Track,
+        signature: "pista:fill(efecto, n [, pasos [, valor]])",
+        returns: Some(Receiver::Track),
+        summary: "Relleno: los últimos pasos del último compás de cada n, con un efecto.",
+        doc: "En los compases n, 2n, 3n... (contando desde 1: el último de cada grupo \
+              de n) los últimos `pasos` pasos (4 por defecto: el último tiempo) \
+              sufren el efecto. `stutter` y `roll` los rellenan con el golpe del \
+              principio del relleno (o el último antes, si ahí hay silencio). Se \
+              aplica en orden con `every` y `chance`, y alarga el ciclo como \
+              `every(n)`. Los efectos están en la tabla de abajo.",
+        params: &[
+            Param {
+                name: "efecto",
+                description: "el efecto (ver la tabla)",
+            },
+            Param {
+                name: "n",
+                description: "cada cuántos compases (1 a 64)",
+            },
+            Param {
+                name: "pasos",
+                description: "cuántos pasos del final (1 a 16; por defecto 4)",
+            },
+            Param {
+                name: "valor",
+                description: "el valor del efecto, si lo lleva",
+            },
+        ],
+        template: "fill(\"${stutter}\", ${4}, ${4})",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             track(\"drums\", amen)\n  \
+             :steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\")\n  \
+             :fill(\"roll\", 4)\n  \
+             :fill(\"pitch\", 8, 2, 7)\n",
+        ),
+    },
+    Function {
         name: "fx",
         receiver: Receiver::Track,
         signature: "pista:fx(nombre, parámetros)",
@@ -1202,6 +1279,18 @@ pub fn guide_markdown() -> String {
                 out.push_str("| Método | Qué hace |\n| --- | --- |\n");
                 for b in functions(Receiver::Bar) {
                     out.push_str(&format!("| {} | {} |\n", code(b.signature), b.summary));
+                }
+                out.push('\n');
+            }
+            (Receiver::Track, "fill") => {
+                out.push_str("| Efecto | Valor | Qué hace |\n| --- | --- | --- |\n");
+                for e in FILL_EFFECTS {
+                    out.push_str(&format!(
+                        "| {} | {} | {} |\n",
+                        code(&format!("\"{}\"", e.name)),
+                        e.value.unwrap_or("—"),
+                        e.summary
+                    ));
                 }
                 out.push('\n');
             }

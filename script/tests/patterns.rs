@@ -389,3 +389,75 @@ fn humanize_is_bounded_seeded_and_lands_on_exact_frames() {
     );
     assert!(error(&dir, "track(\"d\", amen):humanize(5, 2)").contains("el volumen va de 0 a 1"));
 }
+
+#[test]
+fn fill_sounds_like_the_bars_it_writes() {
+    let dir = fixture("fill");
+    let base = "1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .";
+    // Cada 2 compases, los últimos pasos del segundo.
+    let cases = [
+        (
+            "\"stutter\", 2",
+            "1 . 2 .  3 . 4 .  5 6 2 .  7r4 7r4 7r4 7r4",
+        ),
+        (
+            "\"stutter\", 2, 2, 8",
+            "1 . 2 .  3 . 4 .  5 6 2 .  7 . 8r8 8r8",
+        ),
+        ("\"roll\", 2", "1 . 2 .  3 . 4 .  5 6 2 .  7r2 7r4 7r8 7r16"),
+        (
+            "\"reverse\", 2, 8",
+            "1 . 2 .  3 . 4 .  5' 6' 2' .  7' . 8' .",
+        ),
+        ("\"pitch\", 2, 3, 5", "1 . 2 .  3 . 4 .  5 6 2 .  7 . 8^5 ."),
+        ("\"mute\", 2, 6", "1 . 2 .  3 . 4 .  5 6 . .  . . . ."),
+    ];
+    for (args, filled) in cases {
+        let a = render(
+            &dir,
+            &format!("track(\"d\", amen):steps(\"{base}\"):fill({args})"),
+            4,
+        );
+        // El compás 2 de cada 2 es el relleno: every(2) cae en 0, 2... así que
+        // se escribe al revés: base en los pares y relleno en los impares.
+        let b = render(
+            &dir,
+            &format!(
+                "track(\"d\", amen):steps(\"{filled}\"):every(2, function(c) c:steps(\"{base}\") end)"
+            ),
+            4,
+        );
+        same(&a, &b);
+    }
+    // Un relleno que empieza en silencio repite el último golpe antes.
+    let a = render(
+        &dir,
+        "track(\"d\", amen):steps(\"1 . . .  . . . .  . . 3 .  . . . .\"):fill(\"stutter\", 1, 4, 2)",
+        1,
+    );
+    let b = render(
+        &dir,
+        "track(\"d\", amen):steps(\"1 . . .  . . . .  . . 3 .  3r2 3r2 3r2 3r2\")",
+        1,
+    );
+    same(&a, &b);
+    // El ciclo es el de every(n) y se combina en orden.
+    let song = host()
+        .eval(
+            &format!("{HEAD}track(\"d\", amen):steps(\"{base}\"):every(3, function(c) end):fill(\"roll\", 4)"),
+            "song.lua",
+            &dir,
+        )
+        .unwrap();
+    assert_eq!(song.tracks[0].bars.len(), 12);
+    assert!(
+        error(&dir, "track(\"d\", amen):fill(\"glitch\", 4)")
+            .contains("fill: efecto \"glitch\" no existe (stutter, roll, reverse, pitch, mute)")
+    );
+    assert!(
+        error(&dir, "track(\"d\", amen):fill(\"roll\", 4, 20)").contains("los pasos van de 1 a 16")
+    );
+    assert!(
+        error(&dir, "track(\"d\", amen):fill(\"stutter\", 4, 2, 40)").contains("fuera de rango")
+    );
+}

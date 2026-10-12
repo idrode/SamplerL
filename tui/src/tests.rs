@@ -1212,7 +1212,7 @@ fn accepting_inserts_the_template_with_marked_parameters() {
 
     // Tab acepta; Tab salta de un parámetro al siguiente.
     app.editor.move_cursor(ratatui_textarea::CursorMove::End);
-    type_text(&mut app, "\ntrack(\"drums\"):f");
+    type_text(&mut app, "\ntrack(\"drums\"):fx");
     app.handle(special(Key::Tab));
     assert_eq!(
         current_line(&app),
@@ -1532,20 +1532,20 @@ fn the_palette_can_quit_and_run_editor_actions() {
 #[test]
 fn compound_edits_undo_and_redo_in_one_step() {
     let (mut app, _engine) = open_at_end("undo_groups");
-    type_text(&mut app, "track(\"drums\"):f");
+    type_text(&mut app, "track(\"drums\"):fx");
     app.handle(special(Key::Tab));
     assert!(current_line(&app).contains("fx(\"filter\""));
     // Un solo Ctrl-Z quita la plantilla entera y deja lo escrito.
     app.handle(ctrl('z'));
-    assert_eq!(current_line(&app), "track(\"drums\"):f");
+    assert_eq!(current_line(&app), "track(\"drums\"):fx");
     app.handle(ctrl('r'));
     assert!(current_line(&app).contains("fx(\"filter\""));
     // Ctrl-U (el deshacer del editor) hace lo mismo.
     app.handle(ctrl('u'));
-    assert_eq!(current_line(&app), "track(\"drums\"):f");
+    assert_eq!(current_line(&app), "track(\"drums\"):fx");
     // Lo escrito a mano se deshace como siempre, letra a letra.
     app.handle(ctrl('u'));
-    assert_eq!(current_line(&app), "track(\"drums\"):");
+    assert_eq!(current_line(&app), "track(\"drums\"):f");
 }
 
 // --- Snippets ---

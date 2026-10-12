@@ -777,6 +777,53 @@ enum Transform {
     Every { n: u64, func: Function },
     /// `:chance(p, efecto)`: cada golpe sufre el efecto con probabilidad `p`.
     Chance { p: f64, effect: Chance },
+    /// `:fill(efecto, n, pasos)`: los últimos `steps` pasos del último compás
+    /// de cada `n`.
+    Fill { n: u64, steps: usize, effect: Fill },
+}
+
+#[derive(Clone, Copy)]
+enum Fill {
+    /// El último golpe antes del relleno, repetido en cada paso con ese
+    /// retrigger.
+    Stutter(u8),
+    /// Como stutter, con retrigger creciente: 2, 4, 8, 16.
+    Roll,
+    Reverse,
+    /// Suma semitonos a los golpes.
+    Pitch(f32),
+    Mute,
+}
+
+/// Aplica un relleno a los últimos `count` pasos de un compás.
+fn apply_fill(bar: &mut Bar, count: usize, effect: Fill) {
+    let start = STEPS - count;
+    // Golpe que se repite en stutter y roll: el primero del relleno o, si es
+    // silencio, el último antes; si no hay, el primero del compás.
+    let source = bar[..=start]
+        .iter()
+        .rev()
+        .flatten()
+        .next()
+        .or_else(|| bar.iter().flatten().next())
+        .copied();
+    for (j, slot) in bar[start..].iter_mut().enumerate() {
+        match effect {
+            Fill::Stutter(n) => *slot = source.map(|s| s.with_retrig(n)),
+            Fill::Roll => *slot = source.map(|s| s.with_retrig((2u8 << j.min(3)).min(MAX_RETRIG))),
+            Fill::Reverse => {
+                if let Some(step) = slot {
+                    step.reverse = !step.reverse;
+                }
+            }
+            Fill::Pitch(st) => {
+                if let Some(step) = slot {
+                    step.semitones = (step.semitones + st).clamp(-MAX_SEMITONES, MAX_SEMITONES);
+                }
+            }
+            Fill::Mute => *slot = None,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -813,13 +860,13 @@ fn expand(track: TrackBuild, rng: &mut Rng, timing: Timing) -> Result<TrackDef, 
     };
     for transform in &transforms {
         let n = match transform {
-            Transform::Every { n, .. } => *n,
+            Transform::Every { n, .. } | Transform::Fill { n, .. } => *n,
             Transform::Chance { .. } => CHANCE_CYCLE_BARS,
         };
         cycle = lcm(cycle, n);
         if cycle > MAX_CYCLE_BARS as u64 {
             return Err(ScriptError::new(format!(
-                "pista \"{}\": every/chance dan un ciclo de {cycle} compases (máximo {MAX_CYCLE_BARS})",
+                "pista \"{}\": every/chance/fill dan un ciclo de {cycle} compases (máximo {MAX_CYCLE_BARS})",
                 def.name
             )));
         }
@@ -844,6 +891,14 @@ fn expand(track: TrackBuild, rng: &mut Rng, timing: Timing) -> Result<TrackDef, 
                     steps = *shared.borrow();
                 }
                 Transform::Every { .. } => {}
+                Transform::Fill {
+                    n,
+                    steps: count,
+                    effect,
+                } if (b + 1) % n == 0 => {
+                    apply_fill(&mut steps, *count, *effect);
+                }
+                Transform::Fill { .. } => {}
                 Transform::Chance { p, effect } => {
                     for slot in &mut steps {
                         if slot.is_some() && rng.next_f64() < *p {
@@ -1416,6 +1471,46 @@ impl UserData for TrackHandle {
             this.with_track(|t| t.transforms.push(Transform::Every { n: n as u64, func }));
             Ok(this.clone())
         });
+
+        // `:fill(efecto, n [, pasos [, valor]])`: relleno al final de cada n
+        // compases.
+        methods.add_method(
+            "fill",
+            |lua, this, (effect, n, count, value): (String, i64, Option<i64>, Option<f64>)| {
+                let who = format!("fill(\"{effect}\", {n})");
+                if !(1..=MAX_CYCLE_BARS as i64).contains(&n) {
+                    return Err(fail(lua, format!("{who}: n va de 1 a {MAX_CYCLE_BARS}")));
+                }
+                let count = count.unwrap_or(4);
+                if !(1..=STEPS as i64).contains(&count) {
+                    return Err(fail(lua, format!("{who}: los pasos van de 1 a {STEPS}")));
+                }
+                let effect = match effect.as_str() {
+                    "stutter" => Fill::Stutter(check_retrig(lua, value.unwrap_or(4.0) as i64)?),
+                    "roll" => Fill::Roll,
+                    "reverse" => Fill::Reverse,
+                    "pitch" => Fill::Pitch(check_pitch(lua, value.unwrap_or(12.0) as f32)?),
+                    "mute" => Fill::Mute,
+                    other => {
+                        return Err(fail(
+                            lua,
+                            format!(
+                                "fill: efecto \"{other}\" no existe ({})",
+                                names(api::FILL_EFFECTS.iter().map(|e| e.name))
+                            ),
+                        ));
+                    }
+                };
+                this.with_track(|t| {
+                    t.transforms.push(Transform::Fill {
+                        n: n as u64,
+                        steps: count as usize,
+                        effect,
+                    })
+                });
+                Ok(this.clone())
+            },
+        );
 
         // `:chance(p, efecto, valor)`: cada golpe, con probabilidad p.
         methods.add_method(

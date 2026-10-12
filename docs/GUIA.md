@@ -602,6 +602,33 @@ track("drums", amen)
   :humanize(6, 0.2, 1)
 ```
 
+### `pista:fill(efecto, n [, pasos [, valor]])`
+
+Devuelve: pista.
+
+Relleno: los últimos pasos del último compás de cada n, con un efecto. En los compases n, 2n, 3n... (contando desde 1: el último de cada grupo de n) los últimos `pasos` pasos (4 por defecto: el último tiempo) sufren el efecto. `stutter` y `roll` los rellenan con el golpe del principio del relleno (o el último antes, si ahí hay silencio). Se aplica en orden con `every` y `chance`, y alarga el ciclo como `every(n)`. Los efectos están en la tabla de abajo.
+
+- `efecto`: el efecto (ver la tabla)
+- `n`: cada cuántos compases (1 a 64)
+- `pasos`: cuántos pasos del final (1 a 16; por defecto 4)
+- `valor`: el valor del efecto, si lo lleva
+
+| Efecto | Valor | Qué hace |
+| --- | --- | --- |
+| `"stutter"` | retrigger, 1 a 16 (4) | Repite el último golpe en cada paso del relleno, con retrigger |
+| `"roll"` | — | Como stutter, cada vez más rápido: retrigger 2, 4, 8, 16 |
+| `"reverse"` | — | Invierte el sentido de los golpes del relleno |
+| `"pitch"` | semitonos, -36 a 36 (12) | Sube (o baja) los golpes del relleno |
+| `"mute"` | — | Silencio: un corte antes del compás siguiente |
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen)
+  :steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+  :fill("roll", 4)
+  :fill("pitch", 8, 2, 7)
+```
+
 ### `pista:fx(nombre, parámetros)`
 
 Devuelve: pista.

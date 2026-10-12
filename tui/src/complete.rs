@@ -238,6 +238,19 @@ fn string_context(
                     insert: n,
                 })
                 .collect(),
+            ("fill", 0) => api::FILL_EFFECTS
+                .iter()
+                .map(|e| Candidate {
+                    label: e.name.into(),
+                    kind: "efecto de fill".into(),
+                    signature: match e.value {
+                        Some(v) => format!("fill(\"{}\", n, pasos, {v})", e.name),
+                        None => format!("fill(\"{}\", n, pasos)", e.name),
+                    },
+                    description: e.summary.into(),
+                    insert: e.name.into(),
+                })
+                .collect(),
             ("scale", 0) => api::SCALES
                 .iter()
                 .map(|s| Candidate {
@@ -866,7 +879,7 @@ mod tests {
             "{SONG}track(\"drums\", amen)\n  :steps(\"1 . . .  . . . .  . . . .  . . . .\")\n  -- comentario\n  :f|"
         );
         let c = at(&text).unwrap();
-        assert_eq!(labels(&c), ["fx"]);
+        assert_eq!(labels(&c), ["fill", "fx"]);
         let text = format!("{SONG}track(\"drums\", amen):every(4, function(c) c:|) end)");
         let c = at(&text).unwrap();
         assert_eq!(labels(&c), ["steps", "reverse", "pitch", "retrig", "gain"]);
@@ -961,6 +974,15 @@ mod tests {
         assert_eq!(labels(&c).len(), api::NOTES.len());
         let h = help("scale(\"minor\"):mel|ody(\"1\")").unwrap();
         assert_eq!(h.signature, "escala:melody(grados [, golpe])");
+    }
+
+    #[test]
+    fn fill_offers_its_effects() {
+        let c = at(&format!("{SONG}track(\"d\", amen):fill(\"r|")).unwrap();
+        assert_eq!(labels(&c), ["roll", "reverse"]);
+        assert_eq!(c.matches()[0].kind, "efecto de fill");
+        let h = help(&format!("{SONG}track(\"d\", amen):fill(\"roll\", |")).unwrap();
+        assert_eq!(h.description, "n: cada cuántos compases (1 a 64)");
     }
 
     #[test]
