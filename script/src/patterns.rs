@@ -80,6 +80,47 @@ pub fn reverse_pattern(text: &str) -> Result<String, String> {
     Ok(format(&tokens))
 }
 
+/// Generador pseudoaleatorio de `chance`, `mutate` y `shuffle` (xorshift64*): rápido y
+/// reproducible con la misma semilla.
+pub struct Rng(u64);
+
+impl Rng {
+    pub fn new(seed: u64) -> Self {
+        // El estado no puede ser 0.
+        Rng(seed ^ 0x9e37_79b9_7f4a_7c15 | 1)
+    }
+
+    /// Número uniforme en [0, 1).
+    pub fn next_f64(&mut self) -> f64 {
+        self.0 ^= self.0 >> 12;
+        self.0 ^= self.0 << 25;
+        self.0 ^= self.0 >> 27;
+        let x = self.0.wrapping_mul(0x2545_f491_4f6c_dd1d);
+        (x >> 11) as f64 / (1u64 << 53) as f64
+    }
+}
+
+/// Cambia cada paso, con probabilidad `p`, por uno de los 16 del propio
+/// patrón elegido al azar (así se queda con su vocabulario de golpes y
+/// silencios).
+pub fn mutate(text: &str, p: f64, rng: &mut Rng) -> Result<String, String> {
+    let tokens = tokens(text, &format!("mutate(patrón, {p})"))?;
+    if !(0.0..=1.0).contains(&p) {
+        return Err(format!("mutate(patrón, {p}): la probabilidad va de 0 a 1"));
+    }
+    let mutated: Vec<String> = (0..tokens.len())
+        .map(|i| {
+            if rng.next_f64() < p {
+                let j = (rng.next_f64() * tokens.len() as f64) as usize;
+                tokens[j.min(tokens.len() - 1)].clone()
+            } else {
+                tokens[i].clone()
+            }
+        })
+        .collect();
+    Ok(format(&mutated))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,6 +186,27 @@ mod tests {
             reverse_pattern("1")
                 .unwrap_err()
                 .starts_with("reverse_pattern: ")
+        );
+    }
+
+    #[test]
+    fn mutation_keeps_the_vocabulary_and_follows_the_seed() {
+        let p = "1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .";
+        let a = mutate(p, 0.5, &mut Rng::new(3)).unwrap();
+        assert_eq!(
+            a,
+            mutate(p, 0.5, &mut Rng::new(3)).unwrap(),
+            "misma semilla"
+        );
+        assert_ne!(a, mutate(p, 0.5, &mut Rng::new(4)).unwrap());
+        assert_ne!(a, p);
+        let original = tokens(p, "").unwrap();
+        assert!(tokens(&a, "").unwrap().iter().all(|t| original.contains(t)));
+        assert_eq!(mutate(p, 0.0, &mut Rng::new(3)).unwrap(), p);
+        assert!(
+            mutate(p, 1.5, &mut Rng::new(3))
+                .unwrap_err()
+                .contains("de 0 a 1")
         );
     }
 

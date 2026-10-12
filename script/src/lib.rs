@@ -41,6 +41,7 @@ pub mod patterns;
 pub mod project;
 mod watch;
 
+use patterns::Rng;
 pub use project::{Project, SliceLabel};
 pub use watch::{ScriptWatcher, WatchEvent};
 
@@ -53,6 +54,10 @@ use mlua::{
 pub const DEFAULT_TIME_LIMIT: Duration = Duration::from_secs(2);
 /// Cada cuántas instrucciones de Lua se comprueba el tiempo.
 const HOOK_INSTRUCTIONS: u32 = 10_000;
+/// Se mezcla con la semilla de la carga para el generador de `mutate` y
+/// `shuffle` sin semilla propia.
+const PATTERN_SEED: u64 = 0x5eed_0f9a_77e2_a5c3;
+
 /// Compases que se tiran los dados de `chance` antes de repetirse.
 pub const CHANCE_CYCLE_BARS: u64 = 16;
 
@@ -363,6 +368,15 @@ impl ScriptHost {
         .map_err(|e| ScriptError::from_lua(&e))?;
 
         let warnings: Rc<RefCell<Vec<String>>> = Rc::default();
+        // Semilla del azar de la carga: `chance` y, sin semilla propia,
+        // `mutate` y `shuffle` (con un generador aparte, para que unos no
+        // cambien los resultados de los otros).
+        let seed = self.seed.unwrap_or_else(|| {
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos() as u64)
+        });
+        let pattern_rng = Rc::new(RefCell::new(Rng::new(seed.rotate_left(29) ^ PATTERN_SEED)));
         let state = Rc::new(RefCell::new(Builder {
             bpm: None,
             tracks: Vec::new(),
@@ -371,7 +385,7 @@ impl ScriptHost {
         // La caché pasa al estado de Lua durante la evaluación y vuelve después.
         let cache = Rc::new(RefCell::new(std::mem::take(&mut self.samples)));
         let result = self
-            .install_api(&lua, &state, &cache, &warnings, base_dir)
+            .install_api(&lua, &state, &cache, &warnings, &pattern_rng, base_dir)
             .and_then(|()| lua.load(source).set_name(format!("={name}")).exec());
         self.samples = std::mem::take(&mut *cache.borrow_mut());
         result.map_err(|e| ScriptError::from_lua(&e))?;
@@ -393,11 +407,6 @@ impl ScriptHost {
 
         // Expandir `every` y `chance` a un ciclo de compases. Las funciones de
         // `every` se llaman ahora, con el estado de Lua todavía vivo.
-        let seed = self.seed.unwrap_or_else(|| {
-            SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .map_or(0, |d| d.as_nanos() as u64)
-        });
         let mut rng = Rng::new(seed);
         expanding.set(true);
         let expanded = tracks
@@ -419,6 +428,7 @@ impl ScriptHost {
         state: &Rc<RefCell<Builder>>,
         cache: &Rc<RefCell<SampleCache>>,
         warnings: &Rc<RefCell<Vec<String>>>,
+        pattern_rng: &Rc<RefCell<Rng>>,
         base_dir: &Path,
     ) -> mlua::Result<()> {
         let globals = lua.globals();
@@ -495,6 +505,20 @@ impl ScriptHost {
             "reverse_pattern",
             lua.create_function(|lua, text: String| {
                 patterns::reverse_pattern(&text).map_err(|e| fail(lua, e))
+            })?,
+        )?;
+
+        // Con semilla, su propio generador (mismo resultado siempre); sin
+        // ella, el de la carga, como `chance`.
+        let rng = pattern_rng.clone();
+        globals.set(
+            "mutate",
+            lua.create_function(move |lua, (text, p, seed): (String, f64, Option<i64>)| {
+                let result = match seed {
+                    Some(seed) => patterns::mutate(&text, p, &mut Rng::new(seed as u64)),
+                    None => patterns::mutate(&text, p, &mut rng.borrow_mut()),
+                };
+                result.map_err(|e| fail(lua, e))
             })?,
         )?;
 
@@ -769,26 +793,6 @@ fn lcm(a: u64, b: u64) -> u64 {
         if b == 0 { a } else { gcd(b, a % b) }
     }
     a / gcd(a, b) * b
-}
-
-/// Generador pseudoaleatorio de `chance` (xorshift64*): rápido y
-/// reproducible con la misma semilla.
-struct Rng(u64);
-
-impl Rng {
-    fn new(seed: u64) -> Self {
-        // El estado no puede ser 0.
-        Rng(seed ^ 0x9e37_79b9_7f4a_7c15 | 1)
-    }
-
-    /// Número uniforme en [0, 1).
-    fn next_f64(&mut self) -> f64 {
-        self.0 ^= self.0 >> 12;
-        self.0 ^= self.0 << 25;
-        self.0 ^= self.0 >> 27;
-        let x = self.0.wrapping_mul(0x2545_f491_4f6c_dd1d);
-        (x >> 11) as f64 / (1u64 << 53) as f64
-    }
 }
 
 /// `sample("archivo.wav")` en Lua.

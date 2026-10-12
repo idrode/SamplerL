@@ -336,6 +336,41 @@ pub const FUNCTIONS: &[Function] = &[
         ),
     },
     Function {
+        name: "mutate",
+        receiver: Receiver::Global,
+        signature: "mutate(patrón, p [, semilla])",
+        returns: None,
+        summary: "Cambia cada paso, con probabilidad p, por otro del mismo patrón al azar.",
+        doc: "Se queda con los golpes y silencios del patrón, solo los cambia de \
+              sitio aquí y allá. Con `semilla`, el resultado es siempre el mismo. \
+              Sin ella, el azar sigue la regla de `chance`: se tira al cargar (otro \
+              en cada carga, salvo con la semilla fija de los tests), y dentro de \
+              `every` cada compás sale distinto y el ciclo se repite.",
+        params: &[
+            Param {
+                name: "patrón",
+                description: "16 pasos en mini-notación",
+            },
+            Param {
+                name: "p",
+                description: "probabilidad de cambiar cada paso (0 a 1)",
+            },
+            Param {
+                name: "semilla",
+                description: "número entero; con la misma, el mismo resultado",
+            },
+        ],
+        template: "mutate(\"${1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .}\", ${0.25}, ${7})",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             local base = \"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\"\n\
+             -- Una variación fija (semilla 7) y, cada 2 compases, otra nueva.\n\
+             track(\"drums\", amen)\n  \
+             :steps(mutate(base, 0.25, 7))\n  \
+             :every(2, function(c) c:steps(mutate(base, 0.3)) end)\n",
+        ),
+    },
+    Function {
         name: "slice",
         receiver: Receiver::Sample,
         signature: "sample:slice(n)",

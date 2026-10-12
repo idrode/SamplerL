@@ -412,6 +412,23 @@ track("drums", amen)
   :every(4, function(c) c:steps(reverse_pattern(base)) end)
 ```
 
+### `mutate(patrón, p [, semilla])`
+
+Cambia cada paso, con probabilidad p, por otro del mismo patrón al azar. Se queda con los golpes y silencios del patrón, solo los cambia de sitio aquí y allá. Con `semilla`, el resultado es siempre el mismo. Sin ella, el azar sigue la regla de `chance`: se tira al cargar (otro en cada carga, salvo con la semilla fija de los tests), y dentro de `every` cada compás sale distinto y el ciclo se repite.
+
+- `patrón`: 16 pasos en mini-notación
+- `p`: probabilidad de cambiar cada paso (0 a 1)
+- `semilla`: número entero; con la misma, el mismo resultado
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+local base = "1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 ."
+-- Una variación fija (semilla 7) y, cada 2 compases, otra nueva.
+track("drums", amen)
+  :steps(mutate(base, 0.25, 7))
+  :every(2, function(c) c:steps(mutate(base, 0.3)) end)
+```
+
 ### `sample:slice(n)`
 
 Devuelve: cortes.

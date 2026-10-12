@@ -144,3 +144,52 @@ fn reverse_pattern_sounds_like_the_pattern_it_writes() {
     );
     same(&a, &b);
 }
+
+#[test]
+fn mutate_follows_its_seed_or_the_load_seed() {
+    let dir = fixture("mutate");
+    let p = "\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\"";
+    let fixed = value(&dir, &format!("mutate({p}, 0.4, 5)"));
+    assert_ne!(fixed, "1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .");
+    // Con semilla propia, igual aunque cambie la de la carga.
+    let mut other = ScriptHost::new(RATE);
+    other.set_seed(Some(999));
+    let source = format!("{HEAD}error(\"=\" .. mutate({p}, 0.4, 5), 0)");
+    let e = other.eval(&source, "song.lua", &dir).err().unwrap().message;
+    assert!(e.starts_with(&format!("={fixed}")), "{e}");
+    // Suena como el patrón que escribe.
+    let a = render(
+        &dir,
+        &format!("track(\"d\", amen):steps(mutate({p}, 0.4, 5))"),
+        1,
+    );
+    let b = render(&dir, &format!("track(\"d\", amen):steps(\"{fixed}\")"), 1);
+    same(&a, &b);
+
+    // Sin semilla: reproducible con la de la carga, distinta con otra.
+    let free = value(&dir, &format!("mutate({p}, 0.4)"));
+    assert_eq!(free, value(&dir, &format!("mutate({p}, 0.4)")));
+    let e = other
+        .eval(
+            &format!("{HEAD}error(\"=\" .. mutate({p}, 0.4), 0)"),
+            "song.lua",
+            &dir,
+        )
+        .err()
+        .unwrap()
+        .message;
+    assert!(
+        !e.starts_with(&format!("={free}\n")),
+        "otra semilla, otro resultado"
+    );
+    // En every, cada compás distinto; y el ciclo se repite igual.
+    let source = format!(
+        "{HEAD}track(\"d\", amen):steps({p}):every(1, function(c) c:steps(mutate({p}, 0.5)) end):chance(0, \"mute\")"
+    );
+    let song = host().eval(&source, "song.lua", &dir).unwrap();
+    let bars = &song.tracks[0].bars;
+    assert_eq!(bars.len(), 16);
+    assert!(bars.windows(2).any(|w| w[0] != w[1]), "varía por compás");
+    let again = host().eval(&source, "song.lua", &dir).unwrap();
+    assert_eq!(again.tracks[0].bars, *bars);
+}
