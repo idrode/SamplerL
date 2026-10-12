@@ -217,7 +217,10 @@ primero queda marcado: lo que escribas lo sustituye. Por ejemplo, tras
 Tab pasa a `lowpass`, luego a `3000` y luego al final de la línea. Si
 sobre `filter` escribes otro efecto y lo aceptas (por ejemplo `b` y Tab
 para `bitcrush`), la tabla se rehace con los parámetros del nuevo
-(`{ bits = 6, downsample = 2 }`) y queda marcado el primero; lo mismo al
+(`{ bits = 6, downsample = 2 }`) y queda marcado el primero. Los
+parámetros que tienen los dos efectos conservan su valor (de `lowpass` a
+`highpass`, `cutoff` y `q` siguen igual) y solo los nuevos salen con su
+valor por defecto; lo mismo al
 elegir otro efecto con F4 dentro de un `fx("...", { ... })` ya escrito.
 Un efecto escrito entero deja la lista abierta para poder aceptarlo así. Los
 snippets funcionan igual, en varias líneas (las nuevas llevan la sangría de

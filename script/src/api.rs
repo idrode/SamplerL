@@ -103,6 +103,75 @@ pub struct Effect {
     pub template: &'static str,
 }
 
+impl Effect {
+    /// Plantilla de la tabla de parámetros (con sus `${...}`) para cambiar
+    /// a este efecto desde una tabla escrita: conserva el valor de cada
+    /// parámetro de `old` (clave y valor tal como está escrito) que este
+    /// efecto también tenga, y pone los de su plantilla que falten con sus
+    /// valores por defecto. En el orden de sus parámetros.
+    pub fn table_with(&self, old: &[(String, String)]) -> String {
+        let defaults = table_items(
+            self.template
+                .trim()
+                .trim_start_matches('{')
+                .trim_end_matches('}'),
+        );
+        let items: Vec<String> = self
+            .params
+            .iter()
+            .filter_map(|p| {
+                let kept = old.iter().find(|(k, _)| k == p.name).map(|(_, v)| v.trim());
+                let default = defaults
+                    .iter()
+                    .find(|(k, _)| k == p.name)
+                    .map(|(_, v)| v.as_str());
+                match (kept, default) {
+                    // El valor anterior, marcado (entre comillas, el texto de dentro).
+                    (Some(value), _) => Some(
+                        match value.strip_prefix('"').and_then(|v| v.strip_suffix('"')) {
+                            Some(inner) => format!("{} = \"${{{inner}}}\"", p.name),
+                            None => format!("{} = ${{{value}}}", p.name),
+                        },
+                    ),
+                    (None, Some(default)) => Some(format!("{} = {default}", p.name)),
+                    (None, None) => None,
+                }
+            })
+            .collect();
+        format!("{{ {} }}", items.join(", "))
+    }
+}
+
+/// Lee los elementos `clave = valor` de una tabla de Lua escrita en una
+/// línea, sin las llaves (`type = "lowpass", cutoff = 3000`). Los que no
+/// tienen esa forma se ignoran.
+pub fn table_items(inner: &str) -> Vec<(String, String)> {
+    let mut items = Vec::new();
+    let mut quote = None;
+    let mut start = 0;
+    let mut push = |item: &str| {
+        if let Some((key, value)) = item.split_once('=') {
+            let key = key.trim();
+            if !key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                items.push((key.to_string(), value.trim().to_string()));
+            }
+        }
+    };
+    for (i, c) in inner.char_indices() {
+        match (c, quote) {
+            ('"' | '\'', None) => quote = Some(c),
+            (c, Some(q)) if c == q => quote = None,
+            (',', None) => {
+                push(&inner[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    push(&inner[start..]);
+    items
+}
+
 /// Efecto de `:chance(p, efecto[, valor])`.
 #[derive(Debug, Clone, Copy)]
 pub struct ChanceEffect {
@@ -809,6 +878,42 @@ mod tests {
         assert_eq!(text, "fx(\"filter\", { cutoff = 3000 })");
         assert_eq!(marks, vec![4..10, 24..28]);
         assert_eq!(expand_template("count()"), ("count()".into(), vec![]));
+    }
+
+    #[test]
+    fn changing_effect_keeps_the_shared_parameters() {
+        let old = table_items("type = \"highpass\", cutoff = 800, q = 2");
+        assert_eq!(old[0], ("type".into(), "\"highpass\"".into()));
+        // De filter a lowpass: cutoff y q se conservan (q no está en su plantilla).
+        assert_eq!(
+            effect("lowpass").unwrap().table_with(&old),
+            "{ cutoff = ${800}, q = ${2} }"
+        );
+        // De lowpass a filter: type sale por defecto.
+        let old = table_items("cutoff = 800");
+        assert_eq!(
+            effect("filter").unwrap().table_with(&old),
+            "{ type = \"${lowpass}\", cutoff = ${800} }"
+        );
+        // Sin nada en común: la plantilla del efecto.
+        assert_eq!(
+            effect("bitcrush").unwrap().table_with(&old),
+            "{ bits = ${6}, downsample = ${2} }"
+        );
+        assert_eq!(
+            effect("highpass").unwrap().table_with(&[]),
+            "{ cutoff = ${200} }"
+        );
+        // Comas dentro de cadenas no parten.
+        assert_eq!(table_items("a = \"x, y\", b = 1").len(), 2);
+        // El valor entre comillas conserva sus comillas al marcarse.
+        let old = table_items("type = \"highpass\"");
+        assert!(
+            effect("filter")
+                .unwrap()
+                .table_with(&old)
+                .starts_with("{ type = \"${highpass}\"")
+        );
     }
 
     #[test]

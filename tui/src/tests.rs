@@ -1325,11 +1325,14 @@ fn choosing_another_effect_with_the_arrows_replaces_the_rest_of_the_name() {
     app.handle(special(Key::Down));
     app.handle(special(Key::Down));
     app.handle(special(Key::Enter));
+    // Los parámetros que tienen los dos efectos conservan su valor.
     assert_eq!(
         current_line(&app),
-        "track(\"drums\"):fx(\"highpass\", { cutoff = 200 })"
+        "track(\"drums\"):fx(\"highpass\", { cutoff = 800, q = 2 })"
     );
-    assert_eq!(selection_text(&app), "200");
+    assert_eq!(selection_text(&app), "800");
+    app.handle(ctrl('s'));
+    assert!(app.view().error.is_none(), "{:?}", app.view().error);
 }
 
 #[test]

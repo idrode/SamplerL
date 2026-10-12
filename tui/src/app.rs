@@ -790,7 +790,7 @@ impl App {
         {
             let fields = self.grouped(|editor| {
                 editing::insert_template(editor, replace, &insert);
-                editing::replace_fx_table(editor, effect.template)
+                editing::replace_fx_table(editor, effect)
             });
             if let Some(fields) = fields {
                 self.marks = fields;

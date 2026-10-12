@@ -122,11 +122,12 @@ fn build_fields(lead: &str, text: &str, marks: &[std::ops::Range<usize>]) -> Fie
 
 /// Con el cursor al final del nombre de un efecto dentro de
 /// `fx("nombre", { ... })`, sustituye la tabla de parámetros que sigue en
-/// la línea por `table` (la plantilla del efecto nuevo, con sus `${...}`)
-/// y selecciona su primer campo. Lo que quede del nombre anterior hasta
+/// la línea por la del efecto nuevo ([`api::Effect::table_with`]: conserva
+/// los valores de los parámetros que tienen los dos, y los nuevos salen
+/// por defecto) y selecciona su primer campo. Lo que quede del nombre anterior hasta
 /// las comillas se borra. Si tras el nombre no hay `", { ... }` en la
 /// línea, no toca nada y devuelve `None`.
-pub fn replace_fx_table(editor: &mut TextArea, table: &str) -> Option<Fields> {
+pub fn replace_fx_table(editor: &mut TextArea, effect: &api::Effect) -> Option<Fields> {
     let (row, col) = (editor.cursor().0, editor.cursor().1);
     let chars: Vec<char> = editor.lines()[row].chars().collect();
     let skip_spaces = |mut i: usize| {
@@ -164,7 +165,9 @@ pub fn replace_fx_table(editor: &mut TextArea, table: &str) -> Option<Fields> {
         depth == 0
     })?;
 
-    let (text, marks) = api::expand_template(table);
+    let old: String = chars[open + 1..close].iter().collect();
+    let table = effect.table_with(&api::table_items(&old));
+    let (text, marks) = api::expand_template(&table);
     editor.cancel_selection();
     editor.move_cursor(CursorMove::Jump(row as u16, open as u16));
     editor.delete_str(close - open + 1);
@@ -385,7 +388,8 @@ mod tests {
     fn effect_tables_are_regenerated() {
         let mut e = editor("t:fx(\"bitcrush\", { type = \"lowpass\", cutoff = 3000 }):gain(1)");
         at(&mut e, 0, 14);
-        let mut fields = replace_fx_table(&mut e, "{ bits = ${6}, downsample = ${2} }").unwrap();
+        let bitcrush = api::effect("bitcrush").unwrap();
+        let mut fields = replace_fx_table(&mut e, bitcrush).unwrap();
         assert_eq!(
             e.lines(),
             ["t:fx(\"bitcrush\", { bits = 6, downsample = 2 }):gain(1)"]
@@ -397,15 +401,19 @@ mod tests {
         let end = e.lines()[0].find("}):").unwrap() + 2;
         assert_eq!(e.cursor(), (0, end));
         // El resto del nombre anterior tras el cursor se borra.
-        let mut e = editor("fx(\"highpasster\", { cutoff = 3000 })");
+        // y los parámetros comunes conservan su valor.
+        let mut e = editor("fx(\"highpasster\", { type = \"lowpass\", cutoff = 3000, q = 4 })");
         at(&mut e, 0, 12);
-        replace_fx_table(&mut e, "{ cutoff = ${200} }").unwrap();
-        assert_eq!(e.lines(), ["fx(\"highpass\", { cutoff = 200 })"]);
-        assert_eq!(selected(&e), "200");
+        let highpass = api::effect("highpass").unwrap();
+        let mut fields = replace_fx_table(&mut e, highpass).unwrap();
+        assert_eq!(e.lines(), ["fx(\"highpass\", { cutoff = 3000, q = 4 })"]);
+        assert_eq!(selected(&e), "3000");
+        fields.next(&mut e);
+        assert_eq!(selected(&e), "4");
         // Sin tabla detrás, nada.
         let mut e = editor("fx(\"lowpass\")");
         at(&mut e, 0, 11);
-        assert!(replace_fx_table(&mut e, "{ cutoff = ${1} }").is_none());
+        assert!(replace_fx_table(&mut e, highpass).is_none());
         assert_eq!(e.lines(), ["fx(\"lowpass\")"]);
     }
 
