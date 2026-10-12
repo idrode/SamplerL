@@ -256,6 +256,11 @@ impl Transport {
         self.bar = 0;
     }
 
+    /// Tempo que está sonando.
+    pub fn bpm(&self) -> f64 {
+        self.bpm
+    }
+
     /// Frame (absoluto) del siguiente paso.
     pub fn next_step_frame(&self, sample_rate: u32) -> u64 {
         self.bar_start + step_offset(self.step, self.bpm, sample_rate)

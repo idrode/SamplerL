@@ -10,6 +10,7 @@ use crate::limiter::soft_limit;
 use crate::sample::Sample;
 use crate::sequencer::{Pattern, Transport, Trigger, valid_bpm};
 use crate::slice::Slices;
+use crate::status::{SharedStatus, Status};
 
 const COMMAND_CAPACITY: usize = 64;
 // A la basura solo va un `Arc` cuando el motor no guarda otra referencia al
@@ -262,6 +263,7 @@ pub struct Controller {
     commands: Producer<Command>,
     garbage: Consumer<Garbage>,
     playing: Arc<AtomicBool>,
+    status: Arc<SharedStatus>,
 }
 
 /// Una pista en el hilo de audio: su patrón (con cambios pendientes) y su voz.
@@ -322,6 +324,7 @@ pub struct Engine {
     commands: Consumer<Command>,
     garbage: Producer<Garbage>,
     playing: Arc<AtomicBool>,
+    status: Arc<SharedStatus>,
     sample_rate: u32,
     transport: Transport,
     tracks: [Track; MAX_TRACKS],
@@ -338,16 +341,19 @@ pub fn new_engine(sample_rate: u32) -> (Controller, Engine) {
     let (cmd_tx, cmd_rx) = RingBuffer::new(COMMAND_CAPACITY);
     let (garbage_tx, garbage_rx) = RingBuffer::new(GARBAGE_CAPACITY);
     let playing = Arc::new(AtomicBool::new(false));
+    let status = Arc::new(SharedStatus::new(crate::sequencer::DEFAULT_BPM));
     (
         Controller {
             commands: cmd_tx,
             garbage: garbage_rx,
             playing: playing.clone(),
+            status: status.clone(),
         },
         Engine {
             commands: cmd_rx,
             garbage: garbage_tx,
             playing,
+            status,
             sample_rate,
             transport: Transport::new(),
             tracks: std::array::from_fn(|_| Track::default()),
@@ -472,6 +478,12 @@ impl Controller {
         self.playing.load(Ordering::Relaxed)
     }
 
+    /// Estado del motor para la interfaz (tempo, compás, paso, picos...).
+    /// Los picos de las pistas se ponen a cero al leerlos.
+    pub fn status(&self) -> Status {
+        self.status.snapshot()
+    }
+
     /// Libera aquí (fuera del hilo de audio) los samples que el motor ya no usa.
     pub fn collect_garbage(&mut self) {
         while self.garbage.pop().is_ok() {}
@@ -546,6 +558,8 @@ impl Engine {
                 .iter()
                 .any(|t| t.voice.as_ref().is_some_and(Voice::is_active) || t.fading.is_some());
         self.playing.store(playing, Ordering::Relaxed);
+        self.status
+            .set_transport(self.transport.running, self.transport.bpm());
     }
 
     fn handle(&mut self, cmd: Command) {
@@ -590,6 +604,7 @@ impl Engine {
             }
             Command::Start => {
                 self.transport.start();
+                self.status.clear_step();
                 for track in &mut self.tracks {
                     track.retrig = None;
                 }
@@ -609,6 +624,7 @@ impl Engine {
     fn step(&mut self) {
         let now = self.transport.frame;
         let (step, bar) = self.transport.advance(self.sample_rate);
+        self.status.set_step(bar, step);
         let next = self.transport.next_step_frame(self.sample_rate);
         for t in 0..MAX_TRACKS {
             if step == 0
@@ -663,6 +679,7 @@ impl Engine {
             return;
         };
         let voice = Voice::new(pattern.sample.clone(), hit.start, hit.end, hit.playback);
+        self.status.set_hit(t, hit.start);
         self.trigger(t, Some(voice));
     }
 
@@ -704,6 +721,7 @@ impl Engine {
             }
 
             let master = &mut self.master[..2 * n];
+            let mut peak = 0.0f32;
             for (dst, src) in master
                 .as_chunks_mut::<2>()
                 .0
@@ -711,9 +729,12 @@ impl Engine {
                 .zip(buf.as_chunks::<2>().0)
             {
                 track.gain += (target - track.gain) * smoothing;
-                dst[0] += track.gain * src[0];
-                dst[1] += track.gain * src[1];
+                let (l, r) = (track.gain * src[0], track.gain * src[1]);
+                dst[0] += l;
+                dst[1] += r;
+                peak = peak.max(l.abs()).max(r.abs());
             }
+            self.status.add_peak(t, peak);
 
             if track.fading.as_ref().is_some_and(|v| !v.is_active())
                 && let Some(done) = track.fading.take()

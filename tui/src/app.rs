@@ -1,0 +1,273 @@
+//! Estado y lógica de la interfaz, sin terminal (se prueba sin pantalla).
+
+use std::path::{Path, PathBuf};
+
+use engine::{Controller, MAX_TRACKS, Status};
+use ratatui_textarea::{CursorMove, Input, Key, TextArea};
+use script::{ScriptError, ScriptHost};
+
+use crate::model::{ErrorView, TrackView, TransportView, ViewModel, error_line};
+
+/// Plantilla para un script nuevo.
+const TEMPLATE: &str = r#"bpm(170)
+
+local amen = sample("amen.wav"):slice(8)
+
+track("drums", amen)
+  :steps("1 . . 1  . . 3 .  1 . 5 .  . 3 . 6")
+"#;
+
+/// Caída del medidor de nivel por refresco.
+const METER_DECAY: f32 = 0.85;
+
+/// Qué hacer tras una tecla.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Flow {
+    Continue,
+    Quit,
+}
+
+pub struct App {
+    pub editor: TextArea<'static>,
+    path: PathBuf,
+    /// Contenido guardado en disco (para saber si hay cambios).
+    saved: String,
+    host: ScriptHost,
+    controller: Controller,
+    error: Option<ScriptError>,
+    message: String,
+    started: bool,
+    selected: usize,
+    status: Option<Status>,
+    meters: [f32; MAX_TRACKS],
+    /// Se pidió salir con cambios sin guardar: otra vez para confirmar.
+    quit_armed: bool,
+}
+
+impl App {
+    /// Abre el script (o una plantilla si no existe) y lo carga.
+    pub fn open(path: &Path, controller: Controller, sample_rate: u32) -> std::io::Result<App> {
+        let (text, saved) = match std::fs::read_to_string(path) {
+            Ok(text) => (text.clone(), text),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                (TEMPLATE.to_string(), String::new())
+            }
+            Err(e) => return Err(e),
+        };
+        let mut app = App {
+            editor: TextArea::new(text.lines().map(String::from).collect()),
+            path: path.to_path_buf(),
+            saved,
+            host: ScriptHost::new(sample_rate),
+            controller,
+            error: None,
+            message: String::new(),
+            started: false,
+            selected: 0,
+            status: None,
+            meters: [0.0; MAX_TRACKS],
+            quit_armed: false,
+        };
+        app.load();
+        Ok(app)
+    }
+
+    pub fn file_name(&self) -> String {
+        self.path.file_name().map_or_else(
+            || self.path.display().to_string(),
+            |n| n.to_string_lossy().into(),
+        )
+    }
+
+    fn text(&self) -> String {
+        let mut text = self.editor.lines().join("\n");
+        text.push('\n');
+        text
+    }
+
+    pub fn dirty(&self) -> bool {
+        self.text() != self.saved
+    }
+
+    /// Guarda el editor en disco y lo carga.
+    pub fn save(&mut self) {
+        let text = self.text();
+        match std::fs::write(&self.path, &text) {
+            Ok(()) => {
+                self.saved = text;
+                self.load();
+            }
+            Err(e) => {
+                self.message = format!("no se pudo guardar: {e}");
+            }
+        }
+    }
+
+    /// Carga el contenido del editor (sin guardar). Entra en el siguiente
+    /// compás; si falla, sigue sonando lo anterior y el error va al editor.
+    pub fn load(&mut self) {
+        let name = self.file_name();
+        let base = self.path.parent().unwrap_or(Path::new(".")).to_path_buf();
+        let text = self.text();
+        match self.host.load(&mut self.controller, &text, &name, &base) {
+            Ok(_) => {
+                self.error = None;
+                self.message = "cargado: entra en el siguiente compás".into();
+                if !self.started && self.controller.start().is_ok() {
+                    self.started = true;
+                }
+                let count = self.host.song().map_or(0, |s| s.tracks.len());
+                if self.selected >= count {
+                    self.selected = 0;
+                }
+            }
+            Err(e) => {
+                self.message = "error: sigue sonando lo anterior".into();
+                self.error = Some(e);
+            }
+        }
+    }
+
+    pub fn toggle_transport(&mut self) {
+        let running = self.status.is_some_and(|s| s.running) || self.controller.is_playing();
+        let result = if running {
+            self.controller.stop()
+        } else {
+            self.controller.start()
+        };
+        self.message = match result {
+            Ok(()) if running => "parado".into(),
+            Ok(()) => "en marcha".into(),
+            Err(e) => format!("motor: {e}"),
+        };
+    }
+
+    /// Lleva el cursor a la línea del error, si la hay.
+    pub fn goto_error(&mut self) {
+        let name = self.file_name();
+        if let Some(line) = self
+            .error
+            .as_ref()
+            .and_then(|e| error_line(&e.message, &name))
+        {
+            let row = (line.saturating_sub(1)).min(u16::MAX as usize) as u16;
+            self.editor.move_cursor(CursorMove::Jump(row, 0));
+        }
+    }
+
+    pub fn next_track(&mut self) {
+        let count = self.host.song().map_or(0, |s| s.tracks.len());
+        if count > 0 {
+            self.selected = (self.selected + 1) % count;
+        }
+    }
+
+    /// Atiende una tecla: atajos propios o, si no, el editor.
+    pub fn handle(&mut self, input: Input) -> Flow {
+        let quit_armed = std::mem::replace(&mut self.quit_armed, false);
+        match input {
+            Input {
+                key: Key::Char('q'),
+                ctrl: true,
+                ..
+            } => {
+                if self.dirty() && !quit_armed {
+                    self.quit_armed = true;
+                    self.message = "hay cambios sin guardar: Ctrl-Q otra vez para salir".into();
+                } else {
+                    return Flow::Quit;
+                }
+            }
+            Input {
+                key: Key::Char('s'),
+                ctrl: true,
+                ..
+            } => self.save(),
+            Input {
+                key: Key::Char('l'),
+                ctrl: true,
+                ..
+            }
+            | Input { key: Key::F(5), .. } => self.load(),
+            Input {
+                key: Key::Char('t'),
+                ctrl: true,
+                ..
+            }
+            | Input { key: Key::F(8), .. } => self.toggle_transport(),
+            Input {
+                key: Key::Char('g'),
+                ctrl: true,
+                ..
+            } => self.goto_error(),
+            Input {
+                key: Key::Char('o'),
+                ctrl: true,
+                ..
+            } => self.next_track(),
+            input => {
+                self.editor.input(input);
+            }
+        }
+        Flow::Continue
+    }
+
+    /// Lee el estado del motor, actualiza medidores y recoge la basura.
+    pub fn tick(&mut self) {
+        let status = self.controller.status();
+        for (meter, track) in self.meters.iter_mut().zip(&status.tracks) {
+            *meter = track.peak.max(*meter * METER_DECAY).min(1.0);
+        }
+        self.status = Some(status);
+        self.controller.collect_garbage();
+    }
+
+    /// Modelo de vista para los paneles.
+    pub fn view(&self) -> ViewModel {
+        let name = self.file_name();
+        let status = self.status;
+        let transport = status.map_or(TransportView::default(), |s| TransportView {
+            running: s.running,
+            bpm: s.bpm,
+            bar: s.bar,
+            step: s.step,
+        });
+        let tracks: Vec<TrackView> = self
+            .host
+            .song()
+            .map(|song| {
+                song.tracks
+                    .iter()
+                    .map(|t| {
+                        let slot = self.host.track_slot(&t.name);
+                        let track_status = slot.and_then(|s| status.map(|st| st.tracks[s]));
+                        let playing_slice = track_status
+                            .and_then(|ts| ts.hit_start)
+                            .and_then(|start| t.slices.iter().position(|r| r.start == start));
+                        TrackView {
+                            name: t.name.clone(),
+                            slot,
+                            slices: t.slices.iter().collect(),
+                            cycle: t.bars.len(),
+                            playing_slice,
+                            level: slot.map_or(0.0, |s| self.meters[s]),
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let selected = (!tracks.is_empty()).then(|| self.selected.min(tracks.len() - 1));
+        ViewModel {
+            error: self.error.as_ref().map(|e| ErrorView {
+                line: error_line(&e.message, &name),
+                message: e.message.clone(),
+            }),
+            file: name,
+            dirty: self.dirty(),
+            message: self.message.clone(),
+            transport,
+            tracks,
+            selected,
+        }
+    }
+}

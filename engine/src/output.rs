@@ -68,3 +68,53 @@ where
     )?;
     Ok(stream)
 }
+
+/// Salida nula: mueve el motor a ritmo de tiempo real en un hilo propio y
+/// tira el audio. Sirve para usar la interfaz sin abrir la tarjeta de
+/// sonido (el secuenciador avanza igual). Se para al soltarla.
+pub struct NullOutput {
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+    pub sample_rate: u32,
+}
+
+/// Frames por bloque de la salida nula.
+const NULL_BLOCK: usize = 512;
+
+pub fn open_null_output(mut engine: Engine, sample_rate: u32) -> NullOutput {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::{Duration, Instant};
+
+    engine.set_sample_rate(sample_rate);
+    let stop = std::sync::Arc::new(AtomicBool::new(false));
+    let flag = stop.clone();
+    let thread = std::thread::spawn(move || {
+        let mut block = vec![0.0f32; NULL_BLOCK * 2];
+        let period = Duration::from_secs_f64(NULL_BLOCK as f64 / sample_rate as f64);
+        let mut deadline = Instant::now();
+        while !flag.load(Ordering::Relaxed) {
+            engine.process(&mut block, 2);
+            // Plazos absolutos: el reloj no deriva aunque un bloque tarde.
+            deadline += period;
+            if let Some(wait) = deadline.checked_duration_since(Instant::now()) {
+                std::thread::sleep(wait);
+            } else {
+                deadline = Instant::now();
+            }
+        }
+    });
+    NullOutput {
+        stop,
+        thread: Some(thread),
+        sample_rate,
+    }
+}
+
+impl Drop for NullOutput {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}

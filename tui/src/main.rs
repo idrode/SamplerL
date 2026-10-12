@@ -1,10 +1,17 @@
+mod app;
+mod model;
+#[cfg(test)]
+mod tests;
+mod ui;
+
 use std::sync::Arc;
 use std::time::Duration;
 
 use engine::{DetectOptions, Detector, Pattern, STEPS, Slices, Step};
 
 const USAGE: &str = "\
-uso: tui <archivo.wav> --render <salida.wav>
+uso: tui --edit <canción.lua> [--allow-audio]   (interfaz: editor, sample, tracker, efectos)
+     tui <archivo.wav> --render <salida.wav>
      tui --script <canción.lua> --render <salida.wav> [--bars M]
      tui --script <canción.lua> --allow-audio     (reproduce y recarga al guardar)
      tui <archivo.wav> --render <salida.wav> --pattern \"1 . 3 . ...\" \
@@ -63,6 +70,7 @@ fn run() -> Result<(), BoxError> {
     let mut min_gap_ms = None;
     let mut detector = None;
     let mut script = None;
+    let mut edit = None;
     while let Some(arg) = args.next() {
         let mut value = || {
             args.next()
@@ -80,6 +88,7 @@ fn run() -> Result<(), BoxError> {
             "--bpm" => bpm = Some(parse_number::<f64>("--bpm", &value()?)?),
             "--bars" => bars = Some(parse_number::<u64>("--bars", &value()?)?),
             "--script" => script = Some(value()?),
+            "--edit" => edit = Some(value()?),
             "--detector" => {
                 detector = Some(match value()?.as_str() {
                     "flux" => Detector::Flux,
@@ -108,6 +117,12 @@ fn run() -> Result<(), BoxError> {
             _ if path.is_none() => path = Some(arg),
             _ => return Err(USAGE.into()),
         }
+    }
+    if let Some(edit) = edit {
+        if path.is_some() || script.is_some() || render_to.is_some() || pattern.is_some() {
+            return Err(format!("--edit no se combina con otras opciones\n{USAGE}").into());
+        }
+        return run_editor(std::path::Path::new(&edit), allow_audio);
     }
     if let Some(script) = script {
         if path.is_some() || pattern.is_some() || slices.is_some() || min_gap_ms.is_some() {
@@ -309,4 +324,48 @@ fn play_script(path: &str) -> Result<(), BoxError> {
         controller.collect_garbage();
         std::thread::sleep(Duration::from_millis(200));
     }
+}
+
+/// Interfaz de terminal. Sin `--allow-audio`, el motor avanza con una salida
+/// nula (a ritmo real, sin abrir la tarjeta): se ve todo y no suena nada.
+fn run_editor(path: &std::path::Path, allow_audio: bool) -> Result<(), BoxError> {
+    use ratatui::crossterm::event::{self, Event, KeyEventKind};
+
+    let (controller, engine) = engine::new_engine(RENDER_RATE);
+    // Hay que mantener viva la salida mientras dure la interfaz.
+    let (_audio, _null, sample_rate);
+    if allow_audio {
+        let output = engine::open_output(engine)?;
+        sample_rate = output.sample_rate;
+        _audio = Some(output);
+        _null = None;
+    } else {
+        _null = Some(engine::open_null_output(engine, RENDER_RATE));
+        sample_rate = RENDER_RATE;
+        _audio = None;
+    }
+    let mut app = app::App::open(path, controller, sample_rate)?;
+
+    let mut terminal = ratatui::init();
+    let result = (|| -> Result<(), BoxError> {
+        loop {
+            app.tick();
+            terminal.draw(|frame| ui::draw(frame, &mut app))?;
+            if event::poll(Duration::from_millis(30))? {
+                match event::read()? {
+                    Event::Key(key) if key.kind != KeyEventKind::Release => {
+                        if app.handle(key.into()) == app::Flow::Quit {
+                            return Ok(());
+                        }
+                    }
+                    Event::Paste(text) => {
+                        app.editor.insert_str(text);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    })();
+    ratatui::restore();
+    result
 }
