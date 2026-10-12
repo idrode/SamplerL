@@ -55,7 +55,15 @@ Hecha: `euclid`, `rotate`, `reverse_pattern`, `mutate`, `shuffle`,
 - Swing y humanize.
 - `fill("stutter", cada N compases)`.
 
-## Fase D: mezcla y cortes
+## Fase D: mezcla y cortes ✅
+
+Hecha: mute y solo (`pista:mute()`, `pista:solo()`, paleta y `m`/`s`),
+medidor del master con avisos de limitador y saturación, metrónomo
+(`metronome()`, paleta; fuera de lo exportado salvo que se pida),
+detección de BPM (`--detect-bpm`, `sample:detect_bpm()`, paleta),
+preescucha de cortes por una voz aparte (←/→ en el modo tocar) y ajuste
+manual de cortes en ms (`,` `.` `<` `>`, `cortes:move()`, guardado en el
+proyecto). Ver «Fase D» en el Estado de `CLAUDE.md`.
 
 - Mute y solo por pista.
 - Medidores y aviso de saturación.
