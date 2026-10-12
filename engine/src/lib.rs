@@ -1,0 +1,9 @@
+//! Motor de audio del sampler. Independiente de la interfaz.
+
+mod engine;
+mod output;
+mod sample;
+
+pub use engine::{Controller, Engine, new_engine};
+pub use output::{Output, open_output};
+pub use sample::{LoadError, Sample};
