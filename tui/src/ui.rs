@@ -379,6 +379,34 @@ pub fn meter(level: f32, width: usize) -> String {
     format!("{}{}", "█".repeat(filled), "░".repeat(width - filled))
 }
 
+/// Línea del master: medidor (antes del limitador), nivel en dB y avisos.
+fn master_line(master: &crate::model::MasterView) -> Line<'static> {
+    let db = master
+        .db()
+        .map_or("  -∞ dB".to_string(), |db| format!("{db:+5.1} dB"));
+    let color = if master.clipping {
+        ERROR
+    } else if master.limiting {
+        Color::Yellow
+    } else {
+        Color::Green
+    };
+    let mut spans = vec![
+        Span::from(format!(" {:<10}", "master")).bold(),
+        Span::from(meter(master.level, 8)).fg(color),
+        Span::raw(format!(" {db}")),
+    ];
+    if master.limiting {
+        spans.push(Span::raw(" "));
+        spans.push(Span::from(" LIMITADOR ").fg(Color::Black).bg(Color::Yellow));
+    }
+    if master.clipping {
+        spans.push(Span::raw(" "));
+        spans.push(Span::from(" SATURA ").fg(Color::Black).bg(ERROR));
+    }
+    Line::from(spans)
+}
+
 /// Estado del motor: transporte y pistas.
 pub struct EnginePanel<'a>(pub &'a ViewModel);
 
@@ -400,7 +428,7 @@ impl Widget for EnginePanel<'_> {
                     t.bpm, t.bar
                 )),
             ]),
-            Line::raw(""),
+            master_line(&view.master),
         ];
         if view.tracks.is_empty() {
             lines.push(Line::from("sin pistas").fg(DIM));
@@ -734,7 +762,16 @@ impl Widget for FxPanel<'_> {
                 ]),
                 Line::from(vec![
                     Span::raw("nivel "),
-                    Span::from(meter(track.level, width)).fg(Color::Green),
+                    Span::from(meter(track.level, width)).fg(if track.clipping {
+                        ERROR
+                    } else {
+                        Color::Green
+                    }),
+                    if track.clipping {
+                        Span::from(" SAT").fg(ERROR).bold()
+                    } else {
+                        Span::raw("")
+                    },
                 ]),
             ];
             if track.fx.is_empty() {

@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::fx::{FxState, MAX_FX};
-use crate::limiter::soft_limit;
+use crate::limiter::{LIMIT_THRESHOLD, soft_limit};
 use crate::sample::Sample;
 use crate::sequencer::{Pattern, Transport, Trigger, valid_bpm};
 use crate::slice::Slices;
@@ -861,9 +861,19 @@ impl Engine {
                 self.discard(done.sample);
             }
         }
-        for s in &mut self.master[..2 * n] {
-            *s = soft_limit(*s);
+        // Medidor del master antes del limitador, y cuándo actúa.
+        let mut peak = 0.0f32;
+        let mut limited = 0u64;
+        for frame in self.master[..2 * n].as_chunks_mut::<2>().0 {
+            let level = frame[0].abs().max(frame[1].abs());
+            peak = peak.max(level);
+            if level > LIMIT_THRESHOLD {
+                limited += 1;
+            }
+            frame[0] = soft_limit(frame[0]);
+            frame[1] = soft_limit(frame[1]);
         }
+        self.status.add_master(peak, limited);
     }
 
     /// Pasa una voz interrumpida a la ranura de fundido de su pista. Si ya

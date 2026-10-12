@@ -21,4 +21,4 @@ pub use sequencer::{
     Pattern, STEPS, Step, bar_frames, valid_bpm,
 };
 pub use slice::{DEFAULT_MIN_GAP_SECONDS, DetectOptions, Detector, Slices};
-pub use status::{Status, TrackStatus};
+pub use status::{MasterStatus, Status, TrackStatus};

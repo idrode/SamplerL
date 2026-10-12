@@ -29,6 +29,7 @@ pub enum Action {
     Mute,
     Solo,
     ClearMuteSolo,
+    ResetMeters,
     NextSlice,
     PreviousSlice,
     Quit,
@@ -158,6 +159,12 @@ pub const ACTIONS: &[ActionDef] = &[
         action: Action::ClearMuteSolo,
         name: "Quitar mute y solo",
         description: "Quita todos los mute y solo en vivo (los del script siguen)",
+        keys: "",
+    },
+    ActionDef {
+        action: Action::ResetMeters,
+        name: "Reiniciar medidores",
+        description: "Pone a cero los medidores y quita los avisos de limitador y saturación",
         keys: "",
     },
     ActionDef {

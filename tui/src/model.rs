@@ -44,6 +44,25 @@ pub struct ViewModel {
     pub selected: Option<usize>,
     /// Corte seleccionado de esa pista (desde 0).
     pub selected_slice: Option<usize>,
+    pub master: MasterView,
+}
+
+/// Medidor del master.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct MasterView {
+    /// Pico (con caída) de la suma antes del limitador; puede pasar de 1.
+    pub level: f32,
+    /// El limitador ha actuado hace poco.
+    pub limiting: bool,
+    /// La suma ha pasado de ±1 hace poco (el limitador la comprime).
+    pub clipping: bool,
+}
+
+impl MasterView {
+    /// Nivel en dBFS (`None` en silencio).
+    pub fn db(&self) -> Option<f32> {
+        (self.level > 0.0).then(|| 20.0 * self.level.log10())
+    }
 }
 
 /// Paleta de comandos.
@@ -115,6 +134,8 @@ pub struct TrackView {
     pub labels: Vec<Option<String>>,
     /// Swing en porcentaje (50 = recto; 0 si no se ha dicho).
     pub swing: f32,
+    /// La pista sola pasó de ±1 hace poco.
+    pub clipping: bool,
     /// Silenciada (por el script o en vivo).
     pub mute: bool,
     /// En solo (por el script o en vivo).

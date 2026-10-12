@@ -2064,3 +2064,53 @@ fn script_mute_and_solo_show_and_dim_the_others() {
     let screen = text(&draw(&mut app, 120, 40));
     assert!(screen.contains("drums (solo de otra)"), "{screen}");
 }
+
+// --- Medidores ---
+
+#[test]
+fn master_meter_warns_when_the_limiter_acts_and_when_it_saturates() {
+    // SONG: en el paso 0 suenan las dos pistas a 0,5 (suma 1,0): el
+    // limitador actúa (pasa de 0,9) pero no satura (no pasa de 1).
+    let (_, mut app, mut engine) = open("meters_limit", Some(SONG));
+    offline::render(&mut engine, 1000, 2);
+    app.tick();
+    let view = app.view();
+    assert!(
+        view.master.limiting && !view.master.clipping,
+        "{:?}",
+        view.master
+    );
+    let screen = text(&draw(&mut app, 120, 40));
+    assert!(screen.contains("master"), "{screen}");
+    assert!(screen.contains("LIMITADOR"), "{screen}");
+    assert!(!screen.contains("SATURA"), "{screen}");
+    assert!(screen.contains(" +0.0 dB"), "{screen}");
+
+    // Con la pista a volumen 4, pasa de 1: SATURA en el master y SAT en la
+    // pista.
+    let loud = SONG.replace(
+        "track(\"drums\", amen):steps(\"1 . 2 .  1 . 2 .  1 . 2 .  1 . 2 .\")",
+        "track(\"drums\", amen):steps(\"1 . 2 .  1 . 2 .  1 . 2 .  1 . 2 .\"):gain(4)",
+    );
+    let (_, mut app, mut engine) = open("meters_clip", Some(&loud));
+    offline::render(&mut engine, 1000, 2);
+    app.tick();
+    let view = app.view();
+    assert!(view.master.clipping && view.tracks[0].clipping && !view.tracks[1].clipping);
+    let screen = text(&draw(&mut app, 120, 40));
+    assert!(screen.contains("SATURA"), "{screen}");
+    assert!(screen.contains(" SAT"), "{screen}");
+    // La paleta los reinicia.
+    palette(&mut app, "reiniciar medidores");
+    let view = app.view();
+    assert!(!view.master.limiting && !view.master.clipping && !view.tracks[0].clipping);
+    assert_eq!(view.master.db(), None);
+
+    // Una pista sola a 0,5: ni limitador ni saturación.
+    let (_, mut app, mut engine) = open("meters_quiet", Some(SONG_KICK_ONLY));
+    offline::render(&mut engine, 1000, 2);
+    app.tick();
+    let view = app.view();
+    assert!(!view.master.limiting && !view.master.clipping);
+    assert!((view.master.db().unwrap() + 6.02).abs() < 0.01, "-6 dB");
+}

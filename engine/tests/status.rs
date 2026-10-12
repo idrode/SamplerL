@@ -81,3 +81,33 @@ fn null_output_moves_the_engine_in_real_time() {
     std::thread::sleep(Duration::from_millis(80));
     assert_eq!(controller.status().step, status.step);
 }
+
+#[test]
+fn the_master_meter_sees_the_sum_before_the_limiter() {
+    // Una pista: pico 0,5, el limitador no actúa.
+    let (mut controller, mut engine) = new_engine(RATE);
+    controller.set_bpm(120.0).unwrap();
+    controller.set_pattern(pattern()).unwrap();
+    controller.start().unwrap();
+    offline::render(&mut engine, STEP, 2);
+    let master = controller.status().master;
+    assert!((master.peak - 0.5).abs() < 1e-6, "{master:?}");
+    assert_eq!(master.limited_frames, 0);
+
+    // Tres pistas a la vez a 0,5: la suma (1,5) satura y el limitador actúa
+    // en los frames en que pasa de 0,9 (los 800 del bloque, salvo el fundido
+    // de entrada). La salida nunca pasa de 1.
+    let (mut controller, mut engine) = new_engine(RATE);
+    controller.set_bpm(120.0).unwrap();
+    for t in 0..3 {
+        controller.set_track_pattern(t, Some(pattern())).unwrap();
+    }
+    controller.start().unwrap();
+    let audio = offline::render(&mut engine, STEP, 2);
+    let master = controller.status().master;
+    assert!((master.peak - 1.5).abs() < 1e-5, "{master:?}");
+    assert!((700..=800).contains(&master.limited_frames), "{master:?}");
+    assert!(audio.iter().all(|s| s.abs() <= 1.0));
+    // Se vacía al leerlo.
+    assert_eq!(controller.status().master, engine::MasterStatus::default());
+}

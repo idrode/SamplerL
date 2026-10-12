@@ -23,6 +23,18 @@ pub struct Status {
     /// Último paso disparado (0 a 15); `None` antes del primero.
     pub step: Option<usize>,
     pub tracks: [TrackStatus; MAX_TRACKS],
+    pub master: MasterStatus,
+}
+
+/// Nivel del master desde la lectura anterior.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct MasterStatus {
+    /// Pico de la suma antes del limitador: por encima de 1 satura (el
+    /// limitador lo evita comprimiendo).
+    pub peak: f32,
+    /// Frames en los que actuó el limitador (la suma pasó de
+    /// `LIMIT_THRESHOLD`).
+    pub limited_frames: u64,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -43,6 +55,8 @@ pub(crate) struct SharedStatus {
     step: AtomicU64,
     hit_start: [AtomicU64; MAX_TRACKS],
     peak: [AtomicU32; MAX_TRACKS],
+    master_peak: AtomicU32,
+    limited: AtomicU64,
 }
 
 impl SharedStatus {
@@ -54,6 +68,8 @@ impl SharedStatus {
             step: AtomicU64::new(NONE),
             hit_start: std::array::from_fn(|_| AtomicU64::new(NONE)),
             peak: std::array::from_fn(|_| AtomicU32::new(0)),
+            master_peak: AtomicU32::new(0),
+            limited: AtomicU64::new(0),
         }
     }
 
@@ -84,6 +100,16 @@ impl SharedStatus {
         }
     }
 
+    /// Pico del master antes del limitador y frames en que actuó.
+    pub fn add_master(&self, peak: f32, limited_frames: u64) {
+        if peak > 0.0 && peak.is_finite() {
+            self.master_peak.fetch_max(peak.to_bits(), Relaxed);
+        }
+        if limited_frames > 0 {
+            self.limited.fetch_add(limited_frames, Relaxed);
+        }
+    }
+
     // --- Lectura (interfaz) ---
 
     /// Instantánea; los picos se ponen a cero al leerlos.
@@ -98,6 +124,10 @@ impl SharedStatus {
                 hit_start: opt(self.hit_start[t].load(Relaxed)).map(|s| s as usize),
                 peak: f32::from_bits(self.peak[t].swap(0, Relaxed)),
             }),
+            master: MasterStatus {
+                peak: f32::from_bits(self.master_peak.swap(0, Relaxed)),
+                limited_frames: self.limited.swap(0, Relaxed),
+            },
         }
     }
 }

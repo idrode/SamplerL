@@ -13,8 +13,8 @@ use crate::complete::{self, Candidate};
 use crate::diagnose;
 use crate::editing;
 use crate::model::{
-    CompletionView, ErrorView, PaletteView, TrackView, TransportView, ViewModel, Waveform,
-    error_line,
+    CompletionView, ErrorView, MasterView, PaletteView, TrackView, TransportView, ViewModel,
+    Waveform, error_line,
 };
 use crate::palette::{self, Action, Item};
 
@@ -29,6 +29,9 @@ track("drums", amen)
 
 /// Cada cuánto se mira si el archivo cambió fuera del editor.
 const EXTERNAL_CHECK: Duration = Duration::from_millis(500);
+
+/// Cuánto se mantiene a la vista un aviso de limitador o saturación.
+const WARNING_HOLD: Duration = Duration::from_secs(1);
 
 /// Caída del medidor de nivel por refresco.
 const METER_DECAY: f32 = 0.85;
@@ -110,6 +113,14 @@ pub struct App {
     sent_mix: [(bool, bool); MAX_TRACKS],
     status: Option<Status>,
     meters: [f32; MAX_TRACKS],
+    /// Medidor del master (pico antes del limitador, con caída; puede
+    /// pasar de 1).
+    master_meter: f32,
+    /// Hasta cuándo se muestran los avisos de limitador, saturación del
+    /// master y saturación de cada pista.
+    limiting_until: Option<Instant>,
+    clipping_until: Option<Instant>,
+    track_clip_until: [Option<Instant>; MAX_TRACKS],
     /// Se pidió salir con cambios sin guardar: otra vez para confirmar.
     quit_armed: bool,
     mode: Mode,
@@ -161,6 +172,10 @@ impl App {
             sent_mix: [(false, false); MAX_TRACKS],
             status: None,
             meters: [0.0; MAX_TRACKS],
+            master_meter: 0.0,
+            limiting_until: None,
+            clipping_until: None,
+            track_clip_until: [None; MAX_TRACKS],
             quit_armed: false,
             mode: Mode::Edit,
             external: None,
@@ -958,6 +973,7 @@ impl App {
             Action::Mute => self.toggle_live(false),
             Action::Solo => self.toggle_live(true),
             Action::ClearMuteSolo => self.clear_live(),
+            Action::ResetMeters => self.reset_meters(),
             Action::NextSlice => self.select_slice(true),
             Action::PreviousSlice => self.select_slice(false),
             Action::Quit => {
@@ -1097,6 +1113,16 @@ impl App {
         self.sync_mix();
         let what = if solo { "solo" } else { "mute" };
         self.message = format!("{name}: {what} {}", if on { "sí" } else { "no" });
+    }
+
+    /// Vacía los medidores y los avisos de saturación.
+    pub fn reset_meters(&mut self) {
+        self.meters = [0.0; MAX_TRACKS];
+        self.master_meter = 0.0;
+        self.limiting_until = None;
+        self.clipping_until = None;
+        self.track_clip_until = [None; MAX_TRACKS];
+        self.message = "medidores a cero".into();
     }
 
     /// Quita todos los mute y solo en vivo.
@@ -1272,8 +1298,20 @@ impl App {
             self.check_external();
         }
         let status = self.controller.status();
-        for (meter, track) in self.meters.iter_mut().zip(&status.tracks) {
-            *meter = track.peak.max(*meter * METER_DECAY).min(1.0);
+        let now = Instant::now();
+        let hold = Some(now + WARNING_HOLD);
+        for (t, track) in status.tracks.iter().enumerate() {
+            self.meters[t] = track.peak.max(self.meters[t] * METER_DECAY).min(1.0);
+            if track.peak > 1.0 {
+                self.track_clip_until[t] = hold;
+            }
+        }
+        self.master_meter = status.master.peak.max(self.master_meter * METER_DECAY);
+        if status.master.limited_frames > 0 {
+            self.limiting_until = hold;
+        }
+        if status.master.peak > 1.0 {
+            self.clipping_until = hold;
         }
         self.status = Some(status);
         self.controller.collect_garbage();
@@ -1325,6 +1363,9 @@ impl App {
                             fx: t.fx.clone(),
                             labels: t.labels.clone(),
                             swing: t.swing,
+                            clipping: slot.is_some_and(|s| {
+                                self.track_clip_until[s].is_some_and(|u| Instant::now() < u)
+                            }),
                             mute: t.mute || self.muted.contains(&t.name),
                             solo: t.solo || self.soloed.contains(&t.name),
                         }
@@ -1388,6 +1429,11 @@ impl App {
             tracks,
             selected,
             selected_slice,
+            master: MasterView {
+                level: self.master_meter,
+                limiting: self.limiting_until.is_some_and(|u| Instant::now() < u),
+                clipping: self.clipping_until.is_some_and(|u| Instant::now() < u),
+            },
         }
     }
 }

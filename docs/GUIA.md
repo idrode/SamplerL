@@ -178,6 +178,7 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Mute de la pista | Silencia la pista seleccionada, o la vuelve a dejar sonar (en vivo, sin esperar al compás) | m (modo tocar) |
 | Solo de la pista | Pone la pista seleccionada en solo, o se lo quita (en vivo) | s (modo tocar) |
 | Quitar mute y solo | Quita todos los mute y solo en vivo (los del script siguen) | — |
+| Reiniciar medidores | Pone a cero los medidores y quita los avisos de limitador y saturación | — |
 | Etiquetar el corte seleccionado | Abre «etiquetar N » para escribir la etiqueta (kick, snare...); se guarda en el proyecto | — |
 | Corte siguiente | Selecciona el corte siguiente de la pista (sin tocarlo) | — |
 | Corte anterior | Selecciona el corte anterior de la pista (sin tocarlo) | — |
@@ -1043,7 +1044,12 @@ track("hats", amen:slice_at(2))
 ### Saturación
 
 La suma de pistas pasa por un limitador suave: por debajo de 0,9 no toca
-nada y por encima comprime hasta ±1 sin recortar. Si se nota apretado:
+nada y por encima comprime hasta ±1 sin recortar. El panel del motor tiene
+un medidor del **master** (la suma antes del limitador, con su nivel en
+dB) que avisa con `LIMITADOR` (amarillo) cuando el limitador actúa y con
+`SATURA` (rojo) cuando la suma pasa de ±1; el panel de efectos marca `SAT`
+en la pista que se pasa de ±1 ella sola. Los avisos se quedan un segundo a
+la vista; «Reiniciar medidores» (paleta) los quita. Si se nota apretado:
 
 - baja el volumen de las pistas con `:gain()`, sobre todo cuando dos pistas
   tocan el mismo golpe a la vez (break + refuerzo de bombo);
