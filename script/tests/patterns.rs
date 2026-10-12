@@ -298,3 +298,94 @@ fn swing_delays_offbeats_by_exact_frames() {
         "song.lua:3: swing(80): va de 50 (recto) a 75"
     );
 }
+
+#[test]
+fn humanize_is_bounded_seeded_and_lands_on_exact_frames() {
+    let dir = fixture("humanize");
+    let body = |extra: &str| {
+        format!("track(\"d\", amen):steps(\"1 2 1 2  1 2 1 2  1 2 1 2  1 2 1 2\"){extra}")
+    };
+    let eval = |host: &mut ScriptHost, extra: &str| {
+        host.eval(&format!("{HEAD}{}", body(extra)), "song.lua", &dir)
+            .unwrap()
+    };
+    let song = eval(&mut host(), ":humanize(10, 0.3, 42)");
+    let track = &song.tracks[0];
+    assert_eq!(track.bars.len(), 16, "ciclo de 16 compases");
+    // 10 ms a 120 BPM (125 ms por paso) son 0,08 pasos como mucho.
+    let steps: Vec<_> = track.bars.iter().flat_map(|b| b.iter().flatten()).collect();
+    assert!(steps.iter().all(|s| (0.0..=0.08).contains(&s.delay)));
+    assert!(steps.iter().all(|s| (0.7..=1.0).contains(&s.gain)));
+    assert!(steps.iter().any(|s| s.delay > 0.01) && steps.iter().any(|s| s.gain < 0.95));
+    assert!(track.bars[0] != track.bars[1], "cada compás distinto");
+
+    // Cada golpe suena en el frame de su paso más su retraso, exacto.
+    let audio = song.render(RATE, 2).unwrap();
+    let expected: Vec<usize> = (0..32)
+        .map(|k| {
+            let delay = track.bars[k / 16][k % 16].unwrap().delay;
+            k * STEP + (delay as f64 * STEP as f64).round() as usize
+        })
+        .collect();
+    assert_eq!(onsets(&audio), expected);
+
+    // Con semilla propia, igual aunque cambie la de la carga; con otra, no.
+    let mut other = ScriptHost::new(RATE);
+    other.set_seed(Some(5));
+    assert_eq!(
+        eval(&mut other, ":humanize(10, 0.3, 42)").tracks[0].bars,
+        track.bars
+    );
+    assert_ne!(
+        eval(&mut host(), ":humanize(10, 0.3, 43)").tracks[0].bars,
+        track.bars
+    );
+    // Sin semilla: reproducible con la de la carga, distinto por pista.
+    let a = eval(&mut host(), ":humanize(10)");
+    assert_eq!(
+        a.tracks[0].bars,
+        eval(&mut host(), ":humanize(10)").tracks[0].bars
+    );
+    let two = host()
+        .eval(
+            &format!(
+                "{HEAD}{}\ntrack(\"e\", amen):steps(\"1 2 1 2  1 2 1 2  1 2 1 2  1 2 1 2\"):humanize(10)",
+                body(":humanize(10)")
+            ),
+            "song.lua",
+            &dir,
+        )
+        .unwrap();
+    assert_ne!(two.tracks[0].bars, two.tracks[1].bars);
+    // Sin volumen, solo el tiempo.
+    let only_time = eval(&mut host(), ":humanize(10)");
+    assert!(
+        only_time.tracks[0]
+            .bars
+            .iter()
+            .flatten()
+            .flatten()
+            .all(|s| s.gain == 1.0)
+    );
+    // Se suma al swing, con tope.
+    let both = eval(&mut host(), ":swing(75):humanize(100, 0, 1)");
+    let delays: Vec<f32> = both.tracks[0].bars[0]
+        .iter()
+        .flatten()
+        .map(|s| s.delay)
+        .collect();
+    assert!(
+        delays
+            .iter()
+            .skip(1)
+            .step_by(2)
+            .all(|&d| (0.5..=0.9).contains(&d))
+    );
+    assert!(delays.contains(&0.9), "con tope en 0,9 pasos");
+
+    assert_eq!(
+        error(&dir, "track(\"d\", amen):humanize(200)"),
+        "song.lua:3: humanize(200): los ms van de 0 a 100"
+    );
+    assert!(error(&dir, "track(\"d\", amen):humanize(5, 2)").contains("el volumen va de 0 a 1"));
+}

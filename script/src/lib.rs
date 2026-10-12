@@ -58,6 +58,11 @@ const HOOK_INSTRUCTIONS: u32 = 10_000;
 /// `shuffle` sin semilla propia.
 const PATTERN_SEED: u64 = 0x5eed_0f9a_77e2_a5c3;
 
+/// Se mezcla con la semilla de la carga para humanize sin semilla propia.
+const HUMANIZE_SEED: u64 = 0x4b0d_e1a7_c0de_7a11;
+/// Humanize máximo, en ms.
+const MAX_HUMANIZE_MS: f32 = 100.0;
+
 /// Swing recto (sin retraso).
 const STRAIGHT_SWING: f32 = 50.0;
 /// Swing máximo: el contratiempo, a medio paso.
@@ -102,9 +107,22 @@ pub struct TrackDef {
     pub labels: Vec<Option<String>>,
     /// Swing (`:swing()`), en porcentaje estilo MPC: 50 es recto.
     pub swing: f32,
+    /// Humanize (`:humanize()`).
+    pub humanize: Option<Humanize>,
     /// De qué sample y qué `slice(n)` salen los cortes (para etiquetarlos
     /// desde la interfaz y guardarlo en el proyecto).
     pub origin: SliceOrigin,
+}
+
+/// `:humanize(ms, volumen [, semilla])`: cada golpe se retrasa al azar
+/// entre 0 y `ms` y su volumen se multiplica por un factor entre
+/// `1 - volume` y 1.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Humanize {
+    pub ms: f32,
+    pub volume: f32,
+    /// Semilla propia; `None`: la de la carga con el nombre de la pista.
+    pub seed: Option<u64>,
 }
 
 /// Origen de los cortes de una pista.
@@ -415,10 +433,14 @@ impl ScriptHost {
         // Expandir `every` y `chance` a un ciclo de compases. Las funciones de
         // `every` se llaman ahora, con el estado de Lua todavía vivo.
         let mut rng = Rng::new(seed);
+        let timing = Timing {
+            bpm: bpm.unwrap_or(engine::DEFAULT_BPM),
+            seed,
+        };
         expanding.set(true);
         let expanded = tracks
             .into_iter()
-            .map(|track| expand(track, &mut rng))
+            .map(|track| expand(track, &mut rng, timing))
             .collect::<Result<Vec<_>, _>>();
         expanding.set(false);
         let warnings = warnings.borrow().clone();
@@ -588,6 +610,7 @@ impl ScriptHost {
                                     fx: Vec::new(),
                                     labels: Vec::new(),
                                     swing: STRAIGHT_SWING,
+                                    humanize: None,
                                     origin: source.origin.clone(),
                                 },
                                 labels: source.labels.clone(),
@@ -766,7 +789,15 @@ enum Chance {
 }
 
 /// Expande `every` y `chance` de una pista a su ciclo de compases.
-fn expand(track: TrackBuild, rng: &mut Rng) -> Result<TrackDef, ScriptError> {
+/// Lo que necesita `expand` de la canción para humanize: el tempo (los ms
+/// se pasan a pasos con él) y la semilla de la carga.
+#[derive(Clone, Copy)]
+struct Timing {
+    bpm: f64,
+    seed: u64,
+}
+
+fn expand(track: TrackBuild, rng: &mut Rng, timing: Timing) -> Result<TrackDef, ScriptError> {
     let TrackBuild {
         mut def,
         labels,
@@ -774,7 +805,12 @@ fn expand(track: TrackBuild, rng: &mut Rng) -> Result<TrackDef, ScriptError> {
         transforms,
     } = track;
     def.labels = labels.borrow().clone();
-    let mut cycle = 1u64;
+    // Humanize cambia cada compás: el ciclo es de 16 como con `chance`.
+    let mut cycle = if def.humanize.is_some() {
+        CHANCE_CYCLE_BARS
+    } else {
+        1u64
+    };
     for transform in &transforms {
         let n = match transform {
             Transform::Every { n, .. } => *n,
@@ -829,8 +865,35 @@ fn expand(track: TrackBuild, rng: &mut Rng) -> Result<TrackDef, ScriptError> {
             }
         }
     }
+    if let Some(h) = def.humanize {
+        humanize(&mut bars, h, &def.name, timing);
+    }
     def.bars = bars;
     Ok(def)
+}
+
+/// Aplica humanize a los compases del ciclo: a cada golpe, un retraso al
+/// azar de 0 a `ms` (en pasos al tempo de la canción, sumado al que tenga,
+/// con tope `MAX_DELAY`) y un volumen de `1 - volumen` a 1 veces el suyo.
+fn humanize(bars: &mut [Bar], h: Humanize, track: &str, timing: Timing) {
+    let seed = h.seed.unwrap_or_else(|| {
+        // FNV-1a del nombre: cada pista con su azar, fijo con la semilla.
+        let hash = track.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
+            (h ^ b as u64).wrapping_mul(0x0100_0000_01b3)
+        });
+        timing.seed ^ hash ^ HUMANIZE_SEED
+    });
+    let mut rng = Rng::new(seed);
+    let step_seconds = 60.0 / (timing.bpm * 4.0);
+    let max_steps = (h.ms as f64 / 1000.0 / step_seconds) as f32;
+    for bar in bars {
+        for step in bar.iter_mut().flatten() {
+            let delay = rng.next_f64() as f32 * max_steps;
+            let gain = 1.0 - h.volume * rng.next_f64() as f32;
+            step.delay = (step.delay + delay).min(engine::MAX_DELAY);
+            step.gain *= gain;
+        }
+    }
 }
 
 /// Retraso (en pasos) de los contratiempos con un swing en porcentaje
@@ -1302,6 +1365,31 @@ impl UserData for TrackHandle {
             this.with_track(|t| t.def.swing = percent);
             Ok(this.clone())
         });
+
+        // `:humanize(ms, volumen [, semilla])`: retraso y volumen al azar.
+        methods.add_method(
+            "humanize",
+            |lua, this, (ms, volume, seed): (f32, Option<f32>, Option<i64>)| {
+                let volume = volume.unwrap_or(0.0);
+                if !(0.0..=MAX_HUMANIZE_MS).contains(&ms) {
+                    return Err(fail(lua, format!("humanize({ms}): los ms van de 0 a 100")));
+                }
+                if !(0.0..=1.0).contains(&volume) {
+                    return Err(fail(
+                        lua,
+                        format!("humanize({ms}, {volume}): el volumen va de 0 a 1"),
+                    ));
+                }
+                this.with_track(|t| {
+                    t.def.humanize = Some(Humanize {
+                        ms,
+                        volume,
+                        seed: seed.map(|s| s as u64),
+                    })
+                });
+                Ok(this.clone())
+            },
+        );
 
         // `:fx(nombre, { parámetros })`: añade un efecto a la cadena.
         methods.add_method(

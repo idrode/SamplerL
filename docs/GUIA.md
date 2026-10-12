@@ -584,6 +584,24 @@ track("drums", amen)
   :swing(62)
 ```
 
+### `pista:humanize(ms [, volumen [, semilla]])`
+
+Devuelve: pista.
+
+Imperfección humana: cada golpe se retrasa y se suaviza un poco al azar. Cada golpe se retrasa entre 0 y `ms` milisegundos (nunca se adelanta; como mucho, 0,9 pasos) y su volumen se multiplica por un factor entre `1 - volumen` y 1 (nunca sube). Cada compás sale distinto: la pista pasa a un ciclo de 16 compases, como con `chance`. Con `semilla`, siempre igual; sin ella, el azar de la carga (como `chance`), distinto para cada pista. Se suma al swing.
+
+- `ms`: retraso máximo en milisegundos (0 a 100)
+- `volumen`: cuánto puede bajar el volumen (0 a 1; por defecto 0)
+- `semilla`: número entero; con la misma, el mismo resultado
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen)
+  :steps("1 2 2 2  3 2 4 2  5 6 2 2  7 2 8 2")
+  :swing(56)
+  :humanize(6, 0.2, 1)
+```
+
 ### `pista:fx(nombre, parámetros)`
 
 Devuelve: pista.
