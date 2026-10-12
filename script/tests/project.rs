@@ -29,6 +29,7 @@ fn project_round_trip_with_relative_paths() {
         script: dir.join("song.lua"),
         samples: Some(dir.join("samples")),
         bpm: Some(140.0),
+        labels: Vec::new(),
     };
     let path = dir.join("proyectos").join("p.sampler");
     project.save(&path).unwrap();
@@ -54,6 +55,7 @@ fn project_round_trip_with_relative_paths() {
         script: dir.join("song.lua"),
         samples: None,
         bpm: None,
+        labels: Vec::new(),
     };
     let path = dir.join("min.sampler");
     minimal.save(&path).unwrap();
@@ -66,7 +68,8 @@ fn project_round_trip_with_relative_paths() {
         Project {
             script: dir.join("song.lua"),
             samples: None,
-            bpm: None
+            bpm: None,
+            labels: Vec::new(),
         }
     );
 }

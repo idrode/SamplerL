@@ -778,7 +778,7 @@ mod tests {
         let c = at(&format!("{SONG}amen:s|")).unwrap();
         assert_eq!(labels(&c), ["slice_at"], "cortes");
         let c = at("sample(\"amen.wav\"):slice(8):|").unwrap();
-        assert_eq!(labels(&c), ["count", "slice_at"]);
+        assert_eq!(labels(&c), ["count", "slice_at", "name"]);
     }
 
     #[test]

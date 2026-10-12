@@ -31,7 +31,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
-use engine::notation::parse_steps;
+use engine::notation::{check_label, parse_steps_labeled};
 use engine::{
     Batch, Controller, FilterKind, Fx, MAX_CYCLE_BARS, MAX_FX, MAX_GAIN, MAX_RETRIG, MAX_SEMITONES,
     MAX_TRACKS, Pattern, STEPS, Sample, SendError, Slices, Step, valid_bpm,
@@ -40,7 +40,7 @@ pub mod api;
 pub mod project;
 mod watch;
 
-pub use project::Project;
+pub use project::{Project, SliceLabel};
 pub use watch::{ScriptWatcher, WatchEvent};
 
 use mlua::{
@@ -83,6 +83,23 @@ pub struct TrackDef {
     pub gain: f32,
     /// Efectos de la pista (`:fx()`), en orden.
     pub fx: Vec<Fx>,
+    /// Etiqueta de cada corte de la pista (`labels[i]`, corte `i` desde 0).
+    pub labels: Vec<Option<String>>,
+    /// De qué sample y qué `slice(n)` salen los cortes (para etiquetarlos
+    /// desde la interfaz y guardarlo en el proyecto).
+    pub origin: SliceOrigin,
+}
+
+/// Origen de los cortes de una pista.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SliceOrigin {
+    /// El sample tal como se escribió en `sample("...")`.
+    pub sample: String,
+    /// La `n` de `slice(n)`.
+    pub count: usize,
+    /// Corte del `slice(n)` (desde 0) que es cada corte de la pista: todos
+    /// en orden, o uno solo con `slice_at`.
+    pub indices: Vec<usize>,
 }
 
 /// Error de un script, con archivo y línea cuando se conocen.
@@ -167,6 +184,8 @@ pub struct ScriptHost {
     sample_dir: Option<PathBuf>,
     /// Tempo si el script no llama a `bpm()` (del proyecto).
     default_bpm: Option<f64>,
+    /// Etiquetas de corte del proyecto (las de `:name()` mandan).
+    labels: Vec<SliceLabel>,
 }
 
 impl ScriptHost {
@@ -181,7 +200,57 @@ impl ScriptHost {
             seed: None,
             sample_dir: None,
             default_bpm: None,
+            labels: Vec::new(),
         }
+    }
+
+    /// Etiquetas de corte del proyecto: se aplican al cortar un sample con
+    /// el mismo nombre y el mismo número de cortes. Las de `:name()` mandan.
+    pub fn set_labels(&mut self, labels: Vec<SliceLabel>) {
+        self.labels = labels;
+    }
+
+    pub fn labels(&self) -> &[SliceLabel] {
+        &self.labels
+    }
+
+    /// Pone (o quita, con `None`) la etiqueta de un corte en las del
+    /// proyecto. Error si el nombre no vale o ya es de otro corte del mismo
+    /// sample cortado igual.
+    pub fn set_label(
+        &mut self,
+        sample: &str,
+        count: usize,
+        slice: usize,
+        name: Option<&str>,
+    ) -> Result<(), String> {
+        if !(1..=count).contains(&slice) {
+            return Err(format!("el corte {slice} no existe (hay {count})"));
+        }
+        let same = |l: &SliceLabel| l.sample == sample && l.slices == count;
+        if let Some(name) = name {
+            check_label(name)?;
+            if let Some(other) = self
+                .labels
+                .iter()
+                .find(|l| same(l) && l.name == name && l.slice != slice)
+            {
+                return Err(format!(
+                    "la etiqueta \"{name}\" ya es del corte {}",
+                    other.slice
+                ));
+            }
+        }
+        self.labels.retain(|l| !(same(l) && l.slice == slice));
+        if let Some(name) = name {
+            self.labels.push(SliceLabel {
+                sample: sample.to_string(),
+                slices: count,
+                slice,
+                name: name.to_string(),
+            });
+        }
+        Ok(())
     }
 
     /// Carpeta donde `sample()` busca las rutas relativas. `None` (por
@@ -378,14 +447,20 @@ impl ScriptHost {
             .unwrap_or_else(|| base_dir.to_path_buf());
         let rate = self.sample_rate;
         let g = guard.clone();
+        let labels = Rc::new(self.labels.clone());
         globals.set(
             "sample",
-            lua.create_function(move |lua, path: String| {
+            lua.create_function(move |lua, name: String| {
                 g(lua, "sample")?;
-                let path = base_dir.join(path);
+                let path = base_dir.join(&name);
                 let sample = load_cached(&mut cache.borrow_mut(), &path, rate)
                     .map_err(|e| fail(lua, format!("{}: {e}", path.display())))?;
-                Ok(SampleHandle { path, sample })
+                Ok(SampleHandle {
+                    name,
+                    path,
+                    sample,
+                    labels: labels.clone(),
+                })
             })?,
         )?;
 
@@ -408,7 +483,10 @@ impl ScriptHost {
                                     bars: Vec::new(),
                                     gain: 1.0,
                                     fx: Vec::new(),
+                                    labels: Vec::new(),
+                                    origin: source.origin.clone(),
                                 },
+                                labels: source.labels.clone(),
                                 transforms: Vec::new(),
                             };
                             // Redefinir una pista en el mismo script la reemplaza.
@@ -558,6 +636,9 @@ struct Builder {
 /// Pista en construcción: su definición y las transformaciones pendientes.
 struct TrackBuild {
     def: TrackDef,
+    /// Etiquetas de los cortes, compartidas con la variable de Lua: un
+    /// `:name()` posterior a `track()` vale para los `steps` siguientes.
+    labels: Rc<RefCell<Vec<Option<String>>>>,
     transforms: Vec<Transform>,
 }
 
@@ -581,8 +662,10 @@ enum Chance {
 fn expand(track: TrackBuild, rng: &mut Rng) -> Result<TrackDef, ScriptError> {
     let TrackBuild {
         mut def,
+        labels,
         transforms,
     } = track;
+    def.labels = labels.borrow().clone();
     let mut cycle = 1u64;
     for transform in &transforms {
         let n = match transform {
@@ -606,7 +689,7 @@ fn expand(track: TrackBuild, rng: &mut Rng) -> Result<TrackDef, ScriptError> {
                 Transform::Every { n, func } if b % n == 0 => {
                     let bar = BarHandle {
                         steps: Rc::new(RefCell::new(steps)),
-                        slices: def.slices.len(),
+                        labels: Rc::new(def.labels.clone()),
                         track: def.name.clone(),
                     };
                     let shared = bar.steps.clone();
@@ -670,8 +753,12 @@ impl Rng {
 
 /// `sample("archivo.wav")` en Lua.
 struct SampleHandle {
+    /// El nombre tal como se escribió (clave de las etiquetas del proyecto).
+    name: String,
     path: PathBuf,
     sample: Arc<Sample>,
+    /// Etiquetas de corte del proyecto.
+    labels: Rc<Vec<SliceLabel>>,
 }
 
 impl UserData for SampleHandle {
@@ -684,20 +771,42 @@ impl UserData for SampleHandle {
                     format!("slice({n}): el número de cortes va de 1 a 64"),
                 ));
             }
+            let count = n as usize;
+            let slices = Slices::detect(&this.sample, count);
+            // Las etiquetas del proyecto para este sample cortado así.
+            let mut labels = vec![None; slices.len()];
+            for label in this.labels.iter() {
+                if label.sample == this.name
+                    && label.slices == count
+                    && let Some(slot) = labels.get_mut(label.slice - 1)
+                {
+                    *slot = Some(label.name.clone());
+                }
+            }
             Ok(SlicedHandle {
                 path: this.path.clone(),
                 sample: this.sample.clone(),
-                slices: Slices::detect(&this.sample, n as usize),
+                origin: SliceOrigin {
+                    sample: this.name.clone(),
+                    count,
+                    indices: (0..slices.len()).collect(),
+                },
+                slices,
+                labels: Rc::new(RefCell::new(labels)),
             })
         });
     }
 }
 
-/// `sample(...):slice(n)` en Lua: sample con sus cortes.
+/// `sample(...):slice(n)` en Lua: sample con sus cortes y sus etiquetas.
+#[derive(Clone)]
 struct SlicedHandle {
     path: PathBuf,
     sample: Arc<Sample>,
     slices: Slices,
+    /// Etiqueta de cada corte; compartidas por la variable y sus pistas.
+    labels: Rc<RefCell<Vec<Option<String>>>>,
+    origin: SliceOrigin,
 }
 
 impl UserData for SlicedHandle {
@@ -705,25 +814,65 @@ impl UserData for SlicedHandle {
         methods.add_method("count", |_, this, ()| Ok(this.slices.len()));
 
         // `:slice_at(i)`: solo el corte `i` (desde 1), como fuente de un
-        // único corte (en el patrón, `1` o `x`).
+        // único corte (en el patrón, `1`, `x` o su etiqueta).
         methods.add_method("slice_at", |lua, this, index: i64| {
-            let only = usize::try_from(index - 1)
-                .ok()
-                .and_then(|i| this.slices.only(i))
-                .ok_or_else(|| {
-                    fail(
-                        lua,
-                        format!(
-                            "slice_at({index}): el corte no existe (hay {})",
-                            this.slices.len()
-                        ),
-                    )
-                })?;
+            let i = usize::try_from(index - 1).ok();
+            let only = i.and_then(|i| this.slices.only(i)).ok_or_else(|| {
+                fail(
+                    lua,
+                    format!(
+                        "slice_at({index}): el corte no existe (hay {})",
+                        this.slices.len()
+                    ),
+                )
+            })?;
+            let i = i.unwrap_or(0);
             Ok(SlicedHandle {
                 path: this.path.clone(),
                 sample: this.sample.clone(),
                 slices: only,
+                labels: Rc::new(RefCell::new(vec![this.labels.borrow()[i].clone()])),
+                origin: SliceOrigin {
+                    indices: vec![this.origin.indices[i]],
+                    ..this.origin.clone()
+                },
             })
+        });
+
+        // `:name(i, "kick")`: etiqueta el corte `i` para usarla en `steps`
+        // (`nil` la quita).
+        methods.add_method("name", |lua, this, (index, name): (i64, Option<String>)| {
+            let count = this.slices.len();
+            let i = usize::try_from(index - 1)
+                .ok()
+                .filter(|&i| i < count)
+                .ok_or_else(|| {
+                    fail(
+                        lua,
+                        format!("name({index}): el corte no existe (hay {count})"),
+                    )
+                })?;
+            let mut labels = this.labels.borrow_mut();
+            if let Some(name) = &name {
+                check_label(name)
+                    .map_err(|e| fail(lua, format!("name({index}, \"{name}\"): {e}")))?;
+                if let Some(other) = labels
+                    .iter()
+                    .position(|l| l.as_deref() == Some(name.as_str()))
+                    .filter(|&o| o != i)
+                {
+                    return Err(fail(
+                        lua,
+                        format!(
+                            "name({index}, \"{name}\"): la etiqueta ya es del corte {}",
+                            other + 1
+                        ),
+                    ));
+                }
+            }
+            labels[i] = name;
+            drop(labels);
+            Ok(this.clone())
         });
     }
 }
@@ -747,9 +896,16 @@ impl TrackHandle {
     }
 }
 
-/// Lee y valida un patrón en mini-notación para una pista con `slices` cortes.
-fn checked_steps(lua: &Lua, track: &str, slices: usize, text: &str) -> mlua::Result<Bar> {
-    let steps = parse_steps(text).map_err(|e| fail(lua, format!("steps: {e}")))?;
+/// Lee y valida un patrón en mini-notación para una pista con esas
+/// etiquetas (una por corte, así que también dan el número de cortes).
+fn checked_steps(
+    lua: &Lua,
+    track: &str,
+    labels: &[Option<String>],
+    text: &str,
+) -> mlua::Result<Bar> {
+    let slices = labels.len();
+    let steps = parse_steps_labeled(text, labels).map_err(|e| fail(lua, format!("steps: {e}")))?;
     for step in steps.iter().flatten() {
         if step.slice >= slices {
             return Err(fail(
@@ -910,8 +1066,8 @@ impl UserData for TrackHandle {
 
         // `:steps("1 . 3' ...")`: patrón base en mini-notación.
         methods.add_method("steps", |lua, this, text: String| {
-            let slices = this.with_track(|t| t.def.slices.len());
-            let steps = checked_steps(lua, &this.name, slices, &text)?;
+            let labels = this.with_track(|t| t.labels.borrow().clone());
+            let steps = checked_steps(lua, &this.name, &labels, &text)?;
             this.with_track(|t| t.def.steps = steps);
             Ok(this.clone())
         });
@@ -995,7 +1151,7 @@ impl UserData for TrackHandle {
 /// El compás que recibe la función de `every`.
 struct BarHandle {
     steps: Rc<RefCell<Bar>>,
-    slices: usize,
+    labels: Rc<Vec<Option<String>>>,
     track: String,
 }
 
@@ -1009,7 +1165,7 @@ impl BarHandle {
     fn handle(&self) -> BarHandle {
         BarHandle {
             steps: self.steps.clone(),
-            slices: self.slices,
+            labels: self.labels.clone(),
             track: self.track.clone(),
         }
     }
@@ -1019,7 +1175,7 @@ impl UserData for BarHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         // Sustituye los pasos de este compás.
         methods.add_method("steps", |lua, this, text: String| {
-            let steps = checked_steps(lua, &this.track, this.slices, &text)?;
+            let steps = checked_steps(lua, &this.track, &this.labels, &text)?;
             *this.steps.borrow_mut() = steps;
             Ok(this.handle())
         });

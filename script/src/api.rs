@@ -236,6 +236,38 @@ pub const FUNCTIONS: &[Function] = &[
         ),
     },
     Function {
+        name: "name",
+        receiver: Receiver::Slices,
+        signature: "cortes:name(i, nombre)",
+        returns: Some(Receiver::Slices),
+        summary: "Pone una etiqueta al corte i para usarla en steps en vez del número.",
+        doc: "Con la etiqueta, `steps(\"kick . snare .\")` es lo mismo que \
+              `steps(\"1 . 3 .\")`, y admite los mismos sufijos (`kick^7@0.5`). Vale \
+              para las pistas de esa variable, también las definidas antes, y \
+              `slice_at` conserva la etiqueta de su corte. `nil` la quita. El nombre \
+              lleva letras sin tilde, números y `_`, y no puede ser un número, \
+              `x` ni acabar en `r` y un número (se confundiría con el \
+              retrigger); dos cortes no pueden llevar la misma. Las etiquetas \
+              también se pueden guardar en el proyecto (sección 1); las de \
+              `name` mandan.",
+        params: &[
+            Param {
+                name: "i",
+                description: "número del corte (desde 1)",
+            },
+            Param {
+                name: "nombre",
+                description: "la etiqueta (`\"kick\"`, `\"snare\"`...), o `nil` para quitarla",
+            },
+        ],
+        template: "name(${1}, \"${kick}\")",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             amen:name(1, \"kick\"):name(2, \"hat\"):name(3, \"snare\")\n\
+             track(\"drums\", amen):steps(\"kick . hat .  snare . hat .  kick kick hat .  snare . hat^7@0.5 .\")\n",
+        ),
+    },
+    Function {
         name: "steps",
         receiver: Receiver::Track,
         signature: "pista:steps(texto)",

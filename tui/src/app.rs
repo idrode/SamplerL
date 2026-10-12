@@ -189,6 +189,7 @@ impl App {
         self.project = Some(path.to_path_buf());
         self.host.set_sample_dir(project.samples.clone());
         self.host.set_default_bpm(project.bpm);
+        self.host.set_labels(project.labels.clone());
         self.load();
         Ok(())
     }
@@ -307,6 +308,7 @@ impl App {
             script: self.path.clone(),
             samples: self.host.sample_dir().map(Path::to_path_buf),
             bpm,
+            labels: self.host.labels().to_vec(),
         };
         self.message = match project.save(&path) {
             Ok(()) => {

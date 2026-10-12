@@ -100,11 +100,18 @@ de samples y el tempo:
 script = cancion.lua
 samples = /home/yo/samples/breaks
 bpm = 170
+etiqueta = amen.wav 8 1 kick
+etiqueta = amen.wav 8 3 snare
 ```
 
 Las rutas relativas lo son a la carpeta del proyecto. Con `samples`,
 `sample("amen.wav")` busca en esa carpeta. El `bpm` es el tempo por
-defecto: si el script llama a `bpm()`, manda el script. Se abre con
+defecto: si el script llama a `bpm()`, manda el script. Cada `etiqueta`
+nombra un corte: sample (como se escribe en `sample("...")`), número de
+cortes (la `n` de `slice(n)`: con otro número los cortes son otros y no se
+aplica), corte y nombre. Así `steps("kick . snare .")` funciona sin
+`:name()` en el script; si el script nombra el mismo corte, manda el
+script. Se abre con
 `tui --edit proyecto.sampler` o con la orden `abrir`.
 
 ## 2. Atajos de teclado
@@ -250,6 +257,7 @@ tiempos.
 | `3` | Corte 3 (se cuenta desde 1) | `3` |
 | `.` | Silencio: no dispara nada; lo que sonaba sigue sonando | `.` |
 | `x` | Igual que `1` (cómodo con `slice_at`) | `x` |
+| `kick` | El corte con esa etiqueta (ver `cortes:name` en la sección 4) | `kick`, `snare` |
 | `'` | Reverse: el corte suena del final al principio | `3'` |
 | `^n` | Pitch en semitonos (signo y decimales, de -36 a 36). Cambia también la duración | `3^7`, `3^-5`, `3^0.5` |
 | `@g` | Volumen del paso (lineal, de 0 a 4) | `3@0.5` |
@@ -257,7 +265,10 @@ tiempos.
 
 Los sufijos se combinan en cualquier orden, cada uno una vez:
 `3'^7@0.5r2` es el corte 3, al revés, una quinta arriba, a media
-intensidad y repetido dos veces.
+intensidad y repetido dos veces. Con etiquetas, igual: `kick^7@0.5`,
+`snare'r2`. Un `r` y un número pegados al final de la etiqueta son el
+retrigger (`kickr4` es `kick` repetido 4 veces), por eso ninguna etiqueta
+puede acabar así.
 
 Mientras escribes, el editor revisa cada `steps("...")` sin esperar a
 guardar: el paso con error sale subrayado en rojo y el aviso (`⚠ línea N:
@@ -356,6 +367,21 @@ Solo el corte i (desde 1), como fuente de un único corte. En el patrón de la p
 local amen = sample("amen.wav"):slice(8)
 local caja = amen:slice_at(3)
 track("caja", caja):steps(". . . .  x . . .  . . . .  x . . .")
+```
+
+### `cortes:name(i, nombre)`
+
+Devuelve: cortes.
+
+Pone una etiqueta al corte i para usarla en steps en vez del número. Con la etiqueta, `steps("kick . snare .")` es lo mismo que `steps("1 . 3 .")`, y admite los mismos sufijos (`kick^7@0.5`). Vale para las pistas de esa variable, también las definidas antes, y `slice_at` conserva la etiqueta de su corte. `nil` la quita. El nombre lleva letras sin tilde, números y `_`, y no puede ser un número, `x` ni acabar en `r` y un número (se confundiría con el retrigger); dos cortes no pueden llevar la misma. Las etiquetas también se pueden guardar en el proyecto (sección 1); las de `name` mandan.
+
+- `i`: número del corte (desde 1)
+- `nombre`: la etiqueta (`"kick"`, `"snare"`...), o `nil` para quitarla
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+amen:name(1, "kick"):name(2, "hat"):name(3, "snare")
+track("drums", amen):steps("kick . hat .  snare . hat .  kick kick hat .  snare . hat^7@0.5 .")
 ```
 
 ### `pista:steps(texto)`
@@ -755,6 +781,20 @@ song.lua:2: steps: paso 3 ("5^"): falta el número después de ^
 ```
 
 Los sufijos `^`, `@` y `r` necesitan su número pegado: `5^7`, `5@0.5`, `5r4`.
+
+```text
+song.lua:4: steps: paso 3 ("snre"): la etiqueta "snre" no existe (hay: kick, snare, hat)
+```
+
+Una etiqueta mal escrita o que esa pista no tiene. Con `slice_at` la pista
+solo conoce la etiqueta de su corte.
+
+```text
+song.lua:3: name(1, "x"): "x" ya es el corte 1 en la notación
+```
+
+Un nombre de etiqueta que choca con la notación: ni números, ni `x`, ni un
+final en `r` y un número.
 
 ```text
 song.lua:2: la pista "hats" no existe; defínela con track("hats", sample(...):slice(n))
