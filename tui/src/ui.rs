@@ -543,16 +543,22 @@ impl Widget for SamplePanel<'_> {
             })
             .render(inner, buf);
 
-        // Número de cada corte (desde 1) en lo alto de su marca. Se escribe en
-        // el buffer para que caiga en la misma celda que la línea braille
-        // (`ctx.print` redondea la posición de otra forma).
+        // Número de cada corte (desde 1) en lo alto de su marca, con su
+        // etiqueta si la tiene (`1 kick`; la marca siguiente la puede tapar).
+        // Se escribe en el buffer para que caiga en la misma celda que la
+        // línea braille (`ctx.print` redondea la posición de otra forma).
         for (i, slice) in track.slices.iter().enumerate() {
             let column = (slice.start as f64 / frames * inner.width as f64).floor() as u16;
             if column < inner.width {
+                let text = match track.label(i) {
+                    Some(label) => format!("{} {label}", i + 1),
+                    None => (i + 1).to_string(),
+                };
+                let room = (inner.width - column) as usize;
                 buf.set_string(
                     inner.x + column,
                     inner.y,
-                    (i + 1).to_string(),
+                    text.chars().take(room).collect::<String>(),
                     Style::new().fg(SLICE).bold(),
                 );
             }
@@ -605,7 +611,11 @@ impl Widget for TrackerPanel<'_> {
             let mut spans = vec![Span::from(format!("{step:02} ")).fg(DIM)];
             for track in &view.tracks {
                 let cell = &track.steps[step];
-                let text = format!("{:<TRACKER_COLUMN$}", step_text(cell));
+                let cell_text: String = step_text(cell, &track.labels)
+                    .chars()
+                    .take(TRACKER_COLUMN - 1)
+                    .collect();
+                let text = format!("{cell_text:<TRACKER_COLUMN$}");
                 spans.push(if cell.is_some() {
                     Span::raw(text)
                 } else {

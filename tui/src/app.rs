@@ -563,6 +563,29 @@ impl App {
         )
     }
 
+    /// Etiquetas de corte conocidas: las de lo último cargado, las del
+    /// proyecto y las que el texto pone con `:name()` (aún sin cargar).
+    fn known_labels(&self) -> Vec<String> {
+        let mut labels: Vec<String> = Vec::new();
+        let mut add = |name: &str| {
+            if !labels.iter().any(|l| l == name) {
+                labels.push(name.to_string());
+            }
+        };
+        if let Some(song) = self.host.song() {
+            for name in song.tracks.iter().flat_map(|t| t.labels.iter().flatten()) {
+                add(name);
+            }
+        }
+        for label in self.host.labels() {
+            add(&label.name);
+        }
+        for name in complete::text_labels(&self.editor.lines().join("\n")) {
+            add(&name);
+        }
+        labels
+    }
+
     /// Autocompletado en el cursor. Si no es `manual` (F4), solo se abre
     /// con algo escrito o justo tras `:` o unas comillas, y no para una
     /// única opción que ya está escrita entera y no añade nada (una palabra
@@ -571,7 +594,14 @@ impl App {
         let cursor = self.editor.cursor();
         let (row, col) = (cursor.0, cursor.1);
         let folder = self.sample_folder();
-        let context = complete::context(self.editor.lines(), row, col, || list_wavs(&folder))?;
+        let labels = self.known_labels();
+        let context = complete::context(
+            self.editor.lines(),
+            row,
+            col,
+            || list_wavs(&folder),
+            &labels,
+        )?;
         let matches = context.matches();
         if matches.is_empty() {
             return None;
@@ -1041,6 +1071,7 @@ impl App {
                             level: slot.map_or(0.0, |s| self.meters[s]),
                             gain: t.gain,
                             fx: t.fx.clone(),
+                            labels: t.labels.clone(),
                         }
                     })
                     .collect()
@@ -1052,7 +1083,7 @@ impl App {
                 line: error_line(&e.message, &name),
                 message: e.message.clone(),
             }),
-            diagnostics: diagnose::steps_diagnostics(self.editor.lines()),
+            diagnostics: diagnose::steps_diagnostics(self.editor.lines(), &self.known_labels()),
             help: (self.mode == Mode::Edit && self.palette.is_none())
                 .then(|| {
                     let cursor = self.editor.cursor();

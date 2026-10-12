@@ -13,8 +13,9 @@
 //!   `chance(p, "...")`, sus efectos;
 //! - al inicio de línea, funciones globales, snippets, variables locales y
 //!   palabras clave (en mitad de una expresión, lo mismo sin snippets);
-//! - dentro de `steps("...")` (y de cualquier otra cadena o comentario),
-//!   nada.
+//! - dentro de `steps("...")`, las etiquetas de corte conocidas para el
+//!   paso que se escribe (si empieza por letra);
+//! - dentro de cualquier otra cadena o comentario, nada.
 
 use script::api::{self, Receiver};
 
@@ -67,13 +68,15 @@ const MAX_DEPTH: usize = 8;
 
 /// Contexto del cursor en (`row`, `col`), con `col` en caracteres. `wavs`
 /// da los archivos de la carpeta de muestras (solo se llama dentro de
-/// `sample("...")`). `None`: ahí no se completa nada (dentro de
+/// `sample("...")`); `labels`, las etiquetas de corte conocidas. `None`:
+/// ahí no se completa nada (un número de corte o un sufijo en
 /// `steps("...")`, otra cadena, un comentario o un número).
 pub fn context(
     lines: &[String],
     row: usize,
     col: usize,
     wavs: impl FnOnce() -> Vec<String>,
+    labels: &[String],
 ) -> Option<Context> {
     let mut before = String::new();
     for line in lines.iter().take(row) {
@@ -87,7 +90,7 @@ pub fn context(
 
     if let Some(quote) = scan.string {
         let prefix: String = before[quote + 1..].to_string();
-        return string_context(&scan, &before[..quote], prefix, &all, wavs);
+        return string_context(&scan, &before[..quote], prefix, &all, wavs, labels);
     }
     if scan.comment {
         return None;
@@ -169,7 +172,32 @@ fn string_context(
     prefix: String,
     all: &str,
     wavs: impl FnOnce() -> Vec<String>,
+    labels: &[String],
 ) -> Option<Context> {
+    // En `steps("...")`: las etiquetas, para el paso que se está escribiendo.
+    if let Some(Frame::Paren { name, arg: 0, .. }) = scan.frames.last()
+        && name == "steps"
+    {
+        let token = prefix.rsplit(char::is_whitespace).next().unwrap_or("");
+        let is_word = token.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            && !token.starts_with(|c: char| c.is_ascii_digit());
+        if labels.is_empty() || !is_word {
+            return None;
+        }
+        return Some(Context {
+            prefix: token.to_string(),
+            candidates: labels
+                .iter()
+                .map(|l| Candidate {
+                    label: l.clone(),
+                    kind: "etiqueta".into(),
+                    signature: format!("{l} (con sufijos: {l}^7@0.5, {l}'r2)"),
+                    description: "etiqueta de corte".into(),
+                    insert: l.clone(),
+                })
+                .collect(),
+        });
+    }
     let candidates = match scan.frames.last()? {
         Frame::Paren { name, arg, .. } => match (name.as_str(), *arg) {
             ("sample", 0) => wavs()
@@ -697,6 +725,30 @@ fn locals(text: &str) -> Vec<String> {
     names
 }
 
+/// Etiquetas puestas en el texto con `:name(i, "etiqueta")` (en orden,
+/// sin repetir).
+pub fn text_labels(text: &str) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    for (i, _) in text.match_indices(":name(") {
+        let rest = &text[i + ":name(".len()..];
+        let Some((_, after)) = rest.split_once(',') else {
+            continue;
+        };
+        let after = after.trim_start();
+        let Some(quote) = after.chars().next().filter(|&c| c == '"' || c == '\'') else {
+            continue;
+        };
+        let Some(end) = after[1..].find(quote) else {
+            continue;
+        };
+        let name = &after[1..1 + end];
+        if engine::notation::check_label(name).is_ok() && !names.iter().any(|n| n == name) {
+            names.push(name.to_string());
+        }
+    }
+    names
+}
+
 /// Nombres de pista definidos con `track("nombre", ...)` (en orden, sin
 /// repetir).
 pub fn track_names(text: &str) -> Vec<String> {
@@ -739,7 +791,8 @@ mod tests {
         let col = line[..line.find('|').unwrap()].chars().count();
         let lines: Vec<String> = lines.iter().map(|l| l.replace('|', "")).collect();
         let wavs: Vec<String> = wavs.iter().map(|w| w.to_string()).collect();
-        context(&lines, row, col, || wavs)
+        let labels = ["kick".to_string(), "snare".to_string(), "hat".to_string()];
+        context(&lines, row, col, || wavs, &labels)
     }
 
     fn labels(context: &Context) -> Vec<String> {
@@ -854,9 +907,39 @@ mod tests {
     }
 
     #[test]
+    fn steps_offers_labels_for_the_step_being_written() {
+        let c = at(&format!("{SONG}track(\"d\", amen):steps(\"kick . s|")).unwrap();
+        assert_eq!(c.prefix, "s");
+        assert_eq!(labels(&c), ["snare"]);
+        assert_eq!(c.matches()[0].kind, "etiqueta");
+        let c = at(&format!("{SONG}track(\"d\", amen):steps(\"|")).unwrap();
+        assert_eq!(labels(&c), ["kick", "snare", "hat"]);
+        let c = at(&format!("{SONG}x:every(2, function(c) c:steps(\"1 h|")).unwrap();
+        assert_eq!(labels(&c), ["hat"]);
+        // Tras un número o dentro de un sufijo, nada.
+        assert!(at(&format!("{SONG}track(\"d\", amen):steps(\"1 . 3|")).is_none());
+        assert!(at(&format!("{SONG}track(\"d\", amen):steps(\"kick^|")).is_none());
+        // Sin etiquetas conocidas, nada.
+        let lines = vec!["x:steps(\"k".to_string()];
+        assert!(context(&lines, 0, 10, Vec::new, &[]).is_none());
+    }
+
+    #[test]
+    fn finds_labels_named_in_the_text() {
+        let text = "amen:name(1, \"kick\"):name(3,'snare')\nb:name(2, \"12\") -- no vale\namen:name(4, \"kick\")";
+        assert_eq!(text_labels(text), ["kick", "snare"]);
+    }
+
+    #[test]
     fn nothing_inside_steps_other_strings_comments_or_numbers() {
-        assert!(at(&format!("{SONG}track(\"d\", amen):steps(\"1 . |")).is_none());
-        assert!(at(&format!("{SONG}track(\"d\", amen):steps(\"1 . s|\")")).is_none());
+        assert!(at(&format!("{SONG}track(\"d\", amen):steps(\"1 . 2|")).is_none());
+        // Una palabra sin etiqueta que empiece así: sin opciones.
+        assert!(
+            at(&format!("{SONG}track(\"d\", amen):steps(\"1 . z|\")"))
+                .unwrap()
+                .matches()
+                .is_empty()
+        );
         assert!(at("print(\"hola |").is_none());
         assert!(at("-- un comentario tr|").is_none());
         assert!(at("bpm(17|").is_none());

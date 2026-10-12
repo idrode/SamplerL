@@ -1658,3 +1658,72 @@ fn pantalla_paleta() {
     type_query(&mut app, "lin");
     println!("{}", text(&draw(&mut app, 120, 40)));
 }
+
+// --- Etiquetas de corte ---
+
+const LABELED: &str = r#"bpm(120)
+local amen = sample("break.wav"):slice(2):name(1, "kick"):name(2, "snare")
+track("drums", amen):steps("kick . snare .  kick . snare .  kick . snare .  kick^7 . snare' .")
+"#;
+
+#[test]
+fn the_tracker_and_the_sample_view_show_labels() {
+    let (_, mut app, mut engine) = open("labels_views", Some(LABELED));
+    assert!(app.view().error.is_none(), "{:?}", app.view().error);
+    offline::render(&mut engine, STEP + 100, 2);
+    app.tick();
+    let screen = text(&draw(&mut app, 120, 40));
+    // Tracker: el nombre en vez del número, con sus sufijos.
+    assert!(screen.contains("00 kick"), "{screen}");
+    assert!(screen.contains("02 snare"), "{screen}");
+    // Vista del sample: número y etiqueta en cada marca.
+    assert!(screen.contains("1 kick"), "{screen}");
+    assert!(screen.contains("2 snare"), "{screen}");
+    let view = app.view();
+    assert_eq!(view.tracks[0].label(0), Some("kick"));
+    assert_eq!(
+        crate::model::step_text(&view.tracks[0].steps[12], &view.tracks[0].labels),
+        "kick^7"
+    );
+}
+
+#[test]
+fn labels_complete_inside_steps_and_unknown_ones_are_underlined() {
+    let (_, mut app, _engine) = open("labels_complete", Some(LABELED));
+    app.editor.move_cursor(ratatui_textarea::CursorMove::Bottom);
+    app.editor.move_cursor(ratatui_textarea::CursorMove::End);
+    type_text(&mut app, "\ntrack(\"b\", amen):steps(\"kick . sn");
+    assert_eq!(completion_items(&app), ["snare"]);
+    app.handle(special(Key::Enter));
+    assert_eq!(
+        current_line(&app),
+        "track(\"b\", amen):steps(\"kick . snare"
+    );
+
+    // Una etiqueta que no existe se ve al momento, con las que hay.
+    type_text(&mut app, " snre");
+    let view = app.view();
+    assert_eq!(view.diagnostics.len(), 1);
+    assert_eq!(
+        view.diagnostics[0].message,
+        "steps: paso 4 (\"snre\"): la etiqueta \"snre\" no existe (hay: kick, snare)"
+    );
+    // Una etiqueta recién escrita con :name() (sin cargar) ya cuenta.
+    app.handle(special(Key::Esc));
+    let (_, mut app, _engine) = open("labels_typed", Some(LABELED));
+    app.editor.move_cursor(ratatui_textarea::CursorMove::Bottom);
+    app.editor.move_cursor(ratatui_textarea::CursorMove::End);
+    type_text(
+        &mut app,
+        "\namen:name(1, \"bombo\")\ntrack(\"c\", amen):steps(\"bombo . . .  . . . .  . . . .  . . . .\")",
+    );
+    assert!(
+        app.view().diagnostics.is_empty(),
+        "{:?}",
+        app.view().diagnostics
+    );
+    app.handle(ctrl('s'));
+    let view = app.view();
+    assert!(view.error.is_none(), "{:?}", view.error);
+    assert_eq!(view.tracks[0].label(0), Some("bombo"));
+}

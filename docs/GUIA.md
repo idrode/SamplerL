@@ -202,7 +202,8 @@ Qué ofrece según dónde esté el cursor:
 | Dentro de `sample("...")` | Los WAV de la carpeta de muestras (la del proyecto o la del script) |
 | Dentro de `track("...")` | Las pistas ya definidas en el script |
 | Dentro de `chance(p, "...")` | Los efectos de `chance` |
-| Dentro de `steps("...")`, otras cadenas y comentarios | Nada |
+| Dentro de `steps("...")` | Las etiquetas de corte, al escribir un paso que empieza por letra (nada tras un número o en un sufijo) |
+| Otras cadenas y comentarios | Nada |
 
 Al aceptar una función se inserta con sus parámetros de ejemplo y el
 primero queda marcado: lo que escribas lo sustituye. Por ejemplo, tras
@@ -272,9 +273,14 @@ puede acabar así.
 
 Mientras escribes, el editor revisa cada `steps("...")` sin esperar a
 guardar: el paso con error sale subrayado en rojo y el aviso (`⚠ línea N:
-...`) aparece al pie del editor. Comprueba la notación, que haya 16 pasos y
-los rangos de volumen, pitch y retrigger; los cortes que no existen se ven
-al cargar.
+...`) aparece al pie del editor. Comprueba la notación, las etiquetas, que
+haya 16 pasos y los rangos de volumen, pitch y retrigger; los cortes que no
+existen se ven al cargar. Las etiquetas que conoce son las de lo último
+cargado, las del proyecto y las que el texto pone con `:name()`, de
+cualquier pista: si una etiqueta no es de esa pista, lo dice la carga.
+
+Con etiquetas, el tracker muestra el nombre en vez del número (`kick^7`) y
+la vista del sample pone cada etiqueta junto al número de su corte.
 
 Ejemplos:
 

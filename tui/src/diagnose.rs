@@ -5,7 +5,7 @@
 
 use std::ops::Range;
 
-use engine::notation::{parse_step, parse_steps};
+use engine::notation::{parse_step_labeled, parse_steps_labeled};
 use engine::{MAX_GAIN, MAX_RETRIG, MAX_SEMITONES};
 
 /// Un problema en una línea del editor.
@@ -20,8 +20,11 @@ pub struct Diagnostic {
 
 /// Diagnósticos de todas las cadenas de `steps("...")` del texto (también
 /// las de `c:steps` dentro de `every`). Una cadena sin cerrar se mira
-/// hasta el final de la línea.
-pub fn steps_diagnostics(lines: &[String]) -> Vec<Diagnostic> {
+/// hasta el final de la línea. `labels` son las etiquetas de corte
+/// conocidas (de cualquier pista: si una no es de esa pista, lo dirá la
+/// carga).
+pub fn steps_diagnostics(lines: &[String], labels: &[String]) -> Vec<Diagnostic> {
+    let labels: Vec<Option<String>> = labels.iter().cloned().map(Some).collect();
     let mut out = Vec::new();
     for (row, line) in lines.iter().enumerate() {
         let chars: Vec<char> = line.chars().collect();
@@ -52,7 +55,7 @@ pub fn steps_diagnostics(lines: &[String]) -> Vec<Diagnostic> {
                 .find(|&k| chars[k] == quote)
                 .unwrap_or(chars.len());
             let content: String = chars[start..end].iter().collect();
-            if let Some((cols, message)) = check(&content) {
+            if let Some((cols, message)) = check(&content, &labels) {
                 let cols = if cols.is_empty() {
                     // Sin pasos: se subrayan las comillas.
                     start.saturating_sub(1)..(end + 1).min(chars.len())
@@ -75,7 +78,7 @@ pub fn steps_diagnostics(lines: &[String]) -> Vec<Diagnostic> {
 /// error de un paso se ve aunque falten pasos), luego cuántos hay y luego
 /// los rangos. Devuelve las columnas (dentro del patrón) que se subrayan y
 /// el mensaje.
-fn check(content: &str) -> Option<(Range<usize>, String)> {
+fn check(content: &str, labels: &[Option<String>]) -> Option<(Range<usize>, String)> {
     let tokens = tokens(content);
     let text = |i: usize| -> String {
         content
@@ -86,14 +89,14 @@ fn check(content: &str) -> Option<(Range<usize>, String)> {
     };
     for (i, cols) in tokens.iter().enumerate() {
         let token = text(i);
-        if let Err(message) = parse_step(&token) {
+        if let Err(message) = parse_step_labeled(&token, labels) {
             return Some((
                 cols.clone(),
                 format!("paso {} (\"{token}\"): {message}", i + 1),
             ));
         }
     }
-    let steps = match parse_steps(content) {
+    let steps = match parse_steps_labeled(content, labels) {
         Ok(steps) => steps,
         Err(e) => {
             let cols = match (tokens.first(), tokens.last()) {
@@ -172,8 +175,42 @@ mod tests {
     use super::*;
 
     fn diagnose(text: &str) -> Vec<Diagnostic> {
+        diagnose_with(text, &[])
+    }
+
+    fn diagnose_with(text: &str, labels: &[&str]) -> Vec<Diagnostic> {
         let lines: Vec<String> = text.lines().map(String::from).collect();
-        steps_diagnostics(&lines)
+        let labels: Vec<String> = labels.iter().map(|l| l.to_string()).collect();
+        steps_diagnostics(&lines, &labels)
+    }
+
+    #[test]
+    fn labels_are_known_and_unknown_ones_underlined() {
+        let line = r#":steps("kick . snare .  kick^7@0.5 . snre .  . . . .  . . . .")"#;
+        let d = diagnose_with(line, &["kick", "snare"]);
+        assert_eq!(d.len(), 1);
+        let underlined: String = line
+            .chars()
+            .skip(d[0].cols.start)
+            .take(d[0].cols.len())
+            .collect();
+        assert_eq!(underlined, "snre");
+        assert_eq!(
+            d[0].message,
+            "steps: paso 7 (\"snre\"): la etiqueta \"snre\" no existe (hay: kick, snare)"
+        );
+        let fixed = line.replace("snre", "snare");
+        assert!(diagnose_with(&fixed, &["kick", "snare"]).is_empty());
+        // Rangos también con etiquetas.
+        let d = diagnose_with(
+            r#":steps("kick@9 . . .  . . . .  . . . .  . . . .")"#,
+            &["kick"],
+        );
+        assert!(
+            d[0].message.contains("ganancia fuera de rango"),
+            "{}",
+            d[0].message
+        );
     }
 
     #[test]

@@ -109,6 +109,15 @@ pub struct TrackView {
     pub gain: f32,
     /// Efectos de la pista, en orden.
     pub fx: Vec<Fx>,
+    /// Etiqueta de cada corte (si la tiene).
+    pub labels: Vec<Option<String>>,
+}
+
+impl TrackView {
+    /// Etiqueta del corte `i` (desde 0), si la tiene.
+    pub fn label(&self, i: usize) -> Option<&str> {
+        self.labels.get(i).and_then(|l| l.as_deref())
+    }
 }
 
 /// Resumen de una forma de onda: mínimo y máximo (canales mezclados) de
@@ -166,12 +175,16 @@ pub fn error_line(message: &str, file: &str) -> Option<usize> {
     digits.parse().ok()
 }
 
-/// Texto de un paso en mini-notación (`03'^7@0.5r4`), o `---` si es silencio.
-pub fn step_text(step: &Option<Step>) -> String {
+/// Texto de un paso en mini-notación (`03'^7@0.5r4`, o con la etiqueta
+/// del corte si la tiene: `kick'^7`), o `---` si es silencio.
+pub fn step_text(step: &Option<Step>, labels: &[Option<String>]) -> String {
     let Some(step) = step else {
         return "---".into();
     };
-    let mut text = format!("{:02}", step.slice + 1);
+    let mut text = match labels.get(step.slice).and_then(|l| l.as_deref()) {
+        Some(label) => label.to_string(),
+        None => format!("{:02}", step.slice + 1),
+    };
     if step.reverse {
         text.push('\'');
     }
@@ -229,14 +242,20 @@ mod tests {
 
     #[test]
     fn writes_steps_in_notation() {
-        assert_eq!(step_text(&None), "---");
-        assert_eq!(step_text(&Some(Step::new(2))), "03");
+        assert_eq!(step_text(&None, &[]), "---");
+        assert_eq!(step_text(&Some(Step::new(2)), &[]), "03");
         let fancy = Step::new(0)
             .reversed()
             .with_pitch(-5.0)
             .with_gain(0.5)
             .with_retrig(4);
-        assert_eq!(step_text(&Some(fancy)), "01'^-5@0.5r4");
+        assert_eq!(step_text(&Some(fancy), &[]), "01'^-5@0.5r4");
+        // Con etiqueta, el nombre en vez del número (y se vuelve a leer igual).
+        let labels = vec![Some("kick".to_string()), None];
+        assert_eq!(step_text(&Some(fancy), &labels), "kick'^-5@0.5r4");
+        assert_eq!(step_text(&Some(Step::new(1)), &labels), "02");
+        let parsed = engine::notation::parse_step_labeled("kick'^-5@0.5r4", &labels).unwrap();
+        assert_eq!(parsed, Some(fancy));
         // Se puede volver a leer con la notación (con el número sin cero a la izquierda).
         let parsed = engine::notation::parse_step("1'^-5@0.5r4").unwrap();
         assert_eq!(parsed, Some(fancy));
