@@ -131,6 +131,61 @@ pub fn shuffle(text: &str, rng: &mut Rng) -> Result<String, String> {
     Ok(format(&tokens))
 }
 
+/// Semitonos del `degree` (desde 1; negativos, por debajo de la tónica)
+/// de una escala con esos `intervals`, sobre una tónica a `root` semitonos
+/// de do.
+pub fn scale_pitch(intervals: &[i32], root: i32, degree: i64) -> Result<i32, String> {
+    if degree == 0 {
+        return Err("el grado 0 no existe (1 es la tónica, -1 el grado de debajo)".into());
+    }
+    let len = intervals.len() as i64;
+    let index = if degree > 0 { degree - 1 } else { degree };
+    let octave = index.div_euclid(len);
+    let semitones = root as i64 + intervals[index.rem_euclid(len) as usize] as i64 + 12 * octave;
+    i32::try_from(semitones).map_err(|_| format!("el grado {degree} está demasiado lejos"))
+}
+
+/// Patrón de grados (`"1 . 3 .  5@0.5 ..."`) a pasos con pitch del `hit`:
+/// `"1^0 . 1^3 .  1^7@0.5 ..."`.
+pub fn melody(intervals: &[i32], root: i32, degrees: &str, hit: &str) -> Result<String, String> {
+    let who = "melody";
+    let tokens = tokens(degrees, who)?;
+    check_hit(hit, who)?;
+    if hit.contains('^') {
+        return Err(format!(
+            "{who}: el golpe no puede llevar ^ (el pitch lo pone la escala): \"{hit}\""
+        ));
+    }
+    let steps: Vec<String> = tokens
+        .iter()
+        .enumerate()
+        .map(|(i, token)| {
+            if token == "." {
+                return Ok(".".to_string());
+            }
+            let sign = usize::from(token.starts_with('-'));
+            let digits = token[sign..].chars().take_while(char::is_ascii_digit).count();
+            let (number, suffixes) = token.split_at(sign + digits);
+            let degree: i64 = number
+                .parse()
+                .map_err(|_| format!("{who}: paso {} (\"{token}\"): debe empezar por un grado (1, 2, -1...) o ser \".\"", i + 1))?;
+            if suffixes.contains('^') {
+                return Err(format!("{who}: paso {} (\"{token}\"): el pitch lo pone la escala, sin ^", i + 1));
+            }
+            let semitones = scale_pitch(intervals, root, degree)
+                .map_err(|e| format!("{who}: paso {} (\"{token}\"): {e}", i + 1))?;
+            if semitones.abs() > engine::MAX_SEMITONES as i32 {
+                return Err(format!(
+                    "{who}: paso {} (\"{token}\"): el grado {degree} da {semitones} semitonos (máximo ±36)",
+                    i + 1
+                ));
+            }
+            Ok(format!("{hit}^{semitones}{suffixes}"))
+        })
+        .collect::<Result<_, String>>()?;
+    Ok(format(&steps))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,6 +290,55 @@ mod tests {
                 .unwrap_err()
                 .starts_with("shuffle: ")
         );
+    }
+
+    #[test]
+    fn scale_degrees_become_semitones() {
+        let minor = crate::api::scale("minor").unwrap().intervals;
+        let major = crate::api::scale("major").unwrap().intervals;
+        let got: Vec<i32> = [1, 2, 3, 4, 5, 6, 7, 8, 10, -1, -7, -8]
+            .iter()
+            .map(|&d| scale_pitch(minor, 0, d).unwrap())
+            .collect();
+        assert_eq!(got, [0, 2, 3, 5, 7, 8, 10, 12, 15, -2, -12, -14]);
+        assert_eq!(scale_pitch(major, 2, 3).unwrap(), 6, "en re");
+        assert!(scale_pitch(major, 0, 0).unwrap_err().contains("grado 0"));
+        let penta = crate::api::scale("minor_pentatonic").unwrap().intervals;
+        assert_eq!(scale_pitch(penta, 0, 6).unwrap(), 12);
+    }
+
+    #[test]
+    fn melodies_from_degrees() {
+        let minor = crate::api::scale("minor").unwrap().intervals;
+        assert_eq!(
+            melody(minor, 0, "1 3 5 3  . . . .  . . . .  . . . .", "1").unwrap(),
+            "1^0 1^3 1^7 1^3  . . . .  . . . .  . . . ."
+        );
+        assert_eq!(
+            melody(
+                minor,
+                3,
+                "1@0.5 -1' 8r2 .  . . . .  . . . .  . . . .",
+                "kick"
+            )
+            .unwrap(),
+            "kick^3@0.5 kick^1' kick^15r2 .  . . . .  . . . .  . . . ."
+        );
+        let e = |d: &str, hit: &str| {
+            melody(
+                minor,
+                0,
+                &format!("{d} . . .  . . . .  . . . .  . . . ."),
+                hit,
+            )
+            .unwrap_err()
+        };
+        assert!(e("x", "1").contains("paso 1 (\"x\"): debe empezar por un grado"));
+        assert!(e("3^2", "1").contains("sin ^"));
+        assert!(e("0", "1").contains("grado 0"));
+        assert!(e("30", "1").contains("da 50 semitonos (máximo ±36)"));
+        assert!(e("1", "1^5").contains("el golpe no puede llevar ^"));
+        assert!(e("1", ".").contains("el golpe"));
     }
 
     #[test]

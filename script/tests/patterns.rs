@@ -220,3 +220,39 @@ fn shuffle_follows_its_seed_and_sounds_like_its_pattern() {
         value(&dir, &format!("shuffle({p})"))
     );
 }
+
+#[test]
+fn scale_melodies_sound_like_the_pitched_pattern() {
+    let dir = fixture("scale");
+    assert_eq!(
+        value(
+            &dir,
+            "scale(\"minor\", \"C\"):melody(\"1 3 5 3  . . . .  . . . .  . . . .\")"
+        ),
+        "1^0 1^3 1^7 1^3  . . . .  . . . .  . . . ."
+    );
+    assert_eq!(
+        value(&dir, "tostring(scale(\"major\", \"D\"):pitch(3))"),
+        "6"
+    );
+    let a = render(
+        &dir,
+        "track(\"m\", amen):steps(scale(\"dorian\", \"Eb\"):melody(\"1 . 3 .  5 . 7@0.5 .  8 . -1 .  . . 2' .\", \"3\"))",
+        1,
+    );
+    // dórica sobre mi bemol (3): 3 6 10 15 | 15 2 | 5
+    let b = render(
+        &dir,
+        "track(\"m\", amen):steps(\"3^3 . 3^6 .  3^10 . 3^13@0.5 .  3^15 . 3^1 .  . . 3^5' .\")",
+        1,
+    );
+    same(&a, &b);
+    assert_eq!(
+        error(&dir, "scale(\"menor\")"),
+        "song.lua:3: scale(\"menor\"): no existe (major, minor, harmonic_minor, melodic_minor, \
+         dorian, phrygian, lydian, mixolydian, locrian, major_pentatonic, minor_pentatonic, \
+         blues, chromatic)"
+    );
+    assert!(error(&dir, "scale(\"minor\", \"H\")").contains("tónica no válida"));
+    assert!(error(&dir, "scale(\"minor\"):pitch(0)").contains("pitch(0): el grado 0 no existe"));
+}

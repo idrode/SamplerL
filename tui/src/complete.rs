@@ -238,6 +238,26 @@ fn string_context(
                     insert: n,
                 })
                 .collect(),
+            ("scale", 0) => api::SCALES
+                .iter()
+                .map(|s| Candidate {
+                    label: s.name.into(),
+                    kind: "escala".into(),
+                    signature: format!("scale(\"{}\")", s.name),
+                    description: s.summary.into(),
+                    insert: s.name.into(),
+                })
+                .collect(),
+            ("scale", 1) => api::NOTES
+                .iter()
+                .map(|(n, semis)| Candidate {
+                    label: n.to_string(),
+                    kind: "tónica".into(),
+                    signature: format!("scale(nombre, \"{n}\")"),
+                    description: format!("{semis} semitonos sobre el tono del corte"),
+                    insert: n.to_string(),
+                })
+                .collect(),
             ("chance", 1) => api::CHANCE_EFFECTS
                 .iter()
                 .map(|e| Candidate {
@@ -319,6 +339,7 @@ fn methods(receiver: Option<Receiver>) -> Vec<Candidate> {
             Receiver::Slices,
             Receiver::Sample,
             Receiver::Bar,
+            Receiver::Scale,
         ],
     };
     let mut out: Vec<Candidate> = Vec::new();
@@ -601,6 +622,7 @@ fn method(code: &str, receiver: &str, name: &str) -> Option<&'static api::Functi
             Receiver::Slices,
             Receiver::Sample,
             Receiver::Bar,
+            Receiver::Scale,
         ]
         .into_iter()
         .find_map(|r| api::function(r, name)),
@@ -922,6 +944,19 @@ mod tests {
         // Sin etiquetas conocidas, nada.
         let lines = vec!["x:steps(\"k".to_string()];
         assert!(context(&lines, 0, 10, Vec::new, &[]).is_none());
+    }
+
+    #[test]
+    fn scales_offer_their_methods_names_and_tonics() {
+        let c = at("local menor = scale(\"minor\")\nmenor:|").unwrap();
+        assert_eq!(labels(&c), ["pitch", "melody"]);
+        assert_eq!(c.matches()[0].kind, "método de escala");
+        let c = at("scale(\"mi|").unwrap();
+        assert_eq!(labels(&c), ["minor", "mixolydian", "minor_pentatonic"]);
+        let c = at("scale(\"minor\", \"|").unwrap();
+        assert_eq!(labels(&c).len(), api::NOTES.len());
+        let h = help("scale(\"minor\"):mel|ody(\"1\")").unwrap();
+        assert_eq!(h.signature, "escala:melody(grados [, golpe])");
     }
 
     #[test]

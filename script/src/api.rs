@@ -24,6 +24,8 @@ pub enum Receiver {
     Track,
     /// Compás que recibe la función de `every`.
     Bar,
+    /// Escala: `scale("minor", "C")`.
+    Scale,
 }
 
 impl Receiver {
@@ -35,6 +37,7 @@ impl Receiver {
             Receiver::Slices => "cortes",
             Receiver::Track => "pista",
             Receiver::Bar => "compás",
+            Receiver::Scale => "escala",
         }
     }
 }
@@ -194,6 +197,119 @@ pub struct Snippet {
     /// Lo que tiene que haber antes en el script para que funcione (se
     /// muestra en la guía y se usa en los tests).
     pub requires: &'static str,
+}
+
+/// Escala para `scale(nombre, tónica)`: intervalos en semitonos desde la
+/// tónica.
+#[derive(Debug, Clone, Copy)]
+pub struct ScaleDef {
+    pub name: &'static str,
+    pub intervals: &'static [i32],
+    pub summary: &'static str,
+}
+
+/// Escalas de `scale`.
+pub const SCALES: &[ScaleDef] = &[
+    ScaleDef {
+        name: "major",
+        intervals: &[0, 2, 4, 5, 7, 9, 11],
+        summary: "mayor (jónica)",
+    },
+    ScaleDef {
+        name: "minor",
+        intervals: &[0, 2, 3, 5, 7, 8, 10],
+        summary: "menor natural (eólica)",
+    },
+    ScaleDef {
+        name: "harmonic_minor",
+        intervals: &[0, 2, 3, 5, 7, 8, 11],
+        summary: "menor armónica",
+    },
+    ScaleDef {
+        name: "melodic_minor",
+        intervals: &[0, 2, 3, 5, 7, 9, 11],
+        summary: "menor melódica (ascendente)",
+    },
+    ScaleDef {
+        name: "dorian",
+        intervals: &[0, 2, 3, 5, 7, 9, 10],
+        summary: "dórica",
+    },
+    ScaleDef {
+        name: "phrygian",
+        intervals: &[0, 1, 3, 5, 7, 8, 10],
+        summary: "frigia",
+    },
+    ScaleDef {
+        name: "lydian",
+        intervals: &[0, 2, 4, 6, 7, 9, 11],
+        summary: "lidia",
+    },
+    ScaleDef {
+        name: "mixolydian",
+        intervals: &[0, 2, 4, 5, 7, 9, 10],
+        summary: "mixolidia",
+    },
+    ScaleDef {
+        name: "locrian",
+        intervals: &[0, 1, 3, 5, 6, 8, 10],
+        summary: "locria",
+    },
+    ScaleDef {
+        name: "major_pentatonic",
+        intervals: &[0, 2, 4, 7, 9],
+        summary: "pentatónica mayor",
+    },
+    ScaleDef {
+        name: "minor_pentatonic",
+        intervals: &[0, 3, 5, 7, 10],
+        summary: "pentatónica menor",
+    },
+    ScaleDef {
+        name: "blues",
+        intervals: &[0, 3, 5, 6, 7, 10],
+        summary: "blues",
+    },
+    ScaleDef {
+        name: "chromatic",
+        intervals: &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+        summary: "cromática (cada grado, un semitono)",
+    },
+];
+
+/// Tónicas de `scale`, con su distancia en semitonos a do (C).
+pub const NOTES: &[(&str, i32)] = &[
+    ("C", 0),
+    ("C#", 1),
+    ("Db", 1),
+    ("D", 2),
+    ("D#", 3),
+    ("Eb", 3),
+    ("E", 4),
+    ("F", 5),
+    ("F#", 6),
+    ("Gb", 6),
+    ("G", 7),
+    ("G#", 8),
+    ("Ab", 8),
+    ("A", 9),
+    ("A#", 10),
+    ("Bb", 10),
+    ("B", 11),
+];
+
+/// Escala por nombre.
+pub fn scale(name: &str) -> Option<&'static ScaleDef> {
+    SCALES.iter().find(|s| s.name == name)
+}
+
+/// Semitonos de una tónica sobre do (`"Eb"` → 3). La letra puede ir en
+/// minúscula.
+pub fn note(name: &str) -> Option<i32> {
+    let mut chars = name.chars();
+    let first = chars.next()?.to_ascii_uppercase();
+    let name = format!("{first}{}", chars.as_str());
+    NOTES.iter().find(|(n, _)| *n == name).map(|(_, s)| *s)
 }
 
 /// Funciones globales y métodos, en el orden de la guía.
@@ -395,6 +511,79 @@ pub const FUNCTIONS: &[Function] = &[
              -- Los golpes del break en un orden nuevo, siempre el mismo (semilla 3).\n\
              track(\"drums\", amen):steps(shuffle(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\", 3))\n",
         ),
+    },
+    Function {
+        name: "scale",
+        receiver: Receiver::Global,
+        signature: "scale(nombre [, tónica])",
+        returns: Some(Receiver::Scale),
+        summary: "Una escala, para tocar melodías con un corte: sus grados se convierten en pitch.",
+        doc: "El pitch se cuenta desde el tono original del corte, que hace de do \
+              (C): con tónica `\"D\"` todo sube 2 semitonos. Las escalas están en la \
+              tabla de abajo; las tónicas, de `C` a `B` con `#` o `b` (`F#`, `Bb`).",
+        params: &[
+            Param {
+                name: "nombre",
+                description: "la escala (ver la tabla)",
+            },
+            Param {
+                name: "tónica",
+                description: "nota de partida (por defecto \"C\", el tono del corte)",
+            },
+        ],
+        template: "scale(\"${minor}\", \"${C}\")",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             local menor = scale(\"minor\", \"C\")\n\
+             -- Grados 1 3 5 3... de la escala sobre el corte 3:\n\
+             -- \"3^0 . 3^3 .  3^7 . 3^3 .  ...\"\n\
+             track(\"melodia\", amen)\n  \
+             :steps(menor:melody(\"1 . 3 .  5 . 3 .  8 . 7 .  5 . 3 -2\", \"3\"))\n  \
+             :gain(0.6)\n",
+        ),
+    },
+    Function {
+        name: "pitch",
+        receiver: Receiver::Scale,
+        signature: "escala:pitch(grado)",
+        returns: None,
+        summary: "Semitonos de un grado de la escala (1 es la tónica, 8 la octava).",
+        doc: "Los grados siguen hacia arriba por octavas (en una escala de 7 notas, \
+              8 es la tónica una octava arriba) y hacia abajo con negativos (-1 es el \
+              último grado una octava abajo). El 0 no existe. Sirve para escribir \
+              pitch a mano: `\"3^\" .. menor:pitch(5)`.",
+        params: &[Param {
+            name: "grado",
+            description: "número de grado (1, 2, 3...; negativos, por debajo)",
+        }],
+        template: "pitch(${5})",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             local quinta = scale(\"major\"):pitch(5) -- 7 semitonos\n\
+             track(\"d\", amen):steps(\"3 . . .  3^\" .. quinta .. \" . . .  3 . . .  3^12 . . .\")\n",
+        ),
+    },
+    Function {
+        name: "melody",
+        receiver: Receiver::Scale,
+        signature: "escala:melody(grados [, golpe])",
+        returns: None,
+        summary: "Convierte un patrón de grados en uno de pasos con pitch: \"1 3 5 3\" → \"1^0 1^3 1^7 1^3\".",
+        doc: "Cada paso de `grados` es un grado (o `.`), con los sufijos que quieras \
+              salvo `^`: `5@0.5` da el golpe con el pitch del grado 5 a medio volumen. \
+              Devuelve texto en mini-notación para `steps`.",
+        params: &[
+            Param {
+                name: "grados",
+                description: "16 pasos: grados de la escala o `.`",
+            },
+            Param {
+                name: "golpe",
+                description: "el corte que suena (número o etiqueta; por defecto \"1\")",
+            },
+        ],
+        template: "melody(\"${1 . 3 .  5 . 3 .  1 . 3 .  5 . 8 .}\", \"${1}\")",
+        example: None,
     },
     Function {
         name: "slice",
@@ -935,6 +1124,19 @@ pub fn guide_markdown() -> String {
                             p.valid
                         ));
                     }
+                }
+                out.push('\n');
+            }
+            (Receiver::Global, "scale") => {
+                out.push_str("| Escala | Qué es | Semitonos |\n| --- | --- | --- |\n");
+                for s in SCALES {
+                    let semis: Vec<String> = s.intervals.iter().map(|i| i.to_string()).collect();
+                    out.push_str(&format!(
+                        "| {} | {} | {} |\n",
+                        code(&format!("\"{}\"", s.name)),
+                        s.summary,
+                        semis.join(" ")
+                    ));
                 }
                 out.push('\n');
             }

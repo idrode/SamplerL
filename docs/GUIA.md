@@ -442,6 +442,60 @@ local amen = sample("amen.wav"):slice(8)
 track("drums", amen):steps(shuffle("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .", 3))
 ```
 
+### `scale(nombre [, tónica])`
+
+Devuelve: escala.
+
+Una escala, para tocar melodías con un corte: sus grados se convierten en pitch. El pitch se cuenta desde el tono original del corte, que hace de do (C): con tónica `"D"` todo sube 2 semitonos. Las escalas están en la tabla de abajo; las tónicas, de `C` a `B` con `#` o `b` (`F#`, `Bb`).
+
+- `nombre`: la escala (ver la tabla)
+- `tónica`: nota de partida (por defecto "C", el tono del corte)
+
+| Escala | Qué es | Semitonos |
+| --- | --- | --- |
+| `"major"` | mayor (jónica) | 0 2 4 5 7 9 11 |
+| `"minor"` | menor natural (eólica) | 0 2 3 5 7 8 10 |
+| `"harmonic_minor"` | menor armónica | 0 2 3 5 7 8 11 |
+| `"melodic_minor"` | menor melódica (ascendente) | 0 2 3 5 7 9 11 |
+| `"dorian"` | dórica | 0 2 3 5 7 9 10 |
+| `"phrygian"` | frigia | 0 1 3 5 7 8 10 |
+| `"lydian"` | lidia | 0 2 4 6 7 9 11 |
+| `"mixolydian"` | mixolidia | 0 2 4 5 7 9 10 |
+| `"locrian"` | locria | 0 1 3 5 6 8 10 |
+| `"major_pentatonic"` | pentatónica mayor | 0 2 4 7 9 |
+| `"minor_pentatonic"` | pentatónica menor | 0 3 5 7 10 |
+| `"blues"` | blues | 0 3 5 6 7 10 |
+| `"chromatic"` | cromática (cada grado, un semitono) | 0 1 2 3 4 5 6 7 8 9 10 11 |
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+local menor = scale("minor", "C")
+-- Grados 1 3 5 3... de la escala sobre el corte 3:
+-- "3^0 . 3^3 .  3^7 . 3^3 .  ..."
+track("melodia", amen)
+  :steps(menor:melody("1 . 3 .  5 . 3 .  8 . 7 .  5 . 3 -2", "3"))
+  :gain(0.6)
+```
+
+### `escala:pitch(grado)`
+
+Semitonos de un grado de la escala (1 es la tónica, 8 la octava). Los grados siguen hacia arriba por octavas (en una escala de 7 notas, 8 es la tónica una octava arriba) y hacia abajo con negativos (-1 es el último grado una octava abajo). El 0 no existe. Sirve para escribir pitch a mano: `"3^" .. menor:pitch(5)`.
+
+- `grado`: número de grado (1, 2, 3...; negativos, por debajo)
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+local quinta = scale("major"):pitch(5) -- 7 semitonos
+track("d", amen):steps("3 . . .  3^" .. quinta .. " . . .  3 . . .  3^12 . . .")
+```
+
+### `escala:melody(grados [, golpe])`
+
+Convierte un patrón de grados en uno de pasos con pitch: "1 3 5 3" → "1^0 1^3 1^7 1^3". Cada paso de `grados` es un grado (o `.`), con los sufijos que quieras salvo `^`: `5@0.5` da el golpe con el pitch del grado 5 a medio volumen. Devuelve texto en mini-notación para `steps`.
+
+- `grados`: 16 pasos: grados de la escala o `.`
+- `golpe`: el corte que suena (número o etiqueta; por defecto "1")
+
 ### `sample:slice(n)`
 
 Devuelve: cortes.

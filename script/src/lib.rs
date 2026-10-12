@@ -534,6 +534,32 @@ impl ScriptHost {
             })?,
         )?;
 
+        globals.set(
+            "scale",
+            lua.create_function(|lua, (name, tonic): (String, Option<String>)| {
+                let scale = api::scale(&name).ok_or_else(|| {
+                    let names: Vec<&str> = api::SCALES.iter().map(|s| s.name).collect();
+                    fail(
+                        lua,
+                        format!("scale(\"{name}\"): no existe ({})", names.join(", ")),
+                    )
+                })?;
+                let tonic = tonic.unwrap_or_else(|| "C".into());
+                let root = api::note(&tonic).ok_or_else(|| {
+                    fail(
+                        lua,
+                        format!(
+                            "scale(\"{name}\", \"{tonic}\"): tónica no válida (de C a B, con # o b: F#, Bb)"
+                        ),
+                    )
+                })?;
+                Ok(ScaleHandle {
+                    intervals: scale.intervals,
+                    root,
+                })
+            })?,
+        )?;
+
         let st = state.clone();
         globals.set(
             "track",
@@ -805,6 +831,34 @@ fn lcm(a: u64, b: u64) -> u64 {
         if b == 0 { a } else { gcd(b, a % b) }
     }
     a / gcd(a, b) * b
+}
+
+/// `scale("minor", "C")` en Lua.
+struct ScaleHandle {
+    intervals: &'static [i32],
+    /// Tónica, en semitonos sobre do.
+    root: i32,
+}
+
+impl UserData for ScaleHandle {
+    fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        methods.add_method("pitch", |lua, this, degree: i64| {
+            patterns::scale_pitch(this.intervals, this.root, degree)
+                .map_err(|e| fail(lua, format!("pitch({degree}): {e}")))
+        });
+        methods.add_method(
+            "melody",
+            |lua, this, (degrees, hit): (String, Option<String>)| {
+                patterns::melody(
+                    this.intervals,
+                    this.root,
+                    &degrees,
+                    hit.as_deref().unwrap_or("1"),
+                )
+                .map_err(|e| fail(lua, e))
+            },
+        );
+    }
 }
 
 /// `sample("archivo.wav")` en Lua.
