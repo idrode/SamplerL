@@ -14,6 +14,8 @@ use crate::app::App;
 use crate::model::{ViewModel, fx_text, step_text};
 
 pub const ERROR: Color = Color::Red;
+/// Fondo de la línea con error (rojo oscuro de la paleta de 256 colores).
+pub const ERROR_LINE: Color = Color::Indexed(52);
 pub const ACCENT: Color = Color::Cyan;
 pub const DIM: Color = Color::DarkGray;
 pub const WAVE: Color = Color::Gray;
@@ -98,6 +100,25 @@ fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rect) {
     app.editor
         .set_cursor_line_style(Style::new().add_modifier(Modifier::UNDERLINED));
     frame.render_widget(&app.editor, editor_area);
+
+    // Resaltar la línea del error si está a la vista. `scroll_offset` da la
+    // primera línea visible tras dibujar (sin ajuste de línea).
+    if let Some(line) = view.error.as_ref().and_then(|e| e.line) {
+        let (top, _) = app.editor.scroll_offset();
+        let row = line.saturating_sub(1);
+        let top = top as usize;
+        if row >= top && row < top + editor_area.height as usize {
+            let y = editor_area.y + (row - top) as u16;
+            frame.buffer_mut().set_style(
+                Rect {
+                    y,
+                    height: 1,
+                    ..editor_area
+                },
+                Style::new().bg(ERROR_LINE),
+            );
+        }
+    }
 }
 
 /// Medidor de nivel en texto: `███░░░`.

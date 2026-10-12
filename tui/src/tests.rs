@@ -678,3 +678,62 @@ track("drums", amen):steps(". . . .  . . . .  . . . .  . . . ."):gain(0.5)
     // Corte 1 (0.5) por el volumen de la pista (0.5).
     assert!((audio[200] - 0.25).abs() < 1e-3, "{}", audio[200]);
 }
+
+/// Filas del buffer con el fondo de línea de error en la columna `x`.
+fn error_rows(buffer: &Buffer, x: u16) -> Vec<u16> {
+    (0..buffer.area.height)
+        .filter(|&y| buffer[(x, y)].bg == ui::ERROR_LINE)
+        .collect()
+}
+
+#[test]
+fn the_error_line_is_highlighted_in_the_editor() {
+    let (_, mut app, _engine) = open("error_line", Some(SONG));
+    let bad = "bpm(120)\nlocal amen = sample(\"break.wav\"):slice(2)\ntrack(\"drums\", amen):steps(\"1 . 9 .  . . . .  . . . .  . . . .\")";
+    replace_all(&mut app, bad);
+    app.handle(ctrl('s'));
+    // Cursor al principio: si no, la línea larga se ve desplazada.
+    app.editor.move_cursor(ratatui_textarea::CursorMove::Jump(0, 0));
+    let buffer = draw(&mut app, 120, 40);
+    // Línea 3 en la fila 3 de la pantalla (borde + 2), en todo su ancho
+    // dentro del editor; ninguna otra.
+    assert_eq!(error_rows(&buffer, 5), vec![3]);
+    let (x, _) = find(&buffer, "track(\"drums\"").unwrap();
+    assert_eq!(buffer[(x, 3)].bg, ui::ERROR_LINE);
+    assert_eq!(buffer[(x, 3)].symbol(), "t");
+    assert_ne!(buffer[(70, 3)].bg, ui::ERROR_LINE, "fuera del editor");
+
+    // Sin error, sin resaltado.
+    replace_all(&mut app, SONG);
+    app.handle(ctrl('s'));
+    assert!(error_rows(&draw(&mut app, 120, 40), 5).is_empty());
+}
+
+#[test]
+fn the_error_line_follows_the_scroll() {
+    let (_, mut app, _engine) = open("error_scroll", Some(SONG));
+    // 60 líneas de comentarios y el error al final (línea 63).
+    let mut long = String::new();
+    for i in 0..60 {
+        long.push_str(&format!("-- línea {}\n", i + 1));
+    }
+    long.push_str("bpm(120)\nlocal amen = sample(\"break.wav\"):slice(2)\nbpm(9999)");
+    replace_all(&mut app, &long);
+    app.handle(ctrl('s'));
+    // El cursor está al final: el editor se desplaza y el error se ve.
+    let buffer = draw(&mut app, 120, 40);
+    let screen = text(&buffer);
+    let rows = error_rows(&buffer, 5);
+    assert_eq!(rows.len(), 1, "{screen}");
+    let line: String = screen.lines().nth(rows[0] as usize).unwrap().into();
+    assert!(line.contains("63 bpm(9999)"), "{line}");
+
+    // Con el cursor arriba, la línea 63 queda fuera de la vista: nada.
+    app.editor.move_cursor(ratatui_textarea::CursorMove::Top);
+    let buffer = draw(&mut app, 120, 40);
+    assert!(error_rows(&buffer, 5).is_empty());
+    // Ctrl-G la trae a la vista otra vez.
+    app.handle(ctrl('g'));
+    let buffer = draw(&mut app, 120, 40);
+    assert_eq!(error_rows(&buffer, 5).len(), 1);
+}
