@@ -16,7 +16,7 @@ pub use limiter::{LIMIT_THRESHOLD, soft_limit};
 pub use output::{Output, open_output};
 pub use sample::{LoadError, Sample};
 pub use sequencer::{
-    DEFAULT_BPM, MAX_BPM, MAX_GAIN, MAX_RETRIG, MAX_SEMITONES, MIN_BPM, Pattern, STEPS, Step,
-    bar_frames, valid_bpm,
+    DEFAULT_BPM, MAX_BPM, MAX_CYCLE_BARS, MAX_GAIN, MAX_RETRIG, MAX_SEMITONES, MIN_BPM, Pattern,
+    STEPS, Step, bar_frames, valid_bpm,
 };
 pub use slice::{DEFAULT_MIN_GAP_SECONDS, DetectOptions, Detector, Slices};

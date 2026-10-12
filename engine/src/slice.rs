@@ -104,6 +104,11 @@ impl Slices {
         self.0.get(index).cloned()
     }
 
+    /// Solo el corte `index`, como un conjunto de un único corte.
+    pub fn only(&self, index: usize) -> Option<Slices> {
+        self.get(index).map(|range| Slices(vec![range]))
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = Range<usize>> + '_ {
         self.0.iter().cloned()
     }

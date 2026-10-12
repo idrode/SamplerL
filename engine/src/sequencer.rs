@@ -20,6 +20,8 @@ pub const MAX_GAIN: f32 = 4.0;
 pub const MAX_SEMITONES: f32 = 36.0;
 /// Repeticiones máximas de un paso con retrigger.
 pub const MAX_RETRIG: u8 = 16;
+/// Compases máximos del ciclo de variantes de un patrón.
+pub const MAX_CYCLE_BARS: usize = 64;
 
 /// Un paso del patrón: qué corte suena y cómo.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -83,7 +85,9 @@ pub(crate) struct Trigger {
 /// este valor (sin reservas).
 pub struct Pattern {
     pub(crate) sample: Arc<Sample>,
-    pub(crate) steps: [Option<Trigger>; STEPS],
+    /// Ciclo de compases: en el compás `b` de la canción suena
+    /// `bars[b % bars.len()]`. Un patrón fijo tiene un solo compás.
+    pub(crate) bars: Vec<[Option<Trigger>; STEPS]>,
     /// Volumen de la pista (lineal), aplicado después de sus voces.
     pub(crate) gain: f32,
     /// Efectos de la pista, en orden.
@@ -107,37 +111,26 @@ impl Pattern {
         slices: &Slices,
         steps: [Option<Step>; STEPS],
     ) -> Result<Self, SendError> {
-        let mut resolved = [None; STEPS];
-        for (i, (slot, step)) in resolved.iter_mut().zip(steps).enumerate() {
-            let Some(step) = step else { continue };
-            let range = slices.get(step.slice).ok_or(SendError::NoSuchSlice {
-                index: step.slice,
-                count: slices.len(),
-            })?;
-            let invalid = |reason| SendError::InvalidStep { step: i, reason };
-            if !(0.0..=MAX_GAIN).contains(&step.gain) {
-                return Err(invalid("ganancia fuera de rango (0 a 4)"));
-            }
-            if !(-MAX_SEMITONES..=MAX_SEMITONES).contains(&step.semitones) {
-                return Err(invalid("pitch fuera de rango (-36 a 36 semitonos)"));
-            }
-            if !(1..=MAX_RETRIG).contains(&step.retrig) {
-                return Err(invalid("retrigger fuera de rango (1 a 16)"));
-            }
-            *slot = Some(Trigger {
-                start: range.start,
-                end: range.end.min(sample.frames()),
-                playback: Playback {
-                    gain: step.gain,
-                    rate: 2f64.powf(step.semitones as f64 / 12.0),
-                    reverse: step.reverse,
-                },
-                retrig: step.retrig,
-            });
+        Self::from_bars(sample, slices, &[steps])
+    }
+
+    /// Patrón de varios compases que se repiten en ciclo: en el compás `b`
+    /// de la canción suena `bars[b % bars.len()]` (de 1 a `MAX_CYCLE_BARS`).
+    pub fn from_bars(
+        sample: Arc<Sample>,
+        slices: &Slices,
+        bars: &[[Option<Step>; STEPS]],
+    ) -> Result<Self, SendError> {
+        if bars.is_empty() || bars.len() > MAX_CYCLE_BARS {
+            return Err(SendError::InvalidCycle(bars.len()));
         }
+        let resolved = bars
+            .iter()
+            .map(|steps| resolve_bar(&sample, slices, steps))
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(Pattern {
             sample,
-            steps: resolved,
+            bars: resolved,
             gain: 1.0,
             fx: [None; MAX_FX],
         })
@@ -171,6 +164,43 @@ impl Pattern {
     }
 }
 
+/// Resuelve los pasos de un compás a rangos de frames y parámetros.
+fn resolve_bar(
+    sample: &Sample,
+    slices: &Slices,
+    steps: &[Option<Step>; STEPS],
+) -> Result<[Option<Trigger>; STEPS], SendError> {
+    let mut resolved = [None; STEPS];
+    for (i, (slot, step)) in resolved.iter_mut().zip(steps.iter().copied()).enumerate() {
+        let Some(step) = step else { continue };
+        let range = slices.get(step.slice).ok_or(SendError::NoSuchSlice {
+            index: step.slice,
+            count: slices.len(),
+        })?;
+        let invalid = |reason| SendError::InvalidStep { step: i, reason };
+        if !(0.0..=MAX_GAIN).contains(&step.gain) {
+            return Err(invalid("ganancia fuera de rango (0 a 4)"));
+        }
+        if !(-MAX_SEMITONES..=MAX_SEMITONES).contains(&step.semitones) {
+            return Err(invalid("pitch fuera de rango (-36 a 36 semitonos)"));
+        }
+        if !(1..=MAX_RETRIG).contains(&step.retrig) {
+            return Err(invalid("retrigger fuera de rango (1 a 16)"));
+        }
+        *slot = Some(Trigger {
+            start: range.start,
+            end: range.end.min(sample.frames()),
+            playback: Playback {
+                gain: step.gain,
+                rate: 2f64.powf(step.semitones as f64 / 12.0),
+                reverse: step.reverse,
+            },
+            retrig: step.retrig,
+        });
+    }
+    Ok(resolved)
+}
+
 /// Frames de un paso a `bpm` y `sample_rate`.
 pub(crate) fn frames_per_step(bpm: f64, sample_rate: u32) -> f64 {
     sample_rate as f64 * 60.0 / (bpm * STEPS_PER_BEAT)
@@ -197,6 +227,8 @@ pub(crate) struct Transport {
     bar_start: u64,
     /// Siguiente paso a disparar dentro del compás.
     step: usize,
+    /// Compases completos desde que arrancó el transporte.
+    bar: u64,
     bpm: f64,
     /// Tempo que espera al siguiente compás.
     pub pending_bpm: Option<f64>,
@@ -209,6 +241,7 @@ impl Transport {
             frame: 0,
             bar_start: 0,
             step: 0,
+            bar: 0,
             bpm: DEFAULT_BPM,
             pending_bpm: None,
         }
@@ -220,6 +253,7 @@ impl Transport {
         self.frame = 0;
         self.bar_start = 0;
         self.step = 0;
+        self.bar = 0;
     }
 
     /// Frame (absoluto) del siguiente paso.
@@ -227,10 +261,10 @@ impl Transport {
         self.bar_start + step_offset(self.step, self.bpm, sample_rate)
     }
 
-    /// Avanza al siguiente paso y devuelve el que toca disparar ahora. En el
-    /// paso 0 (inicio de compás) aplica antes el tempo pendiente.
-    pub fn advance(&mut self, sample_rate: u32) -> usize {
-        let step = self.step;
+    /// Avanza al siguiente paso y devuelve el que toca disparar ahora y su
+    /// compás. En el paso 0 (inicio de compás) aplica antes el tempo pendiente.
+    pub fn advance(&mut self, sample_rate: u32) -> (usize, u64) {
+        let (step, bar) = (self.step, self.bar);
         if step == 0
             && let Some(bpm) = self.pending_bpm.take()
         {
@@ -240,8 +274,9 @@ impl Transport {
         if self.step == STEPS {
             self.bar_start += step_offset(STEPS, self.bpm, sample_rate);
             self.step = 0;
+            self.bar += 1;
         }
-        step
+        (step, bar)
     }
 }
 

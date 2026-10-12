@@ -185,6 +185,8 @@ pub enum SendError {
     InvalidTrackGain(f32),
     /// Efecto de pista con parámetros fuera de rango.
     InvalidFx(&'static str),
+    /// Ciclo de patrón con un número de compases fuera de rango.
+    InvalidCycle(usize),
 }
 
 impl fmt::Display for SendError {
@@ -195,6 +197,11 @@ impl fmt::Display for SendError {
                 write!(f, "no existe el corte {index} (hay {count})")
             }
             SendError::InvalidFx(reason) => write!(f, "efecto: {reason}"),
+            SendError::InvalidCycle(bars) => write!(
+                f,
+                "ciclo de {bars} compases fuera de rango (1 a {})",
+                crate::sequencer::MAX_CYCLE_BARS
+            ),
             SendError::InvalidTrackGain(gain) => {
                 write!(f, "volumen de pista {gain} fuera de rango (0 a 4)")
             }
@@ -241,10 +248,19 @@ impl Batch {
     }
 }
 
+/// Lo que el hilo de audio devuelve al de control para que lo libere allí.
+/// Su contenido no se lee: solo se suelta en el hilo de control.
+#[allow(dead_code)]
+enum Garbage {
+    Sample(Arc<Sample>),
+    /// Un patrón entero: lleva memoria propia (sus compases).
+    Pattern(Pattern),
+}
+
 /// Lado de control (UI/script). Envía comandos al hilo de audio sin bloquear.
 pub struct Controller {
     commands: Producer<Command>,
-    garbage: Consumer<Arc<Sample>>,
+    garbage: Consumer<Garbage>,
     playing: Arc<AtomicBool>,
 }
 
@@ -304,7 +320,7 @@ impl Default for Track {
 /// offline). `process` no reserva memoria, no bloquea y no hace E/S.
 pub struct Engine {
     commands: Consumer<Command>,
-    garbage: Producer<Arc<Sample>>,
+    garbage: Producer<Garbage>,
     playing: Arc<AtomicBool>,
     sample_rate: u32,
     transport: Transport,
@@ -548,7 +564,7 @@ impl Engine {
                     &mut track.pending
                 };
                 if let Some(Some(old)) = slot.replace(pattern) {
-                    self.discard(old.sample);
+                    self.discard_pattern(old);
                 }
             }
             Command::SetBpm(bpm) => {
@@ -568,7 +584,7 @@ impl Engine {
                     if let Some(change) = self.tracks[t].staged.take()
                         && let Some(Some(old)) = self.tracks[t].pending.replace(change)
                     {
-                        self.discard(old.sample);
+                        self.discard_pattern(old);
                     }
                 }
             }
@@ -592,7 +608,7 @@ impl Engine {
     /// Al empezar un compás, antes aplica los patrones pendientes.
     fn step(&mut self) {
         let now = self.transport.frame;
-        let step = self.transport.advance(self.sample_rate);
+        let (step, bar) = self.transport.advance(self.sample_rate);
         let next = self.transport.next_step_frame(self.sample_rate);
         for t in 0..MAX_TRACKS {
             if step == 0
@@ -610,10 +626,13 @@ impl Engine {
                     *state = state.update(fx, self.sample_rate);
                 }
                 if let Some(old) = old {
-                    self.discard(old.sample);
+                    self.discard_pattern(old);
                 }
             }
-            let hit = self.tracks[t].pattern.as_ref().and_then(|p| p.steps[step]);
+            let hit = self.tracks[t]
+                .pattern
+                .as_ref()
+                .and_then(|p| p.bars[(bar % p.bars.len() as u64) as usize][step]);
             // Los subdisparos de un retrigger caben dentro de su paso.
             self.tracks[t].retrig = hit.filter(|h| h.retrig > 1).map(|hit| Retrig {
                 hit,
@@ -729,9 +748,17 @@ impl Engine {
             drop(sample);
             return;
         }
-        if let Err(rtrb::PushError::Full(sample)) = self.garbage.push(sample) {
+        if let Err(rtrb::PushError::Full(garbage)) = self.garbage.push(Garbage::Sample(sample)) {
             // No debería ocurrir; antes filtrar memoria que liberarla en el callback.
-            std::mem::forget(sample);
+            std::mem::forget(garbage);
+        }
+    }
+
+    /// Devuelve un patrón entero al hilo de control: soltarlo aquí liberaría
+    /// sus compases (memoria) en el callback.
+    fn discard_pattern(&mut self, pattern: Pattern) {
+        if let Err(rtrb::PushError::Full(garbage)) = self.garbage.push(Garbage::Pattern(pattern)) {
+            std::mem::forget(garbage);
         }
     }
 

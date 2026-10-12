@@ -144,7 +144,10 @@ fn lowpass_and_highpass_filters() {
     assert!(ratio(200.0, Fx::highpass(1000.0)) < 0.06);
     // En el corte, -3 dB (q = 0.707).
     let at_cutoff = ratio(1000.0, Fx::lowpass(1000.0));
-    assert!((at_cutoff - std::f32::consts::FRAC_1_SQRT_2).abs() < 0.02, "{at_cutoff}");
+    assert!(
+        (at_cutoff - std::f32::consts::FRAC_1_SQRT_2).abs() < 0.02,
+        "{at_cutoff}"
+    );
     // Dos filtros en cadena: paso banda.
     let band = [Fx::highpass(500.0), Fx::lowpass(2000.0)];
     assert!(rms_through(1000.0, &band) / input > 0.8);
