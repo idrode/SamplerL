@@ -491,6 +491,13 @@ impl ScriptHost {
             })?,
         )?;
 
+        globals.set(
+            "reverse_pattern",
+            lua.create_function(|lua, text: String| {
+                patterns::reverse_pattern(&text).map_err(|e| fail(lua, e))
+            })?,
+        )?;
+
         let st = state.clone();
         globals.set(
             "track",

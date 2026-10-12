@@ -315,6 +315,27 @@ pub const FUNCTIONS: &[Function] = &[
         ),
     },
     Function {
+        name: "reverse_pattern",
+        receiver: Receiver::Global,
+        signature: "reverse_pattern(patrón)",
+        returns: None,
+        summary: "El patrón al revés: el último paso pasa a ser el primero.",
+        doc: "Invierte el orden de los pasos, no el sonido de cada golpe: para que un \
+              golpe suene al revés está el sufijo `'` (y `c:reverse()` en `every`).",
+        params: &[Param {
+            name: "patrón",
+            description: "16 pasos en mini-notación",
+        }],
+        template: "reverse_pattern(\"${1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .}\")",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             local base = \"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\"\n\
+             track(\"drums\", amen)\n  \
+             :steps(base)\n  \
+             :every(4, function(c) c:steps(reverse_pattern(base)) end)\n",
+        ),
+    },
+    Function {
         name: "slice",
         receiver: Receiver::Sample,
         signature: "sample:slice(n)",

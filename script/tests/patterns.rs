@@ -123,3 +123,24 @@ fn rotate_sounds_like_the_pattern_it_writes() {
         "song.lua:3: rotate(patrón, 1): el patrón necesita 16 pasos, tiene 2"
     );
 }
+
+#[test]
+fn reverse_pattern_sounds_like_the_pattern_it_writes() {
+    let dir = fixture("reverse_pattern");
+    let p = "\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 3'\"";
+    assert_eq!(
+        value(&dir, &format!("reverse_pattern({p})")),
+        "3' 8 . 7  . 2 6 5  . 4 . 3  . 2 . 1"
+    );
+    let a = render(
+        &dir,
+        &format!("track(\"d\", amen):steps(reverse_pattern({p}))"),
+        1,
+    );
+    let b = render(
+        &dir,
+        "track(\"d\", amen):steps(\"3' 8 . 7  . 2 6 5  . 4 . 3  . 2 . 1\")",
+        1,
+    );
+    same(&a, &b);
+}

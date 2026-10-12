@@ -72,6 +72,14 @@ pub fn rotate(text: &str, n: i64) -> Result<String, String> {
     Ok(format(&rotated))
 }
 
+/// El patrón al revés: el paso 16 pasa a ser el 1. No invierte el sonido
+/// de cada golpe (para eso, el sufijo `'`).
+pub fn reverse_pattern(text: &str) -> Result<String, String> {
+    let mut tokens = tokens(text, "reverse_pattern")?;
+    tokens.reverse();
+    Ok(format(&tokens))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -122,6 +130,21 @@ mod tests {
         assert_eq!(
             rotate("1 .", 1).unwrap_err(),
             "rotate(patrón, 1): el patrón necesita 16 pasos, tiene 2"
+        );
+    }
+
+    #[test]
+    fn reversing_a_pattern_reverses_the_step_order() {
+        let p = "1 2' 3 4  5 6 7 8  9 10 11 12  13 14 15 kick^7";
+        assert_eq!(
+            reverse_pattern(p).unwrap(),
+            "kick^7 15 14 13  12 11 10 9  8 7 6 5  4 3 2' 1"
+        );
+        assert_eq!(reverse_pattern(&reverse_pattern(p).unwrap()).unwrap(), p);
+        assert!(
+            reverse_pattern("1")
+                .unwrap_err()
+                .starts_with("reverse_pattern: ")
         );
     }
 

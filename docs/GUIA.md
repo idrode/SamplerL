@@ -398,6 +398,20 @@ track("drums", amen):steps(rotate("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .", -4))
 track("kick", amen):steps(rotate(euclid(3, 8, "1"), 2))
 ```
 
+### `reverse_pattern(patrón)`
+
+El patrón al revés: el último paso pasa a ser el primero. Invierte el orden de los pasos, no el sonido de cada golpe: para que un golpe suene al revés está el sufijo `'` (y `c:reverse()` en `every`).
+
+- `patrón`: 16 pasos en mini-notación
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+local base = "1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 ."
+track("drums", amen)
+  :steps(base)
+  :every(4, function(c) c:steps(reverse_pattern(base)) end)
+```
+
 ### `sample:slice(n)`
 
 Devuelve: cortes.
