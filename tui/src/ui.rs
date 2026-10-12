@@ -489,7 +489,7 @@ impl Widget for HelpLine<'_> {
                 Span::raw(format!("{prompt}█  ")),
                 Span::from(
                     "exportar [archivo.wav] [compases] · guardar [proyecto] · \
-                     abrir proyecto · muestras carpeta · etiquetar corte nombre · Esc cancelar",
+                     abrir proyecto · muestras carpeta · etiquetar corte nombre · bpm N · Esc cancelar",
                 )
                 .fg(DIM),
             ])

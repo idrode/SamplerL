@@ -1058,6 +1058,22 @@ struct SampleHandle {
 
 impl UserData for SampleHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        // `:detect_bpm()`: tempo y compases del loop (o nil si no se ve).
+        methods.add_method("detect_bpm", |_, this, ()| {
+            Ok(engine::detect_bpm(&this.sample)
+                .map(|g| {
+                    // Entero de Lua si sale entero (`140`, no `140.0`).
+                    let bpm = g.rounded();
+                    let bpm = if bpm.fract() == 0.0 {
+                        Value::Integer(bpm as i64)
+                    } else {
+                        Value::Number(bpm)
+                    };
+                    (bpm, g.bars)
+                })
+                .unzip())
+        });
+
         // `:slice(n)`: corta en los `n` transitorios más fuertes.
         methods.add_method("slice", |lua, this, n: i64| {
             if !(1..=64).contains(&n) {

@@ -1,5 +1,6 @@
 //! Motor de audio del sampler. Independiente de la interfaz.
 
+pub mod bpm;
 mod engine;
 mod fx;
 mod limiter;
@@ -12,6 +13,7 @@ mod sequencer;
 mod slice;
 mod status;
 
+pub use bpm::{BpmGuess, detect_bpm};
 pub use engine::{Batch, Controller, Engine, MAX_TRACKS, SendError, new_engine};
 pub use fx::{DEFAULT_Q, FilterKind, Fx, MAX_FX};
 pub use limiter::{LIMIT_THRESHOLD, soft_limit};

@@ -32,6 +32,20 @@ Sus 8 cortes son: 1 bombo, 2 charles, 3 caja, 4 charles, 5 bombo, 6 bombo,
 amen de verdad los golpes caen en otros números (mira la vista del sample o
 la lista de cortes que imprime `--render`).
 
+### Saber el tempo del break
+
+```sh
+cargo run -p tui -- renders/synth_break.wav --detect-bpm
+```
+
+Propone el `bpm()` y cuántos compases dura el sample, suponiendo que es un
+loop de compases enteros (lo normal en un break preparado para samplear).
+Si dos tempos encajan igual (un break en corcheas vale a 86 y a 172), da
+el más cercano a 130 y menciona el otro. En la interfaz, «Detectar el BPM
+del sample» (paleta) hace lo mismo con el sample de la pista seleccionada
+y deja escrita la orden `bpm 140`: Enter cambia (o añade) la línea `bpm()`
+del script, sin guardar. En Lua, `sample(...):detect_bpm()`.
+
 ### Usar un sample propio
 
 Solo se leen archivos **WAV** (cualquier frecuencia; se resamplean al
@@ -180,6 +194,7 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Mute de la pista | Silencia la pista seleccionada, o la vuelve a dejar sonar (en vivo, sin esperar al compás) | m (modo tocar) |
 | Solo de la pista | Pone la pista seleccionada en solo, o se lo quita (en vivo) | s (modo tocar) |
 | Quitar mute y solo | Quita todos los mute y solo en vivo (los del script siguen) | — |
+| Detectar el BPM del sample | Propone el tempo y los compases del sample de la pista; Enter pone bpm() en el script | — |
 | Metrónomo | Enciende o apaga el clic en cada pulso (no entra en lo exportado salvo que se pida) | — |
 | Reiniciar medidores | Pone a cero los medidores y quita los avisos de limitador y saturación | — |
 | Etiquetar el corte seleccionado | Abre «etiquetar N » para escribir la etiqueta (kick, snare...); se guarda en el proyecto | — |
@@ -268,6 +283,7 @@ proyecto o, si no hay, a la del script.
 | `guardar [proyecto.sampler]` | Guarda el script y el proyecto |
 | `abrir proyecto.sampler` | Abre un proyecto (`abrir!` descarta los cambios sin guardar) |
 | `muestras [carpeta]` | Cambia la carpeta de los samples (sin argumento, dice cuál es) |
+| `bpm N` | Cambia la línea `bpm(...)` del script por `bpm(N)` (o la añade al principio), sin guardar |
 | `etiquetar corte [nombre]` | Pone una etiqueta a un corte de la pista seleccionada (sin nombre, la quita). Se guarda en el proyecto abierto y se recarga |
 
 ### Editor
@@ -524,6 +540,17 @@ Convierte un patrón de grados en uno de pasos con pitch: "1 3 5 3" → "1^0 1^3
 
 - `grados`: 16 pasos: grados de la escala o `.`
 - `golpe`: el corte que suena (número o etiqueta; por defecto "1")
+
+### `sample:detect_bpm()`
+
+Tempo y compases del sample, suponiendo que es un loop de compases enteros. Devuelve dos valores, el tempo (entero si sale muy cerca de uno) y los compases, o `nil` si no se ve (sin golpes, o con un tempo fuera de 60 a 200). Mira cómo encajan los golpes en la rejilla de semicorcheas para 1, 2, 4 y 8 compases; si dos encajan igual (un break en corcheas vale a 86 y a 172), elige el más cercano a 130. Lo mismo hacen `--detect-bpm` y «Detectar el BPM del sample» de la paleta.
+
+```lua
+local amen = sample("amen.wav")
+local tempo, compases = amen:detect_bpm()
+bpm(tempo)
+track("drums", amen:slice(8)):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+```
 
 ### `sample:slice(n)`
 

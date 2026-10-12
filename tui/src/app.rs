@@ -256,9 +256,10 @@ impl App {
             "abrir!" | "open!" => self.open_project_command(args.first().copied(), true),
             "muestras" | "samples" => self.set_samples(args.first().copied()),
             "etiquetar" | "label" => self.label_slice(&args),
+            "bpm" => self.set_bpm_line(args.first().copied()),
             other => {
                 self.message = format!(
-                    "orden desconocida «{other}» (exportar, guardar, abrir, muestras, etiquetar)"
+                    "orden desconocida «{other}» (exportar, guardar, abrir, muestras, etiquetar, bpm)"
                 );
             }
         }
@@ -994,6 +995,7 @@ impl App {
             Action::ClearMuteSolo => self.clear_live(),
             Action::ResetMeters => self.reset_meters(),
             Action::Metronome => self.toggle_metronome(),
+            Action::DetectBpm => self.detect_bpm(),
             Action::NextSlice => self.select_slice(true),
             Action::PreviousSlice => self.select_slice(false),
             Action::Quit => {
@@ -1151,6 +1153,72 @@ impl App {
             "metrónomo apagado"
         }
         .into();
+    }
+
+    /// «Detectar el BPM del sample»: propone el tempo del sample de la
+    /// pista seleccionada y deja escrita la orden `bpm N` para ponerlo.
+    pub fn detect_bpm(&mut self) {
+        let Some(track) = self.host.song().and_then(|s| s.tracks.get(self.selected)) else {
+            self.message = "no hay pistas".into();
+            return;
+        };
+        let name = track.name.clone();
+        let Some(guess) = engine::detect_bpm(&track.sample) else {
+            self.message = format!("{name}: no se encontró un tempo (¿no es un loop de compases?)");
+            return;
+        };
+        let bars = if guess.bars == 1 {
+            "compás"
+        } else {
+            "compases"
+        };
+        let mut message = format!(
+            "{name}: {} BPM, el sample dura {} {bars} (encaje {:.0} %)",
+            guess.rounded(),
+            guess.bars,
+            guess.score * 100.0
+        );
+        if let Some((bpm, n)) = guess.alternative {
+            message.push_str(&format!(
+                "; también {} con {n}",
+                engine::bpm::round_bpm(bpm)
+            ));
+        }
+        message.push_str(" · Enter pone bpm() en el script");
+        self.message = message;
+        self.prompt = Some(format!("bpm {}", guess.rounded()));
+    }
+
+    /// `bpm N`: cambia la primera línea `bpm(...)` del script por `bpm(N)`,
+    /// o la añade al principio. No guarda (se deshace con Ctrl-Z).
+    fn set_bpm_line(&mut self, value: Option<&str>) {
+        let Some(bpm) = value
+            .and_then(|v| v.parse::<f64>().ok())
+            .filter(|b| engine::valid_bpm(*b))
+        else {
+            self.message = "uso: bpm N (de 20 a 400)".into();
+            return;
+        };
+        let line = format!("bpm({bpm})");
+        let row = self
+            .editor
+            .lines()
+            .iter()
+            .position(|l| l.trim_start().starts_with("bpm("));
+        self.completion = None;
+        self.grouped(|editor| match row {
+            Some(row) => {
+                let len = editor.lines()[row].chars().count();
+                editor.move_cursor(CursorMove::Jump(row as u16, 0));
+                editor.delete_str(len);
+                editor.insert_str(&line);
+            }
+            None => {
+                editor.move_cursor(CursorMove::Jump(0, 0));
+                editor.insert_str(format!("{line}\n"));
+            }
+        });
+        self.message = format!("{line} en el script: Ctrl-S para guardar y cargar");
     }
 
     /// Vacía los medidores y los avisos de saturación.

@@ -1,4 +1,8 @@
-//! Fase D en el script: mute, solo y lo que se oye en el render.
+//! Fase D en el script: mute, solo, metrónomo, tempo detectado y lo que se
+//! oye en el render.
+
+#[path = "../../engine/tests/support/synth_break.rs"]
+mod synth;
 
 use std::path::{Path, PathBuf};
 
@@ -89,4 +93,31 @@ fn the_metronome_only_goes_into_the_render_when_asked() {
             .metronome,
         None
     );
+}
+
+#[test]
+fn detect_bpm_reads_the_synthetic_break() {
+    let dir = fixture("detect_bpm");
+    let (audio, _) = synth::synth_break();
+    offline::write_wav(dir.join("amen.wav"), &audio, 1, synth::RATE).unwrap();
+    let source = "local amen = sample(\"amen.wav\")\n\
+                  local tempo, compases = amen:detect_bpm()\n\
+                  bpm(tempo)\n\
+                  error(\"=\" .. tempo .. \" \" .. compases, 0)";
+    let e = ScriptHost::new(RATE)
+        .eval(source, "song.lua", &dir)
+        .err()
+        .unwrap();
+    assert!(e.message.starts_with("=140 1"), "{e}");
+    // En silencio, nil: bpm(nil) da error con línea.
+    offline::write_wav(dir.join("silencio.wav"), &vec![0.0; 4800], 1, RATE).unwrap();
+    let e = ScriptHost::new(RATE)
+        .eval(
+            "local t = sample(\"silencio.wav\"):detect_bpm()\nassert(t == nil, \"no\")",
+            "song.lua",
+            &dir,
+        )
+        .map(|_| ())
+        .map_err(|e| e.message);
+    assert_eq!(e, Ok(()));
 }

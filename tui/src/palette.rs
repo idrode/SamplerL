@@ -31,6 +31,7 @@ pub enum Action {
     ClearMuteSolo,
     ResetMeters,
     Metronome,
+    DetectBpm,
     NextSlice,
     PreviousSlice,
     Quit,
@@ -160,6 +161,12 @@ pub const ACTIONS: &[ActionDef] = &[
         action: Action::ClearMuteSolo,
         name: "Quitar mute y solo",
         description: "Quita todos los mute y solo en vivo (los del script siguen)",
+        keys: "",
+    },
+    ActionDef {
+        action: Action::DetectBpm,
+        name: "Detectar el BPM del sample",
+        description: "Propone el tempo y los compases del sample de la pista; Enter pone bpm() en el script",
         keys: "",
     },
     ActionDef {

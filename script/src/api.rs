@@ -642,6 +642,27 @@ pub const FUNCTIONS: &[Function] = &[
         example: None,
     },
     Function {
+        name: "detect_bpm",
+        receiver: Receiver::Sample,
+        signature: "sample:detect_bpm()",
+        returns: None,
+        summary: "Tempo y compases del sample, suponiendo que es un loop de compases enteros.",
+        doc: "Devuelve dos valores, el tempo (entero si sale muy cerca de uno) y los \
+              compases, o `nil` si no se ve (sin golpes, o con un tempo fuera de 60 \
+              a 200). Mira cómo encajan los golpes en la rejilla de semicorcheas \
+              para 1, 2, 4 y 8 compases; si dos encajan igual (un break en corcheas \
+              vale a 86 y a 172), elige el más cercano a 130. Lo mismo hacen \
+              `--detect-bpm` y «Detectar el BPM del sample» de la paleta.",
+        params: &[],
+        template: "detect_bpm()",
+        example: Some(
+            "local amen = sample(\"amen.wav\")\n\
+             local tempo, compases = amen:detect_bpm()\n\
+             bpm(tempo)\n\
+             track(\"drums\", amen:slice(8)):steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\")\n",
+        ),
+    },
+    Function {
         name: "slice",
         receiver: Receiver::Sample,
         signature: "sample:slice(n)",

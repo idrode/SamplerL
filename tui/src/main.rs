@@ -16,6 +16,7 @@ use engine::{DetectOptions, Detector, Pattern, STEPS, Slices, Step};
 const USAGE: &str = "\
 uso: tui --edit <canción.lua | proyecto.sampler> [--allow-audio]   (interfaz)
      tui <archivo.wav> --render <salida.wav>
+     tui <archivo.wav> --detect-bpm               (propone bpm() y compases)
      tui --script <canción.lua> --render <salida.wav> [--bars M] [--metronome]
      tui --script <canción.lua> --allow-audio     (reproduce y recarga al guardar)
      tui <archivo.wav> --render <salida.wav> --pattern \"1 . 3 . ...\" \
@@ -78,6 +79,7 @@ fn run() -> Result<(), BoxError> {
     let mut script = None;
     let mut edit = None;
     let mut metronome = false;
+    let mut detect = false;
     while let Some(arg) = args.next() {
         let mut value = || {
             args.next()
@@ -87,6 +89,7 @@ fn run() -> Result<(), BoxError> {
             "--render" => render_to = Some(value()?),
             "--allow-audio" => allow_audio = true,
             "--metronome" => metronome = true,
+            "--detect-bpm" => detect = true,
             "--pattern" => {
                 let steps = engine::notation::parse_steps(&value()?)
                     .map_err(|e| format!("--pattern: {e}"))?;
@@ -150,6 +153,9 @@ fn run() -> Result<(), BoxError> {
         };
     }
     let path = path.ok_or(USAGE)?;
+    if detect {
+        return detect_tempo(&path);
+    }
 
     let sequence = match pattern {
         Some(pattern) => Some(Sequence {
@@ -276,6 +282,32 @@ fn render_sequence(path: &str, out: &str, sequence: &Sequence) -> Result<(), Box
         frames,
         frames as f64 / RENDER_RATE as f64
     );
+    Ok(())
+}
+
+/// `--detect-bpm`: propone el tempo y los compases de un loop.
+fn detect_tempo(path: &str) -> Result<(), BoxError> {
+    let sample = load(path, RENDER_RATE)?;
+    let guess = engine::detect_bpm(&sample)
+        .ok_or("no se encontró un tempo (¿sin golpes, o no es un loop de compases?)")?;
+    let bars = if guess.bars == 1 {
+        "compás"
+    } else {
+        "compases"
+    };
+    println!(
+        "{path}: {:.2} BPM, {} {bars} (encaje {:.0} %) → bpm({})",
+        guess.bpm,
+        guess.bars,
+        guess.score * 100.0,
+        guess.rounded()
+    );
+    if let Some((bpm, n)) = guess.alternative {
+        println!(
+            "  también encaja {} BPM con {n} compases",
+            engine::bpm::round_bpm(bpm)
+        );
+    }
     Ok(())
 }
 

@@ -11,6 +11,9 @@ use ratatui::style::{Color, Modifier};
 use ratatui_textarea::{Input, Key};
 
 use crate::app::{App, Flow};
+
+#[path = "../../engine/tests/support/synth_break.rs"]
+mod synth;
 use crate::model::{TrackView, TransportView, ViewModel};
 use crate::ui;
 
@@ -2151,4 +2154,55 @@ fn the_metronome_toggles_from_the_palette_and_stays_out_of_exports() {
     replace_all(&mut app, &text);
     app.handle(ctrl('s'));
     assert!(!app.view().metronome);
+}
+
+// --- Detección de BPM ---
+
+#[test]
+fn the_palette_proposes_the_detected_bpm_and_writes_it() {
+    let path = fixture("detect_bpm", None);
+    let dir = path.parent().unwrap();
+    let (audio, _) = synth::synth_break();
+    offline::write_wav(dir.join("synth.wav"), &audio, 1, synth::RATE).unwrap();
+    let song = "bpm(120)\nlocal amen = sample(\"synth.wav\"):slice(8)\n\
+                track(\"drums\", amen):steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\")\n";
+    std::fs::write(&path, song).unwrap();
+    let (controller, _engine) = new_engine(RATE);
+    let mut app = App::open(&path, controller, RATE).unwrap();
+    palette(&mut app, "detectar bpm");
+    let view = app.view();
+    assert!(
+        view.message
+            .starts_with("drums: 140 BPM, el sample dura 1 compás"),
+        "{}",
+        view.message
+    );
+    assert_eq!(view.prompt.as_deref(), Some("bpm 140"));
+    // Enter cambia la línea bpm() del script (sin guardar).
+    app.handle(special(Key::Enter));
+    assert_eq!(app.editor.lines()[0], "bpm(140)");
+    assert!(app.dirty());
+    assert!(app.view().message.starts_with("bpm(140) en el script"));
+    app.handle(ctrl('z'));
+    assert_eq!(app.editor.lines()[0], "bpm(120)");
+    // Sin línea bpm(), la añade al principio.
+    let text = app.text_for_test().replacen("bpm(120)\n", "", 1);
+    replace_all(&mut app, &text);
+    command(&mut app, "bpm 172.5");
+    assert_eq!(app.editor.lines()[0], "bpm(172.5)");
+    command(&mut app, "bpm 9000");
+    assert_eq!(app.view().message, "uso: bpm N (de 20 a 400)");
+}
+
+#[test]
+fn detecting_the_bpm_of_a_one_shot_says_so() {
+    // break.wav dura 0,125 s: ningún número de compases da un tempo en rango.
+    let (_, mut app, _engine) = open("detect_none", Some(SONG));
+    palette(&mut app, "detectar bpm");
+    assert!(
+        app.view().message.contains("no se encontró un tempo"),
+        "{}",
+        app.view().message
+    );
+    assert!(app.view().prompt.is_none());
 }
