@@ -9,9 +9,11 @@ use crate::sample::Sample;
 use crate::slice::Slices;
 
 const COMMAND_CAPACITY: usize = 64;
-// Cada comando procesado genera como mucho un elemento de basura, y el
-// controlador la recoge antes de cada envío, así que esto no se llena.
+// Cada voz nace de un comando y va a la basura una sola vez, y el controlador
+// la recoge antes de cada envío, así que esto no se llena.
 const GARBAGE_CAPACITY: usize = COMMAND_CAPACITY * 2;
+/// Duración de los fundidos de entrada y salida de cada voz.
+const FADE_SECONDS: f32 = 0.0015;
 
 enum Command {
     /// Reproduce los frames `start..end` del sample.
@@ -25,8 +27,73 @@ enum Command {
 
 struct Voice {
     sample: Arc<Sample>,
+    start: usize,
     pos: usize,
     end: usize,
+    fade: usize,
+    /// Frames que quedan del fundido de salida forzado (voz interrumpida).
+    release: Option<usize>,
+}
+
+impl Voice {
+    fn new(sample: Arc<Sample>, start: usize, end: usize) -> Self {
+        let fade = ((FADE_SECONDS * sample.sample_rate() as f32) as usize).max(1);
+        Voice {
+            sample,
+            start,
+            pos: start,
+            end,
+            fade,
+            release: None,
+        }
+    }
+
+    fn is_active(&self) -> bool {
+        self.pos < self.end && self.release != Some(0)
+    }
+
+    /// Empieza un fundido de salida aunque el corte no haya terminado.
+    fn release(&mut self) {
+        if self.release.is_none() {
+            self.release = Some(self.fade);
+        }
+    }
+
+    /// Ganancia del frame actual: rampa de entrada desde el inicio del corte,
+    /// de salida hacia su final y, si se interrumpió, la del release.
+    fn gain(&self) -> f32 {
+        let from_start = self.pos - self.start;
+        let to_end = self.end - 1 - self.pos;
+        let fade = self.fade as f32;
+        let mut gain = (from_start.min(to_end) as f32 / fade).min(1.0);
+        if let Some(left) = self.release {
+            gain *= (left - 1) as f32 / fade;
+        }
+        gain
+    }
+
+    /// Suma la voz en `out` (entrelazado, `channels` canales).
+    fn mix_into(&mut self, out: &mut [f32], channels: usize) {
+        for frame in out.chunks_exact_mut(channels) {
+            if !self.is_active() {
+                break;
+            }
+            let gain = self.gain();
+            let (l, r) = self.sample.frame(self.pos);
+            match frame {
+                [mono] => *mono += 0.5 * gain * (l + r),
+                [a, b, ..] => {
+                    *a += gain * l;
+                    *b += gain * r;
+                }
+                [] => {}
+            }
+            self.pos += 1;
+            if let Some(left) = &mut self.release {
+                *left -= 1;
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,6 +131,8 @@ pub struct Engine {
     garbage: Producer<Arc<Sample>>,
     playing: Arc<AtomicBool>,
     voice: Option<Voice>,
+    /// Voz interrumpida que todavía está haciendo su fundido de salida.
+    fading: Option<Voice>,
 }
 
 pub fn new_engine() -> (Controller, Engine) {
@@ -81,6 +150,7 @@ pub fn new_engine() -> (Controller, Engine) {
             garbage: garbage_tx,
             playing,
             voice: None,
+            fading: None,
         },
     )
 }
@@ -144,41 +214,44 @@ impl Engine {
     pub fn process(&mut self, out: &mut [f32], channels: usize) {
         while let Ok(cmd) = self.commands.pop() {
             let new_voice = match cmd {
-                Command::Play { sample, start, end } => Some(Voice {
-                    sample,
-                    pos: start,
-                    end,
-                }),
+                Command::Play { sample, start, end } => Some(Voice::new(sample, start, end)),
                 Command::Stop => None,
             };
             if let Some(old) = std::mem::replace(&mut self.voice, new_voice) {
-                self.discard(old.sample);
+                self.fade_out(old);
             }
         }
 
         out.fill(0.0);
-        let Some(voice) = &mut self.voice else {
-            self.playing.store(false, Ordering::Relaxed);
-            return;
-        };
-
-        let remaining = voice.end - voice.pos;
-        let n = remaining.min(out.len() / channels);
-        for (i, frame) in out.chunks_exact_mut(channels).take(n).enumerate() {
-            let (l, r) = voice.sample.frame(voice.pos + i);
-            match frame {
-                [mono] => *mono = 0.5 * (l + r),
-                [a, b, ..] => {
-                    *a = l;
-                    *b = r;
-                }
-                [] => {}
-            }
+        if let Some(voice) = &mut self.voice {
+            voice.mix_into(out, channels);
         }
-        voice.pos += n;
-        // La voz terminada se queda en `self.voice` (sin soltar el Arc aquí)
-        // hasta que otro comando la reemplace.
-        self.playing.store(voice.pos < voice.end, Ordering::Relaxed);
+        if let Some(fading) = &mut self.fading {
+            fading.mix_into(out, channels);
+        }
+        if self.fading.as_ref().is_some_and(|v| !v.is_active())
+            && let Some(done) = self.fading.take()
+        {
+            self.discard(done.sample);
+        }
+
+        // La voz principal terminada se queda en `self.voice` hasta que otro
+        // comando la reemplace.
+        let playing = self.voice.as_ref().is_some_and(Voice::is_active) || self.fading.is_some();
+        self.playing.store(playing, Ordering::Relaxed);
+    }
+
+    /// Pasa una voz interrumpida a la ranura de fundido. Si ya había otra
+    /// fundiéndose, esa se descarta (le quedaba como mucho un fundido).
+    fn fade_out(&mut self, mut voice: Voice) {
+        if !voice.is_active() {
+            self.discard(voice.sample);
+            return;
+        }
+        voice.release();
+        if let Some(previous) = self.fading.replace(voice) {
+            self.discard(previous.sample);
+        }
     }
 
     /// Devuelve un sample al hilo de control para que lo libere allí.

@@ -121,12 +121,22 @@ fn plays_a_slice_by_number() {
     }
     assert!(!controller.is_playing());
 
-    // Lo renderizado es exactamente el corte: mismos frames, luego silencio.
+    // Lo renderizado es el corte: mismos frames salvo los fundidos de los
+    // extremos (como mucho 2 ms), que empiezan y acaban en cero; luego silencio.
     let (body, tail) = rendered.split_at(slice.len() * 2);
-    for (i, frame) in body.as_chunks::<2>().0.iter().enumerate() {
+    let frames = body.as_chunks::<2>().0;
+    let fade = (RATE / 500) as usize;
+    for (i, frame) in frames
+        .iter()
+        .enumerate()
+        .skip(fade)
+        .take(slice.len() - 2 * fade)
+    {
         let (l, r) = sample.frame(slice.start + i);
         assert_eq!(*frame, [l, r], "frame {i} del corte");
     }
+    assert_eq!(frames[0], [0.0, 0.0]);
+    assert_eq!(frames[slice.len() - 1], [0.0, 0.0]);
     assert!(tail.iter().all(|&s| s == 0.0));
 
     // El arranque del corte es el golpe: hay energía en los primeros 5 ms.
