@@ -43,7 +43,12 @@ Hecha: ver «Fase B» en el Estado de `CLAUDE.md` y la mini-notación,
   proyecto.
 - Usables en la notación: `steps("kick . snare .")`.
 
-## Fase C: generadores y transformaciones
+## Fase C: generadores y transformaciones ✅
+
+Hecha: `euclid`, `rotate`, `reverse_pattern`, `mutate`, `shuffle`,
+`scale` (con `:pitch` y `:melody`), `pista:swing`, `pista:humanize` y
+`pista:fill`, en el registro de la API y en la sección 4 de
+`docs/GUIA.md`. Ver «Fase C» en el Estado de `CLAUDE.md`.
 
 - `euclid(k, n)`, `rotate`, `mutate(p)`, `shuffle` (con semilla).
 - `scale("minor", "C")` para tocar melodías con cortes.
