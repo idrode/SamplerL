@@ -1127,9 +1127,9 @@ pub const SNIPPETS: &[Snippet] = &[
     },
     Snippet {
         name: "fill",
-        summary: "Relleno con stutter al final de cada N compases en una pista existente.",
+        summary: "Relleno al final de cada N compases en una pista existente (roll, stutter...).",
         template: "track(\"${drums}\")\n  \
-                   :every(${4}, function(c) c:steps(\"${1 . 2 .  3 . 4 .  5 6 2 .  3r2 3r4 7r8 7r16}\") end)\n",
+                   :fill(\"${roll}\", ${4})\n",
         requires: "local amen = sample(\"amen.wav\"):slice(8)\n\
                    track(\"drums\", amen):steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\")\n",
     },
@@ -1150,6 +1150,31 @@ pub const SNIPPETS: &[Snippet] = &[
                    :fx(\"lowpass\", { cutoff = ${800} })\n  \
                    :gain(${0.8})\n",
         requires: "local amen = sample(\"amen.wav\"):slice(8)\n",
+    },
+    Snippet {
+        name: "euclid",
+        summary: "Pista con un ritmo euclídeo (k golpes repartidos en n pasos).",
+        template: "track(\"${hats}\", amen)\n  \
+                   :steps(euclid(${5}, ${16}, \"${2@0.6}\"))\n",
+        requires: "local amen = sample(\"amen.wav\"):slice(8)\n",
+    },
+    Snippet {
+        name: "melodia",
+        summary: "Melodía con un corte sobre una escala: grados que se convierten en pitch.",
+        template: "local escala = scale(\"${minor}\", \"${C}\")\n\
+                   track(\"${melodia}\", amen)\n  \
+                   :steps(escala:melody(\"${1 . 3 .  5 . 3 .  8 . 7 .  5 . 3 .}\", \"${3}\"))\n  \
+                   :gain(${0.6})\n",
+        requires: "local amen = sample(\"amen.wav\"):slice(8)\n",
+    },
+    Snippet {
+        name: "groove",
+        summary: "Swing y humanize en una pista existente, para que no suene a máquina.",
+        template: "track(\"${drums}\")\n  \
+                   :swing(${58})\n  \
+                   :humanize(${6}, ${0.15})\n",
+        requires: "local amen = sample(\"amen.wav\"):slice(8)\n\
+                   track(\"drums\", amen):steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\")\n",
     },
 ];
 

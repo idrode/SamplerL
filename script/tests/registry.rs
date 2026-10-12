@@ -227,7 +227,12 @@ fn every_snippet_runs_after_what_it_requires() {
         assert!(api::snippet(snippet.name).is_some());
     }
     let names: Vec<&str> = SNIPPETS.iter().map(|s| s.name).collect();
-    assert_eq!(names, ["amen", "fill", "ghost", "intro"]);
+    assert_eq!(
+        names,
+        [
+            "amen", "fill", "ghost", "intro", "euclid", "melodia", "groove"
+        ]
+    );
 }
 
 #[test]

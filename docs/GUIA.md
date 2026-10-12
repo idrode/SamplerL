@@ -179,7 +179,7 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Corte siguiente | Selecciona el corte siguiente de la pista (sin tocarlo) | — |
 | Corte anterior | Selecciona el corte anterior de la pista (sin tocarlo) | — |
 | Salir | Sale (pide confirmación si hay cambios sin guardar) | Ctrl-Q |
-| Snippet: `amen`, `fill`, `ghost`, `intro` | Inserta el snippet en el cursor (ver «Snippets» en la sección 4) | — |
+| Snippet: `amen`, `fill`, `ghost`, `intro`, `euclid`, `melodia`, `groove` | Inserta el snippet en el cursor (ver «Snippets» en la sección 4) | — |
 
 <!-- paleta:fin -->
 
@@ -201,7 +201,7 @@ Qué ofrece según dónde esté el cursor:
 
 | Dónde | Opciones |
 | --- | --- |
-| Inicio de línea | Funciones globales (`bpm`, `sample`, `track`), snippets (`amen`, `fill`, `ghost`, `intro`), variables locales y palabras clave de Lua |
+| Inicio de línea | Funciones globales (`bpm`, `sample`, `track`), snippets (`amen`, `fill`, `ghost`, `intro`, `euclid`, `melodia`, `groove`), variables locales y palabras clave de Lua |
 | Tras `:` | Los métodos del objeto: de sample, de cortes, de pista o del compás de `every` (si no se sabe qué es, todos) |
 | Dentro de `fx("...")` | Los efectos; dentro de la tabla, sus parámetros, y en `type = "..."` sus valores |
 | Dentro de `sample("...")` | Los WAV de la carpeta de muestras (la del proyecto o la del script) |
@@ -720,9 +720,12 @@ Trozos de script con campos para rellenar. Se insertan desde el autocompletado (
 | Snippet | Qué inserta |
 | --- | --- |
 | `amen` | Tempo, el break cortado y una pista que lo toca en orden. |
-| `fill` | Relleno con stutter al final de cada N compases en una pista existente. |
+| `fill` | Relleno al final de cada N compases en una pista existente (roll, stutter...). |
 | `ghost` | Pista de ghost notes: un golpe muy suave en contratiempos que aparece al azar. |
 | `intro` | Pista de intro: pocos golpes, filtrada y más baja. |
+| `euclid` | Pista con un ritmo euclídeo (k golpes repartidos en n pasos). |
+| `melodia` | Melodía con un corte sobre una escala: grados que se convierten en pitch. |
+| `groove` | Swing y humanize en una pista existente, para que no suene a máquina. |
 
 `amen`:
 
@@ -740,7 +743,7 @@ track("drums", amen)
 local amen = sample("amen.wav"):slice(8)
 track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
 track("drums")
-  :every(4, function(c) c:steps("1 . 2 .  3 . 4 .  5 6 2 .  3r2 3r4 7r8 7r16") end)
+  :fill("roll", 4)
 ```
 
 `ghost` (las primeras líneas son lo que necesita tener antes):
@@ -761,6 +764,34 @@ track("intro", amen)
   :steps("1 . . .  . . . .  1 . . .  . . . .")
   :fx("lowpass", { cutoff = 800 })
   :gain(0.8)
+```
+
+`euclid` (las primeras líneas son lo que necesita tener antes):
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+track("hats", amen)
+  :steps(euclid(5, 16, "2@0.6"))
+```
+
+`melodia` (las primeras líneas son lo que necesita tener antes):
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+local escala = scale("minor", "C")
+track("melodia", amen)
+  :steps(escala:melody("1 . 3 .  5 . 3 .  8 . 7 .  5 . 3 .", "3"))
+  :gain(0.6)
+```
+
+`groove` (las primeras líneas son lo que necesita tener antes):
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+track("drums")
+  :swing(58)
+  :humanize(6, 0.15)
 ```
 
 <!-- api:fin -->
