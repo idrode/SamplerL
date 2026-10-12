@@ -6,6 +6,7 @@
 #   scripts/render-demo.sh [entrada.wav]
 # Variables opcionales (con su valor por defecto):
 #   PATTERN="1 . . 1  . . 3 .  1 . 5 .  . 3 . 6"  SLICES=8  BPM=170  BARS=4  MIN_GAP=40
+#   DETECTOR=flux (o energy)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -24,7 +25,8 @@ cargo run -q --release -p tui -- "$INPUT" \
     --slices "${SLICES:-8}" \
     --bpm "${BPM:-170}" \
     --bars "${BARS:-4}" \
-    --min-gap "${MIN_GAP:-40}"
+    --min-gap "${MIN_GAP:-40}" \
+    --detector "${DETECTOR:-flux}"
 
 echo
 echo "Para escucharlo en otra máquina:"

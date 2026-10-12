@@ -1,9 +1,12 @@
 //! Detección de transitorios sobre un audio sintético con golpes en
 //! posiciones conocidas, y reproducción de cortes por número.
 
+mod support;
+
 use std::sync::Arc;
 
-use engine::{DetectOptions, Sample, SendError, Slices, new_engine};
+use engine::{DetectOptions, Detector, Sample, SendError, Slices, new_engine};
+use support::synth_break::{Hit, render_hits};
 
 const RATE: u32 = 48_000;
 const LENGTH_SECONDS: f32 = 2.4;
@@ -76,6 +79,21 @@ fn detects_all_hits_at_known_positions() {
 
     for (i, (range, &(ms, _))) in slices.iter().zip(&HITS).enumerate() {
         assert_near(range.start, ms_to_frames(ms), &format!("corte {i}"));
+    }
+
+    // El detector por energía sigue disponible y también los encuentra.
+    let energy = DetectOptions {
+        detector: Detector::Energy,
+        ..Default::default()
+    };
+    let slices_energy = Slices::detect_with(&sample, 8, &energy);
+    assert_eq!(slices_energy.len(), HITS.len());
+    for (i, (range, &(ms, _))) in slices_energy.iter().zip(&HITS).enumerate() {
+        assert_near(
+            range.start,
+            ms_to_frames(ms),
+            &format!("corte {i} (energía)"),
+        );
     }
     // Contiguos: cada corte acaba donde empieza el siguiente; el último en el final.
     let ranges: Vec<_> = slices.iter().collect();
@@ -179,6 +197,7 @@ fn min_gap_is_configurable() {
     // Con 50 ms de separación mínima solo queda el golpe más fuerte.
     let wide = DetectOptions {
         min_gap_seconds: 0.050,
+        ..Default::default()
     };
     let slices = Slices::detect_with(&sample, 8, &wide);
     assert_eq!(slices.len(), 1);
@@ -189,6 +208,47 @@ fn min_gap_is_configurable() {
     assert_eq!(Slices::detect(&closer, 8).len(), 1);
     let narrow = DetectOptions {
         min_gap_seconds: 0.010,
+        ..Default::default()
     };
     assert_eq!(Slices::detect_with(&closer, 8, &narrow).len(), 2);
+}
+
+#[test]
+fn flux_finds_a_weak_hat_over_a_kick_tail() {
+    // Bombo grave con cola larga y, 214 ms después, un charles más débil
+    // que la cola del bombo en ese momento.
+    let hat_at = ms_to_frames(214);
+    let length = RATE as usize / 2;
+    let kick_only = render_hits(RATE, &[(Hit::Kick, 0, 1.0)], length);
+    let hat_only = render_hits(RATE, &[(Hit::Hat, hat_at, 0.4)], length);
+    let audio: Vec<f32> = kick_only
+        .iter()
+        .zip(&hat_only)
+        .map(|(k, h)| k + h)
+        .collect();
+
+    // Precondición: en los 10 ms del charles, la cola del bombo es más fuerte
+    // en pico y en RMS. Por amplitud total, el charles no destaca.
+    let window = hat_at..hat_at + ms_to_frames(10);
+    let peak = |x: &[f32]| x.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+    let rms = |x: &[f32]| (x.iter().map(|s| s * s).sum::<f32>() / x.len() as f32).sqrt();
+    let (tail, hat) = (&kick_only[window.clone()], &hat_only[window]);
+    assert!(
+        peak(hat) < peak(tail),
+        "pico: charles {} >= cola {}",
+        peak(hat),
+        peak(tail)
+    );
+    assert!(
+        rms(hat) < rms(tail),
+        "RMS: charles {} >= cola {}",
+        rms(hat),
+        rms(tail)
+    );
+
+    let sample = Sample::from_interleaved(&audio, 1, RATE, RATE).unwrap();
+    let slices = Slices::detect(&sample, 8);
+    assert_eq!(slices.len(), 2, "{slices:?}");
+    assert_near(slices.get(0).unwrap().start, 0, "bombo");
+    assert_near(slices.get(1).unwrap().start, hat_at, "charles");
 }
