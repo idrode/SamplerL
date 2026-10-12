@@ -11,7 +11,7 @@ use ratatui::widgets::canvas::{Canvas, Line as CanvasLine};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
 
 use crate::app::App;
-use crate::model::ViewModel;
+use crate::model::{ViewModel, step_text};
 
 pub const ERROR: Color = Color::Red;
 pub const ACCENT: Color = Color::Cyan;
@@ -28,12 +28,19 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(main);
 
     draw_editor(frame, app, &view, left);
-    // Motor arriba (una línea por pista) y sample debajo.
+    // Motor arriba (una línea por pista), sample y tracker debajo.
     let engine_height = (view.tracks.len() as u16 + 4).clamp(5, 12);
-    let [engine_area, sample_area] =
-        Layout::vertical([Constraint::Length(engine_height), Constraint::Min(4)]).areas(right);
+    // El tracker pide sus 16 filas (más cabecera y bordes); el sample se
+    // queda con lo que sobre. Si no cabe, el tracker se desplaza.
+    let [engine_area, sample_area, tracker_area] = Layout::vertical([
+        Constraint::Length(engine_height),
+        Constraint::Min(6),
+        Constraint::Length(engine::STEPS as u16 + 3),
+    ])
+    .areas(right);
     frame.render_widget(EnginePanel(&view), engine_area);
     frame.render_widget(SamplePanel(&view), sample_area);
+    frame.render_widget(TrackerPanel(&view), tracker_area);
     frame.render_widget(HelpLine(&view), help);
 }
 
@@ -242,6 +249,76 @@ impl Widget for SamplePanel<'_> {
                     Style::new().fg(SLICE).bold(),
                 );
             }
+        }
+    }
+}
+
+/// Ancho de cada columna del tracker.
+const TRACKER_COLUMN: usize = 11;
+
+/// Tracker vertical: un paso por fila y una columna por pista, con la fila
+/// que está sonando resaltada.
+pub struct TrackerPanel<'a>(pub &'a ViewModel);
+
+impl Widget for TrackerPanel<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let view = self.0;
+        let t = view.transport;
+        let block = Block::bordered().title(format!(" tracker · compás {} ", t.bar));
+        let inner = block.inner(area);
+        block.render(area, buf);
+        if inner.height < 2 {
+            return;
+        }
+        let current = t.step.filter(|_| t.running);
+
+        // Cabecera con los nombres de las pistas.
+        let mut header = vec![Span::raw("   ")];
+        for (i, track) in view.tracks.iter().enumerate() {
+            let name: String = track.name.chars().take(TRACKER_COLUMN - 1).collect();
+            let span = Span::from(format!("{name:<TRACKER_COLUMN$}"));
+            header.push(if view.selected == Some(i) {
+                span.fg(ACCENT).bold()
+            } else {
+                span.bold()
+            });
+        }
+        Line::from(header).render(Rect { height: 1, ..inner }, buf);
+
+        // Si no caben las 16 filas, se desplaza para ver la que suena.
+        let visible = (inner.height - 1) as usize;
+        let first = if visible >= engine::STEPS {
+            0
+        } else {
+            current
+                .map_or(0, |s| s.saturating_sub(visible / 2))
+                .min(engine::STEPS - visible)
+        };
+        for (row, step) in (first..engine::STEPS).take(visible).enumerate() {
+            let mut spans = vec![Span::from(format!("{step:02} ")).fg(DIM)];
+            for track in &view.tracks {
+                let cell = &track.steps[step];
+                let text = format!("{:<TRACKER_COLUMN$}", step_text(cell));
+                spans.push(if cell.is_some() {
+                    Span::raw(text)
+                } else {
+                    Span::from(text).fg(DIM)
+                });
+            }
+            let mut line = Line::from(spans);
+            if current == Some(step) {
+                line = line.style(Style::new().bg(Color::Blue).fg(Color::White).bold());
+            }
+            let y = inner.y + 1 + row as u16;
+            let row_area = Rect {
+                y,
+                height: 1,
+                ..inner
+            };
+            if current == Some(step) {
+                buf.set_style(row_area, Style::new().bg(Color::Blue));
+            }
+            line.render(row_area, buf);
         }
     }
 }

@@ -5,7 +5,7 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use engine::Sample;
+use engine::{STEPS, Sample, Step};
 
 #[derive(Debug, Clone, Default)]
 pub struct ViewModel {
@@ -53,6 +53,8 @@ pub struct TrackView {
     pub slices: Vec<Range<usize>>,
     /// Compases del ciclo (`every`/`chance`).
     pub cycle: usize,
+    /// Pasos del compás que está sonando (variante del ciclo).
+    pub steps: [Option<Step>; STEPS],
     /// Corte que sonó por última vez (índice desde 0).
     pub playing_slice: Option<usize>,
     /// Medidor de nivel (pico con caída), de 0 a 1.
@@ -114,6 +116,27 @@ pub fn error_line(message: &str, file: &str) -> Option<usize> {
     digits.parse().ok()
 }
 
+/// Texto de un paso en mini-notación (`03'^7@0.5r4`), o `---` si es silencio.
+pub fn step_text(step: &Option<Step>) -> String {
+    let Some(step) = step else {
+        return "---".into();
+    };
+    let mut text = format!("{:02}", step.slice + 1);
+    if step.reverse {
+        text.push('\'');
+    }
+    if step.semitones != 0.0 {
+        text.push_str(&format!("^{}", step.semitones));
+    }
+    if step.gain != 1.0 {
+        text.push_str(&format!("@{}", step.gain));
+    }
+    if step.retrig > 1 {
+        text.push_str(&format!("r{}", step.retrig));
+    }
+    text
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -138,5 +161,20 @@ mod tests {
         assert_eq!(w.range(0.21, 0.29), (0.5, 0.5));
         assert_eq!(w.range(0.6, 0.8), (-0.8, 0.0));
         assert_eq!(w.range(0.0, 1.0), (-0.8, 0.5));
+    }
+
+    #[test]
+    fn writes_steps_in_notation() {
+        assert_eq!(step_text(&None), "---");
+        assert_eq!(step_text(&Some(Step::new(2))), "03");
+        let fancy = Step::new(0)
+            .reversed()
+            .with_pitch(-5.0)
+            .with_gain(0.5)
+            .with_retrig(4);
+        assert_eq!(step_text(&Some(fancy)), "01'^-5@0.5r4");
+        // Se puede volver a leer con la notación (con el número sin cero a la izquierda).
+        let parsed = engine::notation::parse_step("1'^-5@0.5r4").unwrap();
+        assert_eq!(parsed, Some(fancy));
     }
 }

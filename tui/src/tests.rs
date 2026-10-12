@@ -294,13 +294,7 @@ fn pantalla() {
     let (_, mut app, mut engine) = open("pantalla", Some(SONG));
     offline::render(&mut engine, 5 * STEP + 100, 2);
     app.tick();
-    println!("{}", text(&draw(&mut app, 120, 24)));
-    replace_all(
-        &mut app,
-        "bpm(120)\nlocal a = sample(\"break.wav\"):slice(2)\ntrack(\"d\", a):steps(\"1 . 9\")\n",
-    );
-    app.handle(ctrl('s'));
-    println!("{}", text(&draw(&mut app, 120, 24)));
+    println!("{}", text(&draw(&mut app, 130, 40)));
 }
 
 fn waveform_view(playing: Option<usize>) -> ViewModel {
@@ -405,4 +399,122 @@ fn sample_panel_follows_the_selected_track() {
     assert!(screen.contains("›kick"), "{screen}");
     app.handle(ctrl('o'));
     assert!(text(&draw(&mut app, 120, 24)).contains("sample · drums"));
+}
+
+fn tracker_view(step: Option<usize>, running: bool) -> ViewModel {
+    use engine::Step;
+    let mut drums = [None; engine::STEPS];
+    drums[0] = Some(Step::new(0));
+    drums[5] = Some(Step::new(2).reversed().with_pitch(7.0));
+    drums[12] = Some(Step::new(1).with_retrig(4));
+    let mut kick = [None; engine::STEPS];
+    kick[5] = Some(Step::new(0).with_gain(0.5));
+    ViewModel {
+        transport: TransportView {
+            running,
+            bpm: 120.0,
+            bar: 3,
+            step,
+        },
+        tracks: vec![
+            TrackView {
+                name: "drums".into(),
+                steps: drums,
+                ..TrackView::default()
+            },
+            TrackView {
+                name: "kick".into(),
+                steps: kick,
+                ..TrackView::default()
+            },
+        ],
+        selected: Some(1),
+        ..ViewModel::default()
+    }
+}
+
+/// Fila de la pantalla que empieza (tras el borde) por `prefix`.
+fn row_starting(buffer: &Buffer, prefix: &str) -> Option<u16> {
+    text(buffer)
+        .lines()
+        .position(|line| line.chars().skip(1).collect::<String>().starts_with(prefix))
+        .map(|y| y as u16)
+}
+
+#[test]
+fn tracker_shows_steps_and_highlights_the_current_row() {
+    let view = tracker_view(Some(5), true);
+    let buffer = draw_widget(ui::TrackerPanel(&view), 40, 20);
+    let screen = text(&buffer);
+    assert!(screen.contains("tracker · compás 3"), "{screen}");
+    assert!(screen.contains("   drums      kick"), "{screen}");
+    assert!(screen.contains("00 01         ---"), "{screen}");
+    assert!(screen.contains("05 03'^7      01@0.5"), "{screen}");
+    assert!(screen.contains("12 02r4       ---"), "{screen}");
+    // Pista seleccionada en la cabecera.
+    let (x, y) = find(&buffer, "kick").unwrap();
+    assert_eq!(buffer[(x, y)].fg, Color::Cyan);
+
+    // Solo la fila 05 resaltada, en todo su ancho.
+    let row = row_starting(&buffer, "05").unwrap();
+    for x in 1..39 {
+        assert_eq!(buffer[(x, row)].bg, Color::Blue, "x = {x}");
+    }
+    let other = row_starting(&buffer, "06").unwrap();
+    assert_ne!(buffer[(5, other)].bg, Color::Blue);
+
+    // Parado: nada resaltado.
+    let buffer = draw_widget(ui::TrackerPanel(&tracker_view(Some(5), false)), 40, 20);
+    let row = row_starting(&buffer, "05").unwrap();
+    assert_ne!(buffer[(5, row)].bg, Color::Blue);
+}
+
+#[test]
+fn tracker_scrolls_to_keep_the_current_row_visible() {
+    // 8 de alto: borde, cabecera y 5 filas.
+    let buffer = draw_widget(ui::TrackerPanel(&tracker_view(Some(12), true)), 40, 8);
+    let screen = text(&buffer);
+    assert!(!screen.contains("│00 "), "{screen}");
+    let row = row_starting(&buffer, "12").unwrap();
+    assert_eq!(buffer[(5, row)].bg, Color::Blue, "{screen}");
+    // Al final del compás no se pasa de la fila 15.
+    let screen = text(&draw_widget(
+        ui::TrackerPanel(&tracker_view(Some(15), true)),
+        40,
+        8,
+    ));
+    assert!(
+        screen.contains("│15 ") && screen.contains("│11 "),
+        "{screen}"
+    );
+}
+
+#[test]
+fn tracker_follows_the_engine_and_every() {
+    let song = r#"bpm(120)
+local amen = sample("break.wav"):slice(2)
+track("drums", amen)
+  :steps("1 . . .  1 . . .  1 . . .  1 . . .")
+  :every(2, function(t) t:steps("2' . 2 .  . . . .  . . . .  . . . .") end)
+"#;
+    let (_, mut app, mut engine) = open("tracker", Some(song));
+    // Compás 0, paso 2: variante de every.
+    offline::render(&mut engine, 2 * STEP + 100, 2);
+    app.tick();
+    let buffer = draw(&mut app, 120, 40);
+    let screen = text(&buffer);
+    assert!(screen.contains("tracker · compás 0"), "{screen}");
+    assert!(screen.contains("00 02'"), "{screen}");
+    assert!(screen.contains("02 02 "), "{screen}");
+    let (_, row) = find(&buffer, "02 02 ").unwrap();
+    let (x, _) = find(&buffer, "02 02 ").unwrap();
+    assert_eq!(buffer[(x, row)].bg, Color::Blue);
+
+    // Compás 1, paso 4: patrón base.
+    offline::render(&mut engine, 16 * STEP + 2 * STEP, 2);
+    app.tick();
+    let screen = text(&draw(&mut app, 120, 40));
+    assert!(screen.contains("tracker · compás 1"), "{screen}");
+    assert!(screen.contains("00 01 "), "{screen}");
+    assert!(screen.contains("04 01 "), "{screen}");
 }
