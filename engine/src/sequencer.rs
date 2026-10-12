@@ -72,6 +72,8 @@ pub(crate) struct Trigger {
 pub struct Pattern {
     pub(crate) sample: Arc<Sample>,
     pub(crate) steps: [Option<Trigger>; STEPS],
+    /// Volumen de la pista (lineal), aplicado después de sus voces.
+    pub(crate) gain: f32,
 }
 
 impl Pattern {
@@ -118,7 +120,18 @@ impl Pattern {
         Ok(Pattern {
             sample,
             steps: resolved,
+            gain: 1.0,
         })
+    }
+
+    /// Volumen de la pista que toca este patrón (lineal, de 0 a `MAX_GAIN`).
+    /// Entra con el patrón, al empezar el compás, con un suavizado de ~5 ms.
+    pub fn with_gain(mut self, gain: f32) -> Result<Self, SendError> {
+        if !(0.0..=MAX_GAIN).contains(&gain) {
+            return Err(SendError::InvalidTrackGain(gain));
+        }
+        self.gain = gain;
+        Ok(self)
     }
 }
 

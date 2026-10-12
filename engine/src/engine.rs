@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use rtrb::{Consumer, Producer, RingBuffer};
 
+use crate::limiter::soft_limit;
 use crate::sample::Sample;
 use crate::sequencer::{Pattern, Transport, valid_bpm};
 use crate::slice::Slices;
@@ -17,6 +18,11 @@ const COMMAND_CAPACITY: usize = 64;
 const GARBAGE_CAPACITY: usize = COMMAND_CAPACITY * 2;
 /// Número máximo de pistas. Cada una tiene su patrón y su voz.
 pub const MAX_TRACKS: usize = 8;
+/// Frames por trozo de mezcla. Los buffers de pista y maestro tienen este
+/// tamaño fijo; los bloques del callback se procesan en trozos.
+const CHUNK: usize = 256;
+/// Constante de tiempo del suavizado del volumen de pista.
+const GAIN_SMOOTHING_SECONDS: f32 = 0.005;
 /// Duración de los fundidos de entrada y salida de cada voz.
 const FADE_SECONDS: f32 = 0.0015;
 
@@ -144,22 +150,16 @@ impl Voice {
         (l0 + frac * (l1 - l0), r0 + frac * (r1 - r0))
     }
 
-    /// Suma la voz en `out` (entrelazado, `channels` canales).
-    fn mix_into(&mut self, out: &mut [f32], channels: usize) {
-        for frame in out.chunks_exact_mut(channels) {
+    /// Suma la voz en `out` (estéreo entrelazado).
+    fn mix_into(&mut self, out: &mut [f32]) {
+        for frame in out.as_chunks_mut::<2>().0 {
             if !self.is_active() {
                 break;
             }
             let gain = self.playback.gain * self.envelope();
             let (l, r) = self.read();
-            match frame {
-                [mono] => *mono += 0.5 * gain * (l + r),
-                [a, b, ..] => {
-                    *a += gain * l;
-                    *b += gain * r;
-                }
-                [] => {}
-            }
+            frame[0] += gain * l;
+            frame[1] += gain * r;
             self.rendered += 1;
             if let Some(left) = &mut self.release {
                 *left -= 1;
@@ -180,6 +180,8 @@ pub enum SendError {
     InvalidStep { step: usize, reason: &'static str },
     /// Número de pista fuera de rango.
     NoSuchTrack(usize),
+    /// Volumen de pista fuera de rango.
+    InvalidTrackGain(f32),
 }
 
 impl fmt::Display for SendError {
@@ -188,6 +190,9 @@ impl fmt::Display for SendError {
             SendError::QueueFull => write!(f, "cola de comandos llena"),
             SendError::NoSuchSlice { index, count } => {
                 write!(f, "no existe el corte {index} (hay {count})")
+            }
+            SendError::InvalidTrackGain(gain) => {
+                write!(f, "volumen de pista {gain} fuera de rango (0 a 4)")
             }
             SendError::NoSuchTrack(track) => {
                 write!(f, "no existe la pista {track} (máximo {MAX_TRACKS})")
@@ -240,7 +245,6 @@ pub struct Controller {
 }
 
 /// Una pista en el hilo de audio: su patrón (con cambios pendientes) y su voz.
-#[derive(Default)]
 struct Track {
     pattern: Option<Pattern>,
     /// Cambio que entra en el siguiente compás (`Some(None)` = silenciar).
@@ -250,6 +254,21 @@ struct Track {
     voice: Option<Voice>,
     /// Voz interrumpida que todavía está haciendo su fundido de salida.
     fading: Option<Voice>,
+    /// Volumen actual, que se acerca suavemente al del patrón.
+    gain: f32,
+}
+
+impl Default for Track {
+    fn default() -> Self {
+        Track {
+            pattern: None,
+            pending: None,
+            staged: None,
+            voice: None,
+            fading: None,
+            gain: 1.0,
+        }
+    }
 }
 
 /// Lado de audio. Se mueve al callback de audio (o se usa para renderizar
@@ -261,6 +280,9 @@ pub struct Engine {
     sample_rate: u32,
     transport: Transport,
     tracks: [Track; MAX_TRACKS],
+    /// Buffers de mezcla (estéreo entrelazado), de tamaño fijo.
+    track_buf: [f32; 2 * CHUNK],
+    master: [f32; 2 * CHUNK],
     batch_open: bool,
     staged_bpm: Option<f64>,
 }
@@ -284,6 +306,8 @@ pub fn new_engine(sample_rate: u32) -> (Controller, Engine) {
             sample_rate,
             transport: Transport::new(),
             tracks: std::array::from_fn(|_| Track::default()),
+            track_buf: [0.0; 2 * CHUNK],
+            master: [0.0; 2 * CHUNK],
             batch_open: false,
             staged_bpm: None,
         },
@@ -430,11 +454,10 @@ impl Engine {
             self.handle(cmd);
         }
 
-        out.fill(0.0);
         let frames = out.len() / channels;
         let mut offset = 0;
         while offset < frames {
-            let mut n = frames - offset;
+            let mut n = (frames - offset).min(CHUNK);
             if self.transport.running {
                 let next = self.transport.next_step_frame(self.sample_rate);
                 if next <= self.transport.frame {
@@ -444,7 +467,9 @@ impl Engine {
                 // Partir el bloque en el siguiente paso: disparo exacto al frame.
                 n = n.min((next - self.transport.frame) as usize);
             }
-            self.mix(
+            self.mix(n);
+            write_out(
+                &self.master[..2 * n],
                 &mut out[offset * channels..(offset + n) * channels],
                 channels,
             );
@@ -521,9 +546,17 @@ impl Engine {
         for t in 0..MAX_TRACKS {
             if step == 0
                 && let Some(change) = self.tracks[t].pending.take()
-                && let Some(old) = std::mem::replace(&mut self.tracks[t].pattern, change)
             {
-                self.discard(old.sample);
+                let track = &mut self.tracks[t];
+                let old = std::mem::replace(&mut track.pattern, change);
+                // Si la pista está callada, el volumen nuevo entra ya, sin
+                // suavizado: el primer golpe suena con él desde el principio.
+                if !track.voice.as_ref().is_some_and(Voice::is_active) && track.fading.is_none() {
+                    track.gain = track.pattern.as_ref().map_or(1.0, |p| p.gain);
+                }
+                if let Some(old) = old {
+                    self.discard(old.sample);
+                }
             }
             let voice = self.tracks[t].pattern.as_ref().and_then(|p| {
                 p.steps[step]
@@ -543,20 +576,49 @@ impl Engine {
         }
     }
 
-    fn mix(&mut self, out: &mut [f32], channels: usize) {
+    /// Mezcla `n` frames en `self.master`: cada pista en su buffer, con su
+    /// volumen, y al final el limitador.
+    fn mix(&mut self, n: usize) {
+        self.master[..2 * n].fill(0.0);
+        let smoothing = 1.0 - (-1.0 / (GAIN_SMOOTHING_SECONDS * self.sample_rate as f32)).exp();
         for t in 0..MAX_TRACKS {
             let track = &mut self.tracks[t];
+            let target = track.pattern.as_ref().map_or(1.0, |p| p.gain);
+            if track.voice.is_none() && track.fading.is_none() {
+                // En silencio no hay nada que suavizar: el siguiente golpe
+                // empieza ya con el volumen nuevo.
+                track.gain = target;
+                continue;
+            }
+            let buf = &mut self.track_buf[..2 * n];
+            buf.fill(0.0);
             if let Some(voice) = &mut track.voice {
-                voice.mix_into(out, channels);
+                voice.mix_into(buf);
             }
             if let Some(fading) = &mut track.fading {
-                fading.mix_into(out, channels);
+                fading.mix_into(buf);
             }
+
+            let master = &mut self.master[..2 * n];
+            for (dst, src) in master
+                .as_chunks_mut::<2>()
+                .0
+                .iter_mut()
+                .zip(buf.as_chunks::<2>().0)
+            {
+                track.gain += (target - track.gain) * smoothing;
+                dst[0] += track.gain * src[0];
+                dst[1] += track.gain * src[1];
+            }
+
             if track.fading.as_ref().is_some_and(|v| !v.is_active())
                 && let Some(done) = track.fading.take()
             {
                 self.discard(done.sample);
             }
+        }
+        for s in &mut self.master[..2 * n] {
+            *s = soft_limit(*s);
         }
     }
 
@@ -601,6 +663,27 @@ impl Engine {
     }
 }
 
+/// Copia la mezcla estéreo a la salida con `channels` canales: en mono se
+/// promedia; con más de dos, los demás canales quedan en silencio.
+fn write_out(master: &[f32], out: &mut [f32], channels: usize) {
+    for (src, dst) in master
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .zip(out.chunks_exact_mut(channels))
+    {
+        match dst {
+            [mono] => *mono = 0.5 * (src[0] + src[1]),
+            [l, r, rest @ ..] => {
+                *l = src[0];
+                *r = src[1];
+                rest.fill(0.0);
+            }
+            [] => {}
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -634,7 +717,7 @@ mod tests {
         controller.commands.push(set(1)).ok().unwrap();
         controller.commands.push(Command::CommitBatch).ok().unwrap();
         let audio = offline::render(&mut engine, bar, 2);
-        // Las dos pistas suenan a la vez: 0.5 + 0.5.
-        assert_eq!(audio[2 * 200], 1.0);
+        // Las dos pistas suenan a la vez: 0.5 + 0.5, por el limitador.
+        assert_eq!(audio[2 * 200], soft_limit(1.0));
     }
 }

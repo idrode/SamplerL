@@ -74,9 +74,9 @@ fn api_from_claude_md_renders_two_tracks() {
     controller.start().unwrap();
     let l = render_left(&mut engine, BAR);
 
-    // Paso 0: corte 1 en las dos pistas (0.5 + 0.5). Paso 2: corte 2 en
+    // Paso 0: corte 1 en las dos pistas (0.5 + 0.5, por el limitador). Paso 2: corte 2 en
     // "drums". Paso 4: "x" (= corte 1) en "kick". Paso 1: silencio.
-    assert_level(&l, 0, 0, 1.0);
+    assert_level(&l, 0, 0, engine::soft_limit(1.0));
     assert_level(&l, 0, 1, 0.0);
     assert_level(&l, 0, 2, 0.25);
     assert_level(&l, 0, 4, 0.5);
@@ -215,7 +215,7 @@ track("kick", amen):steps("x . . .  x . . .  . . . .  . . . .")
     assert!(Arc::ptr_eq(&first, &host.song().unwrap().tracks[0].sample));
     assert_eq!(host.track_slot("kick"), Some(kick_slot));
     assert_eq!(host.track_slot("drums"), None);
-    assert_level(&l, 0, 0, 1.0);
+    assert_level(&l, 0, 0, engine::soft_limit(1.0));
     assert_level(&l, 0, 2, 0.25);
     assert_level(&l, 1, 0, 0.5);
     assert_level(&l, 1, 2, 0.0);
@@ -230,9 +230,30 @@ fn load_file_resolves_samples_next_to_the_script() {
     host.load_file(&mut controller, &path).unwrap();
     controller.start().unwrap();
     let l = render_left(&mut engine, BAR);
-    assert_level(&l, 0, 0, 1.0);
+    assert_level(&l, 0, 0, engine::soft_limit(1.0));
 
     std::fs::write(&path, "bpm(120)\n\nbpm(\"rápido\")\n").unwrap();
     let err = host.load_file(&mut controller, &path).err().unwrap();
     assert!(err.message.contains("song.lua:3:"), "{err}");
+}
+
+#[test]
+fn track_gain_from_lua() {
+    let (dir, mut host, mut controller, mut engine) = setup("gain");
+    let src = r#"
+local amen = sample("break.wav"):slice(2)
+track("drums", amen):steps("1 . . .  . . . .  . . . .  . . . ."):gain(0.5)
+"#;
+    load(&mut host, &mut controller, &dir, src).unwrap();
+    controller.start().unwrap();
+    let l = render_left(&mut engine, BAR);
+    assert_level(&l, 0, 0, 0.25);
+    assert_eq!(host.song().unwrap().tracks[0].gain, 0.5);
+
+    let bad = "local a = sample(\"break.wav\"):slice(2)\ntrack(\"d\", a):gain(5)\n";
+    let err = load(&mut host, &mut controller, &dir, bad).unwrap_err();
+    assert!(
+        err.contains("song.lua:2:") && err.contains("volumen de pista 5"),
+        "{err}"
+    );
 }

@@ -54,6 +54,8 @@ pub struct TrackDef {
     pub path: PathBuf,
     pub slices: Slices,
     pub steps: [Option<Step>; STEPS],
+    /// Volumen de la pista (`:gain()`), lineal.
+    pub gain: f32,
 }
 
 /// Error de un script, con archivo y línea cuando se conocen.
@@ -200,6 +202,7 @@ impl ScriptHost {
                     let track = song.tracks.iter().find(|t| &t.name == name).unwrap();
                     let pattern =
                         Pattern::from_steps(track.sample.clone(), &track.slices, track.steps)
+                            .and_then(|p| p.with_gain(track.gain))
                             .map_err(|e| ScriptError::new(format!("pista \"{name}\": {e}")))?;
                     Some(pattern)
                 }
@@ -315,6 +318,7 @@ impl ScriptHost {
                                 path: source.path.clone(),
                                 slices: source.slices.clone(),
                                 steps: [None; STEPS],
+                                gain: 1.0,
                             };
                             // Redefinir una pista en el mismo script la reemplaza.
                             match builder.tracks.iter_mut().find(|t| t.name == name) {
@@ -444,15 +448,37 @@ impl UserData for SlicedHandle {
 }
 
 /// `track(nombre, ...)` en Lua.
+#[derive(Clone)]
 struct TrackHandle {
     name: String,
     state: Rc<RefCell<Builder>>,
+}
+
+impl TrackHandle {
+    fn with_track<R>(&self, f: impl FnOnce(&mut TrackDef) -> R) -> R {
+        let mut builder = self.state.borrow_mut();
+        let track = builder
+            .tracks
+            .iter_mut()
+            .find(|t| t.name == self.name)
+            .expect("la pista existe desde track()");
+        f(track)
+    }
 }
 
 impl UserData for TrackHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         // `:steps("1 . 3' ...")`: patrón en mini-notación. Devuelve la pista
         // para poder encadenar.
+        // `:gain(g)`: volumen de la pista (lineal, de 0 a 4).
+        methods.add_method("gain", |lua, this, gain: f32| {
+            if !(0.0..=engine::MAX_GAIN).contains(&gain) {
+                return Err(fail(lua, SendError::InvalidTrackGain(gain)));
+            }
+            this.with_track(|track| track.gain = gain);
+            Ok(this.clone())
+        });
+
         methods.add_method("steps", |lua, this, text: String| {
             let steps = parse_steps(&text).map_err(|e| fail(lua, format!("steps: {e}")))?;
             let mut builder = this.state.borrow_mut();
