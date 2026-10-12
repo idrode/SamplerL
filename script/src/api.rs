@@ -1,0 +1,710 @@
+//! Registro único de la API de Lua: nombre, firma, descripción, parámetros
+//! y valores válidos de cada función, efecto de `:fx` y efecto de
+//! `:chance`.
+//!
+//! Lo usan el autocompletado del editor y la sección 4 de `docs/GUIA.md`
+//! (que se genera con [`guide_markdown`]; `cargo run -p script --example
+//! guia` la reescribe). Los tests comprueban que cada función registrada
+//! existe de verdad en el entorno de Lua y que la guía está al día.
+//!
+//! Plantillas: el texto que inserta el autocompletado. Cada `${...}` es un
+//! parámetro que el editor deja marcado para sustituirlo; se insertan sin
+//! los `${` `}`.
+
+/// Sobre qué se llama una función.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Receiver {
+    /// Función global: `bpm(170)`.
+    Global,
+    /// `sample("...")` sin cortar.
+    Sample,
+    /// Sample con sus cortes: `sample("..."):slice(n)`.
+    Slices,
+    /// Pista: `track(...)`.
+    Track,
+    /// Compás que recibe la función de `every`.
+    Bar,
+}
+
+impl Receiver {
+    /// Nombre corto (el de la variable en las firmas).
+    pub fn label(self) -> &'static str {
+        match self {
+            Receiver::Global => "función",
+            Receiver::Sample => "sample",
+            Receiver::Slices => "cortes",
+            Receiver::Track => "pista",
+            Receiver::Bar => "compás",
+        }
+    }
+}
+
+/// Parámetro de una función.
+#[derive(Debug, Clone, Copy)]
+pub struct Param {
+    pub name: &'static str,
+    pub description: &'static str,
+}
+
+/// Función o método de la API.
+#[derive(Debug, Clone, Copy)]
+pub struct Function {
+    pub name: &'static str,
+    pub receiver: Receiver,
+    /// Firma tal como se escribe: `pista:fx(nombre, parámetros)`.
+    pub signature: &'static str,
+    /// Lo que devuelve, si es un objeto de la API.
+    pub returns: Option<Receiver>,
+    /// Una línea (el autocompletado la muestra).
+    pub summary: &'static str,
+    /// Explicación para la guía (Markdown), después del resumen.
+    pub doc: &'static str,
+    pub params: &'static [Param],
+    /// Texto que inserta el autocompletado (ver la cabecera del módulo).
+    pub template: &'static str,
+    /// Ejemplo para la guía (se comprueba en los tests).
+    pub example: Option<&'static str>,
+}
+
+impl Function {
+    /// Firma con lo que devuelve: `sample:slice(n) → cortes`.
+    pub fn full_signature(&self) -> String {
+        match self.returns {
+            Some(r) => format!("{} → {}", self.signature, r.label()),
+            None => self.signature.to_string(),
+        }
+    }
+}
+
+/// Parámetro de un efecto de `:fx`.
+#[derive(Debug, Clone, Copy)]
+pub struct FxParam {
+    pub name: &'static str,
+    pub description: &'static str,
+    /// Valor por defecto (como se escribe en Lua); `None`: obligatorio.
+    pub default: Option<&'static str>,
+    /// Valores válidos en texto: `20–20000`, `"lowpass"` o `"highpass"`.
+    pub valid: &'static str,
+    /// Valores posibles, si es una lista cerrada de cadenas.
+    pub values: &'static [&'static str],
+    /// Texto que inserta el autocompletado.
+    pub template: &'static str,
+}
+
+/// Efecto de pista para `:fx(nombre, parámetros)`.
+#[derive(Debug, Clone, Copy)]
+pub struct Effect {
+    pub name: &'static str,
+    /// Otros nombres que admite.
+    pub aliases: &'static [&'static str],
+    pub summary: &'static str,
+    pub params: &'static [FxParam],
+    /// Tabla de parámetros que inserta el autocompletado tras el nombre.
+    pub template: &'static str,
+}
+
+/// Efecto de `:chance(p, efecto[, valor])`.
+#[derive(Debug, Clone, Copy)]
+pub struct ChanceEffect {
+    pub name: &'static str,
+    pub aliases: &'static [&'static str],
+    /// Qué es el valor y su rango; `None`: no lleva.
+    pub value: Option<&'static str>,
+    pub summary: &'static str,
+}
+
+/// Funciones globales y métodos, en el orden de la guía.
+pub const FUNCTIONS: &[Function] = &[
+    Function {
+        name: "bpm",
+        receiver: Receiver::Global,
+        signature: "bpm(n)",
+        returns: None,
+        summary: "Tempo en pulsos por minuto, de 20 a 400.",
+        doc: "Si no se llama, se mantiene el que haya (o el del proyecto).",
+        params: &[Param {
+            name: "n",
+            description: "pulsos por minuto (20 a 400, admite decimales)",
+        }],
+        template: "bpm(${170})",
+        example: Some("bpm(174)\n"),
+    },
+    Function {
+        name: "sample",
+        receiver: Receiver::Global,
+        signature: "sample(ruta)",
+        returns: Some(Receiver::Sample),
+        summary: "Carga un WAV.",
+        doc: "La ruta es relativa a la carpeta del script o, en un proyecto, a su \
+              carpeta `samples`. Recargar el script no vuelve a leer el archivo si \
+              no ha cambiado.",
+        params: &[Param {
+            name: "ruta",
+            description: "archivo WAV (cualquier frecuencia; se resamplea al cargar)",
+        }],
+        template: "sample(\"${amen.wav}\")",
+        example: Some("local amen = sample(\"amen.wav\")\n"),
+    },
+    Function {
+        name: "track",
+        receiver: Receiver::Global,
+        signature: "track(nombre, cortes) / track(nombre)",
+        returns: Some(Receiver::Track),
+        summary: "Define una pista que toca esos cortes, o recupera una ya definida.",
+        doc: "Con dos argumentos define (o redefine) la pista; con uno, recupera \
+              una pista ya definida para seguir configurándola. Hay como mucho 8 \
+              pistas; suenan a la vez y se suman. Todos los métodos de la pista \
+              devuelven la pista, así que se pueden encadenar.",
+        params: &[
+            Param {
+                name: "nombre",
+                description: "nombre de la pista; conserva su pista del motor entre recargas",
+            },
+            Param {
+                name: "cortes",
+                description: "lo que devuelve `sample(...):slice(n)` o `:slice_at(i)`",
+            },
+        ],
+        template: "track(\"${drums}\", ${amen})",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             track(\"drums\", amen)\n\
+             track(\"drums\"):steps(\"1 . . .  3 . . .  1 . . .  3 . . .\")\n",
+        ),
+    },
+    Function {
+        name: "slice",
+        receiver: Receiver::Sample,
+        signature: "sample:slice(n)",
+        returns: Some(Receiver::Slices),
+        summary: "Corta el sample en sus n golpes más fuertes.",
+        doc: "Si hay menos golpes, devuelve menos cortes. Usa el detector por flujo \
+              espectral con 40 ms de separación mínima.",
+        params: &[Param {
+            name: "n",
+            description: "cortes a buscar (1 a 64)",
+        }],
+        template: "slice(${8})",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             local cuantos = amen:count()\n\
+             track(\"drums\", amen):steps(\"1 . . .  . . . .  1 . . .  . . . .\")\n",
+        ),
+    },
+    Function {
+        name: "count",
+        receiver: Receiver::Slices,
+        signature: "cortes:count()",
+        returns: None,
+        summary: "Número de cortes.",
+        doc: "Puede ser menor que el pedido en `slice(n)` si el detector encontró \
+              menos golpes.",
+        params: &[],
+        template: "count()",
+        example: None,
+    },
+    Function {
+        name: "slice_at",
+        receiver: Receiver::Slices,
+        signature: "cortes:slice_at(i)",
+        returns: Some(Receiver::Slices),
+        summary: "Solo el corte i (desde 1), como fuente de un único corte.",
+        doc: "En el patrón de la pista es `1` o `x`.",
+        params: &[Param {
+            name: "i",
+            description: "número del corte (desde 1)",
+        }],
+        template: "slice_at(${1})",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             local caja = amen:slice_at(3)\n\
+             track(\"caja\", caja):steps(\". . . .  x . . .  . . . .  x . . .\")\n",
+        ),
+    },
+    Function {
+        name: "steps",
+        receiver: Receiver::Track,
+        signature: "pista:steps(texto)",
+        returns: Some(Receiver::Track),
+        summary: "Patrón del compás en mini-notación (16 pasos).",
+        doc: "La notación está en la sección 3. Los cortes que no existen dan error \
+              en esa línea.",
+        params: &[Param {
+            name: "texto",
+            description: "16 pasos separados por espacios",
+        }],
+        template: "steps(\"${1 . . .  . . . .  . . . .  . . . .}\")",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             track(\"drums\", amen):steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\")\n",
+        ),
+    },
+    Function {
+        name: "gain",
+        receiver: Receiver::Track,
+        signature: "pista:gain(g)",
+        returns: Some(Receiver::Track),
+        summary: "Volumen de la pista, lineal de 0 a 4.",
+        doc: "Se aplica después de los efectos.",
+        params: &[Param {
+            name: "g",
+            description: "volumen lineal (0 a 4; 1 lo deja igual)",
+        }],
+        template: "gain(${0.8})",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             track(\"drums\", amen):steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\"):gain(0.7)\n",
+        ),
+    },
+    Function {
+        name: "fx",
+        receiver: Receiver::Track,
+        signature: "pista:fx(nombre, parámetros)",
+        returns: Some(Receiver::Track),
+        summary: "Añade un efecto a la cadena de la pista (hasta 4, en orden).",
+        doc: "Un parámetro desconocido da error, para pillar las erratas. Los \
+              efectos y sus parámetros están en la tabla de abajo.\n\n\
+              El filtro es un biquad de 12 dB/octava; `q = 0.707` es la respuesta \
+              más plana y valores altos resuenan en el corte. El bitcrusher reduce \
+              la resolución a `bits` y repite cada muestra `downsample` veces \
+              (reducción de la frecuencia de muestreo, sin filtro: suena sucio a \
+              propósito).",
+        params: &[
+            Param {
+                name: "nombre",
+                description: "el efecto (ver la tabla)",
+            },
+            Param {
+                name: "parámetros",
+                description: "tabla con los parámetros del efecto",
+            },
+        ],
+        template: "fx(\"${filter}\", { type = \"${lowpass}\", cutoff = ${3000} })",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             track(\"drums\", amen)\n  \
+             :steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\")\n  \
+             :fx(\"filter\", { type = \"lowpass\", cutoff = 3000 })\n  \
+             :fx(\"highpass\", { cutoff = 80, q = 0.9 })\n  \
+             :fx(\"bitcrush\", { bits = 6, downsample = 2 })\n",
+        ),
+    },
+    Function {
+        name: "every",
+        receiver: Receiver::Track,
+        signature: "pista:every(n, función)",
+        returns: Some(Receiver::Track),
+        summary: "En los compases 0, n, 2n... llama a función(compás).",
+        doc: "Como en Tidal, cuenta los compases de la canción. La función puede \
+              cambiar ese compás con los métodos de la tabla de abajo, que se \
+              pueden encadenar. Dentro de la función no se puede llamar a `track`, \
+              `bpm` ni `sample`.",
+        params: &[
+            Param {
+                name: "n",
+                description: "cada cuántos compases (1 a 64)",
+            },
+            Param {
+                name: "función",
+                description: "recibe el compás (`function(c) ... end`)",
+            },
+        ],
+        template: "every(${4}, function(c) ${c:reverse()} end)",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             track(\"drums\", amen)\n  \
+             :steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\")\n  \
+             :every(4, function(c) c:reverse() end)\n",
+        ),
+    },
+    Function {
+        name: "chance",
+        receiver: Receiver::Track,
+        signature: "pista:chance(p, efecto [, valor])",
+        returns: Some(Receiver::Track),
+        summary: "Cada golpe sufre el efecto con probabilidad p.",
+        doc: "El azar se tira al cargar, para 16 compases que se repiten. Cada carga \
+              tira otra vez los dados. Los efectos están en la tabla de abajo.\n\n\
+              `every` y `chance` se aplican en el orden en que se escriben. La \
+              pista queda como un ciclo de compases: el mínimo común múltiplo de \
+              los `every`, con 16 si hay `chance`, hasta 64 (más da error).",
+        params: &[
+            Param {
+                name: "p",
+                description: "probabilidad (0 a 1)",
+            },
+            Param {
+                name: "efecto",
+                description: "el efecto (ver la tabla)",
+            },
+            Param {
+                name: "valor",
+                description: "el valor del efecto, si lo lleva",
+            },
+        ],
+        template: "chance(${0.2}, \"${retrig}\", ${4})",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             track(\"drums\", amen)\n  \
+             :steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\")\n  \
+             :chance(0.2, \"retrig\", 4)\n  \
+             :chance(0.1, \"mute\")\n",
+        ),
+    },
+    Function {
+        name: "steps",
+        receiver: Receiver::Bar,
+        signature: "c:steps(texto)",
+        returns: Some(Receiver::Bar),
+        summary: "Sustituye los pasos del compás.",
+        doc: "",
+        params: &[Param {
+            name: "texto",
+            description: "16 pasos en mini-notación",
+        }],
+        template: "steps(\"${1 . . .  . . . .  . . . .  . . . .}\")",
+        example: None,
+    },
+    Function {
+        name: "reverse",
+        receiver: Receiver::Bar,
+        signature: "c:reverse()",
+        returns: Some(Receiver::Bar),
+        summary: "Invierte el sentido de cada golpe (lo que iba al revés vuelve al derecho).",
+        doc: "",
+        params: &[],
+        template: "reverse()",
+        example: None,
+    },
+    Function {
+        name: "pitch",
+        receiver: Receiver::Bar,
+        signature: "c:pitch(st)",
+        returns: Some(Receiver::Bar),
+        summary: "Pone el pitch de cada golpe (-36 a 36).",
+        doc: "",
+        params: &[Param {
+            name: "st",
+            description: "semitonos (-36 a 36)",
+        }],
+        template: "pitch(${7})",
+        example: None,
+    },
+    Function {
+        name: "retrig",
+        receiver: Receiver::Bar,
+        signature: "c:retrig(n)",
+        returns: Some(Receiver::Bar),
+        summary: "Pone el retrigger de cada golpe (1 a 16).",
+        doc: "",
+        params: &[Param {
+            name: "n",
+            description: "repeticiones por paso (1 a 16)",
+        }],
+        template: "retrig(${4})",
+        example: None,
+    },
+    Function {
+        name: "gain",
+        receiver: Receiver::Bar,
+        signature: "c:gain(g)",
+        returns: Some(Receiver::Bar),
+        summary: "Pone el volumen de cada golpe (0 a 4); no el de la pista.",
+        doc: "",
+        params: &[Param {
+            name: "g",
+            description: "volumen lineal (0 a 4)",
+        }],
+        template: "gain(${0.5})",
+        example: None,
+    },
+];
+
+const FILTER_PARAMS: &[FxParam] = &[
+    FxParam {
+        name: "cutoff",
+        description: "frecuencia de corte en Hz (obligatoria)",
+        default: None,
+        valid: "20–20000",
+        values: &[],
+        template: "cutoff = ${3000}",
+    },
+    FxParam {
+        name: "q",
+        description: "resonancia",
+        default: Some("0.707"),
+        valid: "0.1–20",
+        values: &[],
+        template: "q = ${0.707}",
+    },
+];
+
+/// Efectos de `:fx`.
+pub const EFFECTS: &[Effect] = &[
+    Effect {
+        name: "filter",
+        aliases: &[],
+        summary: "Filtro paso bajo o paso alto (biquad de 12 dB/octava).",
+        params: &[
+            FxParam {
+                name: "type",
+                description: "tipo de filtro",
+                default: Some("\"lowpass\""),
+                valid: "`\"lowpass\"` o `\"highpass\"`",
+                values: &["lowpass", "highpass"],
+                template: "type = \"${lowpass}\"",
+            },
+            FILTER_PARAMS[0],
+            FILTER_PARAMS[1],
+        ],
+        template: "{ type = \"${lowpass}\", cutoff = ${3000} }",
+    },
+    Effect {
+        name: "lowpass",
+        aliases: &[],
+        summary: "Filtro paso bajo (como filter con type = \"lowpass\").",
+        params: FILTER_PARAMS,
+        template: "{ cutoff = ${3000} }",
+    },
+    Effect {
+        name: "highpass",
+        aliases: &[],
+        summary: "Filtro paso alto (como filter con type = \"highpass\").",
+        params: FILTER_PARAMS,
+        template: "{ cutoff = ${200} }",
+    },
+    Effect {
+        name: "bitcrush",
+        aliases: &["bitcrusher"],
+        summary: "Menos bits y menos frecuencia de muestreo: suena sucio.",
+        params: &[
+            FxParam {
+                name: "bits",
+                description: "resolución",
+                default: Some("8"),
+                valid: "1–16",
+                values: &[],
+                template: "bits = ${8}",
+            },
+            FxParam {
+                name: "downsample",
+                description: "repite cada muestra n veces",
+                default: Some("1"),
+                valid: "1–64",
+                values: &[],
+                template: "downsample = ${2}",
+            },
+        ],
+        template: "{ bits = ${6}, downsample = ${2} }",
+    },
+];
+
+/// Efectos de `:chance`.
+pub const CHANCE_EFFECTS: &[ChanceEffect] = &[
+    ChanceEffect {
+        name: "retrig",
+        aliases: &["stutter"],
+        value: Some("n (1 a 16)"),
+        summary: "Retrigger del golpe",
+    },
+    ChanceEffect {
+        name: "reverse",
+        aliases: &[],
+        value: None,
+        summary: "Invierte su sentido",
+    },
+    ChanceEffect {
+        name: "pitch",
+        aliases: &[],
+        value: Some("semitonos (-36 a 36)"),
+        summary: "Pone su pitch",
+    },
+    ChanceEffect {
+        name: "gain",
+        aliases: &[],
+        value: Some("volumen (0 a 4)"),
+        summary: "Pone su volumen",
+    },
+    ChanceEffect {
+        name: "mute",
+        aliases: &[],
+        value: None,
+        summary: "Lo quita",
+    },
+];
+
+/// Funciones de un receptor.
+pub fn functions(receiver: Receiver) -> impl Iterator<Item = &'static Function> {
+    FUNCTIONS.iter().filter(move |f| f.receiver == receiver)
+}
+
+/// Método o función por receptor y nombre.
+pub fn function(receiver: Receiver, name: &str) -> Option<&'static Function> {
+    functions(receiver).find(|f| f.name == name)
+}
+
+/// Efecto de `:fx` por nombre o alias.
+pub fn effect(name: &str) -> Option<&'static Effect> {
+    EFFECTS
+        .iter()
+        .find(|e| e.name == name || e.aliases.contains(&name))
+}
+
+/// Efecto de `:chance` por nombre o alias.
+pub fn chance_effect(name: &str) -> Option<&'static ChanceEffect> {
+    CHANCE_EFFECTS
+        .iter()
+        .find(|e| e.name == name || e.aliases.contains(&name))
+}
+
+/// Quita las marcas `${` `}` de una plantilla y devuelve el texto y los
+/// parámetros marcados como rangos de caracteres (no bytes).
+pub fn expand_template(template: &str) -> (String, Vec<std::ops::Range<usize>>) {
+    let mut text = String::new();
+    let mut marks = Vec::new();
+    let mut chars = 0;
+    let mut rest = template;
+    while let Some(open) = rest.find("${") {
+        text.push_str(&rest[..open]);
+        chars += rest[..open].chars().count();
+        let after = &rest[open + 2..];
+        let close = after.find('}').expect("plantilla con ${ sin cerrar");
+        let inner = &after[..close];
+        let len = inner.chars().count();
+        text.push_str(inner);
+        marks.push(chars..chars + len);
+        chars += len;
+        rest = &after[close + 1..];
+    }
+    text.push_str(rest);
+    (text, marks)
+}
+
+/// Comillas invertidas de Markdown.
+fn code(text: &str) -> String {
+    format!("`{text}`")
+}
+
+/// Alternativas: `"a"` (o `"b"`).
+fn with_aliases(name: &str, aliases: &[&str]) -> String {
+    let mut text = code(&format!("\"{name}\""));
+    for alias in aliases {
+        text.push_str(&format!(" (o {})", code(&format!("\"{alias}\""))));
+    }
+    text
+}
+
+/// Sección de la API de `docs/GUIA.md` (entre las marcas `api:inicio` y
+/// `api:fin`), generada a partir del registro.
+pub fn guide_markdown() -> String {
+    let mut out = String::new();
+    for f in FUNCTIONS.iter().filter(|f| f.receiver != Receiver::Bar) {
+        out.push_str(&format!("### {}\n\n", code(f.signature)));
+        if let Some(r) = f.returns {
+            out.push_str(&format!("Devuelve: {}.\n\n", r.label()));
+        }
+        out.push_str(f.summary);
+        if !f.doc.is_empty() {
+            out.push(' ');
+            out.push_str(f.doc);
+        }
+        out.push_str("\n\n");
+        if !f.params.is_empty() {
+            for p in f.params {
+                out.push_str(&format!("- {}: {}\n", code(p.name), p.description));
+            }
+            out.push('\n');
+        }
+        match (f.receiver, f.name) {
+            (Receiver::Track, "fx") => {
+                out.push_str("| Efecto | Parámetro | Qué es | Por defecto | Valores |\n");
+                out.push_str("| --- | --- | --- | --- | --- |\n");
+                for e in EFFECTS {
+                    for (i, p) in e.params.iter().enumerate() {
+                        let name = if i == 0 {
+                            with_aliases(e.name, e.aliases)
+                        } else {
+                            String::new()
+                        };
+                        let default = p.default.map_or("obligatorio".into(), code);
+                        out.push_str(&format!(
+                            "| {name} | {} | {} | {default} | {} |\n",
+                            code(p.name),
+                            p.description,
+                            p.valid
+                        ));
+                    }
+                }
+                out.push('\n');
+            }
+            (Receiver::Track, "every") => {
+                out.push_str("| Método | Qué hace |\n| --- | --- |\n");
+                for b in functions(Receiver::Bar) {
+                    out.push_str(&format!("| {} | {} |\n", code(b.signature), b.summary));
+                }
+                out.push('\n');
+            }
+            (Receiver::Track, "chance") => {
+                out.push_str("| Efecto | Valor | Qué hace |\n| --- | --- | --- |\n");
+                for e in CHANCE_EFFECTS {
+                    out.push_str(&format!(
+                        "| {} | {} | {} |\n",
+                        with_aliases(e.name, e.aliases),
+                        e.value.unwrap_or("—"),
+                        e.summary
+                    ));
+                }
+                out.push('\n');
+            }
+            _ => {}
+        }
+        if let Some(example) = f.example {
+            out.push_str(&format!("```lua\n{example}```\n\n"));
+        }
+    }
+    out.truncate(out.trim_end().len());
+    out.push('\n');
+    out
+}
+
+/// Marcas de la sección generada en la guía.
+pub const GUIDE_BEGIN: &str = "<!-- api:inicio (generado desde script/src/api.rs) -->";
+pub const GUIDE_END: &str = "<!-- api:fin -->";
+
+/// Sustituye la sección generada de la guía. `None` si faltan las marcas.
+pub fn update_guide(guide: &str) -> Option<String> {
+    let begin = guide.find(GUIDE_BEGIN)? + GUIDE_BEGIN.len();
+    let end = guide[begin..].find(GUIDE_END)? + begin;
+    Some(format!(
+        "{}\n\n{}\n{}",
+        &guide[..begin],
+        guide_markdown(),
+        &guide[end..]
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn templates_expand_to_text_and_marks() {
+        let (text, marks) = expand_template("fx(\"${filter}\", { cutoff = ${3000} })");
+        assert_eq!(text, "fx(\"filter\", { cutoff = 3000 })");
+        assert_eq!(marks, vec![4..10, 24..28]);
+        assert_eq!(expand_template("count()"), ("count()".into(), vec![]));
+    }
+
+    #[test]
+    fn every_template_starts_with_its_name() {
+        for f in FUNCTIONS {
+            let (text, _) = expand_template(f.template);
+            assert!(text.starts_with(&format!("{}(", f.name)), "{}", f.name);
+        }
+        for e in EFFECTS {
+            for p in e.params {
+                assert!(p.template.starts_with(p.name), "{}", p.name);
+            }
+        }
+    }
+}

@@ -195,54 +195,42 @@ de la canción; nada suena hasta que la carga termina bien (ver la sección
 5). Solo están las librerías `math`, `string`, `table` y `utf8` (no `io` ni
 `os`), y un script que tarda más de 2 s se corta.
 
+El resto de esta sección se genera a partir del registro de la API
+(`script/src/api.rs`), el mismo que usa el autocompletado del editor. Para
+cambiarla, edita el registro y ejecuta `cargo run -p script --example guia`.
+
+<!-- api:inicio (generado desde script/src/api.rs) -->
+
 ### `bpm(n)`
 
-Tempo en pulsos por minuto, de 20 a 400. Si no se llama, se mantiene el que
-haya (o el del proyecto).
+Tempo en pulsos por minuto, de 20 a 400. Si no se llama, se mantiene el que haya (o el del proyecto).
+
+- `n`: pulsos por minuto (20 a 400, admite decimales)
 
 ```lua
 bpm(174)
 ```
 
-### `sample(ruta)` → sample
+### `sample(ruta)`
 
-Carga un WAV. La ruta es relativa a la carpeta del script o, en un
-proyecto, a su carpeta `samples`. Recargar el script no vuelve a leer el
-archivo si no ha cambiado.
+Devuelve: sample.
+
+Carga un WAV. La ruta es relativa a la carpeta del script o, en un proyecto, a su carpeta `samples`. Recargar el script no vuelve a leer el archivo si no ha cambiado.
+
+- `ruta`: archivo WAV (cualquier frecuencia; se resamplea al cargar)
 
 ```lua
 local amen = sample("amen.wav")
 ```
 
-### `sample:slice(n)` → cortes
+### `track(nombre, cortes) / track(nombre)`
 
-Busca los `n` golpes más fuertes (de 1 a 64) y corta el sample en ellos.
-Si hay menos golpes, devuelve menos cortes. `:count()` dice cuántos hay.
-Usa el detector por flujo espectral con 40 ms de separación mínima.
+Devuelve: pista.
 
-```lua
-local amen = sample("amen.wav"):slice(8)
-local cuantos = amen:count()
-track("drums", amen):steps("1 . . .  . . . .  1 . . .  . . . .")
-```
+Define una pista que toca esos cortes, o recupera una ya definida. Con dos argumentos define (o redefine) la pista; con uno, recupera una pista ya definida para seguir configurándola. Hay como mucho 8 pistas; suenan a la vez y se suman. Todos los métodos de la pista devuelven la pista, así que se pueden encadenar.
 
-### `cortes:slice_at(i)` → cortes
-
-Solo el corte `i` (desde 1), como una fuente de un único corte: en el
-patrón es `1` o `x`.
-
-```lua
-local amen = sample("amen.wav"):slice(8)
-local caja = amen:slice_at(3)
-track("caja", caja):steps(". . . .  x . . .  . . . .  x . . .")
-```
-
-### `track(nombre, cortes)` / `track(nombre)` → pista
-
-Con dos argumentos define (o redefine) una pista que toca esos cortes. Con
-uno, recupera una pista ya definida para seguir configurándola. Hay como
-mucho 8 pistas; suenan a la vez y se suman. Todos los métodos de la pista
-devuelven la pista, así que se pueden encadenar.
+- `nombre`: nombre de la pista; conserva su pista del motor entre recargas
+- `cortes`: lo que devuelve `sample(...):slice(n)` o `:slice_at(i)`
 
 ```lua
 local amen = sample("amen.wav"):slice(8)
@@ -250,10 +238,45 @@ track("drums", amen)
 track("drums"):steps("1 . . .  3 . . .  1 . . .  3 . . .")
 ```
 
+### `sample:slice(n)`
+
+Devuelve: cortes.
+
+Corta el sample en sus n golpes más fuertes. Si hay menos golpes, devuelve menos cortes. Usa el detector por flujo espectral con 40 ms de separación mínima.
+
+- `n`: cortes a buscar (1 a 64)
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+local cuantos = amen:count()
+track("drums", amen):steps("1 . . .  . . . .  1 . . .  . . . .")
+```
+
+### `cortes:count()`
+
+Número de cortes. Puede ser menor que el pedido en `slice(n)` si el detector encontró menos golpes.
+
+### `cortes:slice_at(i)`
+
+Devuelve: cortes.
+
+Solo el corte i (desde 1), como fuente de un único corte. En el patrón de la pista es `1` o `x`.
+
+- `i`: número del corte (desde 1)
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+local caja = amen:slice_at(3)
+track("caja", caja):steps(". . . .  x . . .  . . . .  x . . .")
+```
+
 ### `pista:steps(texto)`
 
-El patrón del compás en mini-notación (sección 3). Los cortes que no
-existen dan error en esa línea.
+Devuelve: pista.
+
+Patrón del compás en mini-notación (16 pasos). La notación está en la sección 3. Los cortes que no existen dan error en esa línea.
+
+- `texto`: 16 pasos separados por espacios
 
 ```lua
 local amen = sample("amen.wav"):slice(8)
@@ -262,7 +285,11 @@ track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
 
 ### `pista:gain(g)`
 
+Devuelve: pista.
+
 Volumen de la pista, lineal de 0 a 4. Se aplica después de los efectos.
+
+- `g`: volumen lineal (0 a 4; 1 lo deja igual)
 
 ```lua
 local amen = sample("amen.wav"):slice(8)
@@ -271,20 +298,26 @@ track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 ."):gain(0.7)
 
 ### `pista:fx(nombre, parámetros)`
 
-Añade un efecto a la cadena de la pista (hasta 4, en orden). Un parámetro
-desconocido da error, para pillar las erratas.
+Devuelve: pista.
 
-| Nombre | Parámetros | Por defecto | Rango |
-| --- | --- | --- | --- |
-| `"filter"` | `type` (`"lowpass"` o `"highpass"`), `cutoff` (Hz), `q` | `type = "lowpass"`, `q = 0.707` | `cutoff` 20–20000 (obligatorio), `q` 0.1–20 |
-| `"lowpass"` | `cutoff`, `q` | `q = 0.707` | igual que `filter` |
-| `"highpass"` | `cutoff`, `q` | `q = 0.707` | igual que `filter` |
-| `"bitcrush"` (o `"bitcrusher"`) | `bits`, `downsample` | `bits = 8`, `downsample = 1` | `bits` 1–16, `downsample` 1–64 |
+Añade un efecto a la cadena de la pista (hasta 4, en orden). Un parámetro desconocido da error, para pillar las erratas. Los efectos y sus parámetros están en la tabla de abajo.
 
-El filtro es un biquad de 12 dB/octava; `q = 0.707` es la respuesta más
-plana y valores altos resuenan en el corte. El bitcrusher reduce la
-resolución a `bits` y repite cada muestra `downsample` veces (reducción de
-la frecuencia de muestreo, sin filtro: suena sucio a propósito).
+El filtro es un biquad de 12 dB/octava; `q = 0.707` es la respuesta más plana y valores altos resuenan en el corte. El bitcrusher reduce la resolución a `bits` y repite cada muestra `downsample` veces (reducción de la frecuencia de muestreo, sin filtro: suena sucio a propósito).
+
+- `nombre`: el efecto (ver la tabla)
+- `parámetros`: tabla con los parámetros del efecto
+
+| Efecto | Parámetro | Qué es | Por defecto | Valores |
+| --- | --- | --- | --- | --- |
+| `"filter"` | `type` | tipo de filtro | `"lowpass"` | `"lowpass"` o `"highpass"` |
+|  | `cutoff` | frecuencia de corte en Hz (obligatoria) | obligatorio | 20–20000 |
+|  | `q` | resonancia | `0.707` | 0.1–20 |
+| `"lowpass"` | `cutoff` | frecuencia de corte en Hz (obligatoria) | obligatorio | 20–20000 |
+|  | `q` | resonancia | `0.707` | 0.1–20 |
+| `"highpass"` | `cutoff` | frecuencia de corte en Hz (obligatoria) | obligatorio | 20–20000 |
+|  | `q` | resonancia | `0.707` | 0.1–20 |
+| `"bitcrush"` (o `"bitcrusher"`) | `bits` | resolución | `8` | 1–16 |
+|  | `downsample` | repite cada muestra n veces | `1` | 1–64 |
 
 ```lua
 local amen = sample("amen.wav"):slice(8)
@@ -297,19 +330,20 @@ track("drums", amen)
 
 ### `pista:every(n, función)`
 
-En los compases 0, n, 2n... de la canción (como en Tidal) se llama a
-`función(compás)`, que puede cambiar ese compás. `n` va de 1 a 64. El
-compás tiene estos métodos, que se pueden encadenar:
+Devuelve: pista.
+
+En los compases 0, n, 2n... llama a función(compás). Como en Tidal, cuenta los compases de la canción. La función puede cambiar ese compás con los métodos de la tabla de abajo, que se pueden encadenar. Dentro de la función no se puede llamar a `track`, `bpm` ni `sample`.
+
+- `n`: cada cuántos compases (1 a 64)
+- `función`: recibe el compás (`function(c) ... end`)
 
 | Método | Qué hace |
 | --- | --- |
-| `c:steps(texto)` | Sustituye los pasos del compás |
-| `c:reverse()` | Invierte el sentido de cada golpe (lo que iba al revés vuelve al derecho) |
-| `c:pitch(st)` | Pone el pitch de cada golpe (-36 a 36) |
-| `c:retrig(n)` | Pone el retrigger de cada golpe (1 a 16) |
-| `c:gain(g)` | Pone el volumen de cada golpe (0 a 4); no el de la pista |
-
-Dentro de la función no se puede llamar a `track`, `bpm` ni `sample`.
+| `c:steps(texto)` | Sustituye los pasos del compás. |
+| `c:reverse()` | Invierte el sentido de cada golpe (lo que iba al revés vuelve al derecho). |
+| `c:pitch(st)` | Pone el pitch de cada golpe (-36 a 36). |
+| `c:retrig(n)` | Pone el retrigger de cada golpe (1 a 16). |
+| `c:gain(g)` | Pone el volumen de cada golpe (0 a 4); no el de la pista. |
 
 ```lua
 local amen = sample("amen.wav"):slice(8)
@@ -320,7 +354,15 @@ track("drums", amen)
 
 ### `pista:chance(p, efecto [, valor])`
 
-Cada golpe sufre el efecto con probabilidad `p` (de 0 a 1).
+Devuelve: pista.
+
+Cada golpe sufre el efecto con probabilidad p. El azar se tira al cargar, para 16 compases que se repiten. Cada carga tira otra vez los dados. Los efectos están en la tabla de abajo.
+
+`every` y `chance` se aplican en el orden en que se escriben. La pista queda como un ciclo de compases: el mínimo común múltiplo de los `every`, con 16 si hay `chance`, hasta 64 (más da error).
+
+- `p`: probabilidad (0 a 1)
+- `efecto`: el efecto (ver la tabla)
+- `valor`: el valor del efecto, si lo lleva
 
 | Efecto | Valor | Qué hace |
 | --- | --- | --- |
@@ -330,9 +372,6 @@ Cada golpe sufre el efecto con probabilidad `p` (de 0 a 1).
 | `"gain"` | volumen (0 a 4) | Pone su volumen |
 | `"mute"` | — | Lo quita |
 
-El azar se tira al cargar, para 16 compases que se repiten. Cada carga tira
-otra vez los dados.
-
 ```lua
 local amen = sample("amen.wav"):slice(8)
 track("drums", amen)
@@ -341,9 +380,7 @@ track("drums", amen)
   :chance(0.1, "mute")
 ```
 
-`every` y `chance` se aplican en el orden en que se escriben. La pista
-queda como un ciclo de compases: el mínimo común múltiplo de los `every`,
-con 16 si hay `chance`, hasta 64 (más da error).
+<!-- api:fin -->
 
 ## 5. Cuantización, recarga atómica y errores
 

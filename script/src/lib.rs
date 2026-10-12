@@ -36,6 +36,7 @@ use engine::{
     Batch, Controller, FilterKind, Fx, MAX_CYCLE_BARS, MAX_FX, MAX_GAIN, MAX_RETRIG, MAX_SEMITONES,
     MAX_TRACKS, Pattern, STEPS, Sample, SendError, Slices, Step, valid_bpm,
 };
+pub mod api;
 pub mod project;
 mod watch;
 
@@ -807,9 +808,13 @@ fn check_gain(lua: &Lua, gain: f32) -> mlua::Result<f32> {
     }
 }
 
-/// Lee los parámetros de `:fx()`; error si hay claves desconocidas.
-fn fx_params(lua: &Lua, name: &str, params: &Option<Table>, known: &[&str]) -> mlua::Result<()> {
+/// Lee los parámetros de `:fx()`; error si hay claves desconocidas (las
+/// conocidas salen del registro de la API).
+fn fx_params(lua: &Lua, name: &str, params: &Option<Table>) -> mlua::Result<()> {
     let Some(params) = params else { return Ok(()) };
+    let known: Vec<&str> = api::effect(name)
+        .map(|e| e.params.iter().map(|p| p.name).collect())
+        .unwrap_or_default();
     for pair in params.pairs::<Value, Value>() {
         let (key, _) = pair?;
         let key = match key {
@@ -827,6 +832,11 @@ fn fx_params(lua: &Lua, name: &str, params: &Option<Table>, known: &[&str]) -> m
         }
     }
     Ok(())
+}
+
+/// Lista separada por comas.
+fn names(list: impl Iterator<Item = &'static str>) -> String {
+    list.collect::<Vec<_>>().join(", ")
 }
 
 fn parse_fx(lua: &Lua, name: &str, params: Option<Table>) -> mlua::Result<Fx> {
@@ -847,7 +857,7 @@ fn parse_fx(lua: &Lua, name: &str, params: Option<Table>) -> mlua::Result<Fx> {
     };
     let fx = match name {
         "filter" => {
-            fx_params(lua, name, &params, &["type", "cutoff", "q"])?;
+            fx_params(lua, name, &params)?;
             let kind: Option<String> = match &params {
                 Some(p) => p.get("type")?,
                 None => None,
@@ -864,7 +874,7 @@ fn parse_fx(lua: &Lua, name: &str, params: Option<Table>) -> mlua::Result<Fx> {
             }
         }
         "lowpass" | "highpass" => {
-            fx_params(lua, name, &params, &["cutoff", "q"])?;
+            fx_params(lua, name, &params)?;
             let kind = if name == "lowpass" {
                 FilterKind::LowPass
             } else {
@@ -873,7 +883,7 @@ fn parse_fx(lua: &Lua, name: &str, params: Option<Table>) -> mlua::Result<Fx> {
             filter(kind)?
         }
         "bitcrush" | "bitcrusher" => {
-            fx_params(lua, name, &params, &["bits", "downsample"])?;
+            fx_params(lua, name, &params)?;
             Fx::Bitcrush {
                 bits: get("bits")?.unwrap_or(8.0) as u32,
                 downsample: get("downsample")?.unwrap_or(1.0) as u32,
@@ -882,7 +892,10 @@ fn parse_fx(lua: &Lua, name: &str, params: Option<Table>) -> mlua::Result<Fx> {
         other => {
             return Err(fail(
                 lua,
-                format!("fx(\"{other}\"): no existe (filter, lowpass, highpass, bitcrush)"),
+                format!(
+                    "fx(\"{other}\"): no existe ({})",
+                    names(api::EFFECTS.iter().map(|e| e.name))
+                ),
             ));
         }
     };
@@ -966,8 +979,8 @@ impl UserData for TrackHandle {
                         return Err(fail(
                             lua,
                             format!(
-                                "chance: efecto \"{other}\" no existe \
-                                 (retrig, reverse, pitch, gain, mute)"
+                                "chance: efecto \"{other}\" no existe ({})",
+                                names(api::CHANCE_EFFECTS.iter().map(|e| e.name))
                             ),
                         ));
                     }

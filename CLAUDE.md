@@ -2,7 +2,7 @@
 
 Sampler + secuenciador para remixes con amen breaks, controlado por código en vivo. Proyecto en Rust. El desarrollo se hace en una laptop x86_64 con Gentoo.
 
-Guía de uso (inicio rápido, atajos, mini-notación, API de Lua, recetas y problemas): [docs/GUIA.md](docs/GUIA.md). Sus bloques de Lua y las recetas de `scripts/ejemplos/` se comprueban en `script/tests/guide.rs`: al cambiar la API, actualiza la guía.
+Guía de uso (inicio rápido, atajos, mini-notación, API de Lua, recetas y problemas): [docs/GUIA.md](docs/GUIA.md). Sus bloques de Lua y las recetas de `scripts/ejemplos/` se comprueban en `script/tests/guide.rs`. La sección de la API se genera desde el registro `script/src/api.rs`: al cambiar la API, actualiza el registro y ejecuta `cargo run -p script --example guia`.
 
 ## Idea central
 
@@ -154,6 +154,7 @@ Hecho: `steps(...)` reproduce los cortes, y `fx`, `every` y `chance` funcionan (
   - `tui --edit proyecto.sampler` abre un proyecto; `guardar` guarda el script y el proyecto (sin nombre: el abierto, o `<script>.sampler`); `abrir` carga otro (se niega con cambios sin guardar salvo `abrir!`).
   - `exportar`: `Song::render(frecuencia, compases)` renderiza en un motor aparte (no toca lo que suena) lo último cargado bien, y se guarda en WAV de 16 bits. Por defecto, `<script>-mezcla.wav` y la canción entera: `Song::length_bars(4)` = mcm de los ciclos de las pistas, al menos 4 compases. Es idéntico, muestra a muestra, a lo que suena en el motor en vivo (test).
   - Tests en `script/tests/project.rs` y `tui/src/tests.rs` (órdenes, exportar, proyectos, carpeta de samples, cambios externos, modo tocar, línea de error).
+- **Registro de la API de Lua** (`script/src/api.rs`): fuente única de nombres, firmas, resúmenes, parámetros y plantillas de inserción (`${...}` marca cada parámetro) de las funciones y métodos (`FUNCTIONS`, con su `Receiver`: global, sample, cortes, pista o compás), de los efectos de `:fx` con sus parámetros y valores válidos (`EFFECTS`) y de los de `:chance` (`CHANCE_EFFECTS`). Lo usan la validación de parámetros de `:fx` y los mensajes de error, y la sección 4 de `docs/GUIA.md`: `api::guide_markdown()` la genera entre las marcas `api:inicio`/`api:fin` y `cargo run -p script --example guia` la reescribe; un test falla si la guía no coincide. `script/tests/registry.rs` comprueba que cada función registrada existe en Lua (también los métodos del compás de `every`), que no hay funciones globales sin registrar y que plantillas, efectos, parámetros y valores registrados se aceptan.
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`
 - Pendiente conocido: cpal avisa de un underrun al arrancar el stream (una vez, ~200 ms). PipeWire estaba inactivo y cpal iba directo a ALSA.
 

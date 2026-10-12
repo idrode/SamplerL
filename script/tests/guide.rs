@@ -1,5 +1,6 @@
 //! Cada bloque ```lua de docs/GUIA.md y cada receta de scripts/ejemplos/
-//! se carga sin errores contra el break sintético (como `amen.wav`).
+//! se carga sin errores contra el break sintético (como `amen.wav`), y la
+//! sección de la API coincide con el registro (`script::api`).
 
 #[path = "../../engine/tests/support/synth_break.rs"]
 mod synth;
@@ -91,4 +92,15 @@ fn every_example_runs_and_matches_the_guide() {
     }
     let link = std::fs::read_link(format!("{ROOT}/scripts/ejemplos/amen.wav")).unwrap();
     assert_eq!(link, Path::new("../../renders/synth_break.wav"));
+}
+
+#[test]
+fn the_api_section_of_the_guide_comes_from_the_registry() {
+    let guide = std::fs::read_to_string(format!("{ROOT}/docs/GUIA.md")).unwrap();
+    let updated = script::api::update_guide(&guide).expect("faltan las marcas api:inicio/api:fin");
+    assert!(
+        updated == guide,
+        "docs/GUIA.md no coincide con script/src/api.rs: \
+         ejecuta `cargo run -p script --example guia`"
+    );
 }
