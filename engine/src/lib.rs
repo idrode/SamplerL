@@ -1,5 +1,6 @@
 //! Motor de audio del sampler. Independiente de la interfaz.
 
+pub mod automation;
 pub mod bpm;
 pub mod bus;
 mod engine;
@@ -15,6 +16,7 @@ mod slice;
 mod status;
 pub mod stretch;
 
+pub use automation::{Automation, Curve, LfoRate, MAX_AUTOMATIONS};
 pub use bpm::{BpmGuess, detect_bpm};
 pub use bus::{Buses, DelayParams, Division, ReverbParams};
 pub use engine::{Batch, Controller, Engine, MAX_TRACKS, SendError, new_engine};

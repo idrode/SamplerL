@@ -1925,6 +1925,14 @@ impl App {
                             level: slot.map_or(0.0, |s| self.meters[s]),
                             gain: t.gain,
                             fx: t.fx.clone(),
+                            automated: t
+                                .automation
+                                .iter()
+                                .filter_map(|a| {
+                                    let name = t.fx.get(a.fx)?.params().get(a.param)?;
+                                    Some((a.fx, *name))
+                                })
+                                .collect(),
                             labels: t.labels.clone(),
                             adjusted: t.adjusted.clone(),
                             swing: t.swing,

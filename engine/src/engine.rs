@@ -5,8 +5,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use rtrb::{Consumer, Producer, RingBuffer};
 
+use crate::automation::mix;
 use crate::bus::{BUSES, Buses, Rack};
-use crate::fx::{FxState, MAX_FX};
+use crate::fx::{Fx, FxState, MAX_FX};
 use crate::limiter::{LIMIT_THRESHOLD, soft_limit};
 use crate::metronome::Metronome;
 use crate::sample::Sample;
@@ -27,6 +28,8 @@ pub const MAX_TRACKS: usize = 8;
 pub(crate) const CHUNK: usize = 256;
 /// Constante de tiempo del suavizado del volumen de pista.
 const GAIN_SMOOTHING_SECONDS: f32 = 0.005;
+/// Frames entre recálculos de los parámetros automatizados.
+const MOD_BLOCK: usize = 32;
 /// Duración de los fundidos de entrada y salida de cada voz.
 const FADE_SECONDS: f32 = 0.0015;
 
@@ -286,8 +289,10 @@ impl Batch {
 }
 
 /// Lo que el hilo de audio devuelve al de control para que lo libere allí.
-/// Su contenido no se lee: solo se suelta en el hilo de control.
-#[allow(dead_code)]
+/// Su contenido no se lee: solo se suelta en el hilo de control. El
+/// patrón va sin `Box` por lo mismo que en `Command`: meterlo en una caja
+/// reservaría memoria en el callback.
+#[allow(dead_code, clippy::large_enum_variant)]
 enum Garbage {
     Sample(Arc<Sample>),
     /// Un patrón entero: lleva memoria propia (sus compases).
@@ -328,6 +333,11 @@ struct Track {
     fresh: bool,
     /// Nivel de cada envío, que se acerca suavemente al del patrón.
     sends: [f32; BUSES],
+    /// Corte del primer filtro puesto por el último golpe (`~`).
+    lock: Option<f32>,
+    /// Valor (suavizado) de cada parámetro automatizable de cada efecto
+    /// mientras se mueve; `None`: el fijo del efecto.
+    mods: [[Option<f32>; 2]; MAX_FX],
 }
 
 /// Disparos pendientes de una pista: el golpe empieza en `start` (el
@@ -367,6 +377,8 @@ impl Default for Track {
             audible: 1.0,
             fresh: false,
             sends: [0.0; BUSES],
+            lock: None,
+            mods: [[None; 2]; MAX_FX],
         }
     }
 }
@@ -857,6 +869,18 @@ impl Engine {
             {
                 let track = &mut self.tracks[t];
                 let old = std::mem::replace(&mut track.pattern, change);
+                // Un efecto de otro tipo en la ranura: su parámetro suavizado
+                // ya no vale.
+                for (i, mods) in track.mods.iter_mut().enumerate() {
+                    let kind = |p: &Option<Pattern>| {
+                        p.as_ref()
+                            .and_then(|p| p.fx[i])
+                            .map(|fx| std::mem::discriminant(&fx))
+                    };
+                    if kind(&old) != kind(&track.pattern) {
+                        *mods = [None; 2];
+                    }
+                }
                 // Los disparos pendientes eran del patrón anterior (quizá de
                 // otro sample): no se mezclan con el nuevo.
                 track.retrig = None;
@@ -922,6 +946,7 @@ impl Engine {
         };
         let voice = Voice::new(pattern.sample.clone(), hit.start, hit.end, hit.playback);
         self.status.set_hit(t, hit.start);
+        self.tracks[t].lock = hit.lock;
         self.trigger(t, Some(voice));
     }
 
@@ -949,6 +974,14 @@ impl Engine {
             buf[..2 * n].fill(0.0);
         }
         let mut fed = [false; BUSES];
+        // Posición de la canción al empezar el trozo (para las curvas).
+        let rate = self.sample_rate;
+        let clock = Clock {
+            steps: self.transport.position_steps(rate),
+            seconds: self.transport.frame as f64 / rate as f64,
+            frames_per_step: crate::sequencer::frames_per_step(self.transport.bpm(), rate),
+            sample_rate: rate,
+        };
         for t in 0..MAX_TRACKS {
             let track = &mut self.tracks[t];
             let target = track.pattern.as_ref().map_or(1.0, |p| p.gain);
@@ -967,9 +1000,25 @@ impl Engine {
                 for state in &mut track.fx {
                     state.reset();
                 }
+                // Los parámetros que se movían vuelven a su valor fijo.
+                if track.mods.iter().flatten().any(Option::is_some)
+                    && let Some(pattern) = &track.pattern
+                {
+                    for (i, state) in track.fx.iter_mut().enumerate() {
+                        for (p, m) in track.mods[i].iter_mut().enumerate() {
+                            if m.take().is_some()
+                                && let Some(base) = pattern.fx[i].and_then(|fx| fx.param_value(p))
+                            {
+                                state.set_param(p, base, rate);
+                            }
+                        }
+                    }
+                }
+                track.mods = [[None; 2]; MAX_FX];
                 continue;
             }
-            if std::mem::take(&mut track.fresh) {
+            let fresh = std::mem::take(&mut track.fresh);
+            if fresh {
                 track.audible = audible;
             }
             let buf = &mut self.track_buf[..2 * n];
@@ -980,8 +1029,18 @@ impl Engine {
             if let Some(fading) = &mut track.fading {
                 fading.mix_into(buf);
             }
-            for state in &mut track.fx {
-                state.process(buf);
+            let moving = track.lock.is_some()
+                || track.mods.iter().flatten().any(Option::is_some)
+                || track
+                    .pattern
+                    .as_ref()
+                    .is_some_and(|p| p.automation.iter().any(Option::is_some));
+            if moving {
+                modulate(track, buf, &clock, fresh);
+            } else {
+                for state in &mut track.fx {
+                    state.process(buf);
+                }
             }
 
             let master = &mut self.master[..2 * n];
@@ -1123,6 +1182,82 @@ impl Engine {
                 .preview_fading
                 .as_ref()
                 .is_some_and(|v| same(&v.sample))
+    }
+}
+
+/// Dónde está la canción al empezar un trozo de mezcla.
+struct Clock {
+    steps: f64,
+    seconds: f64,
+    frames_per_step: f64,
+    sample_rate: u32,
+}
+
+/// Pasa `buf` por los efectos de la pista con sus parámetros movidos:
+/// cada `MOD_BLOCK` frames calcula el destino de cada parámetro (la curva
+/// de su automatización o, el corte del primer filtro, el del último
+/// golpe con `~`), lo suaviza (~5 ms) y se lo pasa al efecto. Con `snap`
+/// (la voz acaba de empezar desde el silencio), el primer valor entra ya.
+/// Un parámetro que vuelve a su valor fijo deja de moverse.
+fn modulate(track: &mut Track, buf: &mut [f32], clock: &Clock, snap: bool) {
+    let Some(pattern) = &track.pattern else {
+        for state in &mut track.fx {
+            state.process(buf);
+        }
+        return;
+    };
+    let rate = clock.sample_rate;
+    let keep = (-(MOD_BLOCK as f32) / (GAIN_SMOOTHING_SECONDS * rate as f32)).exp();
+    let first_filter = pattern
+        .fx
+        .iter()
+        .position(|f| matches!(f, Some(Fx::Filter { .. })));
+    for (block, sub) in buf.chunks_mut(2 * MOD_BLOCK).enumerate() {
+        let frames = (block * MOD_BLOCK) as f64;
+        let steps = clock.steps + frames / clock.frames_per_step;
+        let seconds = clock.seconds + frames / rate as f64;
+        for (slot, state) in track.fx.iter_mut().enumerate() {
+            let Some(fx) = pattern.fx[slot] else { continue };
+            for p in 0..fx.params().len() {
+                let (base, (_, _, log)) = (
+                    fx.param_value(p).unwrap_or(0.0),
+                    fx.param_range(p).unwrap_or((0.0, 1.0, false)),
+                );
+                let curve = pattern
+                    .automation
+                    .iter()
+                    .flatten()
+                    .find(|a| a.fx == slot && a.param == p);
+                let lock = track.lock.filter(|_| p == 0 && Some(slot) == first_filter);
+                let target = match (lock, curve) {
+                    (Some(hz), _) => Some(hz),
+                    (None, Some(a)) => Some(a.curve.value(steps, seconds, log)),
+                    (None, None) => None,
+                };
+                let current = &mut track.mods[slot][p];
+                if target.is_none() && current.is_none() {
+                    continue;
+                }
+                let goal = target.unwrap_or(base);
+                let from = current.unwrap_or(if snap { goal } else { base });
+                let next = if snap && block == 0 {
+                    goal
+                } else {
+                    mix(goal, from, keep, log)
+                };
+                // Sin nada que lo mueva y ya en su sitio: vuelve al fijo.
+                if target.is_none() && (next - base).abs() <= 1e-4 * base.abs().max(1.0) {
+                    *current = None;
+                    state.set_param(p, base, rate);
+                } else {
+                    *current = Some(next);
+                    state.set_param(p, next, rate);
+                }
+            }
+        }
+        for state in &mut track.fx {
+            state.process(sub);
+        }
     }
 }
 

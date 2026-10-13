@@ -125,13 +125,27 @@ pub fn context(
 
     // Clave de la tabla de parámetros de `fx("efecto", { ... })`.
     if let Some(Frame::Brace { item_start }) = scan.frames.last() {
-        if let Some(effect) = scan.fx_effect()
-            && head[*item_start..].trim().is_empty()
-        {
-            return Some(Context {
-                prefix,
-                candidates: effect.params.iter().map(fx_param).collect(),
-            });
+        if let Some(effect) = scan.fx_effect() {
+            let item = head[*item_start..].trim();
+            if item.is_empty() {
+                return Some(Context {
+                    prefix,
+                    candidates: effect.params.iter().map(fx_param).collect(),
+                });
+            }
+            // Tras `cutoff =` (un parámetro que se puede mover): ramp y lfo.
+            if let Some(key) = item.strip_suffix('=').map(str::trim)
+                && api::automatable(effect.name, key)
+            {
+                return Some(Context {
+                    prefix,
+                    candidates: ["ramp", "lfo"]
+                        .iter()
+                        .filter_map(|n| api::function(Receiver::Global, n))
+                        .map(function)
+                        .collect(),
+                });
+            }
         }
         return None;
     }
@@ -1024,9 +1038,15 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(labels(&c), ["lowpass", "highpass"]);
+        // Tras `cutoff =` (se puede mover): ramp y lfo; tras `bits =`, nada.
+        let c = at(&format!(
+            "{SONG}track(\"d\", amen):fx(\"filter\", {{ cutoff = |"
+        ))
+        .unwrap();
+        assert_eq!(labels(&c), ["ramp", "lfo"]);
         assert!(
             at(&format!(
-                "{SONG}track(\"d\", amen):fx(\"filter\", {{ cutoff = |"
+                "{SONG}track(\"d\", amen):fx(\"bitcrush\", {{ bits = |"
             ))
             .is_none()
         );

@@ -171,6 +171,9 @@ pub struct TrackView {
     pub gain: f32,
     /// Efectos de la pista, en orden.
     pub fx: Vec<Fx>,
+    /// Parámetros automatizados de cada efecto (`ramp`, `lfo`), por su
+    /// índice en `fx`.
+    pub automated: Vec<(usize, &'static str)>,
     /// Etiqueta de cada corte (si la tiene).
     pub labels: Vec<Option<String>>,
     /// Cortes con el inicio ajustado a mano.
@@ -280,6 +283,9 @@ pub fn step_text(step: &Option<Step>, labels: &[Option<String>]) -> String {
     }
     if step.retrig > 1 {
         text.push_str(&format!("r{}", step.retrig));
+    }
+    if let Some(hz) = step.lock {
+        text.push_str(&format!("~{hz}"));
     }
     text
 }

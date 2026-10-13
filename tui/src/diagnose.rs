@@ -126,6 +126,8 @@ fn check(
             "pitch fuera de rango (-36 a 36 semitonos)"
         } else if !(1..=MAX_RETRIG).contains(&step.retrig) {
             "retrigger fuera de rango (1 a 16)"
+        } else if step.lock.is_some_and(|hz| !(20.0..=20_000.0).contains(&hz)) {
+            "corte (~) fuera de rango (20 a 20000 Hz)"
         } else {
             return None;
         };

@@ -266,6 +266,7 @@ fn every_snippet_runs_after_what_it_requires() {
             "euclid",
             "melodia",
             "polirritmo",
+            "barrido",
             "groove"
         ]
     );

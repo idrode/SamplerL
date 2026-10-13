@@ -7,7 +7,9 @@
 //!   [`check_label`]). Lleva los mismos sufijos: `kick^7@0.5`, `kick'r2`.
 //! - Sufijos combinables, en cualquier orden y cada uno una vez:
 //!   `'` reverse, `^7` / `^-5` / `^0.5` pitch en semitonos, `@0.5` volumen,
-//!   `r4` retrigger/stutter (el paso se repite 4 veces, de 1 a 16).
+//!   `r4` retrigger/stutter (el paso se repite 4 veces, de 1 a 16) y `~800`
+//!   corte del primer filtro de la pista en Hz desde ese golpe (parameter
+//!   lock).
 //!
 //! Ejemplo: `"1 . 3' .  1^7 . 5@0.5 .  . 3'^-12@0.8 . x  . . . ."`.
 
@@ -196,7 +198,7 @@ pub fn parse_step_labeled(token: &str, labels: &[Option<String>]) -> Result<Opti
 
     let mut step = Step::new(slice - 1);
     let (mut seen_reverse, mut seen_pitch, mut seen_gain) = (false, false, false);
-    let mut seen_retrig = false;
+    let (mut seen_retrig, mut seen_lock) = (false, false);
     while let Some(c) = rest.chars().next() {
         rest = &rest[c.len_utf8()..];
         match c {
@@ -226,10 +228,17 @@ pub fn parse_step_labeled(token: &str, labels: &[Option<String>]) -> Result<Opti
                 step.retrig = count;
                 rest = &rest[digits..];
             }
+            '~' => {
+                once(&mut seen_lock, "corte (~)")?;
+                let (value, after) =
+                    number(rest, false).ok_or("falta el corte en Hz después de ~")?;
+                step.lock = Some(value);
+                rest = after;
+            }
             other => {
                 return Err(format!(
                     "carácter inesperado '{other}' \
-                     (efectos: ' reverse, ^n pitch, @n volumen, rN retrigger)"
+                     (efectos: ' reverse, ^n pitch, @n volumen, rN retrigger, ~Hz corte)"
                 ));
             }
         }

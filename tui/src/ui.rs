@@ -1004,8 +1004,23 @@ impl Widget for FxPanel<'_> {
             if track.fx.is_empty() {
                 lines.push(Line::from("sin efectos").fg(DIM));
             }
-            for fx in &track.fx {
-                lines.push(Line::from(format!("› {}", fx_text(fx))));
+            for (i, fx) in track.fx.iter().enumerate() {
+                // Los parámetros que se mueven (ramp, lfo): `∿cutoff`.
+                let moving: Vec<String> = track
+                    .automated
+                    .iter()
+                    .filter(|(f, _)| *f == i)
+                    .map(|(_, p)| format!("∿{p}"))
+                    .collect();
+                lines.push(Line::from(vec![
+                    Span::raw(format!("› {}", fx_text(fx))),
+                    Span::from(if moving.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" {}", moving.join(" "))
+                    })
+                    .fg(ACCENT),
+                ]));
             }
             Paragraph::new(lines).render(*column, buf);
         }

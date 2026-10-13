@@ -9,6 +9,7 @@
 
 use std::sync::Arc;
 
+use crate::automation::{Automation, MAX_AUTOMATIONS};
 use crate::engine::{Playback, SendError};
 use crate::fx::{Fx, MAX_FX};
 use crate::sample::Sample;
@@ -55,6 +56,10 @@ pub struct Step {
     /// Retraso del golpe (swing, humanize), en fracción de paso: de 0 a
     /// `MAX_DELAY`. El motor lo pasa a frames con la duración del paso.
     pub delay: f32,
+    /// Corte (Hz) del primer filtro de la pista desde este golpe hasta el
+    /// siguiente (parameter lock, `3~800`); `None`, el de la automatización
+    /// o el fijo.
+    pub lock: Option<f32>,
 }
 
 impl Step {
@@ -66,6 +71,14 @@ impl Step {
             reverse: false,
             retrig: 1,
             delay: 0.0,
+            lock: None,
+        }
+    }
+
+    pub fn with_lock(self, cutoff_hz: f32) -> Self {
+        Step {
+            lock: Some(cutoff_hz),
+            ..self
         }
     }
 
@@ -102,6 +115,8 @@ pub(crate) struct Trigger {
     pub retrig: u8,
     /// Retraso en fracción de paso.
     pub delay: f32,
+    /// Corte del primer filtro desde este golpe (Hz).
+    pub lock: Option<f32>,
 }
 
 /// Patrón de una pista. Los pasos se resuelven a rangos de frames y
@@ -124,6 +139,8 @@ pub struct Pattern {
     pub(crate) solo: bool,
     /// Envío a cada bus (delay, reverb), de 0 a `MAX_SEND`.
     pub(crate) sends: [f32; crate::bus::BUSES],
+    /// Parámetros de efecto automatizados.
+    pub(crate) automation: [Option<Automation>; MAX_AUTOMATIONS],
 }
 
 impl Pattern {
@@ -181,7 +198,26 @@ impl Pattern {
             mute: false,
             solo: false,
             sends: [0.0; crate::bus::BUSES],
+            automation: [None; MAX_AUTOMATIONS],
         })
+    }
+
+    /// Parámetros de efecto que cambian con el tiempo (ver
+    /// [`crate::automation`]). Va después de [`Pattern::with_fx`]: cada
+    /// automatización tiene que ser de un efecto de la cadena.
+    pub fn with_automation(mut self, list: &[Automation]) -> Result<Self, SendError> {
+        if list.len() > MAX_AUTOMATIONS {
+            return Err(SendError::InvalidFx(
+                "demasiadas automatizaciones (máximo 8)",
+            ));
+        }
+        let mut slots = [None; MAX_AUTOMATIONS];
+        for (slot, a) in slots.iter_mut().zip(list) {
+            a.validate(&self.fx).map_err(SendError::InvalidFx)?;
+            *slot = Some(*a);
+        }
+        self.automation = slots;
+        Ok(self)
     }
 
     /// Envíos de la pista a los buses: `[delay, reverb]`, de 0 a
@@ -288,6 +324,9 @@ fn resolve_bar(
         if !(0.0..=MAX_DELAY).contains(&step.delay) {
             return Err(invalid("retraso fuera de rango (0 a 0,9 pasos)"));
         }
+        if step.lock.is_some_and(|hz| !(20.0..=20_000.0).contains(&hz)) {
+            return Err(invalid("corte por paso (~) fuera de rango (20 a 20000 Hz)"));
+        }
         out.push(Some(Trigger {
             start: range.start,
             end: range.end.min(sample.frames()),
@@ -298,6 +337,7 @@ fn resolve_bar(
             },
             retrig: step.retrig,
             delay: step.delay,
+            lock: step.lock,
         }));
     }
     Ok(())
@@ -361,6 +401,15 @@ impl Transport {
     /// Tempo que está sonando.
     pub fn bpm(&self) -> f64 {
         self.bpm
+    }
+
+    /// Posición de la canción en pasos (con decimales) en el frame actual:
+    /// lo que siguen las automatizaciones.
+    pub fn position_steps(&self, sample_rate: u32) -> f64 {
+        let step = frames_per_step(self.bpm, sample_rate);
+        // Durante el último paso del compás, `bar` y `bar_start` ya son los
+        // del siguiente: la resta sale negativa y la suma, bien.
+        self.bar as f64 * STEPS as f64 + (self.frame as f64 - self.bar_start as f64) / step
     }
 
     /// Frame (absoluto) del siguiente paso.

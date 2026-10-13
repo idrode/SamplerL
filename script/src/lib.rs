@@ -126,6 +126,8 @@ pub struct TrackDef {
     pub swing: f32,
     /// Humanize (`:humanize()`).
     pub humanize: Option<Humanize>,
+    /// Parámetros de efecto con `ramp()` o `lfo()`.
+    pub automation: Vec<engine::Automation>,
     /// Envíos a los buses (`:send()`): `[delay, reverb]`.
     pub sends: [f32; engine::bus::BUSES],
     /// Silenciada (`:mute()`).
@@ -859,6 +861,54 @@ impl ScriptHost {
         )?;
 
         globals.set(
+            "ramp",
+            lua.create_function(|lua, (from, to, duration): (f32, f32, String)| {
+                let steps = parse_duration(&duration).ok_or_else(|| {
+                    fail(
+                        lua,
+                        format!(
+                            "ramp({from}, {to}, \"{duration}\"): la duración es \"N compases\" o \"N pasos\" (hasta 64 compases)"
+                        ),
+                    )
+                })?;
+                Ok(CurveHandle(engine::Curve::Ramp { from, to, steps }))
+            })?,
+        )?;
+
+        globals.set(
+            "lfo",
+            lua.create_function(|lua, (rate, min, max): (Value, f32, f32)| {
+                let rate = match rate {
+                    Value::Integer(hz) => engine::LfoRate::Hz(hz as f32),
+                    Value::Number(hz) => engine::LfoRate::Hz(hz as f32),
+                    Value::String(text) => {
+                        let text = text.to_str()?.to_string();
+                        engine::LfoRate::Steps(parse_duration(&text).ok_or_else(|| {
+                            fail(
+                                lua,
+                                format!(
+                                    "lfo(\"{text}\", ...): la frecuencia es un número (Hz) o lo que dura un ciclo: \"1 compás\", \"8 pasos\""
+                                ),
+                            )
+                        })?)
+                    }
+                    _ => {
+                        return Err(fail(
+                            lua,
+                            "lfo(frecuencia, mín, máx): la frecuencia es un número (Hz) o \"N compases\"",
+                        ));
+                    }
+                };
+                if let engine::LfoRate::Hz(hz) = rate
+                    && !(0.01..=50.0).contains(&hz)
+                {
+                    return Err(fail(lua, format!("lfo({hz}, ...): de 0.01 a 50 Hz")));
+                }
+                Ok(CurveHandle(engine::Curve::Lfo { min, max, rate }))
+            })?,
+        )?;
+
+        globals.set(
             "scale",
             lua.create_function(|lua, (name, tonic): (String, Option<String>)| {
                 let scale = api::scale(&name).ok_or_else(|| {
@@ -909,6 +959,7 @@ impl ScriptHost {
                                     swing: STRAIGHT_SWING,
                                     humanize: None,
                                     sends: [0.0; engine::bus::BUSES],
+                                    automation: Vec::new(),
                                     mute: false,
                                     solo: false,
                                     origin: source.origin.clone(),
@@ -984,6 +1035,7 @@ fn song_batch(song: &Song, slots: &[Option<String>; MAX_TRACKS]) -> Result<Batch
                 let pattern = Pattern::from_bars(track.sample.clone(), &track.slices, &track.bars)
                     .and_then(|p| p.with_gain(track.gain))
                     .and_then(|p| p.with_fx(&track.fx))
+                    .and_then(|p| p.with_automation(&track.automation))
                     .and_then(|p| p.with_sends(track.sends))
                     .map(|p| p.with_mute(track.mute).with_solo(track.solo))
                     .map_err(|e| ScriptError::new(format!("pista \"{name}\": {e}")))?;
@@ -1270,6 +1322,15 @@ fn expand(track: TrackBuild, rng: &mut Rng, timing: Timing) -> Result<TrackDef, 
     }
     if let Some(h) = def.humanize {
         humanize(&mut bars, h, &def.name, timing);
+    }
+    // Un corte por paso (`~`) necesita un filtro en la pista.
+    let locked = bars.iter().flatten().flatten().any(|s| s.lock.is_some());
+    if locked && !def.fx.iter().any(|f| matches!(f, Fx::Filter { .. })) {
+        return Err(ScriptError::new(format!(
+            "pista \"{}\": ~ (corte por paso) necesita un filtro en la pista, \
+             por ejemplo :fx(\"lowpass\", {{ cutoff = 3000 }})",
+            def.name
+        )));
     }
     def.bars = bars;
     Ok(def)
@@ -1738,6 +1799,9 @@ fn check_step(lua: &Lua, step: &Step) -> mlua::Result<()> {
     if !(1..=MAX_RETRIG).contains(&step.retrig) {
         return Err(fail(lua, "steps: retrigger fuera de rango (1 a 16)"));
     }
+    if step.lock.is_some_and(|hz| !(20.0..=20_000.0).contains(&hz)) {
+        return Err(fail(lua, "steps: corte (~) fuera de rango (20 a 20000 Hz)"));
+    }
     Ok(())
 }
 
@@ -1798,11 +1862,54 @@ fn names(list: impl Iterator<Item = &'static str>) -> String {
     list.collect::<Vec<_>>().join(", ")
 }
 
-fn parse_fx(lua: &Lua, name: &str, params: Option<Table>) -> mlua::Result<Fx> {
+/// `ramp(...)` o `lfo(...)` en Lua: un valor que cambia con el tiempo,
+/// para un parámetro de `:fx`.
+#[derive(Clone, Copy)]
+struct CurveHandle(engine::Curve);
+
+impl UserData for CurveHandle {}
+
+/// Duración escrita como `"4 compases"`, `"1 compás"`, `"8 pasos"` o `"1
+/// paso"`, en pasos.
+fn parse_duration(text: &str) -> Option<f64> {
+    let mut words = text.split_whitespace();
+    let n: f64 = words.next()?.replace(',', ".").parse().ok()?;
+    let unit = words.next()?;
+    if words.next().is_some() || !(n > 0.0 && n.is_finite()) {
+        return None;
+    }
+    let steps = match unit {
+        "compás" | "compas" | "compases" | "bar" | "bars" => n * STEPS as f64,
+        "paso" | "pasos" | "step" | "steps" => n,
+        _ => return None,
+    };
+    (steps <= (MAX_CYCLE_BARS * STEPS) as f64).then_some(steps)
+}
+
+/// Lee los parámetros de `:fx()` y devuelve el efecto con sus valores fijos
+/// y los parámetros que llevan una curva (`ramp`, `lfo`): el valor fijo de
+/// esos es el primer extremo de la curva.
+fn parse_fx(
+    lua: &Lua,
+    name: &str,
+    params: Option<Table>,
+) -> mlua::Result<(Fx, Vec<(String, engine::Curve)>)> {
+    let curves: RefCell<Vec<(String, engine::Curve)>> = RefCell::default();
     let get = |key: &str| -> mlua::Result<Option<f32>> {
-        match &params {
-            Some(p) => p.get::<Option<f32>>(key),
-            None => Ok(None),
+        let Some(p) = &params else { return Ok(None) };
+        match p.get::<Value>(key)? {
+            Value::Nil => Ok(None),
+            Value::UserData(ud) if ud.is::<CurveHandle>() => {
+                let curve = ud.borrow::<CurveHandle>()?.0;
+                curves.borrow_mut().push((key.to_string(), curve));
+                Ok(Some(curve.bounds().0))
+            }
+            other => lua.unpack::<f32>(other).map(Some).map_err(|_| {
+                fail(
+                    lua,
+                    format!("fx(\"{name}\"): {key} tiene que ser un número, ramp() o lfo()"),
+                )
+            }),
         }
     };
     let filter = |kind: FilterKind| -> mlua::Result<Fx> {
@@ -1877,7 +1984,8 @@ fn parse_fx(lua: &Lua, name: &str, params: Option<Table>) -> mlua::Result<Fx> {
     };
     fx.validate()
         .map_err(|e| fail(lua, format!("fx(\"{name}\"): {e}")))?;
-    Ok(fx)
+    let curves = curves.into_inner();
+    Ok((fx, curves))
 }
 
 impl UserData for TrackHandle {
@@ -2019,12 +2127,41 @@ impl UserData for TrackHandle {
         methods.add_method(
             "fx",
             |lua, this, (name, params): (String, Option<Table>)| {
-                let fx = parse_fx(lua, &name, params)?;
+                let (fx, curves) = parse_fx(lua, &name, params)?;
                 let count = this.with_track(|t| t.def.fx.len());
                 if count >= MAX_FX {
                     return Err(fail(lua, format!("fx: máximo {MAX_FX} efectos por pista")));
                 }
-                this.with_track(|t| t.def.fx.push(fx));
+                // Los parámetros con ramp() o lfo(): automatizaciones.
+                let mut chain = [None; MAX_FX];
+                chain[count] = Some(fx);
+                let mut automations = Vec::new();
+                for (key, curve) in curves {
+                    let Some(param) = fx.param_index(&key) else {
+                        let can = if fx.params().is_empty() {
+                            "este efecto no tiene parámetros automatizables".to_string()
+                        } else {
+                            format!("sí: {}", fx.params().join(", "))
+                        };
+                        return Err(fail(
+                            lua,
+                            format!("fx(\"{name}\"): {key} no se puede automatizar ({can})"),
+                        ));
+                    };
+                    let automation = engine::Automation {
+                        fx: count,
+                        param,
+                        curve,
+                    };
+                    automation
+                        .validate(&chain)
+                        .map_err(|e| fail(lua, format!("fx(\"{name}\"): {key}: {e}")))?;
+                    automations.push(automation);
+                }
+                this.with_track(|t| {
+                    t.def.fx.push(fx);
+                    t.def.automation.extend(automations);
+                });
                 Ok(this.clone())
             },
         );

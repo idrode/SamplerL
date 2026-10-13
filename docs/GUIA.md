@@ -220,7 +220,7 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Guardar en una ranura (1-9) | Guarda la selección (o la línea del cursor) en la ranura del número que se pulse, como los registros de vim | — |
 | Pegar una ranura (1-9) | Pega la ranura del número que se pulse; las líneas enteras van encima de la del cursor | — |
 | Salir | Sale (pide confirmación si hay cambios sin guardar) | Ctrl-Q |
-| Snippet: `amen`, `fill`, `ghost`, `intro`, `euclid`, `melodia`, `polirritmo`, `groove` | Inserta el snippet en el cursor (ver «Snippets» en la sección 4) | — |
+| Snippet: `amen`, `fill`, `ghost`, `intro`, `euclid`, `melodia`, `polirritmo`, `barrido`, `groove` | Inserta el snippet en el cursor (ver «Snippets» en la sección 4) | — |
 
 <!-- paleta:fin -->
 
@@ -242,7 +242,7 @@ Qué ofrece según dónde esté el cursor:
 
 | Dónde | Opciones |
 | --- | --- |
-| Inicio de línea | Funciones globales (`bpm`, `sample`, `track`), snippets (`amen`, `fill`, `ghost`, `intro`, `euclid`, `melodia`, `polirritmo`, `groove`), bloques de tu biblioteca (ver «Biblioteca de bloques»), variables locales y palabras clave de Lua |
+| Inicio de línea | Funciones globales (`bpm`, `sample`, `track`), snippets (`amen`, `fill`, `ghost`, `intro`, `euclid`, `melodia`, `polirritmo`, `barrido`, `groove`), bloques de tu biblioteca (ver «Biblioteca de bloques»), variables locales y palabras clave de Lua |
 | Tras `:` | Los métodos del objeto: de sample, de cortes, de pista o del compás de `every` (si no se sabe qué es, todos) |
 | Dentro de `fx("...")` | Los efectos; dentro de la tabla, sus parámetros, y en `type = "..."` sus valores |
 | Dentro de `sample("...")` | Los WAV de la carpeta de muestras (la del proyecto o la del script) |
@@ -442,10 +442,23 @@ compases).
 | `^n` | Pitch en semitonos (signo y decimales, de -36 a 36). Cambia también la duración | `3^7`, `3^-5`, `3^0.5` |
 | `@g` | Volumen del paso (lineal, de 0 a 4) | `3@0.5` |
 | `rN` | Retrigger / stutter: el paso se divide en N partes y el corte vuelve a empezar en cada una (de 1 a 16) | `3r4` |
+| `~Hz` | Corte del primer filtro de la pista desde este golpe hasta el siguiente (parameter lock, de 20 a 20000 Hz); un golpe sin `~` vuelve al corte de `:fx` | `3~800` |
 
 Los sufijos se combinan en cualquier orden, cada uno una vez:
 `3'^7@0.5r2` es el corte 3, al revés, una quinta arriba, a media
-intensidad y repetido dos veces. Con etiquetas, igual: `kick^7@0.5`,
+intensidad y repetido dos veces. `~` necesita un filtro en la pista
+(`:fx("lowpass", { cutoff = 3000 })`): `"1~300 . 2 .  1 . 2~8000 ."` cierra
+el filtro en el primer golpe y lo abre del todo en la segunda caja.
+
+**Automatización.** En la tabla de `:fx`, `cutoff`, `q`, `threshold`,
+`makeup`, `drive` y `mix` admiten `ramp(desde, hasta, "4 compases")` (una
+rampa que se repite) o `lfo(frecuencia, mín, máx)` (un seno) en lugar de un
+número (ver la sección 4). Las dos dependen solo de la posición de la
+canción: son deterministas y recargar no las desplaza. Todo lo que se
+mueve (curvas y `~`) se suaviza en unos 5 ms y el filtro recalcula sus
+coeficientes cada 32 muestras: no hay clics. El panel de efectos marca los
+parámetros que se mueven (`› LP 200 Hz q0.71 ∿cutoff`) y el tracker enseña
+el `~` de cada paso. Con etiquetas, igual: `kick^7@0.5`,
 `snare'r2`. Un `r` y un número pegados al final de la etiqueta son el
 retrigger (`kickr4` es `kick` repetido 4 veces), por eso ninguna etiqueta
 puede acabar así.
@@ -651,6 +664,38 @@ Los mismos pasos en otro orden al azar. Conserva cada golpe y cada silencio, sol
 local amen = sample("amen.wav"):slice(8)
 -- Los golpes del break en un orden nuevo, siempre el mismo (semilla 3).
 track("drums", amen):steps(shuffle("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .", 3))
+```
+
+### `ramp(desde, hasta, duración)`
+
+Valor que va de desde a hasta en esa duración y vuelve a empezar (para un parámetro de :fx). Se pone en lugar de un número en la tabla de `:fx` (`cutoff`, `q`, `threshold`, `makeup`, `drive` o `mix`). Es una rampa en diente de sierra alineada con la canción: con `"4 compases"` sube en los compases 0-3, otra vez en los 4-7... (como `every`, cuenta desde que arranca el secuenciador, así que recargar no la desplaza). Las frecuencias suben en escala logarítmica (de 200 a 4000 Hz, la mitad del camino es 894 Hz). Entra con el patrón al empezar el compás y se suaviza: nunca hace clic.
+
+- `desde`: valor al empezar
+- `hasta`: valor al acabar
+- `duración`: `"N compases"` o `"N pasos"` (hasta 64 compases)
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen)
+  :steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+  -- El filtro se abre durante 4 compases y vuelve a cerrarse.
+  :fx("lowpass", { cutoff = ramp(200, 8000, "4 compases") })
+```
+
+### `lfo(frecuencia, mín, máx)`
+
+Valor que oscila (seno) entre mín y máx (para un parámetro de :fx). Como `ramp`, va en lugar de un número en la tabla de `:fx`. La frecuencia es un número en Hz (de 0.01 a 50) o lo que dura un ciclo en el tempo de la canción (`"1 compás"`, `"8 pasos"`). Empieza en `mín` cuando arranca el secuenciador; las frecuencias oscilan en escala logarítmica.
+
+- `frecuencia`: Hz, o la duración de un ciclo: `"1 compás"`, `"8 pasos"`
+- `mín`: valor más bajo
+- `máx`: valor más alto
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen)
+  :steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+  :fx("lowpass", { cutoff = lfo("2 compases", 400, 6000), q = 2 })
+  :fx("distortion", { drive = 6, mix = lfo(0.5, 0, 0.8) })
 ```
 
 ### `scale(nombre [, tónica])`
@@ -937,7 +982,7 @@ Devuelve: pista.
 
 Añade un efecto a la cadena de la pista (hasta 4, en orden). Un parámetro desconocido da error, para pillar las erratas. Los efectos y sus parámetros están en la tabla de abajo.
 
-El filtro es un biquad de 12 dB/octava; `q = 0.707` es la respuesta más plana y valores altos resuenan en el corte. El bitcrusher reduce la resolución a `bits` y repite cada muestra `downsample` veces (reducción de la frecuencia de muestreo, sin filtro: suena sucio a propósito).
+El filtro es un biquad de 12 dB/octava; `q = 0.707` es la respuesta más plana y valores altos resuenan en el corte. El bitcrusher reduce la resolución a `bits` y repite cada muestra `downsample` veces (reducción de la frecuencia de muestreo, sin filtro: suena sucio a propósito). Los parámetros `cutoff`, `q`, `threshold`, `makeup`, `drive` y `mix` admiten `ramp()` y `lfo()` en lugar de un número; el corte del primer filtro, además, puede cambiar en cada golpe con `~` en `steps` (`3~800`).
 
 - `nombre`: el efecto (ver la tabla)
 - `parámetros`: tabla con los parámetros del efecto
@@ -1052,6 +1097,7 @@ Trozos de script con campos para rellenar. Se insertan desde el autocompletado (
 | `euclid` | Pista con un ritmo euclídeo (k golpes repartidos en n pasos). |
 | `melodia` | Melodía con un corte sobre una escala: grados que se convierten en pitch. |
 | `polirritmo` | Pista de otra longitud (12 pasos contra el compás de 16): polirritmia. |
+| `barrido` | Filtro que se abre poco a poco (ramp) y un envío a la reverb en una pista existente. |
 | `groove` | Swing y humanize en una pista existente, para que no suene a máquina. |
 
 `amen`:
@@ -1118,6 +1164,16 @@ local amen = sample("amen.wav"):slice(8)
 track("tres", amen)
   :length(12)
   :steps("3 . . 3@0.5  . . 3 .  . 3@0.5 . .")
+```
+
+`barrido` (las primeras líneas son lo que necesita tener antes):
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+track("drums")
+  :fx("lowpass", { cutoff = ramp(200, 8000, "4 compases") })
+  :send("reverb", 0.2)
 ```
 
 `groove` (las primeras líneas son lo que necesita tener antes):

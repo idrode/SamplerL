@@ -177,7 +177,34 @@ fn the_audio_thread_never_allocates() {
     assert_eq!(n, 0, "reservas con longitudes variables");
 
     // Envíos al delay y a la reverb, con cambio de parámetros al compás.
-    let sending = Pattern::from_bars(sample.clone(), &slices, &bars[..1])
+    // Con automatización (rampa y LFO) y cortes por paso (`~`).
+    let locked: Vec<Option<Step>> = (0..STEPS)
+        .map(|k| Some(Step::new(k % 2).with_lock(200.0 + 500.0 * k as f32)))
+        .collect();
+    let sending = Pattern::from_steps(sample.clone(), &slices, locked)
+        .unwrap()
+        .with_fx(&[Fx::lowpass(3000.0), Fx::distortion(4.0, 0.5)])
+        .unwrap()
+        .with_automation(&[
+            engine::Automation {
+                fx: 0,
+                param: 1,
+                curve: engine::Curve::Ramp {
+                    from: 0.5,
+                    to: 4.0,
+                    steps: 32.0,
+                },
+            },
+            engine::Automation {
+                fx: 1,
+                param: 1,
+                curve: engine::Curve::Lfo {
+                    min: 0.0,
+                    max: 1.0,
+                    rate: engine::LfoRate::Hz(2.0),
+                },
+            },
+        ])
         .unwrap()
         .with_sends([0.8, 0.6])
         .unwrap();
@@ -197,7 +224,10 @@ fn the_audio_thread_never_allocates() {
             engine.process(&mut out, 2);
         }
     });
-    assert_eq!(n, 0, "reservas con envíos");
+    assert_eq!(
+        n, 0,
+        "reservas con envíos, automatización y cortes por paso"
+    );
 
     controller.stop().unwrap();
     controller.start().unwrap();

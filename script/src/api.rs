@@ -614,6 +614,77 @@ pub const FUNCTIONS: &[Function] = &[
         ),
     },
     Function {
+        name: "ramp",
+        receiver: Receiver::Global,
+        signature: "ramp(desde, hasta, duración)",
+        returns: None,
+        summary: "Valor que va de desde a hasta en esa duración y vuelve a empezar (para un parámetro de :fx).",
+        doc: "Se pone en lugar de un número en la tabla de `:fx` (`cutoff`, `q`, \
+              `threshold`, `makeup`, `drive` o `mix`). Es una rampa en diente de \
+              sierra alineada con la canción: con `\"4 compases\"` sube en los \
+              compases 0-3, otra vez en los 4-7... (como `every`, cuenta desde que \
+              arranca el secuenciador, así que recargar no la desplaza). Las \
+              frecuencias suben en escala logarítmica (de 200 a 4000 Hz, la mitad \
+              del camino es 894 Hz). Entra con el patrón al empezar el compás y se \
+              suaviza: nunca hace clic.",
+        params: &[
+            Param {
+                name: "desde",
+                description: "valor al empezar",
+            },
+            Param {
+                name: "hasta",
+                description: "valor al acabar",
+            },
+            Param {
+                name: "duración",
+                description: "`\"N compases\"` o `\"N pasos\"` (hasta 64 compases)",
+            },
+        ],
+        template: "ramp(${200}, ${4000}, \"${4 compases}\")",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             track(\"drums\", amen)\n  \
+             :steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\")\n  \
+             -- El filtro se abre durante 4 compases y vuelve a cerrarse.\n  \
+             :fx(\"lowpass\", { cutoff = ramp(200, 8000, \"4 compases\") })\n",
+        ),
+    },
+    Function {
+        name: "lfo",
+        receiver: Receiver::Global,
+        signature: "lfo(frecuencia, mín, máx)",
+        returns: None,
+        summary: "Valor que oscila (seno) entre mín y máx (para un parámetro de :fx).",
+        doc: "Como `ramp`, va en lugar de un número en la tabla de `:fx`. La \
+              frecuencia es un número en Hz (de 0.01 a 50) o lo que dura un ciclo \
+              en el tempo de la canción (`\"1 compás\"`, `\"8 pasos\"`). Empieza en \
+              `mín` cuando arranca el secuenciador; las frecuencias oscilan en \
+              escala logarítmica.",
+        params: &[
+            Param {
+                name: "frecuencia",
+                description: "Hz, o la duración de un ciclo: `\"1 compás\"`, `\"8 pasos\"`",
+            },
+            Param {
+                name: "mín",
+                description: "valor más bajo",
+            },
+            Param {
+                name: "máx",
+                description: "valor más alto",
+            },
+        ],
+        template: "lfo(\"${1 compás}\", ${400}, ${3000})",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             track(\"drums\", amen)\n  \
+             :steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\")\n  \
+             :fx(\"lowpass\", { cutoff = lfo(\"2 compases\", 400, 6000), q = 2 })\n  \
+             :fx(\"distortion\", { drive = 6, mix = lfo(0.5, 0, 0.8) })\n",
+        ),
+    },
+    Function {
         name: "scale",
         receiver: Receiver::Global,
         signature: "scale(nombre [, tónica])",
@@ -1062,7 +1133,10 @@ pub const FUNCTIONS: &[Function] = &[
               más plana y valores altos resuenan en el corte. El bitcrusher reduce \
               la resolución a `bits` y repite cada muestra `downsample` veces \
               (reducción de la frecuencia de muestreo, sin filtro: suena sucio a \
-              propósito).",
+              propósito). Los parámetros `cutoff`, `q`, `threshold`, `makeup`, `drive` y `mix` \
+              admiten `ramp()` y `lfo()` en lugar de un número; el corte del primer \
+              filtro, además, puede cambiar en cada golpe con `~` en `steps` \
+              (`3~800`).",
         params: &[
             Param {
                 name: "nombre",
@@ -1566,6 +1640,15 @@ pub const SNIPPETS: &[Snippet] = &[
         requires: "local amen = sample(\"amen.wav\"):slice(8)\n",
     },
     Snippet {
+        name: "barrido",
+        summary: "Filtro que se abre poco a poco (ramp) y un envío a la reverb en una pista existente.",
+        template: "track(\"${drums}\")\n  \
+                   :fx(\"lowpass\", { cutoff = ramp(${200}, ${8000}, \"${4 compases}\") })\n  \
+                   :send(\"${reverb}\", ${0.2})\n",
+        requires: "local amen = sample(\"amen.wav\"):slice(8)\n\
+                   track(\"drums\", amen):steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\")\n",
+    },
+    Snippet {
         name: "groove",
         summary: "Swing y humanize en una pista existente, para que no suene a máquina.",
         template: "track(\"${drums}\")\n  \
@@ -1589,6 +1672,20 @@ pub fn functions(receiver: Receiver) -> impl Iterator<Item = &'static Function> 
 /// Método o función por receptor y nombre.
 pub fn function(receiver: Receiver, name: &str) -> Option<&'static Function> {
     functions(receiver).find(|f| f.name == name)
+}
+
+/// Si el parámetro `param` del efecto `effect` (nombre o alias del
+/// registro) admite `ramp()` y `lfo()`: lo dice el propio motor
+/// ([`engine::Fx::params`]).
+pub fn automatable(effect: &str, param: &str) -> bool {
+    let fx = match self::effect(effect).map(|e| e.name) {
+        Some("filter" | "lowpass" | "highpass") => engine::Fx::lowpass(1000.0),
+        Some("compressor") => engine::Fx::compressor(-18.0, 4.0),
+        Some("distortion") => engine::Fx::distortion(4.0, 1.0),
+        Some("bitcrush") => engine::Fx::bitcrush(8, 1),
+        _ => return false,
+    };
+    fx.param_index(param).is_some()
 }
 
 /// Efecto de `:fx` por nombre o alias.

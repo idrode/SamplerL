@@ -81,6 +81,49 @@ impl Fx {
         Fx::Distortion { drive, mix }
     }
 
+    /// Parámetros que se pueden automatizar (con `ramp`, `lfo` o, el corte,
+    /// por paso): su nombre en el script, en el orden de su índice.
+    pub fn params(&self) -> &'static [&'static str] {
+        match self {
+            Fx::Filter { .. } => &["cutoff", "q"],
+            Fx::Compressor { .. } => &["threshold", "makeup"],
+            Fx::Distortion { .. } => &["drive", "mix"],
+            Fx::Bitcrush { .. } => &[],
+        }
+    }
+
+    /// Índice del parámetro automatizable `name`.
+    pub fn param_index(&self, name: &str) -> Option<usize> {
+        self.params().iter().position(|p| *p == name)
+    }
+
+    /// Rango válido del parámetro `index` y si se mueve en escala
+    /// logarítmica (las frecuencias).
+    pub fn param_range(&self, index: usize) -> Option<(f32, f32, bool)> {
+        Some(match (self, index) {
+            (Fx::Filter { .. }, 0) => (20.0, 20_000.0, true),
+            (Fx::Filter { .. }, 1) => (0.1, 20.0, true),
+            (Fx::Compressor { .. }, 0) => (-60.0, 0.0, false),
+            (Fx::Compressor { .. }, 1) => (0.0, 24.0, false),
+            (Fx::Distortion { .. }, 0) => (1.0, 50.0, true),
+            (Fx::Distortion { .. }, 1) => (0.0, 1.0, false),
+            _ => return None,
+        })
+    }
+
+    /// Valor fijo del parámetro `index` (el que se escribió en la tabla).
+    pub fn param_value(&self, index: usize) -> Option<f32> {
+        Some(match (*self, index) {
+            (Fx::Filter { cutoff_hz, .. }, 0) => cutoff_hz,
+            (Fx::Filter { q, .. }, 1) => q,
+            (Fx::Compressor { threshold_db, .. }, 0) => threshold_db,
+            (Fx::Compressor { makeup_db, .. }, 1) => makeup_db,
+            (Fx::Distortion { drive, .. }, 0) => drive,
+            (Fx::Distortion { mix, .. }, 1) => mix,
+            _ => return None,
+        })
+    }
+
     /// Comprueba los rangos. El corte se limita además por debajo de la
     /// frecuencia de Nyquist al aplicarse.
     pub fn validate(&self) -> Result<(), &'static str> {
@@ -144,6 +187,8 @@ pub(crate) enum FxState {
     Off,
     Biquad {
         kind: FilterKind,
+        cutoff_hz: f32,
+        q: f32,
         coefs: Biquad,
         /// Memoria (z1, z2) de cada canal.
         z: [[f32; 2]; 2],
@@ -214,7 +259,13 @@ impl FxState {
                     FxState::Biquad { kind: k, z, .. } if k == kind => z,
                     _ => [[0.0; 2]; 2],
                 };
-                FxState::Biquad { kind, coefs, z }
+                FxState::Biquad {
+                    kind,
+                    cutoff_hz,
+                    q,
+                    coefs,
+                    z,
+                }
             }
             (
                 Some(Fx::Compressor {
@@ -253,6 +304,34 @@ impl FxState {
                     held,
                 }
             }
+        }
+    }
+
+    /// Cambia el parámetro automatizable `index` (ver [`Fx::params`]) sin
+    /// tocar la memoria del efecto. Solo recalcula lo necesario.
+    pub fn set_param(&mut self, index: usize, value: f32, sample_rate: u32) {
+        match (self, index) {
+            (
+                FxState::Biquad {
+                    kind,
+                    cutoff_hz,
+                    q,
+                    coefs,
+                    ..
+                },
+                0 | 1,
+            ) => {
+                let target = if index == 0 { &mut *cutoff_hz } else { &mut *q };
+                if *target != value {
+                    *target = value;
+                    *coefs = Biquad::new(*kind, *cutoff_hz, *q, sample_rate);
+                }
+            }
+            (FxState::Comp { threshold_db, .. }, 0) => *threshold_db = value,
+            (FxState::Comp { makeup_db, .. }, 1) => *makeup_db = value,
+            (FxState::Drive { drive, .. }, 0) => *drive = value,
+            (FxState::Drive { mix, .. }, 1) => *mix = value,
+            _ => {}
         }
     }
 
