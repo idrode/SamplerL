@@ -671,6 +671,36 @@ pub const FUNCTIONS: &[Function] = &[
         ),
     },
     Function {
+        name: "stretch",
+        receiver: Receiver::Sample,
+        signature: "sample:stretch([bpm_origen])",
+        returns: Some(Receiver::Sample),
+        summary: "Estira el sample del tempo de origen al de la canción sin cambiar el tono.",
+        doc: "Al cargar, el sample pasa de `bpm_origen` al tempo de la canción (el de \
+              `bpm()`, el del proyecto o 120), sin cambiar el tono: un break de 140 \
+              suena a 170 y sus golpes caen en la rejilla. Sin `bpm_origen`, usa el \
+              que detecta `detect_bpm()` (si no lo ve, da error: pásalo). Los cortes \
+              se buscan en el sample original y se escalan, así que `slice(n)`, las \
+              etiquetas y los ajustes en ms (`move`, proyecto) son los de siempre. \
+              Va bien entre ×0,7 y ×1,4 (de ×0,25 a ×4 se admite). Es WSOLA por \
+              tramos de golpe a golpe: cada golpe empieza justo en su sitio y el \
+              resto se estira copiando la forma de onda; estirar mucho repite o \
+              emborrona un poco las colas largas.",
+        params: &[Param {
+            name: "bpm_origen",
+            description: "tempo original del sample (20 a 400); sin él, el detectado",
+        }],
+        template: "stretch(${140})",
+        example: Some(
+            "bpm(170)\n\
+             -- El break está a 140: suena a 170 con el mismo tono.\n\
+             local amen = sample(\"amen.wav\"):stretch(140):slice(8)\n\
+             track(\"drums\", amen):steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\")\n\
+             -- O con el tempo que detecta.\n\
+             local otro = sample(\"amen.wav\"):stretch():slice(8)\n",
+        ),
+    },
+    Function {
         name: "slice",
         receiver: Receiver::Sample,
         signature: "sample:slice(n)",

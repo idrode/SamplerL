@@ -682,14 +682,21 @@ impl Widget for SamplePanel<'_> {
         };
         let seconds = track.sample_frames as f64 / track.sample_rate.max(1) as f64;
         let selected = view.selected_slice;
+        // Con stretch, la posición va en ms del sample original (la de los
+        // ajustes y del proyecto) y se dice de qué tempo a cuál.
+        let ratio = track.stretch.map_or(1.0, |(_, r)| r);
         let chosen = selected.map_or(String::new(), |i| {
             let at = track.slices.get(i).map_or(0.0, |r| {
-                r.start as f64 * 1000.0 / track.sample_rate.max(1) as f64
+                r.start as f64 * 1000.0 / track.sample_rate.max(1) as f64 / ratio
             });
             format!(" · corte {} {at:.1} ms", slice_mark(track, i))
         });
+        let stretch = track.stretch.map_or(String::new(), |(source, ratio)| {
+            let round = |b: f64| ((b * 10.0).round() / 10.0).to_string();
+            format!(" · {}→{} BPM", round(source), round(source / ratio))
+        });
         let block = Block::bordered().title(format!(
-            " sample · {} · {} · {seconds:.2} s · {} cortes{chosen} ",
+            " sample · {} · {}{stretch} · {seconds:.2} s · {} cortes{chosen} ",
             track.name,
             track.sample_name,
             track.slices.len()

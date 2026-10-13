@@ -92,6 +92,19 @@ impl Slices {
         Slices(ranges)
     }
 
+    /// Los mismos cortes en un sample estirado en el tiempo por `ratio`
+    /// (ver [`Sample::stretched`]) que dura `frames`: cada límite pasa a
+    /// `round(límite · ratio)` (los mismos cortes, en el mismo orden).
+    pub fn scaled(&self, ratio: f64, frames: usize) -> Slices {
+        let scale = |f: usize| ((f as f64 * ratio).round() as usize).min(frames);
+        Slices(
+            self.0
+                .iter()
+                .map(|r| scale(r.start)..scale(r.end))
+                .collect(),
+        )
+    }
+
     pub fn len(&self) -> usize {
         self.0.len()
     }

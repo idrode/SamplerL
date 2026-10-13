@@ -12,6 +12,7 @@ mod sample;
 mod sequencer;
 mod slice;
 mod status;
+pub mod stretch;
 
 pub use bpm::{BpmGuess, detect_bpm};
 pub use engine::{Batch, Controller, Engine, MAX_TRACKS, SendError, new_engine};
@@ -25,3 +26,4 @@ pub use sequencer::{
 };
 pub use slice::{DEFAULT_MIN_GAP_SECONDS, DetectOptions, Detector, Slices};
 pub use status::{MasterStatus, Status, TrackStatus};
+pub use stretch::{MAX_STRETCH, MIN_STRETCH};

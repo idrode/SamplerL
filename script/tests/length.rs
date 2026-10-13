@@ -3,20 +3,27 @@
 //! en un patrón largo.
 
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use engine::{new_engine, offline};
 use script::{ScriptHost, Song};
 
 const RATE: u32 = 48_000;
 
+/// Se escribe una sola vez: los tests van en paralelo y no deben leerlo a
+/// medio escribir.
 fn dir() -> PathBuf {
-    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("length");
-    std::fs::create_dir_all(&dir).unwrap();
-    let mut mono = vec![0.0f32; 6000];
-    mono[..800].fill(0.5);
-    mono[3000..3800].fill(0.25);
-    offline::write_wav(dir.join("break.wav"), &mono, 1, RATE).unwrap();
-    dir
+    static DIR: OnceLock<PathBuf> = OnceLock::new();
+    DIR.get_or_init(|| {
+        let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("length");
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut mono = vec![0.0f32; 6000];
+        mono[..800].fill(0.5);
+        mono[3000..3800].fill(0.25);
+        offline::write_wav(dir.join("break.wav"), &mono, 1, RATE).unwrap();
+        dir
+    })
+    .clone()
 }
 
 fn song(source: &str) -> Result<Song, String> {

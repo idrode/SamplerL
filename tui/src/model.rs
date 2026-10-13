@@ -160,6 +160,9 @@ pub struct TrackView {
     /// Paso de su patrón (desde 0) que sonó el último, con el
     /// secuenciador en marcha.
     pub position: Option<usize>,
+    /// Time-stretch del sample: tempo de origen y proporción (duración
+    /// nueva / original).
+    pub stretch: Option<(f64, f64)>,
     /// Corte que sonó por última vez (índice desde 0).
     pub playing_slice: Option<usize>,
     /// Medidor de nivel (pico con caída), de 0 a 1.

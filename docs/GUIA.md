@@ -46,6 +46,12 @@ del sample» (paleta) hace lo mismo con el sample de la pista seleccionada
 y deja escrita la orden `bpm 140`: Enter cambia (o añade) la línea `bpm()`
 del script, sin guardar. En Lua, `sample(...):detect_bpm()`.
 
+Para tocar el break **a otro tempo sin cambiar su tono**, estíralo:
+`sample("amen.wav"):stretch(140):slice(8)` lo pasa de 140 al tempo de la
+canción (sin el número, usa el que detecta). Cada golpe cae en la rejilla
+nueva y la vista del sample lo dice (`140→170 BPM`); los ajustes de cortes
+siguen en ms del sample original. Ver `sample:stretch` en la sección 4.
+
 ### Usar un sample propio
 
 Solo se leen archivos **WAV** (cualquier frecuencia; se resamplean al
@@ -681,6 +687,23 @@ local amen = sample("amen.wav")
 local tempo, compases = amen:detect_bpm()
 bpm(tempo)
 track("drums", amen:slice(8)):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+```
+
+### `sample:stretch([bpm_origen])`
+
+Devuelve: sample.
+
+Estira el sample del tempo de origen al de la canción sin cambiar el tono. Al cargar, el sample pasa de `bpm_origen` al tempo de la canción (el de `bpm()`, el del proyecto o 120), sin cambiar el tono: un break de 140 suena a 170 y sus golpes caen en la rejilla. Sin `bpm_origen`, usa el que detecta `detect_bpm()` (si no lo ve, da error: pásalo). Los cortes se buscan en el sample original y se escalan, así que `slice(n)`, las etiquetas y los ajustes en ms (`move`, proyecto) son los de siempre. Va bien entre ×0,7 y ×1,4 (de ×0,25 a ×4 se admite). Es WSOLA por tramos de golpe a golpe: cada golpe empieza justo en su sitio y el resto se estira copiando la forma de onda; estirar mucho repite o emborrona un poco las colas largas.
+
+- `bpm_origen`: tempo original del sample (20 a 400); sin él, el detectado
+
+```lua
+bpm(170)
+-- El break está a 140: suena a 170 con el mismo tono.
+local amen = sample("amen.wav"):stretch(140):slice(8)
+track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+-- O con el tempo que detecta.
+local otro = sample("amen.wav"):stretch():slice(8)
 ```
 
 ### `sample:slice(n)`

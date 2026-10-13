@@ -130,6 +130,19 @@ pub struct TrackDef {
     /// De qué sample y qué `slice(n)` salen los cortes (para etiquetarlos
     /// desde la interfaz y guardarlo en el proyecto).
     pub origin: SliceOrigin,
+    /// Time-stretch al tempo de la canción (`sample:stretch()`), si lo hay.
+    /// Entonces `sample` y `slices` ya están estirados.
+    pub stretch: Option<Stretch>,
+}
+
+/// `sample:stretch(bpm_origen)`: el sample se estira del tempo de origen al
+/// de la canción sin cambiar el tono.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Stretch {
+    /// Tempo original del sample.
+    pub source_bpm: f64,
+    /// Duración nueva / original (`source_bpm / bpm de la canción`).
+    pub ratio: f64,
 }
 
 impl TrackDef {
@@ -238,6 +251,14 @@ fn script_location(traceback: &str) -> Option<String> {
 }
 
 /// Evalúa scripts y aplica su resultado al motor. Vive en el hilo de control.
+/// Un sample estirado que se guarda entre cargas (estirar cuesta).
+struct Stretched {
+    original: Arc<Sample>,
+    ratio: f64,
+    bounds: Vec<usize>,
+    result: Arc<Sample>,
+}
+
 pub struct ScriptHost {
     sample_rate: u32,
     time_limit: Duration,
@@ -258,6 +279,9 @@ pub struct ScriptHost {
     labels: Vec<SliceLabel>,
     /// Ajustes manuales de cortes del proyecto.
     positions: Vec<SlicePosition>,
+    /// Samples estirados con `:stretch()` en la última carga (se reutilizan
+    /// si no cambian el sample, la proporción ni los cortes).
+    stretched: Vec<Stretched>,
 }
 
 impl ScriptHost {
@@ -274,6 +298,7 @@ impl ScriptHost {
             default_bpm: None,
             labels: Vec::new(),
             positions: Vec::new(),
+            stretched: Vec::new(),
         }
     }
 
@@ -496,6 +521,9 @@ impl ScriptHost {
             )));
         }
 
+        let mut tracks = tracks;
+        self.apply_stretch(&mut tracks, bpm.unwrap_or(engine::DEFAULT_BPM), name)?;
+
         // Expandir `every` y `chance` a un ciclo de compases. Las funciones de
         // `every` se llaman ahora, con el estado de Lua todavía vivo.
         let mut rng = Rng::new(seed);
@@ -516,6 +544,79 @@ impl ScriptHost {
             metronome,
             warnings,
         })
+    }
+
+    /// Estira los samples de las pistas con `:stretch()` al tempo de la
+    /// canción y escala sus cortes. Las pistas del mismo sample comparten
+    /// el resultado (los inicios de todos sus cortes son límites de tramo),
+    /// que se guarda para la carga siguiente.
+    fn apply_stretch(
+        &mut self,
+        tracks: &mut [TrackBuild],
+        bpm: f64,
+        name: &str,
+    ) -> Result<(), ScriptError> {
+        let mut used: Vec<Stretched> = Vec::new();
+        // Samples y cortes originales de las pistas con stretch (antes de
+        // sustituirlos).
+        let originals: Vec<Option<(Arc<Sample>, Vec<usize>)>> = tracks
+            .iter()
+            .map(|t| {
+                t.def.stretch.map(|_| {
+                    let starts = t.def.slices.iter().map(|r| r.start).collect();
+                    (t.def.sample.clone(), starts)
+                })
+            })
+            .collect();
+        for track in tracks.iter_mut() {
+            let Some(stretch) = track.def.stretch else {
+                continue;
+            };
+            let ratio = stretch.source_bpm / bpm;
+            if !(engine::MIN_STRETCH..=engine::MAX_STRETCH).contains(&ratio) {
+                return Err(ScriptError::new(format!(
+                    "{name}: pista \"{}\": estirar de {} a {bpm} BPM es ×{ratio:.2} \
+                     (va de ×{} a ×{})",
+                    track.def.name,
+                    stretch.source_bpm,
+                    engine::MIN_STRETCH,
+                    engine::MAX_STRETCH
+                )));
+            }
+            let original = track.def.sample.clone();
+            let mut bounds: Vec<usize> = originals
+                .iter()
+                .flatten()
+                .filter(|(sample, _)| Arc::ptr_eq(sample, &original))
+                .flat_map(|(_, starts)| starts.iter().copied())
+                .collect();
+            bounds.sort_unstable();
+            bounds.dedup();
+            let same = |e: &Stretched| {
+                Arc::ptr_eq(&e.original, &original) && e.ratio == ratio && e.bounds == bounds
+            };
+            let result = match used.iter().chain(&self.stretched).find(|e| same(e)) {
+                Some(entry) => entry.result.clone(),
+                None => Arc::new(original.stretched_with(ratio, &bounds)),
+            };
+            if !used.iter().any(same) {
+                used.push(Stretched {
+                    original: original.clone(),
+                    ratio,
+                    bounds,
+                    result: result.clone(),
+                });
+            }
+            let def = &mut track.def;
+            def.slices = def.slices.scaled(ratio, result.frames());
+            def.sample = result;
+            def.stretch = Some(Stretch {
+                source_bpm: stretch.source_bpm,
+                ratio,
+            });
+        }
+        self.stretched = used;
+        Ok(())
     }
 
     fn install_api(
@@ -590,6 +691,7 @@ impl ScriptHost {
                     labels: labels.clone(),
                     positions: positions.clone(),
                     warnings: warnings.clone(),
+                    stretch: None,
                 })
             })?,
         )?;
@@ -699,6 +801,10 @@ impl ScriptHost {
                                     mute: false,
                                     solo: false,
                                     origin: source.origin.clone(),
+                                    stretch: source.stretch.map(|source_bpm| Stretch {
+                                        source_bpm,
+                                        ratio: 1.0,
+                                    }),
                                 },
                                 labels: source.labels.clone(),
                                 stale: source.stale.clone(),
@@ -1146,6 +1252,7 @@ impl UserData for ScaleHandle {
 }
 
 /// `sample("archivo.wav")` en Lua.
+#[derive(Clone)]
 struct SampleHandle {
     /// El nombre tal como se escribió (clave de las etiquetas del proyecto).
     name: String,
@@ -1157,10 +1264,45 @@ struct SampleHandle {
     positions: Rc<Vec<SlicePosition>>,
     /// Avisos de la carga.
     warnings: Rc<RefCell<Vec<String>>>,
+    /// Tempo de origen de `:stretch()`: se estira al de la canción.
+    stretch: Option<f64>,
 }
 
 impl UserData for SampleHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        // `:stretch([bpm_origen])`: al cargar, el sample se estira de ese
+        // tempo (o el que se detecte) al de la canción, sin cambiar el tono.
+        methods.add_method("stretch", |lua, this, bpm: Option<f64>| {
+            let source = match bpm {
+                Some(bpm) if valid_bpm(bpm) => bpm,
+                Some(bpm) => {
+                    return Err(fail(
+                        lua,
+                        format!(
+                            "stretch({bpm}): el tempo de origen va de {} a {}",
+                            engine::MIN_BPM,
+                            engine::MAX_BPM
+                        ),
+                    ));
+                }
+                None => engine::detect_bpm(&this.sample)
+                    .map(|g| g.rounded())
+                    .ok_or_else(|| {
+                        fail(
+                            lua,
+                            format!(
+                                "stretch(): no se detecta el tempo de {}; pásalo: stretch(bpm)",
+                                this.name
+                            ),
+                        )
+                    })?,
+            };
+            Ok(SampleHandle {
+                stretch: Some(source),
+                ..this.clone()
+            })
+        });
+
         // `:detect_bpm()`: tempo y compases del loop (o nil si no se ve).
         methods.add_method("detect_bpm", |_, this, ()| {
             Ok(engine::detect_bpm(&this.sample)
@@ -1272,6 +1414,7 @@ impl UserData for SampleHandle {
                 labels: Rc::new(RefCell::new(labels)),
                 stale: Rc::new(stale),
                 adjusted,
+                stretch: this.stretch,
             })
         });
     }
@@ -1291,6 +1434,8 @@ struct SlicedHandle {
     stale: Rc<Vec<(String, usize)>>,
     /// Cortes con el inicio ajustado a mano.
     adjusted: Vec<bool>,
+    /// Tempo de origen de `sample:stretch()`.
+    stretch: Option<f64>,
 }
 
 impl UserData for SlicedHandle {
@@ -1322,6 +1467,7 @@ impl UserData for SlicedHandle {
                 },
                 stale: this.stale.clone(),
                 adjusted: vec![this.adjusted[i]],
+                stretch: this.stretch,
             })
         });
 

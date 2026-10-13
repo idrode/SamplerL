@@ -90,6 +90,11 @@ impl Sample {
         })
     }
 
+    /// Sample desde estéreo entrelazado ya a la frecuencia del motor.
+    pub(crate) fn from_raw(data: Vec<f32>, sample_rate: u32) -> Self {
+        Sample { data, sample_rate }
+    }
+
     pub fn frames(&self) -> usize {
         self.data.len() / 2
     }

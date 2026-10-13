@@ -537,7 +537,9 @@ impl App {
             return;
         };
         let rate = track.sample.sample_rate() as f64;
-        let current = range.start as f64 * 1000.0 / rate;
+        // Las posiciones van en ms del sample original (sin estirar).
+        let ratio = track.stretch.map_or(1.0, |s| s.ratio);
+        let current = range.start as f64 * 1000.0 / rate / ratio;
         let slice = origin.indices[index] + 1;
         let previous = self
             .host
@@ -1909,6 +1911,7 @@ impl App {
                             slices: t.slices.iter().collect(),
                             cycle: t.bars.len(),
                             length: t.length,
+                            stretch: t.stretch.map(|s| (s.source_bpm, s.ratio)),
                             steps: t.lap_steps(lap).clone(),
                             position: transport
                                 .step
