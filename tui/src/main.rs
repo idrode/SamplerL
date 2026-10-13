@@ -406,6 +406,7 @@ fn run_editor(path: &std::path::Path, allow_audio: bool) -> Result<(), BoxError>
     } else {
         app::App::open(path, controller, sample_rate)?
     };
+    app.set_global_blocks(script::blocks::global_dir());
 
     let mut terminal = ratatui::init();
     let result = (|| -> Result<(), BoxError> {

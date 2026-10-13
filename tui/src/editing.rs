@@ -288,6 +288,46 @@ pub fn toggle_comment(editor: &mut TextArea) {
     editor.move_cursor(CursorMove::Jump(row as u16, col));
 }
 
+/// Texto seleccionado (puede ocupar varias líneas), o `None` si no hay
+/// selección o está vacía.
+pub fn selected_text(editor: &TextArea) -> Option<String> {
+    let (a, b) = editor.selection_range()?;
+    let ((r1, c1), (r2, c2)) = if a <= b { (a, b) } else { (b, a) };
+    let mut text = String::new();
+    for (row, line) in editor.lines().iter().enumerate().take(r2 + 1).skip(r1) {
+        let chars: Vec<char> = line.chars().collect();
+        let end = if row == r2 {
+            c2.min(chars.len())
+        } else {
+            chars.len()
+        };
+        let start = if row == r1 { c1.min(end) } else { 0 };
+        text.extend(&chars[start..end]);
+        if row < r2 {
+            text.push('\n');
+        }
+    }
+    (!text.is_empty()).then_some(text)
+}
+
+/// Quita la sangría común de las líneas con texto.
+pub fn dedent(text: &str) -> String {
+    let indent = text
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| l.chars().take_while(|c| c.is_whitespace()).count())
+        .min()
+        .unwrap_or(0);
+    let mut out: Vec<String> = text
+        .lines()
+        .map(|l| l.chars().skip(indent).collect())
+        .collect();
+    if text.ends_with('\n') {
+        out.push(String::new());
+    }
+    out.join("\n")
+}
+
 /// Duplica las líneas seleccionadas o la del cursor debajo de sí mismas;
 /// el cursor pasa a la copia.
 pub fn duplicate_lines(editor: &mut TextArea) {

@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use engine::{Controller, MAX_TRACKS, Sample, Status};
 use ratatui_textarea::{CursorMove, Input, Key, TextArea};
+use script::blocks::{self, Library, SaveError, Scope};
 use script::{Project, ScriptError, ScriptHost, api};
 
 use crate::complete::{self, Candidate};
@@ -149,6 +150,11 @@ pub struct App {
     /// Acciones compuestas que se pueden deshacer y rehacer enteras.
     undo_groups: Vec<EditGroup>,
     redo_groups: Vec<EditGroup>,
+    /// Carpeta global de bloques (la pone `main`; sin ella, solo los del
+    /// proyecto).
+    global_blocks: Option<PathBuf>,
+    /// Biblioteca de bloques (global y del proyecto).
+    blocks: Library,
 }
 
 impl App {
@@ -192,7 +198,10 @@ impl App {
             last_palette: None,
             undo_groups: Vec::new(),
             redo_groups: Vec::new(),
+            global_blocks: None,
+            blocks: Library::default(),
         };
+        app.reload_blocks();
         app.load();
         Ok(app)
     }
@@ -224,6 +233,7 @@ impl App {
         self.host.set_default_bpm(project.bpm);
         self.host.set_labels(project.labels.clone());
         self.host.set_positions(project.positions.clone());
+        self.reload_blocks();
         self.load();
         Ok(())
     }
@@ -245,11 +255,28 @@ impl App {
             .map_or_else(|| "canción".into(), |s| s.to_string_lossy().into())
     }
 
+    /// Pone la carpeta global de bloques y relee la biblioteca.
+    pub fn set_global_blocks(&mut self, dir: Option<PathBuf>) {
+        self.global_blocks = dir;
+        self.reload_blocks();
+    }
+
+    /// Relee los bloques de la carpeta global y la del proyecto (o del
+    /// script).
+    fn reload_blocks(&mut self) {
+        self.blocks = Library::open(
+            self.global_blocks.clone(),
+            Some(blocks::project_dir(&self.base_dir())),
+        );
+    }
+
     /// Ejecuta una orden de la línea de órdenes (F2).
     pub fn run_command(&mut self, line: &str) {
+        let line = line.trim();
         let mut words = line.split_whitespace();
         let Some(command) = words.next() else { return };
         let args: Vec<&str> = words.collect();
+        let rest = line[command.len()..].trim();
         match command {
             "exportar" | "export" => self.export(&args),
             "guardar" | "save" => self.save_project(args.first().copied()),
@@ -258,9 +285,13 @@ impl App {
             "muestras" | "samples" => self.set_samples(args.first().copied()),
             "etiquetar" | "label" => self.label_slice(&args),
             "bpm" => self.set_bpm_line(args.first().copied()),
+            "bloque" | "bloque!" | "bloque-proyecto" | "bloque-proyecto!" => {
+                self.save_block(command, rest)
+            }
             other => {
                 self.message = format!(
-                    "orden desconocida «{other}» (exportar, guardar, abrir, muestras, etiquetar, bpm)"
+                    "orden desconocida «{other}» (exportar, guardar, abrir, muestras, etiquetar, \
+                     bpm, bloque)"
                 );
             }
         }
@@ -529,6 +560,61 @@ impl App {
                 path.display()
             );
         }
+    }
+
+    /// «Guardar la selección como bloque»: abre la línea de órdenes con
+    /// `bloque ` para escribir el nombre, las etiquetas y la descripción.
+    pub fn start_save_block(&mut self) {
+        if editing::selected_text(&self.editor).is_none() {
+            self.message = "selecciona antes el texto del bloque".into();
+            return;
+        }
+        self.completion = None;
+        self.prompt = Some("bloque ".into());
+        self.message = "nombre [etiquetas] [-- descripción] · «bloque-proyecto ...» lo guarda \
+                        en el proyecto"
+            .into();
+    }
+
+    /// `bloque nombre [etiquetas...] [-- descripción]`: guarda la selección
+    /// como bloque en la carpeta global (`bloque-proyecto`: en la del
+    /// proyecto). Con `!` sustituye el que se llame igual.
+    fn save_block(&mut self, command: &str, rest: &str) {
+        let usage = "uso: bloque nombre [etiquetas] [-- descripción] (con texto seleccionado)";
+        let overwrite = command.ends_with('!');
+        let scope = if command.starts_with("bloque-proyecto") {
+            Scope::Project
+        } else {
+            Scope::Global
+        };
+        let (head, description) = rest.split_once("--").unwrap_or((rest, ""));
+        let mut words = head.split_whitespace();
+        let Some(name) = words.next() else {
+            self.message = usage.into();
+            return;
+        };
+        let tags = blocks::parse_tags(&words.collect::<Vec<_>>().join(" "));
+        let Some(body) = editing::selected_text(&self.editor) else {
+            self.message = format!("selecciona antes el texto del bloque · {usage}");
+            return;
+        };
+        let body = editing::dedent(&body);
+        self.message =
+            match self
+                .blocks
+                .save(scope, name, description.trim(), &tags, &body, overwrite)
+            {
+                Ok(block) => format!(
+                    "bloque «{name}» guardado en {} ({})",
+                    block.path.display(),
+                    scope.label()
+                ),
+                Err(SaveError::Exists(path)) => format!(
+                    "ya hay un bloque «{name}» en {}: «{command}! ...» lo sustituye",
+                    path.display()
+                ),
+                Err(e) => format!("no se pudo guardar el bloque: {e}"),
+            };
     }
 
     /// `muestras carpeta`: carpeta de los samples (y recarga). Sin argumento
@@ -1056,6 +1142,7 @@ impl App {
             Action::Export => self.export(&[]),
             Action::Commands => self.prompt = Some(String::new()),
             Action::LabelSlice => self.start_labeling(),
+            Action::SaveBlock => self.start_save_block(),
             Action::Mute => self.toggle_live(false),
             Action::Solo => self.toggle_live(true),
             Action::ClearMuteSolo => self.clear_live(),
@@ -1518,6 +1605,8 @@ impl App {
         if self.last_external_check.elapsed() >= EXTERNAL_CHECK {
             self.last_external_check = Instant::now();
             self.check_external();
+            // Los bloques pueden cambiar fuera (otro editor, git...).
+            self.blocks.reload();
         }
         let status = self.controller.status();
         let now = Instant::now();

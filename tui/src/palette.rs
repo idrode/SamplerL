@@ -38,6 +38,7 @@ pub enum Action {
     ClearSliceAdjust,
     NextSlice,
     PreviousSlice,
+    SaveBlock,
     Quit,
 }
 
@@ -225,6 +226,12 @@ pub const ACTIONS: &[ActionDef] = &[
         action: Action::PreviousSlice,
         name: "Corte anterior",
         description: "Selecciona el corte anterior de la pista (sin tocarlo)",
+        keys: "",
+    },
+    ActionDef {
+        action: Action::SaveBlock,
+        name: "Guardar la selección como bloque",
+        description: "Abre «bloque » para escribir nombre, etiquetas y `-- descripción`; va a la biblioteca global",
         keys: "",
     },
     ActionDef {
