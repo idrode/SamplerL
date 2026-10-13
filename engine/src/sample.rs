@@ -125,3 +125,96 @@ fn resample(stereo: Vec<f32>, frames: usize, from: u32, to: u32) -> Result<Vec<f
     data.resize(expected * 2, 0.0);
     Ok(data)
 }
+
+/// Cómo se prepara un sample al importarlo (ver [`Sample::processed`]).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct ImportOptions {
+    /// Recortar el silencio del principio y del final: lo que queda por
+    /// debajo de este nivel (dBFS).
+    pub trim_db: Option<f32>,
+    /// Llevar el pico a este nivel (dBFS).
+    pub normalize_db: Option<f32>,
+    /// Fundidos de entrada y de salida, en ms (0: ninguno).
+    pub fade_in_ms: f32,
+    pub fade_out_ms: f32,
+}
+
+impl ImportOptions {
+    /// Nivel por defecto de `trim` y de `normalize` cuando solo se pide.
+    pub const TRIM_DB: f32 = -60.0;
+    pub const NORMALIZE_DB: f32 = 0.0;
+
+    pub fn is_empty(&self) -> bool {
+        *self == ImportOptions::default()
+    }
+
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.trim_db.is_some_and(|db| !(-120.0..=0.0).contains(&db)) {
+            return Err("trim fuera de rango (-120 a 0 dB)");
+        }
+        if self
+            .normalize_db
+            .is_some_and(|db| !(-60.0..=0.0).contains(&db))
+        {
+            return Err("normalize fuera de rango (-60 a 0 dB)");
+        }
+        if !(0.0..=10_000.0).contains(&self.fade_in_ms)
+            || !(0.0..=10_000.0).contains(&self.fade_out_ms)
+        {
+            return Err("fundido fuera de rango (0 a 10000 ms)");
+        }
+        Ok(())
+    }
+}
+
+impl Sample {
+    /// El sample preparado: primero se recorta el silencio de los extremos
+    /// (`trim_db`), luego se normaliza el pico (`normalize_db`) y al final
+    /// se aplican los fundidos (lineales). Sin opciones, una copia exacta.
+    /// Si todo es silencio, el recorte no quita nada.
+    pub fn processed(&self, options: &ImportOptions) -> Sample {
+        let level = |i: usize| {
+            let (l, r) = self.frame(i);
+            l.abs().max(r.abs())
+        };
+        let frames = self.frames();
+        let (mut start, mut end) = (0, frames);
+        if let Some(db) = options.trim_db {
+            let threshold = 10f32.powf(db / 20.0);
+            if let Some(first) = (0..frames).find(|&i| level(i) > threshold) {
+                let last = (0..frames).rev().find(|&i| level(i) > threshold).unwrap();
+                (start, end) = (first, last + 1);
+            }
+        }
+        let mut data = self.data[2 * start..2 * end].to_vec();
+        if let Some(db) = options.normalize_db {
+            let peak = data.iter().fold(0.0f32, |m, x| m.max(x.abs()));
+            if peak > 0.0 {
+                let gain = 10f32.powf(db / 20.0) / peak;
+                for x in &mut data {
+                    *x *= gain;
+                }
+            }
+        }
+        let len = data.len() / 2;
+        let ms = |ms: f32| ((ms / 1000.0 * self.sample_rate as f32) as usize).min(len);
+        let (fade_in, fade_out) = (ms(options.fade_in_ms), ms(options.fade_out_ms));
+        for (i, frame) in data.as_chunks_mut::<2>().0.iter_mut().enumerate() {
+            let mut gain = 1.0f32;
+            if i < fade_in {
+                gain *= i as f32 / fade_in as f32;
+            }
+            if len - i <= fade_out {
+                gain *= (len - 1 - i) as f32 / fade_out as f32;
+            }
+            if gain != 1.0 {
+                frame[0] *= gain;
+                frame[1] *= gain;
+            }
+        }
+        Sample {
+            data,
+            sample_rate: self.sample_rate,
+        }
+    }
+}

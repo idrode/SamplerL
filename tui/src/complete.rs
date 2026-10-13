@@ -554,6 +554,7 @@ impl Scan {
             ("fx", 1) => api::effect(strings.first()?.as_deref()?),
             ("bus", 1) => api::bus(strings.first()?.as_deref()?),
             ("set", 0 | 1) => Some(&api::SLICE_TABLE),
+            ("sample", 1) => Some(&api::SAMPLE_TABLE),
             _ => None,
         }
     }
@@ -641,6 +642,8 @@ pub fn help_at(lines: &[String], row: usize, col: usize) -> Option<Help> {
         };
         let signature = if std::ptr::eq(effect, &api::SLICE_TABLE) {
             "cortes:set([i,] { ... })".to_string()
+        } else if std::ptr::eq(effect, &api::SAMPLE_TABLE) {
+            "sample(ruta, { ... })".to_string()
         } else if api::bus(effect.name).is_some_and(|b| std::ptr::eq(b, effect)) {
             format!("bus(\"{}\", {{ ... }})", effect.name)
         } else {
@@ -1189,7 +1192,7 @@ mod tests {
             "texto: pasos separados por espacios: 16, o los de :length(n)"
         );
         let h = help("local a = sample(\"am|").unwrap();
-        assert_eq!(h.signature, "sample(ruta) → sample");
+        assert_eq!(h.signature, "sample(ruta [, opciones]) → sample");
         // En la tabla de fx: el efecto y, sobre una clave, su rango.
         let h = help(&format!("{SONG}track(\"d\", amen):fx(\"filter\", {{ |")).unwrap();
         assert_eq!(h.signature, "fx(\"filter\", { ... })");

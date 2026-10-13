@@ -278,6 +278,41 @@ fn script_location(traceback: &str) -> Option<String> {
 }
 
 /// Evalúa scripts y aplica su resultado al motor. Vive en el hilo de control.
+/// Un sample preparado al importar (`sample(nombre, { ... })`), que se
+/// guarda entre cargas.
+struct Imported {
+    original: Arc<Sample>,
+    options: engine::ImportOptions,
+    result: Arc<Sample>,
+}
+
+/// Los preparados de la carga anterior y los que usa esta.
+#[derive(Default)]
+struct Imports {
+    old: Vec<Imported>,
+    used: Vec<Imported>,
+}
+
+impl Imports {
+    /// El sample preparado con esas opciones (el de antes si ya estaba).
+    fn get(&mut self, original: &Arc<Sample>, options: engine::ImportOptions) -> Arc<Sample> {
+        let same = |e: &&Imported| Arc::ptr_eq(&e.original, original) && e.options == options;
+        if let Some(e) = self.used.iter().find(same) {
+            return e.result.clone();
+        }
+        let result = self.old.iter().find(same).map_or_else(
+            || Arc::new(original.processed(&options)),
+            |e| e.result.clone(),
+        );
+        self.used.push(Imported {
+            original: original.clone(),
+            options,
+            result: result.clone(),
+        });
+        result
+    }
+}
+
 /// Un sample estirado que se guarda entre cargas (estirar cuesta).
 struct Stretched {
     original: Arc<Sample>,
@@ -308,6 +343,8 @@ pub struct ScriptHost {
     positions: Vec<SlicePosition>,
     /// Cortes añadidos y quitados en el proyecto.
     edits: Vec<SliceEdit>,
+    /// Samples preparados al importar en la última carga.
+    imported: Vec<Imported>,
     /// Samples estirados con `:stretch()` en la última carga (se reutilizan
     /// si no cambian el sample, la proporción ni los cortes).
     stretched: Vec<Stretched>,
@@ -328,6 +365,7 @@ impl ScriptHost {
             labels: Vec::new(),
             positions: Vec::new(),
             edits: Vec::new(),
+            imported: Vec::new(),
             stretched: Vec::new(),
         }
     }
@@ -589,10 +627,22 @@ impl ScriptHost {
         }));
         // La caché pasa al estado de Lua durante la evaluación y vuelve después.
         let cache = Rc::new(RefCell::new(std::mem::take(&mut self.samples)));
+        let imports = Rc::new(RefCell::new(Imports {
+            old: std::mem::take(&mut self.imported),
+            used: Vec::new(),
+        }));
         let result = self
-            .install_api(&lua, &state, &cache, &warnings, &pattern_rng, base_dir)
+            .install_api(
+                &lua,
+                &state,
+                (&cache, &imports),
+                &warnings,
+                &pattern_rng,
+                base_dir,
+            )
             .and_then(|()| lua.load(source).set_name(format!("={name}")).exec());
         self.samples = std::mem::take(&mut *cache.borrow_mut());
+        self.imported = std::mem::take(&mut imports.borrow_mut().used);
         result.map_err(|e| ScriptError::from_lua(&e))?;
 
         let (bpm, metronome, buses, tracks, expanding) = {
@@ -715,7 +765,8 @@ impl ScriptHost {
         &self,
         lua: &Lua,
         state: &Rc<RefCell<Builder>>,
-        cache: &Rc<RefCell<SampleCache>>,
+        // Los WAV cargados y los samples preparados al importar.
+        (cache, imports): (&Rc<RefCell<SampleCache>>, &Rc<RefCell<Imports>>),
         warnings: &Rc<RefCell<Vec<String>>>,
         pattern_rng: &Rc<RefCell<Rng>>,
         base_dir: &Path,
@@ -862,6 +913,7 @@ impl ScriptHost {
         )?;
 
         let cache = cache.clone();
+        let imports = imports.clone();
         let base_dir = self
             .sample_dir
             .clone()
@@ -874,11 +926,17 @@ impl ScriptHost {
         let warnings = warnings.clone();
         globals.set(
             "sample",
-            lua.create_function(move |lua, name: String| {
+            lua.create_function(move |lua, (name, options): (String, Option<Table>)| {
                 g(lua, "sample")?;
                 let path = base_dir.join(&name);
-                let sample = load_cached(&mut cache.borrow_mut(), &path, rate)
+                let mut sample = load_cached(&mut cache.borrow_mut(), &path, rate)
                     .map_err(|e| fail(lua, format!("{}: {e}", path.display())))?;
+                if let Some(options) = options {
+                    let options = import_options(lua, &name, &options)?;
+                    if !options.is_empty() {
+                        sample = imports.borrow_mut().get(&sample, options);
+                    }
+                }
                 Ok(SampleHandle {
                     name,
                     path,
@@ -1816,6 +1874,60 @@ struct SlicedHandle {
     /// Forma de cada corte (`:set()`); compartida por la variable y sus
     /// pistas, como las etiquetas.
     shapes: Rc<RefCell<Vec<SliceShape>>>,
+}
+
+/// Lee la tabla de opciones de `sample(nombre, { ... })` (claves del
+/// registro `api::SAMPLE_PARAMS`).
+fn import_options(lua: &Lua, name: &str, table: &Table) -> mlua::Result<engine::ImportOptions> {
+    let who = format!("sample(\"{name}\")");
+    let known: Vec<&str> = api::SAMPLE_PARAMS.iter().map(|p| p.name).collect();
+    let mut options = engine::ImportOptions::default();
+    for pair in table.pairs::<Value, Value>() {
+        let (key, value) = pair?;
+        let key = match key {
+            Value::String(s) => s.to_str()?.to_string(),
+            other => format!("{other:?}"),
+        };
+        let number = |v: &Value| -> Option<f32> {
+            match v {
+                Value::Integer(i) => Some(*i as f32),
+                Value::Number(n) => Some(*n as f32),
+                _ => None,
+            }
+        };
+        // `true` (el nivel por defecto), `false` (nada) o un número en dB.
+        let level = |default: f32| -> mlua::Result<Option<f32>> {
+            match &value {
+                Value::Boolean(true) => Ok(Some(default)),
+                Value::Boolean(false) | Value::Nil => Ok(None),
+                v => number(v).map(Some).ok_or_else(|| {
+                    fail(lua, format!("{who}: {key} es true, false o un nivel en dB"))
+                }),
+            }
+        };
+        let ms = || -> mlua::Result<f32> {
+            number(&value).ok_or_else(|| fail(lua, format!("{who}: {key} son ms (un número)")))
+        };
+        match key.as_str() {
+            "trim" => options.trim_db = level(engine::ImportOptions::TRIM_DB)?,
+            "normalize" => options.normalize_db = level(engine::ImportOptions::NORMALIZE_DB)?,
+            "fade_in" => options.fade_in_ms = ms()?,
+            "fade_out" => options.fade_out_ms = ms()?,
+            _ => {
+                return Err(fail(
+                    lua,
+                    format!(
+                        "{who}: opción desconocida \"{key}\" (admite: {})",
+                        known.join(", ")
+                    ),
+                ));
+            }
+        }
+    }
+    options
+        .validate()
+        .map_err(|e| fail(lua, format!("{who}: {e}")))?;
+    Ok(options)
 }
 
 /// Aplica una tabla de `cortes:set()` a la forma de un corte. Las claves

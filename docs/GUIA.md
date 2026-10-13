@@ -66,6 +66,13 @@ track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
 
 o crea un proyecto que diga dónde están los samples (ver más abajo).
 
+Si el WAV trae silencio delante o detrás, está bajo de nivel o acaba con
+un chasquido, prepáralo al importarlo:
+`sample("amen.wav", { trim = true, normalize = true, fade_out = 10 })`
+recorta el silencio de los extremos, lleva el pico a 0 dB y pone un
+fundido de salida de 10 ms (ver `sample` en la sección 4). El archivo no
+se toca: se prepara al cargar y se guarda para la carga siguiente.
+
 Recuerda respetar los derechos de los samples si publicas lo que hagas.
 
 ### Abrir la interfaz
@@ -549,16 +556,26 @@ Tempo en pulsos por minuto, de 20 a 400. Si no se llama, se mantiene el que haya
 bpm(174)
 ```
 
-### `sample(ruta)`
+### `sample(ruta [, opciones])`
 
 Devuelve: sample.
 
-Carga un WAV. La ruta es relativa a la carpeta del script o, en un proyecto, a su carpeta `samples`. Recargar el script no vuelve a leer el archivo si no ha cambiado.
+Carga un WAV (y, con opciones, lo prepara: recorte, normalizado, fundidos). La ruta es relativa a la carpeta del script o, en un proyecto, a su carpeta `samples`. Recargar el script no vuelve a leer el archivo si no ha cambiado. Las opciones (tabla de abajo) preparan el sample al cargarlo, en este orden: recortar el silencio de los extremos, normalizar el pico y los fundidos; se guarda para la carga siguiente. Los cortes, los ajustes en ms y `stretch` van sobre el sample ya preparado (recortar desplaza los ms).
 
 - `ruta`: archivo WAV (cualquier frecuencia; se resamplea al cargar)
+- `opciones`: tabla con las de la tabla de abajo
+
+| Parámetro | Qué es | Por defecto | Valores |
+| --- | --- | --- | --- |
+| `trim` | recorta el silencio del principio y del final: `true` (por debajo de -60 dB) o el nivel en dB | `false` | `true`, `false` o -120–0 |
+| `normalize` | lleva el pico a 0 dB (`true`) o al nivel en dB que se diga | `false` | `true`, `false` o -60–0 |
+| `fade_in` | fundido de entrada, en ms | `0` | 0–10000 |
+| `fade_out` | fundido de salida, en ms | `0` | 0–10000 |
 
 ```lua
 local amen = sample("amen.wav")
+-- Sin el silencio de los extremos, con el pico a -1 dB y sin chasquido al final.
+local limpio = sample("amen.wav", { trim = true, normalize = -1, fade_out = 10 })
 ```
 
 ### `track(nombre, cortes) / track(nombre)`

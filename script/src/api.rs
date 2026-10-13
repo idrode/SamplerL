@@ -369,18 +369,32 @@ pub const FUNCTIONS: &[Function] = &[
     Function {
         name: "sample",
         receiver: Receiver::Global,
-        signature: "sample(ruta)",
+        signature: "sample(ruta [, opciones])",
         returns: Some(Receiver::Sample),
-        summary: "Carga un WAV.",
+        summary: "Carga un WAV (y, con opciones, lo prepara: recorte, normalizado, fundidos).",
         doc: "La ruta es relativa a la carpeta del script o, en un proyecto, a su \
               carpeta `samples`. Recargar el script no vuelve a leer el archivo si \
-              no ha cambiado.",
-        params: &[Param {
-            name: "ruta",
-            description: "archivo WAV (cualquier frecuencia; se resamplea al cargar)",
-        }],
+              no ha cambiado. Las opciones (tabla de abajo) preparan el sample al \
+              cargarlo, en este orden: recortar el silencio de los extremos, \
+              normalizar el pico y los fundidos; se guarda para la carga siguiente. \
+              Los cortes, los ajustes en ms y `stretch` van sobre el sample ya \
+              preparado (recortar desplaza los ms).",
+        params: &[
+            Param {
+                name: "ruta",
+                description: "archivo WAV (cualquier frecuencia; se resamplea al cargar)",
+            },
+            Param {
+                name: "opciones",
+                description: "tabla con las de la tabla de abajo",
+            },
+        ],
         template: "sample(\"${amen.wav}\")",
-        example: Some("local amen = sample(\"amen.wav\")\n"),
+        example: Some(
+            "local amen = sample(\"amen.wav\")\n\
+             -- Sin el silencio de los extremos, con el pico a -1 dB y sin chasquido al final.\n\
+             local limpio = sample(\"amen.wav\", { trim = true, normalize = -1, fade_out = 10 })\n",
+        ),
     },
     Function {
         name: "track",
@@ -1645,6 +1659,53 @@ pub const SLICE_PARAMS: &[FxParam] = &[
     },
 ];
 
+/// Opciones de `sample(ruta, { ... })`: cómo se prepara el sample al
+/// importarlo.
+pub const SAMPLE_PARAMS: &[FxParam] = &[
+    FxParam {
+        name: "trim",
+        description: "recorta el silencio del principio y del final: `true` (por debajo de -60 dB) o el nivel en dB",
+        default: Some("false"),
+        valid: "`true`, `false` o -120–0",
+        values: &[],
+        template: "trim = ${true}",
+    },
+    FxParam {
+        name: "normalize",
+        description: "lleva el pico a 0 dB (`true`) o al nivel en dB que se diga",
+        default: Some("false"),
+        valid: "`true`, `false` o -60–0",
+        values: &[],
+        template: "normalize = ${true}",
+    },
+    FxParam {
+        name: "fade_in",
+        description: "fundido de entrada, en ms",
+        default: Some("0"),
+        valid: "0–10000",
+        values: &[],
+        template: "fade_in = ${5}",
+    },
+    FxParam {
+        name: "fade_out",
+        description: "fundido de salida, en ms",
+        default: Some("0"),
+        valid: "0–10000",
+        values: &[],
+        template: "fade_out = ${20}",
+    },
+];
+
+/// La tabla de opciones de `sample()`, como un efecto (para el
+/// autocompletado y la ayuda de sus claves).
+pub const SAMPLE_TABLE: Effect = Effect {
+    name: "sample",
+    aliases: &[],
+    summary: "Cómo se prepara el sample al importarlo.",
+    params: SAMPLE_PARAMS,
+    template: "{ trim = ${true}, normalize = ${true} }",
+};
+
 /// La tabla de `cortes:set()`, como un efecto (para el autocompletado y la
 /// ayuda de sus claves).
 pub const SLICE_TABLE: Effect = Effect {
@@ -1979,11 +2040,16 @@ pub fn guide_markdown() -> String {
         match (f.receiver, f.name) {
             (Receiver::Track, "fx") => out.push_str(&params_table("Efecto", EFFECTS)),
             (Receiver::Global, "bus") => out.push_str(&params_table("Bus", BUSES)),
-            (Receiver::Slices, "set") => {
+            (Receiver::Slices, "set") | (Receiver::Global, "sample") => {
                 out.push_str(
                     "| Parámetro | Qué es | Por defecto | Valores |\n| --- | --- | --- | --- |\n",
                 );
-                for p in SLICE_PARAMS {
+                let params = if f.name == "set" {
+                    SLICE_PARAMS
+                } else {
+                    SAMPLE_PARAMS
+                };
+                for p in params {
                     let default = p.default.map_or("obligatorio".into(), code);
                     out.push_str(&format!(
                         "| {} | {} | {default} | {} |\n",
