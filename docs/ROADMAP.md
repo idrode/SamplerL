@@ -79,7 +79,13 @@ proyecto). Ver «Fase D» en el Estado de `CLAUDE.md`.
 - A/B de variantes.
 - Grabar lo tocado en el modo tocar como un patrón de `steps`.
 
-## Fase F: biblioteca de bloques
+## Fase F: biblioteca de bloques ✅
+
+Hecha (antes que la E): `script::blocks`, paleta («Guardar la selección
+como bloque», «Insertar un bloque», «Actualizar un bloque con la
+selección», «Borrar un bloque», ranuras 1-9) y autocompletado. Ver
+«Fase F» en el Estado de `CLAUDE.md` y «Biblioteca de bloques» en
+`docs/GUIA.md`.
 
 Bloques de código reutilizables: trozos de script guardados en archivos
 que se insertan como texto en el editor (nunca se cargan ni se enlazan

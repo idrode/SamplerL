@@ -236,7 +236,7 @@ Qué ofrece según dónde esté el cursor:
 
 | Dónde | Opciones |
 | --- | --- |
-| Inicio de línea | Funciones globales (`bpm`, `sample`, `track`), snippets (`amen`, `fill`, `ghost`, `intro`, `euclid`, `melodia`, `groove`), variables locales y palabras clave de Lua |
+| Inicio de línea | Funciones globales (`bpm`, `sample`, `track`), snippets (`amen`, `fill`, `ghost`, `intro`, `euclid`, `melodia`, `groove`), bloques de tu biblioteca (ver «Biblioteca de bloques»), variables locales y palabras clave de Lua |
 | Tras `:` | Los métodos del objeto: de sample, de cortes, de pista o del compás de `every` (si no se sabe qué es, todos) |
 | Dentro de `fx("...")` | Los efectos; dentro de la tabla, sus parámetros, y en `type = "..."` sus valores |
 | Dentro de `sample("...")` | Los WAV de la carpeta de muestras (la del proyecto o la del script) |
@@ -318,6 +318,75 @@ proyecto o, si no hay, a la del script.
 | `muestras [carpeta]` | Cambia la carpeta de los samples (sin argumento, dice cuál es) |
 | `bpm N` | Cambia la línea `bpm(...)` del script por `bpm(N)` (o la añade al principio), sin guardar |
 | `etiquetar corte [nombre]` | Pone una etiqueta a un corte de la pista seleccionada (sin nombre, la quita). Se guarda en el proyecto abierto y se recarga |
+| `bloque nombre [etiquetas] [-- descripción]` | Guarda el texto seleccionado como bloque en la biblioteca global (`bloque-proyecto`: en la del proyecto; con `!`, sustituye uno que se llame igual). Ver «Biblioteca de bloques» |
+
+### Biblioteca de bloques
+
+Los bloques son trozos de script tuyos que guardas para reutilizar: una
+pista de ghost notes que te gusta, una cadena de efectos, un fill... Se
+insertan **como texto** en el editor, igual que los snippets: el script
+nunca carga ni enlaza otros archivos, así que si luego cambias o borras el
+bloque, las canciones donde lo pegaste no cambian.
+
+Viven en dos carpetas, como archivos `.lua`:
+
+- **Global**, para todos los proyectos: `~/.config/sampler/blocks/` (o
+  `$XDG_CONFIG_HOME/sampler/blocks/`). Se crea sola al abrir la interfaz.
+- **Del proyecto**: `blocks/` junto al proyecto (o junto al script si no
+  hay proyecto). Se crea al guardar el primer bloque en ella. Si un bloque
+  del proyecto se llama como uno global, se usa el del proyecto.
+
+Cada archivo empieza con una cabecera de comentarios; lo demás es el
+texto del bloque. Los `${...}` son campos: al insertarlo, el primero queda
+marcado y Tab salta al siguiente, como en los snippets.
+
+```text
+-- nombre: fantasma
+-- descripción: Ghost notes suaves en contratiempos
+-- etiquetas: ghost, hats
+
+track("${ghost}", amen:slice_at(${3}))
+  :steps(". x@0.2 . .  . x@0.2 . .  . x@0.2 . .  . . x@0.2 .")
+  :chance(${0.4}, "mute")
+```
+
+Sin `nombre`, el bloque se llama como el archivo. Los nombres llevan
+letras, números y `_`, y empiezan por letra (así se pueden escribir en el
+autocompletado). Puedes escribirlos o editarlos con cualquier editor: la
+interfaz relee las carpetas cada medio segundo. Un archivo que no se puede
+leer (nombre no válido, vacío, repetido) se avisa al abrir la lista y no
+impide usar los demás.
+
+Desde la paleta (F1):
+
+| Acción | Qué hace |
+| --- | --- |
+| Guardar la selección como bloque | Abre la línea de órdenes con `bloque `: escribe el nombre, las etiquetas y, tras `--`, la descripción. Ejemplo: `bloque fantasma ghost hats -- Ghost notes suaves`. Se guarda sin la sangría común de las líneas. Para la carpeta del proyecto, cambia la orden a `bloque-proyecto`; para sustituir uno que ya existe, `bloque!` |
+| Insertar un bloque | Lista de bloques con su carpeta y sus etiquetas; escribe para filtrar por nombre, `#etiqueta` o palabras de la descripción. Abajo, la descripción y el texto del elegido. Enter lo inserta |
+| Actualizar un bloque con la selección | Elige un bloque y su texto pasa a ser el seleccionado (conserva nombre, descripción y etiquetas). Pide un segundo Enter |
+| Borrar un bloque | Borra su archivo. Pide un segundo Enter. Si era del proyecto y tapaba a uno global, vuelve a verse el global |
+
+Los bloques salen también en el **autocompletado**, al inicio de línea,
+junto a los snippets (con el tipo «bloque»). Para crear campos desde el
+editor, escribe `${valor}` en el texto antes de guardarlo como bloque.
+
+Si pegas un bloque con Lua no válido, no se rompe nada: al cargar sale el
+error de siempre en el editor y sigue sonando lo anterior.
+
+#### Ranuras rápidas (1-9)
+
+Para mover trozos al vuelo sin ponerles nombre, como los registros de vim:
+
+- «Guardar en una ranura (1-9)» y luego un número guarda la selección o,
+  sin selección, la línea del cursor entera.
+- «Pegar una ranura (1-9)» y luego un número la pega. Las líneas enteras
+  van encima de la línea del cursor (como `P` en vim); un trozo, en el
+  cursor. Se deshace con un Ctrl-Z.
+
+Mientras espera el número se ve lo que hay en cada ranura; cualquier otra
+tecla cancela. Las ranuras duran mientras la interfaz está abierta; para
+guardar algo de verdad, hazlo bloque. Con F1 Enter se repite la última
+acción de la paleta, así que pegar otra vez es F1, Enter y el número.
 
 ### Editor
 
