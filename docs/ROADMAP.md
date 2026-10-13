@@ -176,7 +176,40 @@ el Estado de `CLAUDE.md` al día si cambia la notación o el motor.
    mini-notación, por ejemplo el cutoff. Cuantizada al compás,
    determinista y sin clics (parámetros suavizados).
 
-## Fase H: cortes y breaks
+## Fase H: cortes y breaks ✅
+
+Hecha: `pista:mode()`, `pista:choke()`, `cortes:set()` (ataque, cola,
+pan, parte que suena, bucle e ida y vuelta), `sample:slice_grid()`,
+`cortes:add()`/`remove()` y partir/unir desde la paleta, remuestreo
+(`remuestrear`, `--track`) y `sample(ruta, { trim, normalize, fade_in,
+fade_out })`. Ver «Fase H» en el Estado de `CLAUDE.md`. Decisiones:
+
+- **Por pista o por corte**: el modo (gate/one-shot) y el grupo de choke
+  son de la pista, como en un pad de una caja de ritmos; la forma
+  (envolvente, pan, parte, bucle) es de cada corte y se comparte entre la
+  variable y sus pistas, como las etiquetas. Con los valores por defecto,
+  todo suena igual que antes bit a bit (huellas).
+- **Gate**: la voz se cierra al acabar su paso (o su parte del
+  retrigger) y hace la cola del corte. **Choke**: el corte callado hace el
+  fundido mínimo; vale también para los pads.
+- **Bucles**: suenan hasta el siguiente golpe de la pista, la puerta o el
+  choke; el salto no lleva fundido (se oye si el corte no acaba como
+  empieza). `length` es una fracción del corte, no ms.
+- **Cortes a mano**: en el proyecto, `partir` va por posición (ms) y
+  `unir` por número, y se aplican en orden justo después de detectar; los
+  ajustes y las etiquetas van con la numeración que queda, y la interfaz
+  los corre al partir o unir. Las claves del proyecto distinguen
+  `slice(8)` de `slice_grid(8)` (`rejilla8`). En Lua, `add`/`remove`
+  cambian la variable como `move`, y esos cortes no se pueden etiquetar ni
+  mover desde la interfaz.
+- **Remuestreo**: render offline de la pista en solo (con sus efectos,
+  envíos y cola de los buses) o del master, a WAV de 16 bits en la
+  carpeta de samples; no sobrescribe sin `!`. Dura, por defecto, lo que
+  la pista tarda en repetirse; la cola que pase del final se corta (para
+  que vuelva a encajar como loop).
+- **Importar**: se prepara al cargar (recorte, normalizado y fundidos, en
+  ese orden) sin tocar el archivo; los ms de los ajustes son del sample
+  preparado.
 
 - Grupos de choke y modos one-shot/gate, con envolvente por corte (ataque
   y cola).
