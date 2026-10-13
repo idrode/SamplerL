@@ -1848,6 +1848,23 @@ fn parse_fx(lua: &Lua, name: &str, params: Option<Table>) -> mlua::Result<Fx> {
                 downsample: get("downsample")?.unwrap_or(1.0) as u32,
             }
         }
+        "compressor" | "comp" => {
+            fx_params(lua, name, &params)?;
+            Fx::Compressor {
+                threshold_db: get("threshold")?.unwrap_or(-18.0),
+                ratio: get("ratio")?.unwrap_or(4.0),
+                attack_ms: get("attack")?.unwrap_or(5.0),
+                release_ms: get("release")?.unwrap_or(100.0),
+                makeup_db: get("makeup")?.unwrap_or(0.0),
+            }
+        }
+        "distortion" | "drive" => {
+            fx_params(lua, name, &params)?;
+            Fx::Distortion {
+                drive: get("drive")?.unwrap_or(4.0),
+                mix: get("mix")?.unwrap_or(1.0),
+            }
+        }
         other => {
             return Err(fail(
                 lua,

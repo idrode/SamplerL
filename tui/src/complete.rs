@@ -995,7 +995,17 @@ mod tests {
     #[test]
     fn fx_offers_effects_then_their_parameters_and_values() {
         let c = at(&format!("{SONG}track(\"d\", amen):fx(\"|")).unwrap();
-        assert_eq!(labels(&c), ["filter", "lowpass", "highpass", "bitcrush"]);
+        assert_eq!(
+            labels(&c),
+            [
+                "filter",
+                "lowpass",
+                "highpass",
+                "bitcrush",
+                "compressor",
+                "distortion"
+            ]
+        );
         let c = at(&format!("{SONG}track(\"d\", amen):fx(\"bit|")).unwrap();
         assert_eq!(c.prefix, "bit");
         assert_eq!(labels(&c), ["bitcrush"]);

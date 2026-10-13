@@ -1,4 +1,5 @@
-//! Efectos de pista: filtro paso bajo/alto y bitcrusher.
+//! Efectos de pista: filtro paso bajo/alto, bitcrusher, compresor y
+//! distorsión.
 //!
 //! La configuración ([`Fx`]) va dentro del `Pattern` y entra con él al
 //! empezar el compás. El estado ([`FxState`]) vive en la pista, en el hilo
@@ -27,6 +28,19 @@ pub enum Fx {
     /// Reduce la resolución a `bits` y repite cada muestra `downsample`
     /// veces (reducción de frecuencia de muestreo sin filtro).
     Bitcrush { bits: u32, downsample: u32 },
+    /// Compresor estéreo enlazado: por encima de `threshold_db` el nivel
+    /// sube `1/ratio` dB por cada dB de entrada; la reducción llega en
+    /// `attack_ms` y se va en `release_ms`; `makeup_db` sube la salida.
+    Compressor {
+        threshold_db: f32,
+        ratio: f32,
+        attack_ms: f32,
+        release_ms: f32,
+        makeup_db: f32,
+    },
+    /// Saturación con `tanh(drive · x)`, mezclada con la señal limpia
+    /// (`mix` 1 = solo la saturada).
+    Distortion { drive: f32, mix: f32 },
 }
 
 pub const DEFAULT_Q: f32 = std::f32::consts::FRAC_1_SQRT_2;
@@ -52,6 +66,21 @@ impl Fx {
         Fx::Bitcrush { bits, downsample }
     }
 
+    /// Compresor con ataque de 5 ms, release de 100 ms y sin makeup.
+    pub fn compressor(threshold_db: f32, ratio: f32) -> Self {
+        Fx::Compressor {
+            threshold_db,
+            ratio,
+            attack_ms: 5.0,
+            release_ms: 100.0,
+            makeup_db: 0.0,
+        }
+    }
+
+    pub fn distortion(drive: f32, mix: f32) -> Self {
+        Fx::Distortion { drive, mix }
+    }
+
     /// Comprueba los rangos. El corte se limita además por debajo de la
     /// frecuencia de Nyquist al aplicarse.
     pub fn validate(&self) -> Result<(), &'static str> {
@@ -70,6 +99,37 @@ impl Fx {
                 }
                 if !(1..=64).contains(&downsample) {
                     return Err("downsample fuera de rango (1 a 64)");
+                }
+            }
+            Fx::Compressor {
+                threshold_db,
+                ratio,
+                attack_ms,
+                release_ms,
+                makeup_db,
+            } => {
+                if !(-60.0..=0.0).contains(&threshold_db) {
+                    return Err("threshold fuera de rango (-60 a 0 dB)");
+                }
+                if !(1.0..=20.0).contains(&ratio) {
+                    return Err("ratio fuera de rango (1 a 20)");
+                }
+                if !(0.1..=200.0).contains(&attack_ms) {
+                    return Err("attack fuera de rango (0.1 a 200 ms)");
+                }
+                if !(1.0..=2000.0).contains(&release_ms) {
+                    return Err("release fuera de rango (1 a 2000 ms)");
+                }
+                if !(0.0..=24.0).contains(&makeup_db) {
+                    return Err("makeup fuera de rango (0 a 24 dB)");
+                }
+            }
+            Fx::Distortion { drive, mix } => {
+                if !(1.0..=50.0).contains(&drive) {
+                    return Err("drive fuera de rango (1 a 50)");
+                }
+                if !(0.0..=1.0).contains(&mix) {
+                    return Err("mix fuera de rango (0 a 1)");
                 }
             }
         }
@@ -93,6 +153,21 @@ pub(crate) enum FxState {
         downsample: u32,
         counter: u32,
         held: [f32; 2],
+    },
+    Comp {
+        threshold_db: f32,
+        /// dB que se quitan por dB por encima del umbral: `1 - 1/ratio`.
+        slope: f32,
+        /// Coeficientes de la envolvente (por muestra) al subir y al bajar.
+        attack: f32,
+        release: f32,
+        makeup_db: f32,
+        /// Reducción actual, en dB (0 o más).
+        reduction: f32,
+    },
+    Drive {
+        drive: f32,
+        mix: f32,
     },
 }
 
@@ -141,6 +216,31 @@ impl FxState {
                 };
                 FxState::Biquad { kind, coefs, z }
             }
+            (
+                Some(Fx::Compressor {
+                    threshold_db,
+                    ratio,
+                    attack_ms,
+                    release_ms,
+                    makeup_db,
+                }),
+                previous,
+            ) => {
+                let coef = |ms: f32| (-1.0 / (ms / 1000.0 * sample_rate as f32)).exp();
+                FxState::Comp {
+                    threshold_db,
+                    slope: 1.0 - 1.0 / ratio,
+                    attack: coef(attack_ms),
+                    release: coef(release_ms),
+                    makeup_db,
+                    // Otro compresor en la misma ranura: sigue su envolvente.
+                    reduction: match previous {
+                        FxState::Comp { reduction, .. } => reduction,
+                        _ => 0.0,
+                    },
+                }
+            }
+            (Some(Fx::Distortion { drive, mix }), _) => FxState::Drive { drive, mix },
             (Some(Fx::Bitcrush { bits, downsample }), previous) => {
                 let (counter, held) = match previous {
                     FxState::Crush { counter, held, .. } => (counter % downsample, held),
@@ -165,6 +265,8 @@ impl FxState {
                 *counter = 0;
                 *held = [0.0; 2];
             }
+            FxState::Comp { reduction, .. } => *reduction = 0.0,
+            FxState::Drive { .. } => {}
         }
     }
 
@@ -198,6 +300,36 @@ impl FxState {
                     }
                     *counter = (*counter + 1) % *downsample;
                     *frame = *held;
+                }
+            }
+            FxState::Comp {
+                threshold_db,
+                slope,
+                attack,
+                release,
+                makeup_db,
+                reduction,
+            } => {
+                for frame in buf.as_chunks_mut::<2>().0 {
+                    // Pico de los dos canales (estéreo enlazado), en dB.
+                    let level = frame[0].abs().max(frame[1].abs()).max(1e-9);
+                    let over = 20.0 * level.log10() - *threshold_db;
+                    let target = if over > 0.0 { over * *slope } else { 0.0 };
+                    let coef = if target > *reduction {
+                        *attack
+                    } else {
+                        *release
+                    };
+                    *reduction = target + coef * (*reduction - target);
+                    let gain = 10f32.powf((*makeup_db - *reduction) / 20.0);
+                    frame[0] *= gain;
+                    frame[1] *= gain;
+                }
+            }
+            FxState::Drive { drive, mix } => {
+                for x in buf.iter_mut() {
+                    let wet = (*drive * *x).tanh();
+                    *x += *mix * (wet - *x);
                 }
             }
         }

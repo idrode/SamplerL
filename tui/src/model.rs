@@ -295,6 +295,20 @@ pub fn fx_text(fx: &Fx) -> String {
             format!("{kind} {cutoff_hz:.0} Hz q{q:.2}")
         }
         Fx::Bitcrush { bits, downsample } => format!("crush {bits}b ÷{downsample}"),
+        Fx::Compressor {
+            threshold_db,
+            ratio,
+            makeup_db,
+            ..
+        } => {
+            let makeup = if *makeup_db > 0.0 {
+                format!(" +{makeup_db:.0}")
+            } else {
+                String::new()
+            };
+            format!("comp {threshold_db:.0} dB {ratio}:1{makeup}")
+        }
+        Fx::Distortion { drive, mix } => format!("drive ×{drive} mix {mix:.2}"),
     }
 }
 
@@ -350,5 +364,7 @@ mod tests {
         assert_eq!(fx_text(&Fx::lowpass(3000.0)), "LP 3000 Hz q0.71");
         assert_eq!(fx_text(&Fx::highpass(120.5)), "HP 120 Hz q0.71");
         assert_eq!(fx_text(&Fx::bitcrush(6, 2)), "crush 6b ÷2");
+        assert_eq!(fx_text(&Fx::compressor(-18.0, 4.0)), "comp -18 dB 4:1");
+        assert_eq!(fx_text(&Fx::distortion(8.0, 0.5)), "drive ×8 mix 0.50");
     }
 }

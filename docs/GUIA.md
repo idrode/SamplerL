@@ -953,6 +953,13 @@ El filtro es un biquad de 12 dB/octava; `q = 0.707` es la respuesta más plana y
 |  | `q` | resonancia | `0.707` | 0.1–20 |
 | `"bitcrush"` (o `"bitcrusher"`) | `bits` | resolución | `8` | 1–16 |
 |  | `downsample` | repite cada muestra n veces | `1` | 1–64 |
+| `"compressor"` (o `"comp"`) | `threshold` | umbral en dB: por encima empieza a comprimir | `-18` | -60–0 |
+|  | `ratio` | cuántos dB de entrada por cada dB de salida sobre el umbral | `4` | 1–20 |
+|  | `attack` | ms que tarda en comprimir (corto: aplasta los ataques) | `5` | 0.1–200 |
+|  | `release` | ms que tarda en soltar | `100` | 1–2000 |
+|  | `makeup` | dB que se suben después, para compensar | `0` | 0–24 |
+| `"distortion"` (o `"drive"`) | `drive` | ganancia antes de saturar | `4` | 1–50 |
+|  | `mix` | parte saturada (1 = solo la saturada) | `1` | 0–1 |
 
 ```lua
 local amen = sample("amen.wav"):slice(8)

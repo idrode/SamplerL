@@ -158,8 +158,9 @@ fn every_template_is_valid_code() {
 
 #[test]
 fn every_effect_accepts_its_registered_parameters_and_values() {
-    let mut source = String::from(PRELUDE);
+    // Un script por efecto (cada nombre, en su pista: no más de 8 pistas).
     for e in EFFECTS {
+        let mut source = String::from(PRELUDE);
         let (table, _) = expand_template(e.template);
         let all: Vec<String> = e
             .params
@@ -183,6 +184,34 @@ fn every_effect_accepts_its_registered_parameters_and_values() {
             }
         }
         assert!(api::effect(e.name).is_some());
+        eval(&source);
+    }
+}
+
+#[test]
+fn every_bus_accepts_its_registered_parameters_and_values() {
+    let mut source = String::from(PRELUDE);
+    for b in api::BUSES {
+        let (table, _) = expand_template(b.template);
+        let all: Vec<String> = b
+            .params
+            .iter()
+            .map(|p| expand_template(p.template).0)
+            .collect();
+        source.push_str(&format!(
+            "bus(\"{0}\", {table})\nbus(\"{0}\", {{ {1} }})\nt:send(\"{0}\", 0.5)\n",
+            b.name,
+            all.join(", ")
+        ));
+        for p in b.params {
+            for value in p.values {
+                source.push_str(&format!(
+                    "bus(\"{}\", {{ {} = \"{value}\" }})\n",
+                    b.name, p.name
+                ));
+            }
+        }
+        assert!(api::bus(b.name).is_some());
     }
     eval(&source);
 }
@@ -212,7 +241,7 @@ fn unknown_effect_errors_list_the_registry() {
     };
     assert!(
         err.message
-            .contains("no existe (filter, lowpass, highpass, bitcrush)"),
+            .contains("no existe (filter, lowpass, highpass, bitcrush, compressor, distortion)"),
         "{err}"
     );
 }

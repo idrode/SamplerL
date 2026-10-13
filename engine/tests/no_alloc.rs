@@ -81,7 +81,12 @@ fn the_audio_thread_never_allocates() {
     let bars: Vec<_> = (0..4).map(|b| bar(0.07 * b as f32)).collect();
     let first = Pattern::from_bars(sample.clone(), &slices, &bars)
         .unwrap()
-        .with_fx(&[Fx::lowpass(3000.0), Fx::bitcrush(8, 2)])
+        .with_fx(&[
+            Fx::lowpass(3000.0),
+            Fx::bitcrush(8, 2),
+            Fx::compressor(-20.0, 6.0),
+            Fx::distortion(6.0, 0.5),
+        ])
         .unwrap();
     let second = Pattern::from_bars(sample.clone(), &slices, &bars[..2]).unwrap();
 

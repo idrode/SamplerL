@@ -1141,7 +1141,14 @@ fn completion_follows_the_context() {
     type_text(&mut app, "fx(\"");
     assert_eq!(
         completion_items(&app),
-        ["filter", "lowpass", "highpass", "bitcrush"]
+        [
+            "filter",
+            "lowpass",
+            "highpass",
+            "bitcrush",
+            "compressor",
+            "distortion"
+        ]
     );
     type_text(&mut app, "filter\", { ");
     app.handle(f(4));
@@ -1327,7 +1334,14 @@ fn choosing_another_effect_with_the_arrows_replaces_the_rest_of_the_name() {
     app.handle(f(4));
     assert_eq!(
         completion_items(&app),
-        ["filter", "lowpass", "highpass", "bitcrush"]
+        [
+            "filter",
+            "lowpass",
+            "highpass",
+            "bitcrush",
+            "compressor",
+            "distortion"
+        ]
     );
     app.handle(special(Key::Down));
     app.handle(special(Key::Down));
