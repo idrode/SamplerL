@@ -11,15 +11,127 @@
 //! ```
 //!
 //! Cada `etiqueta` es: sample (como en `sample("...")`), número de cortes
-//! (la `n` de `slice(n)`), corte (desde 1) y nombre. Cada `corte` es un
-//! ajuste manual: el inicio de ese corte en ms, que manda sobre el
-//! detector.
+//! (la `n` de `slice(n)`, o `rejillaN` para `slice_grid(N)`), corte
+//! (desde 1) y nombre. Cada `corte` es un ajuste manual: el inicio de ese
+//! corte en ms, que manda sobre el detector. `partir = amen.wav 8 412.5` añade un
+//! corte que empieza ahí y `unir = amen.wav 8 3` quita el corte 3 (el 2 se
+//! alarga); se aplican en orden, después de detectar y antes de los ajustes
+//! y las etiquetas, que van con la numeración que queda.
 
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
 
 /// Extensión de los archivos de proyecto.
 pub const EXTENSION: &str = "sampler";
+
+/// Cómo se cortó un sample: `slice(n)` (detector) o `slice_grid(n)`
+/// (rejilla). Las etiquetas, los ajustes y las ediciones del proyecto son
+/// de un sample cortado de una forma concreta.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Cut {
+    pub count: usize,
+    pub grid: bool,
+}
+
+impl Cut {
+    pub fn detect(count: usize) -> Cut {
+        Cut { count, grid: false }
+    }
+
+    pub fn grid(count: usize) -> Cut {
+        Cut { count, grid: true }
+    }
+
+    /// La llamada que corta así: `slice(8)` o `slice_grid(16)`.
+    pub fn call(&self) -> String {
+        if self.grid {
+            format!("slice_grid({})", self.count)
+        } else {
+            format!("slice({})", self.count)
+        }
+    }
+
+    /// Lee `8` o `rejilla16`.
+    fn parse(text: &str) -> Result<Cut, String> {
+        let (grid, number) = match text.strip_prefix("rejilla") {
+            Some(n) => (true, n),
+            None => (false, text),
+        };
+        number
+            .parse()
+            .ok()
+            .filter(|n| (1..=64).contains(n))
+            .map(|count| Cut { count, grid })
+            .ok_or_else(|| format!("número de cortes no válido: {text} (8, o rejilla16)"))
+    }
+}
+
+impl fmt::Display for Cut {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.grid {
+            write!(f, "rejilla{}", self.count)
+        } else {
+            write!(f, "{}", self.count)
+        }
+    }
+}
+
+/// Edición de los cortes guardada en el proyecto.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SliceEdit {
+    pub sample: String,
+    pub cut: Cut,
+    pub kind: EditKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum EditKind {
+    /// Un corte nuevo que empieza en esos ms.
+    Split(f64),
+    /// Quitar el corte con ese número (desde 2): el anterior se alarga.
+    Join(usize),
+}
+
+impl SliceEdit {
+    /// Lee `amen.wav 8 412.5` (partir) o `amen.wav 8 3` (unir).
+    fn parse(value: &str, split: bool) -> Result<SliceEdit, String> {
+        let usage = if split {
+            "se esperaba «partir = sample cortes ms»"
+        } else {
+            "se esperaba «unir = sample cortes corte»"
+        };
+        let mut words = value.rsplitn(3, char::is_whitespace);
+        let at = words.next().ok_or(usage)?;
+        let cut = Cut::parse(words.next().ok_or(usage)?)?;
+        let sample = words
+            .next()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or(usage)?;
+        let kind = if split {
+            EditKind::Split(
+                at.parse()
+                    .ok()
+                    .filter(|m: &f64| m.is_finite() && *m >= 0.0)
+                    .ok_or_else(|| format!("posición no válida: {at} (ms desde el principio)"))?,
+            )
+        } else {
+            EditKind::Join(
+                at.parse()
+                    .ok()
+                    .filter(|i| (2..=64).contains(i))
+                    .ok_or_else(|| {
+                        format!("corte no válido: {at} (de 2 a 64: se une con el anterior)")
+                    })?,
+            )
+        };
+        Ok(SliceEdit {
+            sample: sample.to_string(),
+            cut,
+            kind,
+        })
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Project {
@@ -33,6 +145,8 @@ pub struct Project {
     pub labels: Vec<SliceLabel>,
     /// Ajustes manuales de cortes.
     pub positions: Vec<SlicePosition>,
+    /// Cortes añadidos y quitados a mano, en orden.
+    pub edits: Vec<SliceEdit>,
 }
 
 /// Ajuste manual de un corte guardado en el proyecto: dónde empieza, en
@@ -41,8 +155,8 @@ pub struct Project {
 pub struct SlicePosition {
     /// El sample tal como se escribe en `sample("...")`.
     pub sample: String,
-    /// La `n` de `slice(n)`.
-    pub slices: usize,
+    /// Cómo se cortó (la `n` de `slice(n)` o de `slice_grid(n)`).
+    pub slices: Cut,
     /// Corte, desde 1.
     pub slice: usize,
     /// Inicio en ms.
@@ -62,16 +176,12 @@ impl SlicePosition {
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .ok_or(usage)?;
-        let slices: usize = slices
-            .parse()
-            .ok()
-            .filter(|n| (1..=64).contains(n))
-            .ok_or_else(|| format!("número de cortes no válido: {slices}"))?;
+        let slices = Cut::parse(slices)?;
         let slice: usize = slice
             .parse()
             .ok()
-            .filter(|i| (1..=slices).contains(i))
-            .ok_or_else(|| format!("corte no válido: {slice} (de 1 a {slices})"))?;
+            .filter(|i| (1..=64).contains(i))
+            .ok_or_else(|| format!("corte no válido: {slice} (de 1 a 64)"))?;
         let ms: f64 = ms
             .parse()
             .ok()
@@ -91,8 +201,9 @@ impl SlicePosition {
 pub struct SliceLabel {
     /// El sample tal como se escribe en `sample("...")`.
     pub sample: String,
-    /// La `n` de `slice(n)`: con otro número de cortes no se aplica.
-    pub slices: usize,
+    /// Cómo se cortó (la `n` de `slice(n)` o de `slice_grid(n)`): cortado
+    /// de otra forma no se aplica.
+    pub slices: Cut,
     /// Corte, desde 1.
     pub slice: usize,
     pub name: String,
@@ -111,16 +222,12 @@ impl SliceLabel {
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .ok_or(usage)?;
-        let slices: usize = slices
-            .parse()
-            .ok()
-            .filter(|n| (1..=64).contains(n))
-            .ok_or_else(|| format!("número de cortes no válido: {slices}"))?;
+        let slices = Cut::parse(slices)?;
         let slice: usize = slice
             .parse()
             .ok()
-            .filter(|i| (1..=slices).contains(i))
-            .ok_or_else(|| format!("corte no válido: {slice} (de 1 a {slices})"))?;
+            .filter(|i| (1..=64).contains(i))
+            .ok_or_else(|| format!("corte no válido: {slice} (de 1 a 64)"))?;
         engine::notation::check_label(name)?;
         Ok(SliceLabel {
             sample: sample.to_string(),
@@ -155,6 +262,10 @@ impl Project {
         let (mut script, mut samples, mut bpm) = (None, None, None);
         let mut labels: Vec<SliceLabel> = Vec::new();
         let mut positions: Vec<SlicePosition> = Vec::new();
+        let mut edits: Vec<SliceEdit> = Vec::new();
+        // Línea de cada etiqueta y ajuste, para comprobar al final que su
+        // corte existe (contando los que añade `partir`).
+        let mut numbered: Vec<(usize, String, Cut, usize)> = Vec::new();
         for (i, line) in text.lines().enumerate() {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
@@ -198,6 +309,7 @@ impl Project {
                             ),
                         ));
                     }
+                    numbered.push((i + 1, label.sample.clone(), label.slices, label.slice));
                     labels.push(label);
                 }
                 "corte" => {
@@ -212,16 +324,40 @@ impl Project {
                             format!("el corte {} ya tiene un ajuste", position.slice),
                         ));
                     }
+                    numbered.push((
+                        i + 1,
+                        position.sample.clone(),
+                        position.slices,
+                        position.slice,
+                    ));
                     positions.push(position);
+                }
+                "partir" | "unir" => {
+                    edits.push(SliceEdit::parse(value, key == "partir").map_err(|e| err(i + 1, e))?)
                 }
                 other => {
                     return Err(err(
                         i + 1,
                         format!(
-                            "clave desconocida «{other}» (admite: script, samples, bpm, etiqueta, corte)"
+                            "clave desconocida «{other}» (admite: script, samples, bpm, etiqueta, \
+                             corte, partir, unir)"
                         ),
                     ));
                 }
+            }
+        }
+        for (line, sample, cut, slice) in numbered {
+            let splits = edits
+                .iter()
+                .filter(|e| e.sample == sample && e.cut == cut)
+                .filter(|e| matches!(e.kind, EditKind::Split(_)))
+                .count();
+            let max = cut.count + splits;
+            if slice > max {
+                return Err(err(
+                    line,
+                    format!("corte no válido: {slice} (de 1 a {max})"),
+                ));
             }
         }
         let script = script
@@ -232,6 +368,7 @@ impl Project {
             bpm,
             labels,
             positions,
+            edits,
         })
     }
 
@@ -254,6 +391,17 @@ impl Project {
                 "etiqueta = {} {} {} {}\n",
                 l.sample, l.slices, l.slice, l.name
             ));
+        }
+        // Las ediciones van antes: se aplican antes que los ajustes.
+        for e in &self.edits {
+            match e.kind {
+                EditKind::Split(ms) => {
+                    text.push_str(&format!("partir = {} {} {ms}\n", e.sample, e.cut))
+                }
+                EditKind::Join(slice) => {
+                    text.push_str(&format!("unir = {} {} {slice}\n", e.sample, e.cut))
+                }
+            }
         }
         for p in &self.positions {
             text.push_str(&format!(

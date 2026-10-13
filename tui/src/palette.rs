@@ -38,6 +38,8 @@ pub enum Action {
     ClearSliceAdjust,
     NextSlice,
     PreviousSlice,
+    SplitSlice,
+    JoinSlice,
     SaveBlock,
     InsertBlock,
     UpdateBlock,
@@ -231,6 +233,18 @@ pub const ACTIONS: &[ActionDef] = &[
         action: Action::PreviousSlice,
         name: "Corte anterior",
         description: "Selecciona el corte anterior de la pista (sin tocarlo)",
+        keys: "",
+    },
+    ActionDef {
+        action: Action::SplitSlice,
+        name: "Partir el corte seleccionado",
+        description: "Añade un corte en su mitad (se guarda en el proyecto; las etiquetas y ajustes siguientes se corren)",
+        keys: "",
+    },
+    ActionDef {
+        action: Action::JoinSlice,
+        name: "Unir el corte seleccionado con el anterior",
+        description: "Quita su marca: el anterior se alarga hasta donde acababa este (se guarda en el proyecto)",
         keys: "",
     },
     ActionDef {

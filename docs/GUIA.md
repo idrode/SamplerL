@@ -124,6 +124,8 @@ samples = /home/yo/samples/breaks
 bpm = 170
 etiqueta = amen.wav 8 1 kick
 etiqueta = amen.wav 8 3 snare
+partir = amen.wav 8 180.25
+unir = amen.wav 8 7
 corte = amen.wav 8 3 412.5
 ```
 
@@ -137,8 +139,13 @@ slice(8) y este script usa slice(6): no se aplica`), corte y nombre. Así `steps
 `:name()` en el script; si el script nombra el mismo corte, manda el
 script. Cada `corte` es un ajuste manual (ver el modo tocar): el corte 3 de
 `slice(8)` empieza en 412,5 ms, diga lo que diga el detector; si no cabe
-entre sus vecinos, la carga lo avisa y no lo aplica. Se abre con
-`tui --edit proyecto.sampler` o con la orden `abrir`.
+entre sus vecinos, la carga lo avisa y no lo aplica. `partir` añade un
+corte que empieza en esos ms y `unir` quita la marca de un corte (el
+anterior se alarga); se aplican en orden, justo después de detectar, y los
+`corte` y las `etiqueta` van con la numeración que queda. Para un sample
+cortado en rejilla (`slice_grid(16)`), el número de cortes se escribe
+`rejilla16`. Se abre con `tui --edit proyecto.sampler` o con la orden
+`abrir`.
 
 ## 2. Atajos de teclado
 
@@ -213,6 +220,8 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Quitar el ajuste del corte | El corte seleccionado vuelve a empezar donde lo pone el detector | — |
 | Corte siguiente | Selecciona el corte siguiente de la pista (sin tocarlo) | — |
 | Corte anterior | Selecciona el corte anterior de la pista (sin tocarlo) | — |
+| Partir el corte seleccionado | Añade un corte en su mitad (se guarda en el proyecto; las etiquetas y ajustes siguientes se corren) | — |
+| Unir el corte seleccionado con el anterior | Quita su marca: el anterior se alarga hasta donde acababa este (se guarda en el proyecto) | — |
 | Guardar la selección como bloque | Abre «bloque » para escribir nombre, etiquetas y `-- descripción`; va a la biblioteca global | — |
 | Insertar un bloque | Lista filtrable (nombre, etiquetas, descripción) con vista previa; Tab salta entre sus campos `${...}` | — |
 | Actualizar un bloque con la selección | Elige un bloque y sustituye su texto por la selección (conserva nombre, descripción y etiquetas); Enter dos veces | — |
@@ -302,6 +311,12 @@ empieza el ajustado, y no puede acercarse a menos de 1 ms de sus vecinos.
 La vista del sample marca los cortes ajustados con `*` y da la posición
 del seleccionado; «Quitar el ajuste del corte» lo devuelve al detector. En
 Lua, `cortes:move(i, ms)`.
+
+«Partir el corte seleccionado» y «Unir el corte seleccionado con el
+anterior» (paleta) añaden un corte en la mitad del seleccionado o quitan
+su marca. Se guardan en el proyecto (`partir`, `unir`) y las etiquetas y
+ajustes de los cortes siguientes se corren con ellos. En Lua,
+`cortes:add(ms)` y `cortes:remove(i)`.
 
 `m` y `s` (o «Mute de la pista» y «Solo de la pista» en la paleta) son el
 mute y el solo en vivo: entran ya, con un fundido de 5 ms para que no
@@ -781,6 +796,19 @@ track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
 local otro = sample("amen.wav"):stretch():slice(8)
 ```
 
+### `sample:slice_grid(n)`
+
+Devuelve: cortes.
+
+Corta el sample en n partes iguales (rejilla), sin mirar los golpes. Para un break bien cuadrado (un compás en 16 o en 8) o para material sin golpes claros. Las etiquetas y los ajustes del proyecto de un sample cortado en rejilla son distintos de los de `slice(n)` (en el proyecto, el número de cortes se escribe `rejilla16`).
+
+- `n`: partes (1 a 64)
+
+```lua
+local amen = sample("amen.wav"):slice_grid(16)
+track("drums", amen):steps("1 2 3 4  5 6 7 8  9 10 11 12  13 14 15 16")
+```
+
 ### `sample:slice(n)`
 
 Devuelve: cortes.
@@ -833,6 +861,31 @@ local amen = sample("amen.wav"):slice(8)
 amen:set({ release = 20 }):set(3, { attack = 2, release = 5 })
 track("drums", amen):steps("1 . 3 .  2 . 3 .  1 1 3 .  2 . 3 3"):mode("gate")
 ```
+
+### `cortes:add(ms)`
+
+Devuelve: cortes.
+
+Añade un corte que empieza en ms (parte en dos el que lo contiene). Los cortes siguientes se corren un número. Como `move`, cambia la variable (y devuelve una copia: para seguir cambiándola, otra línea con la variable): las pistas definidas antes con ella no lo ven. Tiene que quedar a más de 1 ms de los cortes que ya hay. Desde la interfaz, «Partir el corte seleccionado» lo hace en el proyecto.
+
+- `ms`: dónde empieza el corte nuevo, en ms desde el principio
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+-- Un corte más dentro del tercero, y sin la marca del sexto (que,
+-- con el nuevo, es el séptimo).
+amen:add(250)
+amen:remove(7)
+track("drums", amen):steps("1 . 3 4  5 . 6 .  7 . 8 .  1 . 3 4")
+```
+
+### `cortes:remove(i)`
+
+Devuelve: cortes.
+
+Quita el corte i (desde 2): el anterior se alarga hasta donde acababa este. Los cortes siguientes se corren un número. Como `move`, cambia la variable. Desde la interfaz, «Unir el corte seleccionado con el anterior» lo hace en el proyecto.
+
+- `i`: el corte que se quita (desde 2)
 
 ### `cortes:name(i, nombre)`
 

@@ -279,3 +279,36 @@ fn slice_starts_can_be_moved_by_hand_between_their_neighbours() {
     assert_eq!(slices.with_start(2, 8999, 48), Err(3048..8952));
     assert!(slices.with_start(5, 1, 48).is_err());
 }
+
+#[test]
+fn grid_split_and_without() {
+    let sample = Sample::from_interleaved(&[0.0; 1000], 1, 1000, 1000).unwrap();
+    let grid = Slices::grid(&sample, 3);
+    assert_eq!(
+        grid.iter().collect::<Vec<_>>(),
+        [0..333, 333..667, 667..1000]
+    );
+    assert_eq!(Slices::grid(&sample, 16).len(), 16);
+
+    let (split, k) = grid.split(500, 10).unwrap();
+    assert_eq!(k, 2);
+    assert_eq!(
+        split.iter().collect::<Vec<_>>(),
+        [0..333, 333..500, 500..667, 667..1000]
+    );
+    // Demasiado cerca de un límite: los límites válidos.
+    assert_eq!(grid.split(338, 10).unwrap_err(), 343..657);
+    // Quitar el único otro corte deja uno; partir uno solo da dos.
+    let late = Slices::grid(&sample, 2).without(1).unwrap();
+    assert_eq!(late.len(), 1);
+    assert_eq!(late.get(0), Some(0..1000));
+    let (shifted, _) = Slices::grid(&sample, 1).split(400, 10).unwrap();
+    assert_eq!(shifted.iter().collect::<Vec<_>>(), [0..400, 400..1000]);
+
+    assert_eq!(
+        split.without(2).unwrap().iter().collect::<Vec<_>>(),
+        grid.iter().collect::<Vec<_>>()
+    );
+    assert!(grid.without(0).is_none());
+    assert!(grid.without(3).is_none());
+}

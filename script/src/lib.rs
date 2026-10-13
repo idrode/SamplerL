@@ -44,7 +44,7 @@ pub mod project;
 mod watch;
 
 use patterns::Rng;
-pub use project::{Project, SliceLabel, SlicePosition};
+pub use project::{Cut, EditKind, Project, SliceEdit, SliceLabel, SlicePosition};
 pub use watch::{ScriptWatcher, WatchEvent};
 
 use mlua::{
@@ -191,11 +191,25 @@ pub struct Humanize {
 pub struct SliceOrigin {
     /// El sample tal como se escribió en `sample("...")`.
     pub sample: String,
-    /// La `n` de `slice(n)`.
+    /// La `n` de `slice(n)` (o de `slice_grid(n)`).
     pub count: usize,
-    /// Corte del `slice(n)` (desde 0) que es cada corte de la pista: todos
-    /// en orden, o uno solo con `slice_at`.
-    pub indices: Vec<usize>,
+    /// Cortado en rejilla (`slice_grid`).
+    pub grid: bool,
+    /// Corte del sample cortado así (desde 0, con las ediciones del
+    /// proyecto) que es cada corte de la pista: todos en orden, o uno solo
+    /// con `slice_at`. `None`: un corte añadido en el script (`:add()`), que
+    /// no se puede etiquetar ni mover desde la interfaz.
+    pub indices: Vec<Option<usize>>,
+}
+
+impl SliceOrigin {
+    /// Cómo se cortó el sample (la clave de sus etiquetas y ajustes).
+    pub fn cut(&self) -> Cut {
+        Cut {
+            count: self.count,
+            grid: self.grid,
+        }
+    }
 }
 
 /// Error de un script, con archivo y línea cuando se conocen.
@@ -292,6 +306,8 @@ pub struct ScriptHost {
     labels: Vec<SliceLabel>,
     /// Ajustes manuales de cortes del proyecto.
     positions: Vec<SlicePosition>,
+    /// Cortes añadidos y quitados en el proyecto.
+    edits: Vec<SliceEdit>,
     /// Samples estirados con `:stretch()` en la última carga (se reutilizan
     /// si no cambian el sample, la proporción ni los cortes).
     stretched: Vec<Stretched>,
@@ -311,6 +327,7 @@ impl ScriptHost {
             default_bpm: None,
             labels: Vec::new(),
             positions: Vec::new(),
+            edits: Vec::new(),
             stretched: Vec::new(),
         }
     }
@@ -325,10 +342,69 @@ impl ScriptHost {
         &self.positions
     }
 
+    /// Cortes añadidos y quitados a mano del proyecto (se aplican en orden
+    /// al cortar, antes que los ajustes y las etiquetas).
+    pub fn set_edits(&mut self, edits: Vec<SliceEdit>) {
+        self.edits = edits;
+    }
+
+    pub fn edits(&self) -> &[SliceEdit] {
+        &self.edits
+    }
+
+    /// Parte el corte que contiene `ms` en dos (lo guarda en las ediciones
+    /// del proyecto) y corre las etiquetas y los ajustes de los cortes
+    /// siguientes. `new_slice` es el número (desde 1) que tendrá el corte
+    /// nuevo. Que quepa se comprueba al cargar.
+    pub fn split_slice(&mut self, sample: &str, cut: Cut, new_slice: usize, ms: f64) {
+        self.edits.push(SliceEdit {
+            sample: sample.to_string(),
+            cut,
+            kind: EditKind::Split(ms),
+        });
+        self.renumber(sample, cut, |slice| {
+            Some(if slice >= new_slice { slice + 1 } else { slice })
+        });
+    }
+
+    /// Quita el corte `slice` (desde 2: el anterior se alarga), lo guarda en
+    /// las ediciones del proyecto y corre las etiquetas y los ajustes (los
+    /// de ese corte se van).
+    pub fn join_slice(&mut self, sample: &str, cut: Cut, slice: usize) {
+        self.edits.push(SliceEdit {
+            sample: sample.to_string(),
+            cut,
+            kind: EditKind::Join(slice),
+        });
+        self.renumber(sample, cut, |s| match s.cmp(&slice) {
+            std::cmp::Ordering::Less => Some(s),
+            std::cmp::Ordering::Equal => None,
+            std::cmp::Ordering::Greater => Some(s - 1),
+        });
+    }
+
+    /// Cambia el número de corte de las etiquetas y los ajustes de un
+    /// sample cortado así (`None`: se quitan).
+    fn renumber(&mut self, sample: &str, cut: Cut, map: impl Fn(usize) -> Option<usize>) {
+        let ours = |s: &str, c: Cut| s == sample && c == cut;
+        self.labels.retain_mut(|l| {
+            if !ours(&l.sample, l.slices) {
+                return true;
+            }
+            map(l.slice).map(|n| l.slice = n).is_some()
+        });
+        self.positions.retain_mut(|p| {
+            if !ours(&p.sample, p.slices) {
+                return true;
+            }
+            map(p.slice).map(|n| p.slice = n).is_some()
+        });
+    }
+
     /// Pone (o quita, con `None`) el ajuste de un corte en los del proyecto.
     /// Que quepa entre sus vecinos se comprueba al cargar (si no, se avisa
     /// y no se aplica).
-    pub fn set_position(&mut self, sample: &str, count: usize, slice: usize, ms: Option<f64>) {
+    pub fn set_position(&mut self, sample: &str, count: Cut, slice: usize, ms: Option<f64>) {
         self.positions
             .retain(|p| !(p.sample == sample && p.slices == count && p.slice == slice));
         if let Some(ms) = ms {
@@ -357,12 +433,12 @@ impl ScriptHost {
     pub fn set_label(
         &mut self,
         sample: &str,
-        count: usize,
+        count: Cut,
         slice: usize,
         name: Option<&str>,
     ) -> Result<(), String> {
-        if !(1..=count).contains(&slice) {
-            return Err(format!("el corte {slice} no existe (hay {count})"));
+        if !(1..=64).contains(&slice) {
+            return Err(format!("el corte {slice} no existe"));
         }
         let same = |l: &SliceLabel| l.sample == sample && l.slices == count;
         if let Some(name) = name {
@@ -794,6 +870,7 @@ impl ScriptHost {
         let g = guard.clone();
         let labels = Rc::new(self.labels.clone());
         let positions = Rc::new(self.positions.clone());
+        let edits = Rc::new(self.edits.clone());
         let warnings = warnings.clone();
         globals.set(
             "sample",
@@ -810,6 +887,7 @@ impl ScriptHost {
                     positions: positions.clone(),
                     warnings: warnings.clone(),
                     stretch: None,
+                    edits: edits.clone(),
                 })
             })?,
         )?;
@@ -1164,7 +1242,7 @@ struct TrackBuild {
     /// `:name()` posterior a `track()` vale para los `steps` siguientes.
     labels: Rc<RefCell<Vec<Option<String>>>>,
     /// Etiquetas del proyecto de otro `slice(n)` (para explicar errores).
-    stale: Rc<Vec<(String, usize)>>,
+    stale: Rc<Vec<(String, Cut)>>,
     /// Forma de los cortes, compartida con la variable como las etiquetas.
     shapes: Rc<RefCell<Vec<SliceShape>>>,
     transforms: Vec<Transform>,
@@ -1295,7 +1373,7 @@ fn expand(track: TrackBuild, rng: &mut Rng, timing: Timing) -> Result<TrackDef, 
                         length: def.length,
                         labels: Rc::new(def.labels.clone()),
                         stale: stale.clone(),
-                        count: def.origin.count,
+                        count: def.origin.cut(),
                         track: def.name.clone(),
                     };
                     let shared = bar.steps.clone();
@@ -1458,6 +1536,8 @@ struct SampleHandle {
     warnings: Rc<RefCell<Vec<String>>>,
     /// Tempo de origen de `:stretch()`: se estira al de la canción.
     stretch: Option<f64>,
+    /// Cortes añadidos y quitados en el proyecto.
+    edits: Rc<Vec<SliceEdit>>,
 }
 
 impl UserData for SampleHandle {
@@ -1519,99 +1599,159 @@ impl UserData for SampleHandle {
                     format!("slice({n}): el número de cortes va de 1 a 64"),
                 ));
             }
-            let count = n as usize;
-            let mut slices = Slices::detect(&this.sample, count);
-            // Ajustes manuales del proyecto: mandan sobre el detector.
-            let mut adjusted = vec![false; slices.len()];
-            for p in this.positions.iter() {
-                if p.sample != this.name || p.slices != count {
-                    continue;
-                }
-                let frame = ms_to_frame(p.ms, &this.sample);
-                match slices.with_start(p.slice - 1, frame, min_slice_gap(&this.sample)) {
-                    Ok(moved) => {
-                        slices = moved;
-                        adjusted[p.slice - 1] = true;
-                    }
-                    Err(_) if p.slice > slices.len() => {}
-                    Err(bounds) => this.warnings.borrow_mut().push(format!(
-                        "el ajuste del corte {} de {} ({} ms) se sale de sus vecinos \
-                         ({:.1} a {:.1} ms): no se aplica",
-                        p.slice,
-                        this.name,
-                        p.ms,
-                        frame_to_ms(bounds.start, &this.sample),
-                        frame_to_ms(bounds.end, &this.sample),
-                    )),
-                }
+            let slices = Slices::detect(&this.sample, n as usize);
+            cut_sample(lua, this, slices, Cut::detect(n as usize))
+        });
+
+        // `:slice_grid(n)`: `n` cortes iguales (rejilla).
+        methods.add_method("slice_grid", |lua, this, n: i64| {
+            if !(1..=64).contains(&n) {
+                return Err(fail(
+                    lua,
+                    format!("slice_grid({n}): el número de cortes va de 1 a 64"),
+                ));
             }
-            // Etiquetas del proyecto para este sample, pero de otro `slice(n)`:
-            // no se aplican (los cortes son otros). Se avisa, y el error de una
-            // de ellas en `steps` lo explica.
-            let ours = |l: &&SliceLabel| l.sample == this.name;
-            let stale: Vec<(String, usize)> = if this.labels.iter().filter(ours).any(|l| l.slices == count) {
-                Vec::new()
-            } else {
-                this.labels
-                    .iter()
-                    .filter(ours)
-                    .map(|l| (l.name.clone(), l.slices))
-                    .collect()
-            };
-            let mut old_counts: Vec<usize> = stale.iter().map(|(_, n)| *n).collect();
-            old_counts.sort_unstable();
-            old_counts.dedup();
-            for old in old_counts {
-                let names: Vec<String> = stale
-                    .iter()
-                    .filter(|(_, n)| *n == old)
-                    .map(|(name, _)| format!("«{name}»"))
-                    .collect();
-                let warning = if names.len() == 1 {
-                    format!(
-                        "la etiqueta {} de {} es de slice({old}) y este script usa slice({count}): no se aplica",
-                        names[0], this.name
-                    )
-                } else {
-                    format!(
-                        "las etiquetas {} de {} son de slice({old}) y este script usa slice({count}): no se aplican",
-                        names.join(", "),
-                        this.name
-                    )
-                };
-                let mut warnings = this.warnings.borrow_mut();
-                if !warnings.contains(&warning) {
-                    warnings.push(warning);
-                }
-            }
-            // Las etiquetas del proyecto para este sample cortado así.
-            let mut labels = vec![None; slices.len()];
-            let slices_len = slices.len();
-            for label in this.labels.iter() {
-                if label.sample == this.name
-                    && label.slices == count
-                    && let Some(slot) = labels.get_mut(label.slice - 1)
-                {
-                    *slot = Some(label.name.clone());
-                }
-            }
-            Ok(SlicedHandle {
-                path: this.path.clone(),
-                sample: this.sample.clone(),
-                origin: SliceOrigin {
-                    sample: this.name.clone(),
-                    count,
-                    indices: (0..slices.len()).collect(),
-                },
-                slices,
-                labels: Rc::new(RefCell::new(labels)),
-                stale: Rc::new(stale),
-                adjusted,
-                stretch: this.stretch,
-                shapes: Rc::new(RefCell::new(vec![SliceShape::DEFAULT; slices_len])),
-            })
+            let slices = Slices::grid(&this.sample, n as usize);
+            cut_sample(lua, this, slices, Cut::grid(n as usize))
         });
     }
+}
+
+/// Termina de cortar un sample: aplica las ediciones del proyecto
+/// (`partir`, `unir`), luego sus ajustes (`corte`) y sus etiquetas, todo
+/// para este sample cortado así (`cut`). Lo que no cabe se avisa.
+fn cut_sample(
+    lua: &Lua,
+    this: &SampleHandle,
+    mut slices: Slices,
+    cut: Cut,
+) -> mlua::Result<SlicedHandle> {
+    let _ = lua;
+    let gap = min_slice_gap(&this.sample);
+    let warn = |warning: String| {
+        let mut warnings = this.warnings.borrow_mut();
+        if !warnings.contains(&warning) {
+            warnings.push(warning);
+        }
+    };
+    // Cortes añadidos y quitados en el proyecto, en orden.
+    for edit in this.edits.iter() {
+        if edit.sample != this.name || edit.cut != cut {
+            continue;
+        }
+        match edit.kind {
+            EditKind::Split(ms) => match slices.split(ms_to_frame(ms, &this.sample), gap) {
+                Ok((split, _)) => slices = split,
+                Err(_) => warn(format!(
+                    "partir {} en {ms} ms: ahí no cabe un corte nuevo (muy cerca de otro, o fuera): no se aplica",
+                    this.name
+                )),
+            },
+            EditKind::Join(slice) => match slices.without(slice - 1) {
+                Some(joined) => slices = joined,
+                None => warn(format!(
+                    "unir el corte {slice} de {}: no existe (hay {}): no se aplica",
+                    this.name,
+                    slices.len()
+                )),
+            },
+        }
+    }
+    // Ajustes manuales del proyecto: mandan sobre el detector.
+    let mut adjusted = vec![false; slices.len()];
+    for p in this.positions.iter() {
+        if p.sample != this.name || p.slices != cut {
+            continue;
+        }
+        let frame = ms_to_frame(p.ms, &this.sample);
+        match slices.with_start(p.slice - 1, frame, gap) {
+            Ok(moved) => {
+                slices = moved;
+                adjusted[p.slice - 1] = true;
+            }
+            Err(_) if p.slice > slices.len() => {}
+            Err(bounds) => warn(format!(
+                "el ajuste del corte {} de {} ({} ms) se sale de sus vecinos \
+                 ({:.1} a {:.1} ms): no se aplica",
+                p.slice,
+                this.name,
+                p.ms,
+                frame_to_ms(bounds.start, &this.sample),
+                frame_to_ms(bounds.end, &this.sample),
+            )),
+        }
+    }
+    // Etiquetas del proyecto para este sample, pero cortado de otra forma:
+    // no se aplican (los cortes son otros). Se avisa, y el error de una de
+    // ellas en `steps` lo explica.
+    let ours = |l: &&SliceLabel| l.sample == this.name;
+    let stale: Vec<(String, Cut)> = if this.labels.iter().filter(ours).any(|l| l.slices == cut) {
+        Vec::new()
+    } else {
+        this.labels
+            .iter()
+            .filter(ours)
+            .map(|l| (l.name.clone(), l.slices))
+            .collect()
+    };
+    let mut old_cuts: Vec<Cut> = Vec::new();
+    for (_, old) in &stale {
+        if !old_cuts.contains(old) {
+            old_cuts.push(*old);
+        }
+    }
+    old_cuts.sort_by_key(|c| (c.grid, c.count));
+    for old in old_cuts {
+        let names: Vec<String> = stale
+            .iter()
+            .filter(|(_, n)| *n == old)
+            .map(|(name, _)| format!("«{name}»"))
+            .collect();
+        warn(if names.len() == 1 {
+            format!(
+                "la etiqueta {} de {} es de {} y este script usa {}: no se aplica",
+                names[0],
+                this.name,
+                old.call(),
+                cut.call()
+            )
+        } else {
+            format!(
+                "las etiquetas {} de {} son de {} y este script usa {}: no se aplican",
+                names.join(", "),
+                this.name,
+                old.call(),
+                cut.call()
+            )
+        });
+    }
+    // Las etiquetas del proyecto para este sample cortado así.
+    let mut labels = vec![None; slices.len()];
+    for label in this.labels.iter() {
+        if label.sample == this.name
+            && label.slices == cut
+            && let Some(slot) = labels.get_mut(label.slice - 1)
+        {
+            *slot = Some(label.name.clone());
+        }
+    }
+    let count = slices.len();
+    Ok(SlicedHandle {
+        path: this.path.clone(),
+        sample: this.sample.clone(),
+        origin: SliceOrigin {
+            sample: this.name.clone(),
+            count: cut.count,
+            grid: cut.grid,
+            indices: (0..count).map(Some).collect(),
+        },
+        slices,
+        labels: Rc::new(RefCell::new(labels)),
+        stale: Rc::new(stale),
+        adjusted,
+        stretch: this.stretch,
+        shapes: Rc::new(RefCell::new(vec![SliceShape::DEFAULT; count])),
+    })
 }
 
 /// `sample(...):slice(n)` en Lua: sample con sus cortes y sus etiquetas.
@@ -1625,7 +1765,7 @@ struct SlicedHandle {
     origin: SliceOrigin,
     /// Etiquetas del proyecto de otro `slice(n)` (nombre y su `n`), para
     /// explicar el error si se usan.
-    stale: Rc<Vec<(String, usize)>>,
+    stale: Rc<Vec<(String, Cut)>>,
     /// Cortes con el inicio ajustado a mano.
     adjusted: Vec<bool>,
     /// Tempo de origen de `sample:stretch()`.
@@ -1752,6 +1892,70 @@ impl UserData for SlicedHandle {
             })
         });
 
+        // `:add(ms)`: un corte nuevo que empieza en `ms` (parte en dos el que
+        // lo contiene). Como `move`, las pistas definidas antes no lo ven.
+        methods.add_method_mut("add", |lua, this, ms: f64| {
+            if !(ms.is_finite() && ms >= 0.0) {
+                return Err(fail(lua, format!("add({ms}): ms desde el principio (0 o más)")));
+            }
+            let frame = ms_to_frame(ms, &this.sample);
+            let (slices, k) = this
+                .slices
+                .split(frame, min_slice_gap(&this.sample))
+                .map_err(|bounds| {
+                    fail(
+                        lua,
+                        format!(
+                            "add({ms}): ahí no cabe un corte nuevo (en ese corte, de {:.1} a {:.1} ms)",
+                            frame_to_ms(bounds.start, &this.sample),
+                            frame_to_ms(bounds.end, &this.sample)
+                        ),
+                    )
+                })?;
+            this.slices = slices;
+            let mut labels = this.labels.borrow().clone();
+            labels.insert(k, None);
+            this.labels = Rc::new(RefCell::new(labels));
+            let mut shapes = this.shapes.borrow().clone();
+            shapes.insert(k, SliceShape::DEFAULT);
+            this.shapes = Rc::new(RefCell::new(shapes));
+            this.adjusted.insert(k, false);
+            this.origin.indices.insert(k, None);
+            Ok(this.clone())
+        });
+
+        // `:remove(i)`: quita el corte `i` (desde 2): el anterior se alarga.
+        methods.add_method_mut("remove", |lua, this, index: i64| {
+            let count = this.slices.len();
+            let i = usize::try_from(index - 1)
+                .ok()
+                .filter(|&i| i < count)
+                .ok_or_else(|| {
+                    fail(
+                        lua,
+                        format!("remove({index}): el corte no existe (hay {count})"),
+                    )
+                })?;
+            let slices = this.slices.without(i).ok_or_else(|| {
+                fail(
+                    lua,
+                    format!(
+                        "remove({index}): el corte 1 no tiene anterior; quita el 2 para unirlos"
+                    ),
+                )
+            })?;
+            this.slices = slices;
+            let mut labels = this.labels.borrow().clone();
+            labels.remove(i);
+            this.labels = Rc::new(RefCell::new(labels));
+            let mut shapes = this.shapes.borrow().clone();
+            shapes.remove(i);
+            this.shapes = Rc::new(RefCell::new(shapes));
+            this.adjusted.remove(i);
+            this.origin.indices.remove(i);
+            Ok(this.clone())
+        });
+
         // `:move(i, ms)`: el corte `i` empieza en `ms` (ajuste manual; las
         // pistas definidas antes con esta variable no lo ven).
         methods.add_method_mut("move", |lua, this, (index, ms): (i64, f64)| {
@@ -1849,8 +2053,8 @@ impl TrackHandle {
 /// Etiquetas del proyecto que no se aplican a una pista (de otro
 /// `slice(n)`), con el número de cortes que usa el script.
 struct StaleLabels<'a> {
-    labels: &'a [(String, usize)],
-    count: usize,
+    labels: &'a [(String, Cut)],
+    count: Cut,
 }
 
 /// Lee y valida un patrón en mini-notación para una pista con esas
@@ -1870,8 +2074,9 @@ fn checked_steps(
             .and_then(|(name, _)| stale.labels.iter().find(|(n, _)| n == name))
             .map_or(String::new(), |(name, old)| {
                 format!(
-                    "; la etiqueta «{name}» del proyecto es de slice({old}) y este script usa slice({})",
-                    stale.count
+                    "; la etiqueta «{name}» del proyecto es de {} y este script usa {}",
+                    old.call(),
+                    stale.count.call()
                 )
             });
         fail(lua, format!("steps: {e}{hint}"))
@@ -2104,7 +2309,7 @@ impl UserData for TrackHandle {
                 (
                     t.labels.borrow().clone(),
                     t.stale.clone(),
-                    t.def.origin.count,
+                    t.def.origin.cut(),
                     t.def.length,
                 )
             });
@@ -2410,8 +2615,8 @@ struct BarHandle {
     /// Pasos de la vuelta (la longitud de la pista).
     length: usize,
     labels: Rc<Vec<Option<String>>>,
-    stale: Rc<Vec<(String, usize)>>,
-    count: usize,
+    stale: Rc<Vec<(String, Cut)>>,
+    count: Cut,
     track: String,
 }
 

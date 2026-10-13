@@ -7,7 +7,7 @@ mod synth;
 use std::path::{Path, PathBuf};
 
 use engine::offline;
-use script::ScriptHost;
+use script::{Cut, ScriptHost};
 
 const RATE: u32 = 48_000;
 
@@ -149,7 +149,7 @@ fn slices_moved_by_hand_win_over_the_detector() {
     let mut host = ScriptHost::new(RATE);
     host.set_positions(vec![SlicePosition {
         sample: "break8.wav".into(),
-        slices: 8,
+        slices: Cut::detect(8),
         slice: 2,
         ms: 70.0,
     }]);
@@ -170,7 +170,7 @@ fn slices_moved_by_hand_win_over_the_detector() {
     assert_eq!(at.tracks[0].slices.get(0), Some(3360..6000));
 
     // Un ajuste del proyecto que se sale de sus vecinos avisa y no se aplica.
-    host.set_position("break8.wav", 8, 2, Some(200.0));
+    host.set_position("break8.wav", Cut::detect(8), 2, Some(200.0));
     let song = eval(&mut host, steps);
     assert_eq!(song.tracks[0].slices.get(1), Some(3000..6000));
     assert_eq!(
@@ -180,7 +180,7 @@ fn slices_moved_by_hand_win_over_the_detector() {
           (1.0 a 124.0 ms): no se aplica"
         ]
     );
-    host.set_position("break8.wav", 8, 2, None);
+    host.set_position("break8.wav", Cut::detect(8), 2, None);
     assert!(host.positions().is_empty());
 
     // En Lua, error con línea.
@@ -206,10 +206,11 @@ fn slices_moved_by_hand_win_over_the_detector() {
         labels: Vec::new(),
         positions: vec![SlicePosition {
             sample: "break8.wav".into(),
-            slices: 8,
+            slices: Cut::detect(8),
             slice: 2,
             ms: 70.5,
         }],
+        edits: Vec::new(),
     };
     project.save(&path).unwrap();
     assert!(

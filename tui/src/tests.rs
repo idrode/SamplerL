@@ -2336,6 +2336,7 @@ fn slices_are_nudged_with_keys_and_saved_in_the_project() {
 
 mod automation;
 mod blocks;
+mod grid;
 mod length;
 mod sends;
 mod shapes;

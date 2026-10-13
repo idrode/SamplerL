@@ -126,6 +126,62 @@ impl Slices {
         self.0.iter().cloned()
     }
 
+    /// `n` cortes iguales que cubren el sample entero (rejilla): el corte
+    /// `k` empieza en `round(k · frames / n)`.
+    pub fn grid(sample: &Sample, n: usize) -> Self {
+        let frames = sample.frames();
+        let at = |k: usize| ((k as f64 * frames as f64 / n as f64).round() as usize).min(frames);
+        Slices(
+            (0..n.min(frames))
+                .map(|k| at(k)..at(k + 1))
+                .filter(|r| r.start < r.end)
+                .collect(),
+        )
+    }
+
+    /// Los mismos cortes con uno más que empieza en `frame`: parte en dos
+    /// el corte que lo contiene (o, antes del primero, añade uno que llega
+    /// hasta él). Tiene que quedar a más de `min_gap` frames de los
+    /// límites que ya hay; si no, `Err` con los límites válidos del corte
+    /// donde cae. Devuelve también el índice del corte nuevo.
+    pub fn split(&self, frame: usize, min_gap: usize) -> Result<(Slices, usize), Range<usize>> {
+        let mut ranges = self.0.clone();
+        let Some(first) = ranges.first().cloned() else {
+            return Err(0..0);
+        };
+        if frame < first.start {
+            if first.start - frame <= min_gap {
+                return Err(0..first.start.saturating_sub(min_gap));
+            }
+            ranges.insert(0, frame..first.start);
+            return Ok((Slices(ranges), 0));
+        }
+        let i = ranges
+            .iter()
+            .position(|r| r.contains(&frame))
+            .ok_or(first.start..ranges.last().map_or(0, |r| r.end))?;
+        let r = ranges[i].clone();
+        let (low, high) = (r.start + min_gap, r.end.saturating_sub(min_gap));
+        if !(low < frame && frame < high) {
+            return Err(low..high);
+        }
+        ranges[i].end = frame;
+        ranges.insert(i + 1, frame..r.end);
+        Ok((Slices(ranges), i + 1))
+    }
+
+    /// Los mismos cortes sin la marca del corte `index` (desde 0, al menos
+    /// el segundo): el anterior se alarga hasta donde acababa este.
+    pub fn without(&self, index: usize) -> Option<Slices> {
+        if index == 0 || index >= self.0.len() {
+            return None;
+        }
+        let mut ranges = self.0.clone();
+        let removed = ranges.remove(index);
+        ranges[index - 1].end = removed.end;
+        Some(Slices(ranges))
+    }
+
     /// Los mismos cortes con el inicio del corte `index` en `start` (ajuste
     /// manual): el corte anterior acaba donde empieza este. Tiene que
     /// quedar a más de `min_gap` frames de sus vecinos (y del final del

@@ -975,7 +975,7 @@ mod tests {
         assert!(track.starts_with(&["steps".into(), "length".into(), "gain".into()]));
         assert_eq!(c.matches()[0].kind, "método de pista");
         let c = at("local s = sample(\"amen.wav\")\ns:|").unwrap();
-        assert_eq!(labels(&c), ["detect_bpm", "stretch", "slice"]);
+        assert_eq!(labels(&c), ["detect_bpm", "stretch", "slice_grid", "slice"]);
         let c = at(&format!("{SONG}amen:s|")).unwrap();
         assert_eq!(labels(&c), ["slice_at", "set"], "cortes");
         let c = at("sample(\"amen.wav\"):slice(8):|").unwrap();

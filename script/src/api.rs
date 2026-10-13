@@ -809,6 +809,26 @@ pub const FUNCTIONS: &[Function] = &[
         ),
     },
     Function {
+        name: "slice_grid",
+        receiver: Receiver::Sample,
+        signature: "sample:slice_grid(n)",
+        returns: Some(Receiver::Slices),
+        summary: "Corta el sample en n partes iguales (rejilla), sin mirar los golpes.",
+        doc: "Para un break bien cuadrado (un compás en 16 o en 8) o para material \
+              sin golpes claros. Las etiquetas y los ajustes del proyecto de un \
+              sample cortado en rejilla son distintos de los de `slice(n)` (en el \
+              proyecto, el número de cortes se escribe `rejilla16`).",
+        params: &[Param {
+            name: "n",
+            description: "partes (1 a 64)",
+        }],
+        template: "slice_grid(${16})",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice_grid(16)\n\
+             track(\"drums\", amen):steps(\"1 2 3 4  5 6 7 8  9 10 11 12  13 14 15 16\")\n",
+        ),
+    },
+    Function {
         name: "slice",
         receiver: Receiver::Sample,
         signature: "sample:slice(n)",
@@ -884,6 +904,47 @@ pub const FUNCTIONS: &[Function] = &[
              amen:set({ release = 20 }):set(3, { attack = 2, release = 5 })\n\
              track(\"drums\", amen):steps(\"1 . 3 .  2 . 3 .  1 1 3 .  2 . 3 3\"):mode(\"gate\")\n",
         ),
+    },
+    Function {
+        name: "add",
+        receiver: Receiver::Slices,
+        signature: "cortes:add(ms)",
+        returns: Some(Receiver::Slices),
+        summary: "Añade un corte que empieza en ms (parte en dos el que lo contiene).",
+        doc: "Los cortes siguientes se corren un número. Como `move`, cambia la \
+              variable (y devuelve una copia: para seguir cambiándola, otra línea \
+              con la variable): las pistas definidas antes con ella no lo ven. Tiene que \
+              quedar a más de 1 ms de los cortes que ya hay. Desde la interfaz, \
+              «Partir el corte seleccionado» lo hace en el proyecto.",
+        params: &[Param {
+            name: "ms",
+            description: "dónde empieza el corte nuevo, en ms desde el principio",
+        }],
+        template: "add(${250})",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             -- Un corte más dentro del tercero, y sin la marca del sexto (que,\n\
+             -- con el nuevo, es el séptimo).\n\
+             amen:add(250)\n\
+             amen:remove(7)\n\
+             track(\"drums\", amen):steps(\"1 . 3 4  5 . 6 .  7 . 8 .  1 . 3 4\")\n",
+        ),
+    },
+    Function {
+        name: "remove",
+        receiver: Receiver::Slices,
+        signature: "cortes:remove(i)",
+        returns: Some(Receiver::Slices),
+        summary: "Quita el corte i (desde 2): el anterior se alarga hasta donde acababa este.",
+        doc: "Los cortes siguientes se corren un número. Como `move`, cambia la \
+              variable. Desde la interfaz, «Unir el corte seleccionado con el \
+              anterior» lo hace en el proyecto.",
+        params: &[Param {
+            name: "i",
+            description: "el corte que se quita (desde 2)",
+        }],
+        template: "remove(${2})",
+        example: None,
     },
     Function {
         name: "name",

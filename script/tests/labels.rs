@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 
 use engine::{new_engine, offline};
-use script::{Project, ScriptHost, SliceLabel};
+use script::{Cut, Project, ScriptHost, SliceLabel};
 
 const RATE: u32 = 48_000;
 
@@ -134,7 +134,7 @@ fn slice_at_keeps_its_label_and_later_names_apply_to_existing_tracks() {
         )
         .unwrap();
     assert_eq!(song.tracks[0].labels, vec![Some("hat".to_string())]);
-    assert_eq!(song.tracks[0].origin.indices, vec![4]);
+    assert_eq!(song.tracks[0].origin.indices, vec![Some(4)]);
 }
 
 #[test]
@@ -193,7 +193,7 @@ fn project_labels_apply_to_the_same_sample_cut_the_same_way() {
     let mut host = host();
     let label = |slices, slice, name: &str| SliceLabel {
         sample: "break8.wav".into(),
-        slices,
+        slices: Cut::detect(slices),
         slice,
         name: name.into(),
     };
@@ -232,28 +232,33 @@ fn project_labels_apply_to_the_same_sample_cut_the_same_way() {
     assert_eq!(song.tracks[0].labels[1].as_deref(), Some("snare"));
 
     // set_label: pone, cambia, quita y comprueba.
-    host.set_label("break8.wav", 8, 3, Some("hat")).unwrap();
-    host.set_label("break8.wav", 8, 1, Some("bombo")).unwrap();
-    host.set_label("break8.wav", 8, 2, None).unwrap();
+    host.set_label("break8.wav", Cut::detect(8), 3, Some("hat"))
+        .unwrap();
+    host.set_label("break8.wav", Cut::detect(8), 1, Some("bombo"))
+        .unwrap();
+    host.set_label("break8.wav", Cut::detect(8), 2, None)
+        .unwrap();
     let mine: Vec<(usize, &str)> = host
         .labels()
         .iter()
-        .filter(|l| l.slices == 8)
+        .filter(|l| l.slices == Cut::detect(8))
         .map(|l| (l.slice, l.name.as_str()))
         .collect();
     assert_eq!(mine, [(3, "hat"), (1, "bombo")]);
     assert_eq!(
-        host.set_label("break8.wav", 8, 4, Some("hat")).unwrap_err(),
+        host.set_label("break8.wav", Cut::detect(8), 4, Some("hat"))
+            .unwrap_err(),
         "la etiqueta \"hat\" ya es del corte 3"
     );
     assert!(
-        host.set_label("break8.wav", 8, 4, Some("7"))
+        host.set_label("break8.wav", Cut::detect(8), 4, Some("7"))
             .unwrap_err()
             .contains("es un número")
     );
     assert_eq!(
-        host.set_label("break8.wav", 8, 9, Some("y")).unwrap_err(),
-        "el corte 9 no existe (hay 8)"
+        host.set_label("break8.wav", Cut::detect(8), 65, Some("y"))
+            .unwrap_err(),
+        "el corte 65 no existe"
     );
 }
 
@@ -268,18 +273,19 @@ fn projects_save_and_load_labels() {
         labels: vec![
             SliceLabel {
                 sample: "break8.wav".into(),
-                slices: 8,
+                slices: Cut::detect(8),
                 slice: 1,
                 name: "kick".into(),
             },
             SliceLabel {
                 sample: "mis breaks/amen 2.wav".into(),
-                slices: 16,
+                slices: Cut::detect(16),
                 slice: 12,
                 name: "snare_2".into(),
             },
         ],
         positions: Vec::new(),
+        edits: Vec::new(),
     };
     project.save(&path).unwrap();
     let text = std::fs::read_to_string(&path).unwrap();
@@ -354,7 +360,7 @@ fn project_labels_for_another_slice_count_are_reported() {
     let mut host = host();
     let label = |slices, slice, name: &str| SliceLabel {
         sample: "break8.wav".into(),
-        slices,
+        slices: Cut::detect(slices),
         slice,
         name: name.into(),
     };

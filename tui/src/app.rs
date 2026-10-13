@@ -276,6 +276,7 @@ impl App {
         self.host.set_default_bpm(project.bpm);
         self.host.set_labels(project.labels.clone());
         self.host.set_positions(project.positions.clone());
+        self.host.set_edits(project.edits.clone());
         self.reload_blocks();
         self.load();
         Ok(())
@@ -446,6 +447,7 @@ impl App {
             bpm,
             labels: self.host.labels().to_vec(),
             positions: self.host.positions().to_vec(),
+            edits: self.host.edits().to_vec(),
         }
     }
 
@@ -476,9 +478,15 @@ impl App {
             );
             return;
         };
+        let Some(index) = index else {
+            self.message = format!(
+                "el corte {slice} de {track_name} lo añade el script con :add(): etiquétalo con :name()"
+            );
+            return;
+        };
         if let Err(e) = self
             .host
-            .set_label(&origin.sample, origin.count, index + 1, name)
+            .set_label(&origin.sample, origin.cut(), index + 1, name)
         {
             self.message = format!("no se pudo etiquetar: {e}");
             return;
@@ -540,17 +548,23 @@ impl App {
         // Las posiciones van en ms del sample original (sin estirar).
         let ratio = track.stretch.map_or(1.0, |s| s.ratio);
         let current = range.start as f64 * 1000.0 / rate / ratio;
-        let slice = origin.indices[index] + 1;
+        let Some(slice) = origin.indices[index].map(|i| i + 1) else {
+            self.message = format!(
+                "el corte {} de {name} lo añade el script con :add(): muévelo en el script",
+                index + 1
+            );
+            return;
+        };
         let previous = self
             .host
             .positions()
             .iter()
-            .find(|p| p.sample == origin.sample && p.slices == origin.count && p.slice == slice)
+            .find(|p| p.sample == origin.sample && p.slices == origin.cut() && p.slice == slice)
             .map(|p| p.ms);
         // Con la resolución de un frame, redondeado a 0,1 ms.
         let target = delta_ms.map(|d| ((current + d).max(0.0) * 10.0).round() / 10.0);
         self.host
-            .set_position(&origin.sample, origin.count, slice, target);
+            .set_position(&origin.sample, origin.cut(), slice, target);
         self.load();
         let blocked = format!("el ajuste del corte {slice} de {}", origin.sample);
         let warning = self
@@ -560,7 +574,7 @@ impl App {
         if let Some(warning) = warning {
             // Se sale de sus vecinos: se deja como estaba.
             self.host
-                .set_position(&origin.sample, origin.count, slice, previous);
+                .set_position(&origin.sample, origin.cut(), slice, previous);
             self.load();
             self.message = format!("no se mueve: {warning}");
             return;
@@ -578,6 +592,108 @@ impl App {
                 index + 1
             ),
         };
+    }
+
+    /// «Partir el corte seleccionado»: un corte nuevo en su mitad (se guarda
+    /// en el proyecto como `partir`; las etiquetas y los ajustes de los
+    /// siguientes se corren uno).
+    pub fn split_selected(&mut self) {
+        self.edit_slices(true);
+    }
+
+    /// «Unir el corte seleccionado con el anterior»: quita su marca (se
+    /// guarda en el proyecto como `unir`).
+    pub fn join_selected(&mut self) {
+        self.edit_slices(false);
+    }
+
+    fn edit_slices(&mut self, split: bool) {
+        let Some(track) = self.host.song().and_then(|s| s.tracks.get(self.selected)) else {
+            self.message = "no hay pistas".into();
+            return;
+        };
+        let index = self
+            .selected_slice
+            .min(track.slices.len().saturating_sub(1));
+        let (origin, name) = (track.origin.clone(), track.name.clone());
+        let Some(range) = track.slices.get(index) else {
+            return;
+        };
+        let Some(original) = origin.indices.get(index).copied().flatten() else {
+            self.message = format!(
+                "el corte {} de {name} lo añade el script con :add(): cámbialo en el script",
+                index + 1
+            );
+            return;
+        };
+        if self.error.is_some() {
+            self.message =
+                "el script tiene errores: arréglalos antes de partir o unir cortes".into();
+            return;
+        }
+        // Para deshacerlo si al cargar no cabe.
+        let before = (
+            self.host.labels().to_vec(),
+            self.host.positions().to_vec(),
+            self.host.edits().to_vec(),
+        );
+        let ratio = track.stretch.map_or(1.0, |s| s.ratio);
+        let rate = track.sample.sample_rate() as f64;
+        let slices_before = track.slices.len();
+        if split {
+            let middle = (range.start + range.end) as f64 / 2.0;
+            // Al microsegundo: el corte cae en el frame de la mitad.
+            let ms = (middle * 1000.0 / rate / ratio * 1000.0).round() / 1000.0;
+            self.host
+                .split_slice(&origin.sample, origin.cut(), original + 2, ms);
+        } else {
+            if original == 0 {
+                self.message = format!("el corte 1 de {name} no tiene anterior");
+                return;
+            }
+            self.host
+                .join_slice(&origin.sample, origin.cut(), original + 1);
+        }
+        self.load();
+        let after = self
+            .host
+            .song()
+            .and_then(|s| s.tracks.iter().find(|t| t.name == name))
+            .map_or(0, |t| t.slices.len());
+        let warning = self.host.song().and_then(|s| {
+            s.warnings
+                .iter()
+                .find(|w| w.starts_with("partir ") || w.starts_with("unir "))
+                .cloned()
+        });
+        if self.error.is_some() || after == slices_before || warning.is_some() {
+            let (labels, positions, edits) = before;
+            self.host.set_labels(labels);
+            self.host.set_positions(positions);
+            self.host.set_edits(edits);
+            self.load();
+            self.message = format!(
+                "no se puede: {}",
+                warning.unwrap_or_else(|| "el corte es demasiado corto".into())
+            );
+            return;
+        }
+        let saved = self.save_project_file();
+        if split {
+            self.selected_slice = index + 1;
+            self.message = format!(
+                "corte {} de {name} partido: ahora hay {after} (el nuevo es el {}){saved}",
+                index + 1,
+                index + 2
+            );
+        } else {
+            self.selected_slice = index - 1;
+            self.message = format!(
+                "corte {} de {name} unido al {}: ahora hay {after}{saved}",
+                index + 1,
+                index
+            );
+        }
     }
 
     /// `abrir proyecto.sampler` (o `abrir!` para descartar cambios).
@@ -1391,6 +1507,8 @@ impl App {
             Action::SliceLater => self.adjust_slice(Some(5.0)),
             Action::ClearSliceAdjust => self.adjust_slice(None),
             Action::NextSlice => self.select_slice(true),
+            Action::SplitSlice => self.split_selected(),
+            Action::JoinSlice => self.join_selected(),
             Action::PreviousSlice => self.select_slice(false),
             Action::Quit => {
                 let armed = std::mem::replace(&mut self.quit_armed, false);
