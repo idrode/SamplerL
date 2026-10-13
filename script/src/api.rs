@@ -424,6 +424,68 @@ pub const FUNCTIONS: &[Function] = &[
         ),
     },
     Function {
+        name: "bpm_ramp",
+        receiver: Receiver::Global,
+        signature: "bpm_ramp(desde, hasta, duración)",
+        returns: None,
+        summary: "Rampa de tempo: de desde a hasta BPM en esos compases, y se queda en hasta.",
+        doc: "Manda sobre `bpm()`. Cada compás suena a su tempo (cuantizado al \
+              compás: el compás `k` desde que entra, a `desde + (hasta − desde)·k/n`), \
+              así que los pasos siguen cayendo al frame exacto; el delay desliza \
+              su tiempo para no hacer clic. Entra al empezar el compás, como todo \
+              cambio del script, y recargar el mismo script no la vuelve a \
+              empezar. Quitarla (con un `bpm()`) la para.",
+        params: &[
+            Param {
+                name: "desde",
+                description: "tempo del primer compás (20 a 400)",
+            },
+            Param {
+                name: "hasta",
+                description: "tempo al acabar (20 a 400)",
+            },
+            Param {
+                name: "duración",
+                description: "`\"N compases\"` (hasta 64)",
+            },
+        ],
+        template: "bpm_ramp(${140}, ${170}, \"${8 compases}\")",
+        example: Some(
+            "-- De 140 a 174 en 16 compases.\n\
+             bpm_ramp(140, 174, \"16 compases\")\n\
+             local amen = sample(\"amen.wav\"):slice(8)\n\
+             track(\"drums\", amen):steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\")\n",
+        ),
+    },
+    Function {
+        name: "meter",
+        receiver: Receiver::Global,
+        signature: "meter(n, d)",
+        returns: None,
+        summary: "Compás n/d (3/4, 7/8...): cuántas semicorcheas tiene cada compás.",
+        doc: "Por defecto 4/4 (16 pasos). 3/4 son 12 pasos, 7/8 son 14, 5/4 son 20. \
+              Los cambios entran al empezar el compás. Las pistas siguen contando \
+              semicorcheas: una de 16 pasos en un 3/4 se desfasa; dale \
+              `:length(12)`. El metrónomo marca un pulso cada negra (cada corchea \
+              en x/8, cada semicorchea en x/16) con acento en el primero.",
+        params: &[
+            Param {
+                name: "n",
+                description: "pulsos del compás",
+            },
+            Param {
+                name: "d",
+                description: "figura del pulso: 4, 8 o 16",
+            },
+        ],
+        template: "meter(${3}, ${4})",
+        example: Some(
+            "meter(3, 4)\n\
+             local amen = sample(\"amen.wav\"):slice(8)\n\
+             track(\"vals\", amen):length(12):steps(\"1 . . .  2 . 3 .  2 . 3 .\")\n",
+        ),
+    },
+    Function {
         name: "metronome",
         receiver: Receiver::Global,
         signature: "metronome([sí])",

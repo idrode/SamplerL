@@ -11,7 +11,7 @@ use crate::fx::{Fx, FxState, MAX_FX};
 use crate::limiter::{LIMIT_THRESHOLD, soft_limit};
 use crate::metronome::Metronome;
 use crate::sample::Sample;
-use crate::sequencer::{Pattern, STEPS, Transport, Trigger, valid_bpm};
+use crate::sequencer::{Meter, Pattern, TempoRamp, Transport, Trigger, valid_bpm};
 use crate::slice::Slices;
 use crate::status::{SharedStatus, Status};
 
@@ -54,6 +54,10 @@ enum Command {
     SetBpm(f64),
     /// Parámetros de los buses de envío para el siguiente compás.
     SetBuses(Buses),
+    /// Rampa de tempo que entra en el siguiente compás.
+    SetTempoRamp(TempoRamp),
+    /// Compás (pasos y pulso) desde el siguiente compás.
+    SetMeter(Meter),
     /// Empieza un lote: los cambios se guardan aparte hasta `CommitBatch`.
     BeginBatch,
     /// Hace efectivos a la vez todos los cambios del lote.
@@ -388,6 +392,8 @@ impl std::error::Error for SendError {}
 #[derive(Default)]
 pub struct Batch {
     bpm: Option<f64>,
+    ramp: Option<TempoRamp>,
+    meter: Option<Meter>,
     buses: Option<Buses>,
     patterns: Vec<(usize, Option<Pattern>)>,
 }
@@ -399,6 +405,18 @@ impl Batch {
 
     pub fn set_bpm(&mut self, bpm: f64) -> &mut Self {
         self.bpm = Some(bpm);
+        self
+    }
+
+    /// Rampa de tempo (en vez de un tempo fijo).
+    pub fn set_tempo_ramp(&mut self, ramp: TempoRamp) -> &mut Self {
+        self.ramp = Some(ramp);
+        self
+    }
+
+    /// Compás (3/4, 7/8...).
+    pub fn set_meter(&mut self, meter: Meter) -> &mut Self {
+        self.meter = Some(meter);
         self
     }
 
@@ -545,6 +563,8 @@ pub struct Engine {
     rack: Rack,
     pending_buses: Option<Buses>,
     staged_buses: Option<Buses>,
+    staged_ramp: Option<TempoRamp>,
+    staged_meter: Option<Meter>,
     send_buf: [[f32; 2 * CHUNK]; BUSES],
 }
 
@@ -580,6 +600,8 @@ pub fn new_engine(sample_rate: u32) -> (Controller, Engine) {
             rack: Rack::new(sample_rate),
             pending_buses: None,
             staged_buses: None,
+            staged_ramp: None,
+            staged_meter: None,
             send_buf: [[0.0; 2 * CHUNK]; BUSES],
         },
     )
@@ -724,10 +746,17 @@ impl Controller {
         if let Some(buses) = &batch.buses {
             buses.validate().map_err(SendError::InvalidBus)?;
         }
+        if let Some(ramp) = &batch.ramp
+            && !(valid_bpm(ramp.from) && valid_bpm(ramp.to))
+        {
+            return Err(SendError::InvalidBpm(ramp.from.max(ramp.to)));
+        }
         self.collect_garbage();
         let needed = 2
             + batch.patterns.len()
             + usize::from(batch.bpm.is_some())
+            + usize::from(batch.ramp.is_some())
+            + usize::from(batch.meter.is_some())
             + usize::from(batch.buses.is_some());
         if self.commands.slots() < needed {
             return Err(SendError::QueueFull);
@@ -739,6 +768,12 @@ impl Controller {
         push(Command::BeginBatch);
         if let Some(bpm) = batch.bpm {
             push(Command::SetBpm(bpm));
+        }
+        if let Some(ramp) = batch.ramp {
+            push(Command::SetTempoRamp(ramp));
+        }
+        if let Some(meter) = batch.meter {
+            push(Command::SetMeter(meter));
         }
         if let Some(buses) = batch.buses {
             push(Command::SetBuses(buses));
@@ -755,6 +790,19 @@ impl Controller {
     pub fn set_buses(&mut self, buses: Buses) -> Result<(), SendError> {
         buses.validate().map_err(SendError::InvalidBus)?;
         self.send(Command::SetBuses(buses), None)
+    }
+
+    /// Rampa de tempo: entra al empezar el siguiente compás.
+    pub fn set_tempo_ramp(&mut self, ramp: TempoRamp) -> Result<(), SendError> {
+        if !(valid_bpm(ramp.from) && valid_bpm(ramp.to)) {
+            return Err(SendError::InvalidBpm(ramp.from.max(ramp.to)));
+        }
+        self.send(Command::SetTempoRamp(ramp), None)
+    }
+
+    /// Compás: entra al empezar el siguiente compás.
+    pub fn set_meter(&mut self, meter: Meter) -> Result<(), SendError> {
+        self.send(Command::SetMeter(meter), None)
     }
 
     /// Arranca el secuenciador en el paso 0, aplicando lo pendiente.
@@ -945,6 +993,20 @@ impl Engine {
                     self.transport.pending_bpm = Some(bpm);
                 }
             }
+            Command::SetTempoRamp(ramp) => {
+                if self.batch_open {
+                    self.staged_ramp = Some(ramp);
+                } else {
+                    self.transport.pending_ramp = Some(ramp);
+                }
+            }
+            Command::SetMeter(meter) => {
+                if self.batch_open {
+                    self.staged_meter = Some(meter);
+                } else {
+                    self.transport.pending_meter = Some(meter);
+                }
+            }
             Command::SetBuses(buses) => {
                 if self.batch_open {
                     self.staged_buses = Some(buses);
@@ -960,6 +1022,12 @@ impl Engine {
                 }
                 if let Some(buses) = self.staged_buses.take() {
                     self.pending_buses = Some(buses);
+                }
+                if let Some(ramp) = self.staged_ramp.take() {
+                    self.transport.pending_ramp = Some(ramp);
+                }
+                if let Some(meter) = self.staged_meter.take() {
+                    self.transport.pending_meter = Some(meter);
                 }
                 for t in 0..MAX_TRACKS {
                     if let Some(change) = self.tracks[t].staged.take()
@@ -1010,12 +1078,11 @@ impl Engine {
     /// Al empezar un compás, antes aplica los patrones pendientes.
     fn step(&mut self) {
         let now = self.transport.frame;
-        let (step, bar) = self.transport.advance(self.sample_rate);
-        self.status.set_step(bar, step);
-        self.metronome.on_step(step, self.sample_rate);
+        let (step, bar, global) = self.transport.advance(self.sample_rate);
+        let meter = self.transport.meter();
+        self.status.set_step(bar, step, global, meter.steps);
+        self.metronome.on_step(step, meter.beat, self.sample_rate);
         let next = self.transport.next_step_frame(self.sample_rate);
-        // Semicorchea de la canción: cada pista la lee con su longitud.
-        let global = bar * STEPS as u64 + step as u64;
         if step == 0
             && let Some(buses) = self.pending_buses.take()
         {

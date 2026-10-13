@@ -201,6 +201,9 @@ impl Rack {
     }
 }
 
+/// Lo que tarda el delay en deslizarse a un retardo nuevo.
+const DELAY_GLIDE_SECONDS: f64 = 0.05;
+
 /// Repeticiones del delay hasta quedar por debajo de -120 dB.
 fn repeats(feedback: f32) -> usize {
     if feedback <= 0.0 {
@@ -210,10 +213,17 @@ fn repeats(feedback: f32) -> usize {
     }
 }
 
-/// Línea de retardo estéreo con realimentación.
+/// Línea de retardo estéreo con realimentación. Si cambia el retardo (otro
+/// tempo, otra división), se desliza hasta el nuevo en ~50 ms en vez de
+/// saltar: así una rampa de tempo no hace clic.
 struct DelayLine {
     buf: Box<[f32]>,
     write: usize,
+    /// Retardo actual en frames (con decimales mientras se desliza);
+    /// `None` hasta la primera vez (o tras vaciarse), que entra ya.
+    current: Option<f64>,
+    /// Coeficiente del deslizamiento por muestra.
+    glide: f64,
 }
 
 impl DelayLine {
@@ -223,17 +233,21 @@ impl DelayLine {
         DelayLine {
             buf: vec![0.0; 2 * max].into_boxed_slice(),
             write: 0,
+            current: None,
+            glide: 1.0 - (-1.0 / (DELAY_GLIDE_SECONDS * sample_rate as f64)).exp(),
         }
     }
 
     fn clear(&mut self) {
         self.buf.fill(0.0);
+        self.current = None;
     }
 
     /// Devuelve el pico de lo que sale.
     fn process(&mut self, input: &[f32], out: &mut [f32], delay: usize, p: DelayParams) -> f32 {
         let frames = self.buf.len() / 2;
-        let delay = delay.min(frames - 1);
+        let target = delay.min(frames - 2) as f64;
+        let mut current = self.current.unwrap_or(target);
         let mut peak = 0.0f32;
         for (x, o) in input
             .as_chunks::<2>()
@@ -241,9 +255,24 @@ impl DelayLine {
             .iter()
             .zip(out.as_chunks_mut::<2>().0)
         {
-            let read = (self.write + frames - delay) % frames;
+            if current != target {
+                current += (target - current) * self.glide;
+                if (target - current).abs() < 1e-3 {
+                    current = target;
+                }
+            }
+            let whole = current.floor();
+            let frac = (current - whole) as f32;
+            let read = (self.write + frames - whole as usize) % frames;
+            let before = (read + frames - 1) % frames;
             for c in 0..2 {
-                let y = self.buf[2 * read + c];
+                // Retardo entero: la muestra tal cual (exacto); mientras se
+                // desliza, interpolada.
+                let y = if frac == 0.0 {
+                    self.buf[2 * read + c]
+                } else {
+                    self.buf[2 * read + c] * (1.0 - frac) + self.buf[2 * before + c] * frac
+                };
                 self.buf[2 * self.write + c] = flush(x[c] + p.feedback * y);
                 let wet = p.level * y;
                 o[c] += wet;
@@ -251,6 +280,7 @@ impl DelayLine {
             }
             self.write = (self.write + 1) % frames;
         }
+        self.current = Some(current);
         peak
     }
 }

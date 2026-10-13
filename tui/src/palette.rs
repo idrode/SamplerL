@@ -42,6 +42,7 @@ pub enum Action {
     JoinSlice,
     Resample,
     Browser,
+    TapTempo,
     SaveBlock,
     InsertBlock,
     UpdateBlock,
@@ -248,6 +249,12 @@ pub const ACTIONS: &[ActionDef] = &[
         name: "Unir el corte seleccionado con el anterior",
         description: "Quita su marca: el anterior se alarga hasta donde acababa este (se guarda en el proyecto)",
         keys: "",
+    },
+    ActionDef {
+        action: Action::TapTempo,
+        name: "Tap tempo",
+        description: "Golpea el pulso con espacio (media de los últimos 8 golpes); Enter pone bpm(N) en el script",
+        keys: "espacio (al golpear)",
     },
     ActionDef {
         action: Action::Browser,

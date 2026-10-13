@@ -206,6 +206,8 @@ pub struct App {
     block_picker: Option<BlockPicker>,
     /// Explorador de samples abierto.
     browser: Option<Browser>,
+    /// Tap tempo en curso (espacio golpea, Enter pone el tempo).
+    tapping: Option<crate::tap::TapTempo>,
     /// Ranuras rápidas 1-9 (como los registros de vim; duran la sesión).
     slots: [Option<String>; SLOTS],
     /// Esperando el número de ranura.
@@ -257,6 +259,7 @@ impl App {
             blocks: Library::default(),
             block_picker: None,
             browser: None,
+            tapping: None,
             slots: Default::default(),
             slot_prompt: None,
         };
@@ -796,6 +799,47 @@ impl App {
                 browser.selected = 0;
             }
             _ => {}
+        }
+        Flow::Continue
+    }
+
+    /// «Tap tempo»: empieza a contar golpes (este es el primero). Espacio
+    /// golpea, Enter pone `bpm(N)` en el script y Esc cancela.
+    pub fn start_tap(&mut self, now: Instant) {
+        self.completion = None;
+        let mut tap = crate::tap::TapTempo::default();
+        tap.tap(now);
+        self.tapping = Some(tap);
+        self.message = "tap tempo: espacio al pulso · Enter pone bpm() · Esc cancela".into();
+    }
+
+    /// Un golpe de tap tempo en `now`.
+    pub fn tap_at(&mut self, now: Instant) {
+        let Some(tap) = &mut self.tapping else { return };
+        self.message = match tap.tap(now) {
+            Some(bpm) => format!(
+                "tap tempo: {bpm} BPM ({} golpes) · Enter pone bpm({bpm}) · Esc cancela",
+                tap.count()
+            ),
+            None => "tap tempo: sigue golpeando con espacio · Esc cancela".into(),
+        };
+    }
+
+    /// Tecla durante el tap tempo.
+    fn handle_tap(&mut self, input: Input) -> Flow {
+        match input.key {
+            Key::Char(' ') => self.tap_at(Instant::now()),
+            Key::Enter => {
+                let bpm = self.tapping.take().and_then(|t| t.bpm());
+                match bpm {
+                    Some(bpm) => self.set_bpm_line(Some(&bpm.to_string())),
+                    None => self.message = "tap tempo: hacen falta al menos dos golpes".into(),
+                }
+            }
+            _ => {
+                self.tapping = None;
+                self.message = "tap tempo cancelado".into();
+            }
         }
         Flow::Continue
     }
@@ -1729,6 +1773,7 @@ impl App {
             Action::SplitSlice => self.split_selected(),
             Action::Resample => self.start_resample(),
             Action::Browser => self.open_browser(),
+            Action::TapTempo => self.start_tap(Instant::now()),
             Action::JoinSlice => self.join_selected(),
             Action::PreviousSlice => self.select_slice(false),
             Action::Quit => {
@@ -2077,6 +2122,9 @@ impl App {
         if self.browser.is_some() {
             return self.handle_browser(input);
         }
+        if self.tapping.is_some() {
+            return self.handle_tap(input);
+        }
         if let Some(op) = self.slot_prompt.take() {
             match input.key {
                 Key::Char(c @ '1'..='9') if !input.ctrl && !input.alt => {
@@ -2243,7 +2291,8 @@ impl App {
                             .and_then(|start| t.slices.iter().position(|r| r.start == start));
                         // Vuelta y paso de esta pista (con su longitud) en el
                         // último paso que sonó.
-                        let (lap, position) = t.lap(transport.bar, transport.step.unwrap_or(0));
+                        let global = status.map_or(0, |s| s.global);
+                        let (lap, position) = t.lap(global);
                         let waveform = self
                             .waveforms
                             .get(&(Arc::as_ptr(&t.sample) as usize))

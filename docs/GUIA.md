@@ -46,6 +46,13 @@ del sample» (paleta) hace lo mismo con el sample de la pista seleccionada
 y deja escrita la orden `bpm 140`: Enter cambia (o añade) la línea `bpm()`
 del script, sin guardar. En Lua, `sample(...):detect_bpm()`.
 
+Si prefieres marcarlo tú, «Tap tempo» (paleta) cuenta golpes: pulsa
+espacio al pulso (cuenta la media de los últimos 8; una pausa de más de
+2 s empieza otra cuenta) y Enter pone `bpm(N)` en el script; Esc cancela.
+Para que el tempo cambie a lo largo de la canción, `bpm_ramp(desde,
+hasta, "8 compases")`, y para otro compás, `meter(3, 4)` o `meter(7, 8)`
+(sección 4).
+
 Para elegir un WAV sin salir de la interfaz, «Explorador de samples»
 (paleta) lista los de la carpeta de muestras y sus subcarpetas: escribe
 para filtrar por nombre, ↑ ↓ eligen y preescuchan cada uno en la voz
@@ -244,6 +251,7 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Corte anterior | Selecciona el corte anterior de la pista (sin tocarlo) | — |
 | Partir el corte seleccionado | Añade un corte en su mitad (se guarda en el proyecto; las etiquetas y ajustes siguientes se corren) | — |
 | Unir el corte seleccionado con el anterior | Quita su marca: el anterior se alarga hasta donde acababa este (se guarda en el proyecto) | — |
+| Tap tempo | Golpea el pulso con espacio (media de los últimos 8 golpes); Enter pone bpm(N) en el script | espacio (al golpear) |
 | Explorador de samples | Los WAV de la carpeta de muestras: filtra, ↑↓ preescucha (sin tocar las pistas), Enter inserta sample("...") | — |
 | Remuestrear la pista seleccionada | Abre «remuestrear pista »: graba su salida (render offline) como un WAV nuevo en la carpeta de samples | — |
 | Guardar la selección como bloque | Abre «bloque » para escribir nombre, etiquetas y `-- descripción`; va a la biblioteca global | — |
@@ -598,6 +606,34 @@ Define una pista que toca esos cortes, o recupera una ya definida. Con dos argum
 local amen = sample("amen.wav"):slice(8)
 track("drums", amen)
 track("drums"):steps("1 . . .  3 . . .  1 . . .  3 . . .")
+```
+
+### `bpm_ramp(desde, hasta, duración)`
+
+Rampa de tempo: de desde a hasta BPM en esos compases, y se queda en hasta. Manda sobre `bpm()`. Cada compás suena a su tempo (cuantizado al compás: el compás `k` desde que entra, a `desde + (hasta − desde)·k/n`), así que los pasos siguen cayendo al frame exacto; el delay desliza su tiempo para no hacer clic. Entra al empezar el compás, como todo cambio del script, y recargar el mismo script no la vuelve a empezar. Quitarla (con un `bpm()`) la para.
+
+- `desde`: tempo del primer compás (20 a 400)
+- `hasta`: tempo al acabar (20 a 400)
+- `duración`: `"N compases"` (hasta 64)
+
+```lua
+-- De 140 a 174 en 16 compases.
+bpm_ramp(140, 174, "16 compases")
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+```
+
+### `meter(n, d)`
+
+Compás n/d (3/4, 7/8...): cuántas semicorcheas tiene cada compás. Por defecto 4/4 (16 pasos). 3/4 son 12 pasos, 7/8 son 14, 5/4 son 20. Los cambios entran al empezar el compás. Las pistas siguen contando semicorcheas: una de 16 pasos en un 3/4 se desfasa; dale `:length(12)`. El metrónomo marca un pulso cada negra (cada corchea en x/8, cada semicorchea en x/16) con acento en el primero.
+
+- `n`: pulsos del compás
+- `d`: figura del pulso: 4, 8 o 16
+
+```lua
+meter(3, 4)
+local amen = sample("amen.wav"):slice(8)
+track("vals", amen):length(12):steps("1 . . .  2 . 3 .  2 . 3 .")
 ```
 
 ### `metronome([sí])`

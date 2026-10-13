@@ -93,6 +93,10 @@ pub struct Song {
     pub metronome: Option<bool>,
     /// Parámetros de los buses de envío (`bus()`; si no, por defecto).
     pub buses: Buses,
+    /// Rampa de tempo (`bpm_ramp()`): manda sobre `bpm`.
+    pub tempo_ramp: Option<engine::TempoRamp>,
+    /// Compás (`meter()`); `None`, 4/4.
+    pub meter: Option<engine::Meter>,
     /// Avisos de la carga que no la impiden (por ejemplo, etiquetas del
     /// proyecto que no se aplican porque el script corta el sample en otro
     /// número de cortes).
@@ -159,10 +163,9 @@ pub struct Stretch {
 }
 
 impl TrackDef {
-    /// Vuelta y paso (desde 0) que toca esta pista en el paso `step` del
-    /// compás `bar` de la canción.
-    pub fn lap(&self, bar: u64, step: usize) -> (u64, usize) {
-        let global = bar * STEPS as u64 + step as u64;
+    /// Vuelta y paso (desde 0) que toca esta pista en la semicorchea
+    /// `global` de la canción (contada desde que arrancó: `Status::global`).
+    pub fn lap(&self, global: u64) -> (u64, usize) {
         let length = self.length.max(1) as u64;
         (global / length, (global % length) as usize)
     }
@@ -622,6 +625,8 @@ impl ScriptHost {
             bpm: None,
             metronome: None,
             buses: Buses::default(),
+            tempo_ramp: None,
+            meter: None,
             tracks: Vec::new(),
             expanding: Rc::new(Cell::new(false)),
         }));
@@ -645,12 +650,18 @@ impl ScriptHost {
         self.imported = std::mem::take(&mut imports.borrow_mut().used);
         result.map_err(|e| ScriptError::from_lua(&e))?;
 
-        let (bpm, metronome, buses, tracks, expanding) = {
+        let (bpm, metronome, buses, tempo_ramp, meter, tracks, expanding) = {
             let mut builder = state.borrow_mut();
             (
-                builder.bpm.or(self.default_bpm),
+                builder
+                    .tempo_ramp
+                    .map(|r| r.from)
+                    .or(builder.bpm)
+                    .or(self.default_bpm),
                 builder.metronome,
                 builder.buses,
+                builder.tempo_ramp,
+                builder.meter,
                 std::mem::take(&mut builder.tracks),
                 builder.expanding.clone(),
             )
@@ -684,6 +695,8 @@ impl ScriptHost {
             tracks: expanded?,
             metronome,
             buses,
+            tempo_ramp,
+            meter,
             warnings,
         })
     }
@@ -795,6 +808,55 @@ impl ScriptHost {
                     return Err(fail(lua, SendError::InvalidBpm(bpm)));
                 }
                 st.borrow_mut().bpm = Some(bpm);
+                Ok(())
+            })?,
+        )?;
+
+        let st = state.clone();
+        let g = guard.clone();
+        globals.set(
+            "bpm_ramp",
+            lua.create_function(move |lua, (from, to, duration): (f64, f64, String)| {
+                g(lua, "bpm_ramp")?;
+                let who = format!("bpm_ramp({from}, {to}, \"{duration}\")");
+                for bpm in [from, to] {
+                    if !valid_bpm(bpm) {
+                        return Err(fail(lua, format!("{who}: {}", SendError::InvalidBpm(bpm))));
+                    }
+                }
+                let bars = parse_duration(&duration)
+                    .filter(|steps| steps.fract() == 0.0 && (*steps as usize).is_multiple_of(STEPS))
+                    .map(|steps| steps as u64 / STEPS as u64)
+                    .ok_or_else(|| {
+                        fail(
+                            lua,
+                            format!("{who}: la duración es \"N compases\" (hasta 64)"),
+                        )
+                    })?;
+                st.borrow_mut().tempo_ramp = Some(engine::TempoRamp { from, to, bars });
+                Ok(())
+            })?,
+        )?;
+
+        let st = state.clone();
+        let g = guard.clone();
+        globals.set(
+            "meter",
+            lua.create_function(move |lua, (n, d): (i64, i64)| {
+                g(lua, "meter")?;
+                let meter = usize::try_from(n)
+                    .ok()
+                    .zip(usize::try_from(d).ok())
+                    .and_then(|(n, d)| engine::Meter::new(n, d))
+                    .ok_or_else(|| {
+                        fail(
+                            lua,
+                            format!(
+                                "meter({n}, {d}): el denominador es 4, 8 o 16 y el compás, de 1 a 64 semicorcheas"
+                            ),
+                        )
+                    })?;
+                st.borrow_mut().meter = Some(meter);
                 Ok(())
             })?,
         )?;
@@ -1170,9 +1232,17 @@ impl ScriptHost {
 /// ranura (`slots[i]` es el nombre de la pista de la ranura `i`).
 fn song_batch(song: &Song, slots: &[Option<String>; MAX_TRACKS]) -> Result<Batch, ScriptError> {
     let mut batch = Batch::new();
-    if let Some(bpm) = song.bpm {
-        batch.set_bpm(bpm);
+    match (song.tempo_ramp, song.bpm) {
+        (Some(ramp), _) => {
+            batch.set_tempo_ramp(ramp);
+        }
+        (None, Some(bpm)) => {
+            batch.set_bpm(bpm);
+        }
+        (None, None) => {}
     }
+    // Sin `meter()`, 4/4 (así quitarlo vuelve al compás de siempre).
+    batch.set_meter(song.meter.unwrap_or(engine::Meter::COMMON));
     batch.set_buses(song.buses);
     for (slot, assigned) in slots.iter().enumerate() {
         let pattern = match assigned {
@@ -1204,15 +1274,38 @@ impl Song {
     /// `min_bars` (redondeado a ciclos completos). Como mucho
     /// [`MAX_SONG_BARS`].
     pub fn length_bars(&self, min_bars: u64) -> u64 {
-        let steps = self.tracks.iter().fold(STEPS as u64, |acc, t| {
-            lcm(acc, (t.bars.len().max(1) * t.length.max(1)) as u64)
-                .min(MAX_SONG_BARS * STEPS as u64 + 1)
+        let bar = self.bar_steps() as u64;
+        let steps = self.tracks.iter().fold(bar, |acc, t| {
+            lcm(acc, (t.bars.len().max(1) * t.length.max(1)) as u64).min(MAX_SONG_BARS * bar + 1)
         });
-        let cycle = steps.div_ceil(STEPS as u64);
+        let cycle = steps.div_ceil(bar);
         if cycle > MAX_SONG_BARS {
             return MAX_SONG_BARS;
         }
         (cycle * min_bars.div_ceil(cycle).max(1)).min(MAX_SONG_BARS)
+    }
+
+    /// Pasos de un compás (16 en 4/4; `meter()` lo cambia).
+    pub fn bar_steps(&self) -> usize {
+        self.meter.map_or(STEPS, |m| m.steps)
+    }
+
+    /// Tempo del compás `bar` (desde que arranca la canción): el de la
+    /// rampa si la hay.
+    pub fn bpm_at(&self, bar: u64) -> f64 {
+        match self.tempo_ramp {
+            Some(ramp) => ramp.bpm_at(bar),
+            None => self.bpm.unwrap_or(engine::DEFAULT_BPM),
+        }
+    }
+
+    /// Frames que duran los primeros `bars` compases (con la rampa y el
+    /// compás de la canción), con el mismo redondeo que el motor.
+    pub fn frames(&self, sample_rate: u32, bars: u64) -> u64 {
+        let steps = self.bar_steps();
+        (0..bars)
+            .map(|b| engine::bar_frames_steps(steps, self.bpm_at(b), sample_rate))
+            .sum()
     }
 
     /// Renderiza `bars` compases de la canción offline, en un motor aparte
@@ -1260,11 +1353,9 @@ impl Song {
     /// [`MAX_SONG_BARS`].
     pub fn track_length_bars(&self, name: &str) -> Option<u64> {
         let track = self.tracks.iter().find(|t| t.name == name)?;
-        let steps = lcm(
-            STEPS as u64,
-            (track.bars.len().max(1) * track.length.max(1)) as u64,
-        );
-        Some(steps.div_ceil(STEPS as u64).min(MAX_SONG_BARS))
+        let bar = self.bar_steps() as u64;
+        let steps = lcm(bar, (track.bars.len().max(1) * track.length.max(1)) as u64);
+        Some(steps.div_ceil(bar).min(MAX_SONG_BARS))
     }
 
     fn render_all(
@@ -1284,8 +1375,7 @@ impl Song {
             controller.set_metronome(true).map_err(send)?;
         }
         controller.start().map_err(send)?;
-        let bpm = self.bpm.unwrap_or(engine::DEFAULT_BPM);
-        let frames = bars * engine::bar_frames(bpm, sample_rate);
+        let frames = self.frames(sample_rate, bars);
         Ok(engine::offline::render(&mut engine, frames as usize, 2))
     }
 }
@@ -1331,6 +1421,8 @@ struct Builder {
     bpm: Option<f64>,
     metronome: Option<bool>,
     buses: Buses,
+    tempo_ramp: Option<engine::TempoRamp>,
+    meter: Option<engine::Meter>,
     tracks: Vec<TrackBuild>,
     /// Activo mientras se llaman las funciones de `every`.
     expanding: Rc<Cell<bool>>,

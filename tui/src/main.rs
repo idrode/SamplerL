@@ -5,6 +5,7 @@ mod diagnose;
 mod editing;
 mod model;
 mod palette;
+mod tap;
 #[cfg(test)]
 mod tests;
 mod ui;

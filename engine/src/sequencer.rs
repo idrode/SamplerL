@@ -404,9 +404,59 @@ pub fn bar_frames(bpm: f64, sample_rate: u32) -> u64 {
     step_offset(STEPS, bpm, sample_rate)
 }
 
+/// Frames de un compás de `steps` pasos (otro compás que 4/4), con el
+/// mismo redondeo que el transporte.
+pub fn bar_frames_steps(steps: usize, bpm: f64, sample_rate: u32) -> u64 {
+    step_offset(steps, bpm, sample_rate)
+}
+
 /// Si `bpm` está en el rango admitido (`MIN_BPM`..=`MAX_BPM`).
 pub fn valid_bpm(bpm: f64) -> bool {
     (MIN_BPM..=MAX_BPM).contains(&bpm)
+}
+
+/// Rampa de tempo: de `from` a `to` BPM en `bars` compases. Cada compás
+/// suena a su tempo (cuantizado al compás): el `k` desde que entra, a
+/// `from + (to − from)·k/bars`; después, a `to`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TempoRamp {
+    pub from: f64,
+    pub to: f64,
+    pub bars: u64,
+}
+
+impl TempoRamp {
+    /// Tempo del compás `k` desde que entró la rampa.
+    pub fn bpm_at(&self, k: u64) -> f64 {
+        if self.bars == 0 || k >= self.bars {
+            return self.to;
+        }
+        self.from + (self.to - self.from) * k as f64 / self.bars as f64
+    }
+}
+
+/// Compás: cuántos pasos tiene y cada cuántos pasos cae un pulso (del
+/// metrónomo). 4/4 son 16 y 4; 3/4, 12 y 4; 7/8, 14 y 2.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Meter {
+    pub steps: usize,
+    pub beat: usize,
+}
+
+impl Meter {
+    pub const COMMON: Meter = Meter { steps: 16, beat: 4 };
+
+    /// `n/d` (d = 4, 8 o 16): `n · 16/d` pasos y un pulso cada `16/d`.
+    pub fn new(n: usize, d: usize) -> Option<Meter> {
+        if !matches!(d, 4 | 8 | 16) {
+            return None;
+        }
+        let beat = STEPS / d;
+        let steps = n * beat;
+        (1..=MAX_STEPS)
+            .contains(&steps)
+            .then_some(Meter { steps, beat })
+    }
 }
 
 /// Reloj del secuenciador en el hilo de audio: compás, paso y tempo. Los
@@ -421,9 +471,16 @@ pub(crate) struct Transport {
     step: usize,
     /// Compases completos desde que arrancó el transporte.
     bar: u64,
+    /// Pasos de los compases anteriores (desde que arrancó).
+    steps_before: u64,
     bpm: f64,
-    /// Tempo que espera al siguiente compás.
+    meter: Meter,
+    /// Rampa de tempo en curso y el compás en que entró.
+    ramp: Option<(TempoRamp, u64)>,
+    /// Tempo, rampa y compás que esperan al siguiente compás.
     pub pending_bpm: Option<f64>,
+    pub pending_ramp: Option<TempoRamp>,
+    pub pending_meter: Option<Meter>,
 }
 
 impl Transport {
@@ -434,8 +491,13 @@ impl Transport {
             bar_start: 0,
             step: 0,
             bar: 0,
+            steps_before: 0,
             bpm: DEFAULT_BPM,
+            meter: Meter::COMMON,
+            ramp: None,
             pending_bpm: None,
+            pending_ramp: None,
+            pending_meter: None,
         }
     }
 
@@ -446,6 +508,16 @@ impl Transport {
         self.bar_start = 0;
         self.step = 0;
         self.bar = 0;
+        self.steps_before = 0;
+        // Una rampa en curso vuelve a empezar con la canción.
+        if let Some((_, start)) = &mut self.ramp {
+            *start = 0;
+        }
+    }
+
+    /// Compás que está sonando.
+    pub fn meter(&self) -> Meter {
+        self.meter
     }
 
     /// Tempo que está sonando.
@@ -459,7 +531,7 @@ impl Transport {
         let step = frames_per_step(self.bpm, sample_rate);
         // Durante el último paso del compás, `bar` y `bar_start` ya son los
         // del siguiente: la resta sale negativa y la suma, bien.
-        self.bar as f64 * STEPS as f64 + (self.frame as f64 - self.bar_start as f64) / step
+        self.steps_before as f64 + (self.frame as f64 - self.bar_start as f64) / step
     }
 
     /// Frame (absoluto) del siguiente paso.
@@ -467,22 +539,39 @@ impl Transport {
         self.bar_start + step_offset(self.step, self.bpm, sample_rate)
     }
 
-    /// Avanza al siguiente paso y devuelve el que toca disparar ahora y su
-    /// compás. En el paso 0 (inicio de compás) aplica antes el tempo pendiente.
-    pub fn advance(&mut self, sample_rate: u32) -> (usize, u64) {
+    /// Avanza al siguiente paso y devuelve el que toca disparar ahora, su
+    /// compás y su semicorchea desde que arrancó (la que leen las pistas).
+    /// En el paso 0 (inicio de compás) aplica antes el tempo, la rampa y el
+    /// compás pendientes.
+    pub fn advance(&mut self, sample_rate: u32) -> (usize, u64, u64) {
         let (step, bar) = (self.step, self.bar);
-        if step == 0
-            && let Some(bpm) = self.pending_bpm.take()
-        {
-            self.bpm = bpm;
+        if step == 0 {
+            if let Some(bpm) = self.pending_bpm.take() {
+                self.bpm = bpm;
+                self.ramp = None;
+            }
+            // La misma rampa otra vez (al recargar) sigue por donde iba.
+            if let Some(ramp) = self.pending_ramp.take()
+                && self.ramp.map(|(r, _)| r) != Some(ramp)
+            {
+                self.ramp = Some((ramp, bar));
+            }
+            if let Some(meter) = self.pending_meter.take() {
+                self.meter = meter;
+            }
+            if let Some((ramp, start)) = self.ramp {
+                self.bpm = ramp.bpm_at(bar - start);
+            }
         }
+        let global = self.steps_before + step as u64;
         self.step += 1;
-        if self.step == STEPS {
-            self.bar_start += step_offset(STEPS, self.bpm, sample_rate);
+        if self.step == self.meter.steps {
+            self.bar_start += step_offset(self.meter.steps, self.bpm, sample_rate);
+            self.steps_before += self.meter.steps as u64;
             self.step = 0;
             self.bar += 1;
         }
-        (step, bar)
+        (step, bar, global)
     }
 }
 

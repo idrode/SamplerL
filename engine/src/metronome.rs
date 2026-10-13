@@ -1,4 +1,5 @@
-//! Metrónomo: un clic corto en cada pulso (pasos 0, 4, 8 y 12) con acento
+//! Metrónomo: un clic corto en cada pulso (pasos 0, 4, 8 y 12 en 4/4; en
+//! compases de corcheas, cada 2 pasos) con acento
 //! en el primero del compás. Se genera en el hilo de audio sin reservas:
 //! un seno con una caída exponencial, que empieza al frame exacto del paso.
 
@@ -22,9 +23,10 @@ pub(crate) struct Metronome {
 }
 
 impl Metronome {
-    /// Empieza un clic si toca pulso en este paso (y está encendido).
-    pub fn on_step(&mut self, step: usize, sample_rate: u32) {
-        if !self.enabled || !step.is_multiple_of(4) {
+    /// Empieza un clic si toca pulso en este paso (uno cada `beat` pasos;
+    /// y está encendido).
+    pub fn on_step(&mut self, step: usize, beat: usize, sample_rate: u32) {
+        if !self.enabled || !step.is_multiple_of(beat.max(1)) {
             return;
         }
         let (hz, gain) = if step == 0 {

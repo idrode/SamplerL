@@ -282,6 +282,24 @@ fn the_audio_thread_never_allocates() {
     });
     assert_eq!(n, 0, "reservas con un pad que hace choke");
 
+    // Rampa de tempo y cambio de compás.
+    controller
+        .set_tempo_ramp(engine::TempoRamp {
+            from: 150.0,
+            to: 180.0,
+            bars: 2,
+        })
+        .unwrap();
+    controller
+        .set_meter(engine::Meter::new(7, 8).unwrap())
+        .unwrap();
+    let n = counted(|| {
+        for _ in 0..400 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas con rampa de tempo y compás de 7/8");
+
     controller.stop().unwrap();
     controller.start().unwrap();
     let n = counted(|| {

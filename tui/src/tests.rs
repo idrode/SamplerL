@@ -1203,7 +1203,7 @@ fn accepting_inserts_the_template_with_marked_parameters() {
     let (mut app, _engine) = open_at_end("complete_accept");
     // Enter sin haber elegido con las flechas: salto de línea normal.
     type_text(&mut app, "bp");
-    assert_eq!(completion_items(&app), ["bpm"]);
+    assert_eq!(completion_items(&app), ["bpm", "bpm_ramp"]);
     app.handle(special(Key::Enter));
     assert!(app.view().completion.is_none());
     assert_eq!(current_line(&app), "");
@@ -1214,10 +1214,11 @@ fn accepting_inserts_the_template_with_marked_parameters() {
     type_text(&mut app, "m");
     assert_eq!(
         completion_items(&app),
-        ["bpm"],
+        ["bpm", "bpm_ramp"],
         "con plantilla, sigue abierto"
     );
     app.handle(special(Key::Down));
+    app.handle(special(Key::Up));
     app.handle(special(Key::Enter));
     assert_eq!(current_line(&app), "bpm(170)");
     assert!(app.view().completion.is_none());
@@ -2344,3 +2345,4 @@ mod resample;
 mod sends;
 mod shapes;
 mod stretch;
+mod tempo;

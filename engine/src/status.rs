@@ -20,8 +20,12 @@ pub struct Status {
     pub bpm: f64,
     /// Compás del último paso disparado (desde que arrancó).
     pub bar: u64,
-    /// Último paso disparado (0 a 15); `None` antes del primero.
+    /// Último paso disparado (desde 0); `None` antes del primero.
     pub step: Option<usize>,
+    /// Semicorchea de ese paso desde que arrancó (la que leen las pistas).
+    pub global: u64,
+    /// Pasos del compás que suena (16 en 4/4).
+    pub bar_steps: usize,
     pub tracks: [TrackStatus; MAX_TRACKS],
     pub master: MasterStatus,
 }
@@ -53,6 +57,8 @@ pub(crate) struct SharedStatus {
     bpm: AtomicU64,
     bar: AtomicU64,
     step: AtomicU64,
+    global: AtomicU64,
+    bar_steps: AtomicU64,
     hit_start: [AtomicU64; MAX_TRACKS],
     peak: [AtomicU32; MAX_TRACKS],
     master_peak: AtomicU32,
@@ -66,6 +72,8 @@ impl SharedStatus {
             bpm: AtomicU64::new(bpm.to_bits()),
             bar: AtomicU64::new(0),
             step: AtomicU64::new(NONE),
+            global: AtomicU64::new(0),
+            bar_steps: AtomicU64::new(16),
             hit_start: std::array::from_fn(|_| AtomicU64::new(NONE)),
             peak: std::array::from_fn(|_| AtomicU32::new(0)),
             master_peak: AtomicU32::new(0),
@@ -80,9 +88,11 @@ impl SharedStatus {
         self.bpm.store(bpm.to_bits(), Relaxed);
     }
 
-    pub fn set_step(&self, bar: u64, step: usize) {
+    pub fn set_step(&self, bar: u64, step: usize, global: u64, bar_steps: usize) {
         self.bar.store(bar, Relaxed);
         self.step.store(step as u64, Relaxed);
+        self.global.store(global, Relaxed);
+        self.bar_steps.store(bar_steps as u64, Relaxed);
     }
 
     pub fn clear_step(&self) {
@@ -120,6 +130,8 @@ impl SharedStatus {
             bpm: f64::from_bits(self.bpm.load(Relaxed)),
             bar: self.bar.load(Relaxed),
             step: opt(self.step.load(Relaxed)).map(|s| s as usize),
+            global: self.global.load(Relaxed),
+            bar_steps: self.bar_steps.load(Relaxed) as usize,
             tracks: std::array::from_fn(|t| TrackStatus {
                 hit_start: opt(self.hit_start[t].load(Relaxed)).map(|s| s as usize),
                 peak: f32::from_bits(self.peak[t].swap(0, Relaxed)),
