@@ -1,0 +1,580 @@
+//! Configuración del usuario: `~/.config/sampler/config.toml` (o
+//! `$XDG_CONFIG_HOME/sampler/config.toml`), con los atajos de teclado
+//! (`[teclas]`) y los colores (`[colores]`).
+//!
+//! ```toml
+//! [teclas]
+//! guardar = "alt-s"
+//! marcha = ["ctrl-t", "f8"]
+//! paleta = "ctrl-p"
+//!
+//! [colores]
+//! acento = "#ff8700"
+//! sonando = "22"
+//! ```
+//!
+//! Nunca falla: si falta o está roto, valores por defecto y un aviso; lo
+//! que no se entiende se avisa y se ignora. F1 abre siempre la paleta
+//! (aunque se le dé otra tecla): así ninguna configuración la deja
+//! inaccesible.
+
+use std::path::{Path, PathBuf};
+
+use ratatui_textarea::{Input, Key};
+
+use crate::palette::Action;
+use crate::theme::{self, Theme};
+
+/// A qué lleva una tecla.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Bound {
+    Action(Action),
+    /// Abrir la paleta de comandos.
+    Palette,
+}
+
+/// Lo que se puede atar a una tecla en `[teclas]`, con sus teclas por
+/// defecto.
+pub const BINDABLE: &[(&str, Bound, &[&str])] = &[
+    ("paleta", Bound::Palette, &["f1"]),
+    ("guardar", Bound::Action(Action::SaveAndLoad), &["ctrl-s"]),
+    ("cargar", Bound::Action(Action::Load), &["ctrl-l", "f5"]),
+    (
+        "marcha",
+        Bound::Action(Action::Transport),
+        &["ctrl-t", "f8"],
+    ),
+    ("ir_al_error", Bound::Action(Action::GotoError), &["ctrl-g"]),
+    (
+        "siguiente_pista",
+        Bound::Action(Action::NextTrack),
+        &["ctrl-o"],
+    ),
+    ("recargar", Bound::Action(Action::ReloadExternal), &["f3"]),
+    ("ordenes", Bound::Action(Action::Commands), &["f2"]),
+    ("completar", Bound::Action(Action::Complete), &["f4"]),
+    ("salir", Bound::Action(Action::Quit), &["ctrl-q"]),
+    ("modo_tocar", Bound::Action(Action::PlayMode), &["esc"]),
+    (
+        "deshacer",
+        Bound::Action(Action::Undo),
+        &["ctrl-z", "ctrl-u"],
+    ),
+    ("rehacer", Bound::Action(Action::Redo), &["ctrl-r"]),
+    ("explorador", Bound::Action(Action::Browser), &[]),
+    ("tap_tempo", Bound::Action(Action::TapTempo), &[]),
+    ("metronomo", Bound::Action(Action::Metronome), &[]),
+    ("exportar", Bound::Action(Action::Export), &[]),
+];
+
+/// Una combinación de teclas: `ctrl-s`, `alt-x`, `f5`, `esc`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeyCombo {
+    pub key: Key,
+    pub ctrl: bool,
+    pub alt: bool,
+}
+
+impl KeyCombo {
+    /// Lee `ctrl-s`, `alt-shift`... no: modificadores `ctrl-` y `alt-` y una
+    /// letra, un número, `f1`-`f12` o `esc`. Sin modificador solo valen las
+    /// F y Esc (una letra sola escribiría texto).
+    pub fn parse(text: &str) -> Result<KeyCombo, String> {
+        let lower = text.trim().to_lowercase();
+        let (mut ctrl, mut alt) = (false, false);
+        let mut rest = lower.as_str();
+        loop {
+            if let Some(r) = rest.strip_prefix("ctrl-") {
+                ctrl = true;
+                rest = r;
+            } else if let Some(r) = rest.strip_prefix("alt-") {
+                alt = true;
+                rest = r;
+            } else {
+                break;
+            }
+        }
+        let key = match rest {
+            "esc" => Key::Esc,
+            f if f.starts_with('f') && f.len() > 1 => {
+                let n: u8 = f[1..]
+                    .parse()
+                    .ok()
+                    .filter(|n| (1..=12).contains(n))
+                    .ok_or_else(|| format!("«{text}»: tecla desconocida"))?;
+                Key::F(n)
+            }
+            c if c.chars().count() == 1 && c.chars().all(|c| c.is_ascii_alphanumeric()) => {
+                if !ctrl && !alt {
+                    return Err(format!(
+                        "«{text}»: una letra sin ctrl- ni alt- escribiría texto"
+                    ));
+                }
+                Key::Char(c.chars().next().unwrap())
+            }
+            _ => return Err(format!("«{text}»: tecla desconocida")),
+        };
+        Ok(KeyCombo { key, ctrl, alt })
+    }
+
+    pub fn matches(&self, input: &Input) -> bool {
+        let key = match input.key {
+            Key::Char(c) => Key::Char(c.to_ascii_lowercase()),
+            k => k,
+        };
+        key == self.key && input.ctrl == self.ctrl && input.alt == self.alt
+    }
+
+    /// Como se ve: `Ctrl-S`, `Alt-X`, `F5`, `Esc`.
+    pub fn text(&self) -> String {
+        let mut out = String::new();
+        if self.ctrl {
+            out.push_str("Ctrl-");
+        }
+        if self.alt {
+            out.push_str("Alt-");
+        }
+        match self.key {
+            Key::Char(c) => out.push(c.to_ascii_uppercase()),
+            Key::F(n) => out.push_str(&format!("F{n}")),
+            Key::Esc => out.push_str("Esc"),
+            _ => out.push('?'),
+        }
+        out
+    }
+}
+
+/// Las teclas de cada acción.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Keymap {
+    bindings: Vec<(KeyCombo, Bound)>,
+}
+
+/// F1: la paleta, siempre.
+const PALETTE_KEY: KeyCombo = KeyCombo {
+    key: Key::F(1),
+    ctrl: false,
+    alt: false,
+};
+
+impl Default for Keymap {
+    fn default() -> Self {
+        let mut bindings = Vec::new();
+        for (_, bound, keys) in BINDABLE {
+            for key in *keys {
+                bindings.push((KeyCombo::parse(key).expect("tecla por defecto"), *bound));
+            }
+        }
+        Keymap { bindings }
+    }
+}
+
+impl Keymap {
+    /// A qué lleva esta tecla (F1, siempre a la paleta).
+    pub fn lookup(&self, input: &Input) -> Option<Bound> {
+        if PALETTE_KEY.matches(input) {
+            return Some(Bound::Palette);
+        }
+        self.bindings
+            .iter()
+            .find(|(k, _)| k.matches(input))
+            .map(|(_, b)| *b)
+    }
+
+    /// Las teclas de una acción, como se ven: `Ctrl-S o F5` (vacío si no
+    /// tiene).
+    pub fn describe(&self, bound: Bound) -> String {
+        let mut keys: Vec<String> = Vec::new();
+        if bound == Bound::Palette {
+            keys.push(PALETTE_KEY.text());
+        }
+        for (k, b) in &self.bindings {
+            if *b == bound && !keys.contains(&k.text()) {
+                keys.push(k.text());
+            }
+        }
+        keys.join(" o ")
+    }
+
+    /// La primera tecla de una acción, como se ve (`Ctrl-S`).
+    pub fn first(&self, bound: Bound) -> Option<String> {
+        if bound == Bound::Palette {
+            return Some(PALETTE_KEY.text());
+        }
+        self.bindings
+            .iter()
+            .find(|(_, b)| *b == bound)
+            .map(|(k, _)| k.text())
+    }
+
+    /// Línea de ayuda con los atajos principales (`Ctrl-S guardar y cargar
+    /// · ...`): la del modo editor o la del modo tocar.
+    pub fn help(&self, playing: bool) -> String {
+        let action = |a| Bound::Action(a);
+        let items: &[(Bound, &str)] = if playing {
+            &[
+                (action(Action::NextTrack), "pista"),
+                (action(Action::Transport), "marcha/paro"),
+                (Bound::Palette, "paleta"),
+                (action(Action::PlayMode), "editor"),
+            ]
+        } else {
+            &[
+                (action(Action::SaveAndLoad), "guardar y cargar"),
+                (action(Action::Load), "cargar"),
+                (action(Action::Transport), "marcha/paro"),
+                (action(Action::GotoError), "ir al error"),
+                (action(Action::NextTrack), "pista"),
+                (action(Action::PlayMode), "tocar"),
+                (Bound::Palette, "paleta"),
+                (action(Action::Commands), "órdenes"),
+                (action(Action::Complete), "completar"),
+                (action(Action::Quit), "salir"),
+            ]
+        };
+        let parts: Vec<String> = items
+            .iter()
+            .filter_map(|(b, what)| self.first(*b).map(|k| format!("{k} {what}")))
+            .collect();
+        if playing {
+            format!(
+                "TOCAR: 1-0 q-i cortes · ←→ preescucha · m mute · s solo · {}",
+                parts.join(" · ")
+            )
+        } else {
+            parts.join(" · ")
+        }
+    }
+
+    /// Aplica `[teclas]`: las acciones que aparecen cambian sus teclas por
+    /// esas; lo que no vale o choca, se avisa.
+    fn apply(&mut self, table: &toml::Table, warnings: &mut Vec<String>) {
+        let mut user: Vec<(KeyCombo, Bound, String)> = Vec::new();
+        let mut rebound: Vec<Bound> = Vec::new();
+        for (name, value) in table {
+            let Some((_, bound, _)) = BINDABLE.iter().find(|(n, _, _)| n == name) else {
+                warnings.push(format!(
+                    "[teclas] «{name}» no existe (hay: {})",
+                    BINDABLE
+                        .iter()
+                        .map(|(n, _, _)| *n)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+                continue;
+            };
+            let texts: Vec<String> = match value {
+                toml::Value::String(s) => vec![s.clone()],
+                toml::Value::Array(list) => list
+                    .iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect(),
+                _ => {
+                    warnings.push(format!("[teclas] {name}: una tecla o una lista de teclas"));
+                    continue;
+                }
+            };
+            let before = user.len();
+            for text in texts {
+                match KeyCombo::parse(&text) {
+                    Ok(combo) if combo == PALETTE_KEY && *bound != Bound::Palette => warnings.push(
+                        format!("[teclas] {name}: F1 es siempre la paleta de comandos"),
+                    ),
+                    Ok(combo) => match user.iter().find(|(k, _, _)| *k == combo) {
+                        Some((_, _, other)) => warnings.push(format!(
+                            "[teclas] {name}: {} ya es de {other}; no se usa",
+                            combo.text()
+                        )),
+                        None => user.push((combo, *bound, name.clone())),
+                    },
+                    Err(e) => warnings.push(format!("[teclas] {name}: {e}")),
+                }
+            }
+            // Con alguna tecla buena, esas sustituyen a las de siempre; si
+            // no, se queda con las suyas.
+            if user.len() > before {
+                rebound.push(*bound);
+            }
+        }
+        // Las de la configuración primero; las por defecto de las demás
+        // acciones, si su tecla no la ha cogido otra.
+        let mut bindings: Vec<(KeyCombo, Bound)> = user.iter().map(|(k, b, _)| (*k, *b)).collect();
+        for (combo, bound) in &self.bindings {
+            if rebound.contains(bound) {
+                continue;
+            }
+            match user.iter().find(|(k, _, _)| k == combo) {
+                Some((_, _, other)) => {
+                    let name = BINDABLE.iter().find(|(_, b, _)| b == bound).unwrap().0;
+                    warnings.push(format!(
+                        "[teclas] {} era de {name}; ahora es de {other}",
+                        combo.text()
+                    ));
+                }
+                None => bindings.push((*combo, *bound)),
+            }
+        }
+        self.bindings = bindings;
+    }
+}
+
+/// Lo que se lee del archivo.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Config {
+    pub keys: Keymap,
+    pub theme: Theme,
+    /// Avisos (archivo que falta o roto, claves desconocidas, choques...).
+    pub warnings: Vec<String>,
+}
+
+/// Carpeta de configuración: `$XDG_CONFIG_HOME/sampler` o
+/// `~/.config/sampler`.
+pub fn dir() -> Option<PathBuf> {
+    script::blocks::global_dir().and_then(|blocks| blocks.parent().map(Path::to_path_buf))
+}
+
+impl Config {
+    /// Lee el archivo (si falta o está roto, por defecto y un aviso).
+    pub fn load(path: &Path, truecolor: bool) -> Config {
+        match std::fs::read_to_string(path) {
+            Ok(text) => Config::parse(&text, truecolor, &path.display().to_string()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Config {
+                warnings: vec![format!(
+                    "sin {}: teclas y colores por defecto (ver la guía)",
+                    path.display()
+                )],
+                ..Config::default()
+            },
+            Err(e) => Config {
+                warnings: vec![format!("{}: {e}; valores por defecto", path.display())],
+                ..Config::default()
+            },
+        }
+    }
+
+    /// Lee el texto de un `config.toml`.
+    pub fn parse(text: &str, truecolor: bool, name: &str) -> Config {
+        let mut config = Config::default();
+        let table: toml::Table = match text.parse() {
+            Ok(table) => table,
+            Err(e) => {
+                let first = e.to_string().lines().next().unwrap_or("").to_string();
+                config
+                    .warnings
+                    .push(format!("{name} está roto ({first}); valores por defecto"));
+                return config;
+            }
+        };
+        for (section, value) in &table {
+            let Some(inner) = value.as_table() else {
+                config.warnings.push(format!(
+                    "{name}: «{section}» tendría que ser una sección [{section}]"
+                ));
+                continue;
+            };
+            match section.as_str() {
+                "teclas" => config.keys.apply(inner, &mut config.warnings),
+                "colores" => {
+                    for (key, value) in inner {
+                        let color = value
+                            .as_str()
+                            .map(String::from)
+                            .or_else(|| value.as_integer().map(|n| n.to_string()))
+                            .and_then(|text| theme::parse(&text, truecolor));
+                        match color {
+                            Some(color) if config.theme.set(key, color) => {}
+                            Some(_) => config.warnings.push(format!(
+                                "[colores] «{key}» no existe (hay: {})",
+                                theme::NAMES.join(", ")
+                            )),
+                            None => config
+                                .warnings
+                                .push(format!("[colores] {key}: color no válido")),
+                        }
+                    }
+                }
+                other => config.warnings.push(format!(
+                    "{name}: sección [{other}] desconocida (hay: teclas, colores)"
+                )),
+            }
+        }
+        config
+    }
+}
+
+/// Marcas de la tabla de la configuración en la guía.
+#[cfg(test)]
+const GUIDE_BEGIN: &str = "<!-- config:inicio (generado desde tui/src/config.rs) -->";
+#[cfg(test)]
+const GUIDE_END: &str = "<!-- config:fin -->";
+
+/// Tablas de `[teclas]` y `[colores]` para `docs/GUIA.md`.
+#[cfg(test)]
+fn guide_markdown() -> String {
+    let mut out = String::from("| En `[teclas]` | Acción | Por defecto |\n| --- | --- | --- |\n");
+    for (name, bound, keys) in BINDABLE {
+        let what = match bound {
+            Bound::Palette => "Abrir la paleta de comandos (F1 la abre siempre)".to_string(),
+            Bound::Action(a) => crate::palette::ACTIONS
+                .iter()
+                .find(|d| d.action == *a)
+                .map_or(String::new(), |d| d.name.to_string()),
+        };
+        let keys: Vec<String> = keys.iter().map(|k| format!("`{k}`")).collect();
+        let keys = if keys.is_empty() {
+            "—".to_string()
+        } else {
+            keys.join(", ")
+        };
+        out.push_str(&format!("| `{name}` | {what} | {keys} |\n"));
+    }
+    out.push_str("\n| En `[colores]` | Para |\n| --- | --- |\n");
+    for (name, what) in theme::NAMES.iter().zip(theme::DESCRIPTIONS) {
+        out.push_str(&format!("| `{name}` | {what} |\n"));
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::style::Color;
+
+    #[test]
+    fn the_guide_lists_the_config() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../docs/GUIA.md");
+        let guide = std::fs::read_to_string(path).unwrap();
+        let begin = guide
+            .find(GUIDE_BEGIN)
+            .expect("faltan las marcas config:inicio/config:fin")
+            + GUIDE_BEGIN.len();
+        let end = guide[begin..].find(GUIDE_END).unwrap() + begin;
+        let updated = format!(
+            "{}\n\n{}\n{}",
+            &guide[..begin],
+            guide_markdown(),
+            &guide[end..]
+        );
+        if std::env::var_os("ACTUALIZAR_GUIA").is_some() {
+            std::fs::write(path, &updated).unwrap();
+            return;
+        }
+        assert!(
+            updated == guide,
+            "docs/GUIA.md no coincide con tui/src/config.rs: \
+             ACTUALIZAR_GUIA=1 cargo test -p tui the_guide_lists_the_config"
+        );
+    }
+
+    fn input(key: Key, ctrl: bool, alt: bool) -> Input {
+        Input {
+            key,
+            ctrl,
+            alt,
+            ..Input::default()
+        }
+    }
+
+    #[test]
+    fn keys_parse_and_describe_themselves() {
+        let k = KeyCombo::parse("Ctrl-S").unwrap();
+        assert_eq!(k.text(), "Ctrl-S");
+        assert!(k.matches(&input(Key::Char('s'), true, false)));
+        assert!(k.matches(&input(Key::Char('S'), true, false)));
+        assert!(!k.matches(&input(Key::Char('s'), false, false)));
+        assert_eq!(KeyCombo::parse("f12").unwrap().key, Key::F(12));
+        assert_eq!(KeyCombo::parse("ctrl-alt-k").unwrap().text(), "Ctrl-Alt-K");
+        assert!(
+            KeyCombo::parse("s")
+                .unwrap_err()
+                .contains("escribiría texto")
+        );
+        assert!(KeyCombo::parse("f13").is_err());
+        assert!(KeyCombo::parse("ctrl-enter").is_err());
+        let keys = Keymap::default();
+        assert_eq!(keys.describe(Bound::Action(Action::Load)), "Ctrl-L o F5");
+        assert_eq!(keys.describe(Bound::Palette), "F1");
+    }
+
+    #[test]
+    fn the_config_rebinds_and_warns_about_conflicts() {
+        let text = r##"
+[teclas]
+guardar = "alt-s"
+paleta = "ctrl-p"
+marcha = ["ctrl-g", "f8"]
+cargar = "f1"
+explorador = ["alt-b", "alt-s"]
+inventada = "alt-x"
+salir = "q"
+
+[colores]
+acento = "#ff8700"
+sonando = 22
+tenue = "fucsia"
+brillo = "red"
+"##;
+        let config = Config::parse(text, true, "config.toml");
+        let keys = &config.keys;
+        let at = |k, c, a| keys.lookup(&input(k, c, a));
+        assert_eq!(
+            at(Key::Char('s'), false, true),
+            Some(Bound::Action(Action::SaveAndLoad))
+        );
+        assert_eq!(at(Key::Char('s'), true, false), None, "ctrl-s ya no guarda");
+        assert_eq!(at(Key::Char('p'), true, false), Some(Bound::Palette));
+        assert_eq!(
+            at(Key::F(1), false, false),
+            Some(Bound::Palette),
+            "F1, siempre"
+        );
+        assert_eq!(
+            at(Key::Char('g'), true, false),
+            Some(Bound::Action(Action::Transport))
+        );
+        assert_eq!(
+            at(Key::Char('b'), false, true),
+            Some(Bound::Action(Action::Browser))
+        );
+        // salir = "q" no vale: se queda con su tecla por defecto.
+        assert_eq!(
+            at(Key::Char('q'), true, false),
+            Some(Bound::Action(Action::Quit))
+        );
+        assert_eq!(keys.describe(Bound::Palette), "F1 o Ctrl-P");
+        assert_eq!(
+            config.warnings,
+            [
+                "[teclas] cargar: F1 es siempre la paleta de comandos",
+                "[teclas] explorador: Alt-S ya es de guardar; no se usa",
+                "[teclas] «inventada» no existe (hay: paleta, guardar, cargar, marcha, ir_al_error, siguiente_pista, recargar, ordenes, completar, salir, modo_tocar, deshacer, rehacer, explorador, tap_tempo, metronomo, exportar)",
+                "[teclas] salir: «q»: una letra sin ctrl- ni alt- escribiría texto",
+                "[teclas] Ctrl-G era de ir_al_error; ahora es de marcha",
+                "[colores] tenue: color no válido",
+                "[colores] «brillo» no existe (hay: acento, tenue, error, linea_error, aviso_pasos, aviso, onda, cortes, sonando, nivel)",
+            ]
+        );
+        assert_eq!(config.theme.accent, Color::Rgb(0xff, 0x87, 0x00));
+        assert_eq!(config.theme.playing, Color::Indexed(22));
+        // Sin truecolor, el más cercano de 256.
+        let plain = Config::parse(text, false, "config.toml");
+        assert_eq!(plain.theme.accent, Color::Indexed(208));
+    }
+
+    #[test]
+    fn a_broken_or_missing_file_gives_defaults_and_a_warning() {
+        let broken = Config::parse("[teclas\nguardar = ", true, "config.toml");
+        assert_eq!(broken.keys, Keymap::default());
+        assert_eq!(broken.theme, Theme::default());
+        assert!(
+            broken.warnings[0].starts_with("config.toml está roto ("),
+            "{:?}",
+            broken.warnings
+        );
+        let missing = Config::load(Path::new("/no/existe/config.toml"), true);
+        assert_eq!(missing.keys, Keymap::default());
+        assert!(missing.warnings[0].starts_with("sin /no/existe/config.toml"));
+        let odd = Config::parse("teclas = 3\n[otra]\nx = 1\n", true, "c.toml");
+        assert_eq!(odd.warnings.len(), 2, "{:?}", odd.warnings);
+    }
+}

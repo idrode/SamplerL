@@ -11,6 +11,7 @@ use script::blocks::{self, Library, SaveError, Scope};
 use script::{Project, ScriptError, ScriptHost, api};
 
 use crate::complete::{self, Candidate};
+use crate::config::{Bound, Config, Keymap};
 use crate::diagnose;
 use crate::editing;
 use crate::model::{
@@ -212,6 +213,8 @@ pub struct App {
     slots: [Option<String>; SLOTS],
     /// Esperando el número de ranura.
     slot_prompt: Option<SlotOp>,
+    /// Atajos de teclado (los de la configuración o los de siempre).
+    keys: Keymap,
 }
 
 impl App {
@@ -262,6 +265,7 @@ impl App {
             tapping: None,
             slots: Default::default(),
             slot_prompt: None,
+            keys: Keymap::default(),
         };
         app.reload_blocks();
         app.load();
@@ -316,6 +320,20 @@ impl App {
         self.path
             .file_stem()
             .map_or_else(|| "canción".into(), |s| s.to_string_lossy().into())
+    }
+
+    /// Aplica la configuración del usuario (atajos; el tema lo pone `main`
+    /// en el hilo que dibuja). Sus avisos van al mensaje.
+    pub fn set_config(&mut self, config: &Config) {
+        self.keys = config.keys.clone();
+        if !config.warnings.is_empty() {
+            self.message = config
+                .warnings
+                .iter()
+                .map(|w| format!("⚠ {w}"))
+                .collect::<Vec<_>>()
+                .join(" · ");
+        }
     }
 
     /// Pone la carpeta global de bloques y relee la biblioteca.
@@ -1651,7 +1669,7 @@ impl App {
     /// Entradas de la paleta que coinciden con lo escrito.
     fn palette_matches(&self) -> Vec<palette::Entry> {
         let query = self.palette.as_ref().map_or("", |p| p.query.as_str());
-        palette::filter(&palette::entries(self.last_palette), query)
+        palette::filter(&palette::entries_with(self.last_palette, &self.keys), query)
     }
 
     /// F1: abre la paleta de comandos.
@@ -2134,7 +2152,9 @@ impl App {
             }
             return Flow::Continue;
         }
-        if input.key == Key::F(1) {
+        // F1 (y la tecla que se le dé) abre siempre la paleta.
+        let bound = self.keys.lookup(&input);
+        if bound == Some(Bound::Palette) {
             self.open_palette();
             return Flow::Continue;
         }
@@ -2176,26 +2196,37 @@ impl App {
             return Flow::Continue;
         }
         let quit_armed = std::mem::replace(&mut self.quit_armed, false);
-        if (input.key, input.ctrl) != (Key::Char('s'), true) {
+        let action = match bound {
+            Some(Bound::Action(action)) => Some(action),
+            _ => None,
+        };
+        if action != Some(Action::SaveAndLoad) {
             self.overwrite_armed = false;
         }
-        match (input.key, input.ctrl) {
-            (Key::Char('q'), true) => return self.request_quit(quit_armed),
+        // Los atajos (los del archivo de configuración o los de siempre).
+        match action {
+            Some(Action::Quit) => return self.request_quit(quit_armed),
             // Deshacer y rehacer pasan por la app (acciones compuestas).
-            (Key::Char('z' | 'u'), true) => return self.run_action(Action::Undo),
-            (Key::Char('r'), true) => return self.run_action(Action::Redo),
-            (Key::Char('s'), true) => self.save(),
-            (Key::Char('l'), true) | (Key::F(5), _) => self.load(),
-            (Key::Char('t'), true) | (Key::F(8), _) => self.toggle_transport(),
-            (Key::Char('g'), true) => self.goto_error(),
-            (Key::Char('o'), true) => self.next_track(),
-            (Key::F(3), _) => self.reload_external(),
-            (Key::F(2), _) => self.prompt = Some(String::new()),
-            (Key::F(4), _) if self.mode == Mode::Edit => {
+            Some(a @ (Action::Undo | Action::Redo)) => return self.run_action(a),
+            Some(Action::Complete) if self.mode == Mode::Edit => {
                 self.open_completion();
                 return Flow::Continue;
             }
-            (Key::Esc, _) => self.toggle_mode(),
+            Some(Action::Complete) => {}
+            Some(action) => {
+                self.run_action(action);
+            }
+            None => return self.handle_plain(input),
+        }
+        // Los atajos cierran el autocompletado.
+        self.completion = None;
+        Flow::Continue
+    }
+
+    /// Una tecla que no es un atajo: en modo tocar dispara cortes y demás;
+    /// en el editor, escribe.
+    fn handle_plain(&mut self, input: Input) -> Flow {
+        match (input.key, input.ctrl) {
             (Key::Char(c), false) if self.mode == Mode::Play && !input.alt => {
                 if let Some(index) = PADS.iter().position(|&p| p == c.to_ascii_lowercase()) {
                     self.play_pad(index);
@@ -2449,6 +2480,7 @@ impl App {
                 }
             }),
             external_change: self.external.is_some(),
+            key_help: self.keys.help(self.mode == Mode::Play),
             prompt: self.prompt.clone(),
             project: self
                 .project

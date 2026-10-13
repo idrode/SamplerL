@@ -330,14 +330,29 @@ pub struct Entry {
 }
 
 /// Todas las entradas; la última usada (si la hay) va primero.
+#[cfg(test)]
 pub fn entries(last: Option<Item>) -> Vec<Entry> {
+    entries_with(last, &crate::config::Keymap::default())
+}
+
+/// Como [`entries`], con los atajos de un mapa de teclas (el de la
+/// configuración) para las acciones que tienen.
+pub fn entries_with(last: Option<Item>, keys: &crate::config::Keymap) -> Vec<Entry> {
     let mut all: Vec<Entry> = ACTIONS
         .iter()
-        .map(|a| Entry {
-            item: Item::Action(a.action),
-            name: a.name.into(),
-            description: a.description.into(),
-            keys: a.keys.into(),
+        .map(|a| {
+            let bound = crate::config::Bound::Action(a.action);
+            let configurable = crate::config::BINDABLE.iter().any(|(_, b, _)| *b == bound);
+            Entry {
+                item: Item::Action(a.action),
+                name: a.name.into(),
+                description: a.description.into(),
+                keys: if configurable {
+                    keys.describe(bound)
+                } else {
+                    a.keys.into()
+                },
+            }
         })
         .collect();
     all.extend(api::SNIPPETS.iter().map(|s| Entry {

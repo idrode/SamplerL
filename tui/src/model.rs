@@ -36,6 +36,9 @@ pub struct ViewModel {
     pub project: Option<String>,
     /// Mensaje informativo de la última acción.
     pub message: String,
+    /// Atajos principales del modo actual (de la configuración); vacío: los
+    /// de siempre.
+    pub key_help: String,
     /// Error de la última carga (sigue sonando lo anterior).
     pub error: Option<ErrorView>,
     /// Problemas de la notación de `steps("...")` en el texto actual (en

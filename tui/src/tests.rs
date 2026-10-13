@@ -689,7 +689,7 @@ track("drums", amen):steps(". . . .  . . . .  . . . .  . . . ."):gain(0.5)
 /// Filas del buffer con el fondo de línea de error en la columna `x`.
 fn error_rows(buffer: &Buffer, x: u16) -> Vec<u16> {
     (0..buffer.area.height)
-        .filter(|&y| buffer[(x, y)].bg == ui::ERROR_LINE)
+        .filter(|&y| buffer[(x, y)].bg == ui::error_line())
         .collect()
 }
 
@@ -707,9 +707,9 @@ fn the_error_line_is_highlighted_in_the_editor() {
     // dentro del editor; ninguna otra.
     assert_eq!(error_rows(&buffer, 5), vec![3]);
     let (x, _) = find(&buffer, "track(\"drums\"").unwrap();
-    assert_eq!(buffer[(x, 3)].bg, ui::ERROR_LINE);
+    assert_eq!(buffer[(x, 3)].bg, ui::error_line());
     assert_eq!(buffer[(x, 3)].symbol(), "t");
-    assert_ne!(buffer[(70, 3)].bg, ui::ERROR_LINE, "fuera del editor");
+    assert_ne!(buffer[(70, 3)].bg, ui::error_line(), "fuera del editor");
 
     // Sin error, sin resaltado.
     replace_all(&mut app, SONG);
@@ -1690,12 +1690,12 @@ fn steps_errors_are_underlined_while_typing() {
     for dx in 0..2 {
         let cell = &buffer[(x + dx, y)];
         assert!(cell.modifier.contains(Modifier::UNDERLINED), "{dx}");
-        assert_eq!(cell.fg, ui::DIAGNOSTIC);
+        assert_eq!(cell.fg, ui::diagnostic());
     }
     // (La línea del cursor va subrayada entera; lo que distingue el paso es
     // el color.)
-    assert_ne!(buffer[(x + 2, y)].fg, ui::DIAGNOSTIC);
-    assert_ne!(buffer[(x - 2, y)].fg, ui::DIAGNOSTIC);
+    assert_ne!(buffer[(x + 2, y)].fg, ui::diagnostic());
+    assert_ne!(buffer[(x - 2, y)].fg, ui::diagnostic());
 
     // Al corregirlo, queda el aviso de los pasos que faltan, sobre todo el patrón.
     for _ in 0..13 {
@@ -1879,7 +1879,7 @@ fn the_palette_labels_the_slice_played_last() {
     let x = row[..row.find("2 snare").unwrap()].chars().count() as u16;
     assert_eq!(
         buffer[(x, title + 1)].bg,
-        ui::SLICE,
+        ui::slice_color(),
         "el seleccionado, resaltado"
     );
     // Y se puede usar en steps.
@@ -2338,6 +2338,7 @@ fn slices_are_nudged_with_keys_and_saved_in_the_project() {
 mod automation;
 mod blocks;
 mod browser;
+mod config;
 mod grid;
 mod import;
 mod length;

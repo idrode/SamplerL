@@ -1,6 +1,7 @@
 mod app;
 mod browser;
 mod complete;
+mod config;
 mod diagnose;
 mod editing;
 mod model;
@@ -8,6 +9,7 @@ mod palette;
 mod tap;
 #[cfg(test)]
 mod tests;
+mod theme;
 mod ui;
 
 use std::sync::Arc;
@@ -435,6 +437,14 @@ fn run_editor(path: &std::path::Path, allow_audio: bool) -> Result<(), BoxError>
         app::App::open(path, controller, sample_rate)?
     };
     app.set_global_blocks(script::blocks::global_dir());
+    // Teclas y colores del usuario (si falta o está roto: por defecto y un
+    // aviso).
+    let config = match config::dir() {
+        Some(dir) => config::Config::load(&dir.join("config.toml"), theme::truecolor()),
+        None => config::Config::default(),
+    };
+    theme::set(config.theme);
+    app.set_config(&config);
 
     let mut terminal = ratatui::init();
     let result = (|| -> Result<(), BoxError> {

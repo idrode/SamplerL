@@ -443,6 +443,70 @@ tecla cancela. Las ranuras duran mientras la interfaz está abierta; para
 guardar algo de verdad, hazlo bloque. Con F1 Enter se repite la última
 acción de la paleta, así que pegar otra vez es F1, Enter y el número.
 
+### Configuración: teclas y colores
+
+`~/.config/sampler/config.toml` (o `$XDG_CONFIG_HOME/sampler/config.toml`)
+cambia los atajos y los colores. Si falta o está roto, la interfaz usa los
+de siempre y lo dice al arrancar; lo que no entiende lo avisa y lo ignora.
+
+```toml
+[teclas]
+guardar = "alt-s"            # una tecla
+marcha = ["ctrl-t", "f8"]    # o varias
+paleta = "ctrl-p"            # además de F1
+
+[colores]
+acento = "#ff8700"           # nombre, #rrggbb o número de la paleta de 256
+sonando = 22
+```
+
+Las teclas son `ctrl-` y/o `alt-` con una letra o un número, `f1` a `f12`
+o `esc`. Una letra sola no vale (escribiría texto). F1 abre siempre la
+paleta, aunque se le dé otra tecla: así ninguna configuración la deja
+fuera de alcance. Si una tecla va a dos acciones, se avisa y se queda con
+la primera; si la tecla de siempre de una acción la coge otra, esa acción
+se queda con las demás que tenga. La paleta y la línea de ayuda enseñan
+las teclas que hay. Los colores `#rrggbb` se ven tal cual en una terminal
+con truecolor (`COLORTERM=truecolor`); si no, como el más parecido de la
+paleta de 256.
+
+<!-- config:inicio (generado desde tui/src/config.rs) -->
+
+| En `[teclas]` | Acción | Por defecto |
+| --- | --- | --- |
+| `paleta` | Abrir la paleta de comandos (F1 la abre siempre) | `f1` |
+| `guardar` | Guardar y cargar | `ctrl-s` |
+| `cargar` | Cargar sin guardar | `ctrl-l`, `f5` |
+| `marcha` | Marcha / paro | `ctrl-t`, `f8` |
+| `ir_al_error` | Ir al error | `ctrl-g` |
+| `siguiente_pista` | Siguiente pista | `ctrl-o` |
+| `recargar` | Recargar del disco | `f3` |
+| `ordenes` | Línea de órdenes | `f2` |
+| `completar` | Autocompletar | `f4` |
+| `salir` | Salir | `ctrl-q` |
+| `modo_tocar` | Modo tocar | `esc` |
+| `deshacer` | Deshacer | `ctrl-z`, `ctrl-u` |
+| `rehacer` | Rehacer | `ctrl-r` |
+| `explorador` | Explorador de samples | — |
+| `tap_tempo` | Tap tempo | — |
+| `metronomo` | Metrónomo | — |
+| `exportar` | Exportar la mezcla | — |
+
+| En `[colores]` | Para |
+| --- | --- |
+| `acento` | bordes, la pista elegida, la paleta |
+| `tenue` | texto secundario |
+| `error` | errores |
+| `linea_error` | fondo de la línea con error |
+| `aviso_pasos` | paso con error en `steps("...")` |
+| `aviso` | avisos (limitador, cambios fuera del editor) |
+| `onda` | forma de onda |
+| `cortes` | marcas de los cortes |
+| `sonando` | fondo del paso que suena en el tracker |
+| `nivel` | medidores de nivel |
+
+<!-- config:fin -->
+
 ### Editor
 
 Los del widget de texto (`ratatui-textarea`): flechas para moverse, Tab

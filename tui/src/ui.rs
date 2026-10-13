@@ -15,17 +15,41 @@ use crate::model::{
     BlockPickerView, BrowserView, CompletionView, PaletteView, SlotsView, ViewModel, fx_text,
     step_text,
 };
+use crate::theme;
 
-pub const ERROR: Color = Color::Red;
+// Colores del tema (ver `crate::theme`).
+pub fn error_color() -> Color {
+    theme::get().error
+}
 /// Fondo de la línea con error (rojo oscuro de la paleta de 256 colores).
-pub const ERROR_LINE: Color = Color::Indexed(52);
+pub fn error_line() -> Color {
+    theme::get().error_line
+}
 /// Texto subrayado de un paso con error en `steps("...")`.
-pub const DIAGNOSTIC: Color = Color::LightRed;
-pub const WARNING: Color = Color::Yellow;
-pub const ACCENT: Color = Color::Cyan;
-pub const DIM: Color = Color::DarkGray;
-pub const WAVE: Color = Color::Gray;
-pub const SLICE: Color = Color::Yellow;
+pub fn diagnostic() -> Color {
+    theme::get().diagnostic
+}
+pub fn warning_color() -> Color {
+    theme::get().warning
+}
+pub fn accent() -> Color {
+    theme::get().accent
+}
+pub fn dim() -> Color {
+    theme::get().dim
+}
+pub fn wave_color() -> Color {
+    theme::get().wave
+}
+pub fn slice_color() -> Color {
+    theme::get().slice
+}
+fn playing_color() -> Color {
+    theme::get().playing
+}
+fn meter_color() -> Color {
+    theme::get().meter
+}
 
 /// Dibuja toda la interfaz.
 pub fn draw(frame: &mut Frame, app: &mut App) {
@@ -93,16 +117,16 @@ impl Widget for SlotsPopup<'_> {
         let view = self.0;
         Clear.render(area, buf);
         let block = Block::bordered()
-            .border_style(Style::new().fg(ACCENT))
+            .border_style(Style::new().fg(accent()))
             .title(format!(" {} · 1-9 · Esc ", view.title));
         let lines: Vec<Line> = view
             .items
             .iter()
             .enumerate()
             .map(|(i, slot)| {
-                let number = Span::from(format!(" {} ", i + 1)).fg(ACCENT).bold();
+                let number = Span::from(format!(" {} ", i + 1)).fg(accent()).bold();
                 match slot {
-                    None => Line::from(vec![number, Span::from("vacía").fg(DIM)]),
+                    None => Line::from(vec![number, Span::from("vacía").fg(dim())]),
                     Some(lines) => {
                         let first = lines.iter().find(|l| !l.trim().is_empty());
                         // Cuántas líneas, delante (la primera puede no caber).
@@ -112,7 +136,7 @@ impl Widget for SlotsPopup<'_> {
                         };
                         Line::from(vec![
                             number,
-                            Span::from(count).fg(DIM),
+                            Span::from(count).fg(dim()),
                             Span::raw(first.map_or("", |l| l.trim()).to_string()),
                         ])
                     }
@@ -132,7 +156,7 @@ impl Widget for BrowserPopup<'_> {
         let view = self.0;
         Clear.render(area, buf);
         let block = Block::bordered()
-            .border_style(Style::new().fg(ACCENT))
+            .border_style(Style::new().fg(accent()))
             .title(format!(" samples · {} · ↑↓ Tab Enter Esc ", view.folder));
         let inner = block.inner(area);
         block.render(area, buf);
@@ -142,20 +166,20 @@ impl Widget for BrowserPopup<'_> {
         let width = inner.width as usize;
         let mut lines = vec![
             Line::from(vec![
-                Span::from("› ").fg(ACCENT).bold(),
+                Span::from("› ").fg(accent()).bold(),
                 Span::raw(format!("{}█", view.query)),
             ]),
-            Line::from("─".repeat(width)).fg(DIM),
+            Line::from("─".repeat(width)).fg(dim()),
         ];
         let rows = (inner.height as usize).saturating_sub(4);
         let first = view.selected.saturating_sub(rows.saturating_sub(1));
         if view.items.is_empty() {
-            lines.push(Line::from(" ningún WAV coincide").fg(DIM));
+            lines.push(Line::from(" ningún WAV coincide").fg(dim()));
         }
         for (i, name) in view.items.iter().enumerate().skip(first).take(rows) {
             let line = Line::raw(format!(" {name}"));
             lines.push(if i == view.selected {
-                line.style(Style::new().fg(Color::Black).bg(ACCENT))
+                line.style(Style::new().fg(Color::Black).bg(accent()))
             } else {
                 line
             });
@@ -163,8 +187,8 @@ impl Widget for BrowserPopup<'_> {
         while lines.len() < rows + 2 {
             lines.push(Line::raw(""));
         }
-        lines.push(Line::from("─".repeat(width)).fg(DIM));
-        lines.push(Line::from(view.info.clone()).fg(DIM));
+        lines.push(Line::from("─".repeat(width)).fg(dim()));
+        lines.push(Line::from(view.info.clone()).fg(dim()));
         Paragraph::new(lines).render(inner, buf);
     }
 }
@@ -200,7 +224,7 @@ impl Widget for BlockPickerPopup<'_> {
         let view = self.0;
         Clear.render(area, buf);
         let block = Block::bordered()
-            .border_style(Style::new().fg(ACCENT))
+            .border_style(Style::new().fg(accent()))
             .title(format!(" {} · ↑↓ Enter Esc ", view.title));
         let inner = block.inner(area);
         block.render(area, buf);
@@ -210,25 +234,25 @@ impl Widget for BlockPickerPopup<'_> {
         let width = inner.width as usize;
         let mut lines = vec![
             Line::from(vec![
-                Span::from("› ").fg(ACCENT).bold(),
+                Span::from("› ").fg(accent()).bold(),
                 Span::raw(format!("{}█", view.query)),
             ]),
-            Line::from("─".repeat(width)).fg(DIM),
+            Line::from("─".repeat(width)).fg(dim()),
         ];
         let rows = (PICKER_ROWS as usize).min(inner.height as usize - 3);
         let first = view.selected.saturating_sub(rows.saturating_sub(1));
         if view.items.is_empty() {
-            lines.push(Line::from(" ningún bloque coincide").fg(DIM));
+            lines.push(Line::from(" ningún bloque coincide").fg(dim()));
         }
         for (i, (name, scope, tags)) in view.items.iter().enumerate().skip(first).take(rows) {
             let detail = format!("{tags} {scope} ");
             let pad = width.saturating_sub(name.chars().count() + detail.chars().count() + 1);
             let line = Line::from(vec![
                 Span::raw(format!(" {name}{}", " ".repeat(pad))),
-                Span::from(detail).fg(DIM),
+                Span::from(detail).fg(dim()),
             ]);
             lines.push(if i == view.selected {
-                line.style(Style::new().fg(Color::Black).bg(ACCENT))
+                line.style(Style::new().fg(Color::Black).bg(accent()))
             } else {
                 line
             });
@@ -236,7 +260,7 @@ impl Widget for BlockPickerPopup<'_> {
         while lines.len() < rows + 2 {
             lines.push(Line::raw(""));
         }
-        lines.push(Line::from("─".repeat(width)).fg(DIM));
+        lines.push(Line::from("─".repeat(width)).fg(dim()));
         if !view.confirm.is_empty() {
             lines.push(Line::from(view.confirm.clone()).fg(Color::Yellow).bold());
         }
@@ -247,8 +271,9 @@ impl Widget for BlockPickerPopup<'_> {
         let shown = view.preview.len().min(room);
         for (i, text) in view.preview.iter().take(shown).enumerate() {
             if i + 1 == shown && shown < view.preview.len() {
-                lines
-                    .push(Line::from(format!("… ({} líneas más)", view.preview.len() - i)).fg(DIM));
+                lines.push(
+                    Line::from(format!("… ({} líneas más)", view.preview.len() - i)).fg(dim()),
+                );
             } else {
                 lines.push(Line::from(text.clone()).fg(Color::Cyan));
             }
@@ -281,7 +306,7 @@ impl Widget for PalettePopup<'_> {
         let view = self.0;
         Clear.render(area, buf);
         let block = Block::bordered()
-            .border_style(Style::new().fg(ACCENT))
+            .border_style(Style::new().fg(accent()))
             .title(" paleta de comandos · ↑↓ Enter Esc ");
         let inner = block.inner(area);
         block.render(area, buf);
@@ -291,26 +316,26 @@ impl Widget for PalettePopup<'_> {
         let width = inner.width as usize;
         let mut lines = vec![
             Line::from(vec![
-                Span::from("› ").fg(ACCENT).bold(),
+                Span::from("› ").fg(accent()).bold(),
                 Span::raw(format!("{}█", view.query)),
             ]),
-            Line::from("─".repeat(width)).fg(DIM),
+            Line::from("─".repeat(width)).fg(dim()),
         ];
         let rows = (inner.height as usize)
             .saturating_sub(4)
             .min(PALETTE_ROWS as usize);
         let first = view.selected.saturating_sub(rows.saturating_sub(1));
         if view.items.is_empty() {
-            lines.push(Line::from(" ninguna acción coincide").fg(DIM));
+            lines.push(Line::from(" ninguna acción coincide").fg(dim()));
         }
         for (i, (name, keys)) in view.items.iter().enumerate().skip(first).take(rows) {
             let pad = width.saturating_sub(name.chars().count() + keys.chars().count() + 2);
             let line = Line::from(vec![
                 Span::raw(format!(" {name}{}", " ".repeat(pad))),
-                Span::from(format!("{keys} ")).fg(DIM),
+                Span::from(format!("{keys} ")).fg(dim()),
             ]);
             lines.push(if i == view.selected {
-                line.style(Style::new().fg(Color::Black).bg(ACCENT))
+                line.style(Style::new().fg(Color::Black).bg(accent()))
             } else {
                 line
             });
@@ -318,7 +343,7 @@ impl Widget for PalettePopup<'_> {
         while lines.len() < rows + 2 {
             lines.push(Line::raw(""));
         }
-        lines.push(Line::from("─".repeat(width)).fg(DIM));
+        lines.push(Line::from("─".repeat(width)).fg(dim()));
         lines.push(Line::from(view.description.clone()));
         Paragraph::new(lines).render(inner, buf);
     }
@@ -354,8 +379,8 @@ fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rect) -
             None => " ✗ error ".to_string(),
         };
         block = block
-            .border_style(Style::new().fg(ERROR))
-            .title_bottom(Line::from(summary).fg(ERROR));
+            .border_style(Style::new().fg(error_color()))
+            .title_bottom(Line::from(summary).fg(error_color()));
     }
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -368,11 +393,11 @@ fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rect) -
             let height = (lines as u16 + 1).clamp(2, 6);
             let message = Paragraph::new(text)
                 .wrap(Wrap { trim: false })
-                .fg(ERROR)
+                .fg(error_color())
                 .block(
                     Block::new()
                         .borders(Borders::TOP)
-                        .border_style(Style::new().fg(ERROR)),
+                        .border_style(Style::new().fg(error_color())),
                 );
             let [editor, error_area] =
                 Layout::vertical([Constraint::Min(1), Constraint::Length(height)]).areas(inner);
@@ -388,8 +413,8 @@ fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rect) -
                 Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(editor_area);
             frame.render_widget(
                 Line::from(vec![
-                    Span::from(format!("ⓘ {}", help.signature)).fg(ACCENT),
-                    Span::from(format!("  {}", help.description)).fg(DIM),
+                    Span::from(format!("ⓘ {}", help.signature)).fg(accent()),
+                    Span::from(format!("  {}", help.description)).fg(dim()),
                 ]),
                 line,
             );
@@ -414,14 +439,16 @@ fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rect) -
                 Layout::vertical([Constraint::Min(1), Constraint::Length(height)])
                     .areas(editor_area);
             frame.render_widget(
-                Paragraph::new(text).wrap(Wrap { trim: false }).fg(WARNING),
+                Paragraph::new(text)
+                    .wrap(Wrap { trim: false })
+                    .fg(warning_color()),
                 warning,
             );
             editor
         }
         None => editor_area,
     };
-    app.editor.set_line_number_style(Style::new().fg(DIM));
+    app.editor.set_line_number_style(Style::new().fg(dim()));
     app.editor
         .set_cursor_line_style(Style::new().add_modifier(Modifier::UNDERLINED));
     frame.render_widget(&app.editor, editor_area);
@@ -444,8 +471,8 @@ fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rect) -
         frame.buffer_mut().set_style(
             Rect::new(x, editor_area.y + y as u16, width, 1),
             Style::new()
-                .fg(DIAGNOSTIC)
-                .underline_color(DIAGNOSTIC)
+                .fg(diagnostic())
+                .underline_color(diagnostic())
                 .add_modifier(Modifier::UNDERLINED),
         );
     }
@@ -477,7 +504,7 @@ fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rect) -
                     height: 1,
                     ..editor_area
                 },
-                Style::new().bg(ERROR_LINE),
+                Style::new().bg(error_line()),
             );
         }
     }
@@ -532,7 +559,7 @@ impl Widget for CompletionPopup<'_> {
         let view = self.0;
         Clear.render(area, buf);
         let block = Block::bordered()
-            .border_style(Style::new().fg(ACCENT))
+            .border_style(Style::new().fg(accent()))
             .title(" completar · Tab · ↑↓ Enter · Esc ");
         let inner = block.inner(area);
         block.render(area, buf);
@@ -548,15 +575,15 @@ impl Widget for CompletionPopup<'_> {
             let pad = width.saturating_sub(label.chars().count() + kind.chars().count() + 2);
             let line = Line::from(vec![
                 Span::raw(format!(" {label}{}", " ".repeat(pad))),
-                Span::from(format!("{kind} ")).fg(DIM),
+                Span::from(format!("{kind} ")).fg(dim()),
             ]);
             lines.push(if i == view.selected {
-                line.style(Style::new().fg(Color::Black).bg(ACCENT))
+                line.style(Style::new().fg(Color::Black).bg(accent()))
             } else {
                 line
             });
         }
-        lines.push(Line::from("─".repeat(width)).fg(DIM));
+        lines.push(Line::from("─".repeat(width)).fg(dim()));
         let mut detail = vec![Line::from(view.signature.clone()).bold()];
         detail.extend(view.description.lines().map(|l| Line::from(l.to_string())));
         let [list, info] =
@@ -581,11 +608,11 @@ fn master_line(master: &crate::model::MasterView) -> Line<'static> {
         .db()
         .map_or("  -∞ dB".to_string(), |db| format!("{db:+5.1} dB"));
     let color = if master.clipping {
-        ERROR
+        error_color()
     } else if master.limiting {
         Color::Yellow
     } else {
-        Color::Green
+        meter_color()
     };
     let mut spans = vec![
         Span::from(format!(" {:<10}", "master")).bold(),
@@ -598,7 +625,7 @@ fn master_line(master: &crate::model::MasterView) -> Line<'static> {
     }
     if master.clipping {
         spans.push(Span::raw(" "));
-        spans.push(Span::from(" SATURA ").fg(Color::Black).bg(ERROR));
+        spans.push(Span::from(" SATURA ").fg(Color::Black).bg(error_color()));
     }
     Line::from(spans)
 }
@@ -611,9 +638,9 @@ impl Widget for EnginePanel<'_> {
         let view = self.0;
         let t = view.transport;
         let state = if t.running {
-            Span::from("▶ en marcha").fg(Color::Green)
+            Span::from("▶ en marcha").fg(meter_color())
         } else {
-            Span::from("■ parado").fg(DIM)
+            Span::from("■ parado").fg(dim())
         };
         let step = t.step.map_or("--".into(), |s| format!("{s:02}"));
         let mut lines = vec![
@@ -632,7 +659,7 @@ impl Widget for EnginePanel<'_> {
             master_line(&view.master),
         ];
         if view.tracks.is_empty() {
-            lines.push(Line::from("sin pistas").fg(DIM));
+            lines.push(Line::from("sin pistas").fg(dim()));
         }
         for (i, track) in view.tracks.iter().enumerate() {
             let selected = view.selected == Some(i);
@@ -642,13 +669,13 @@ impl Widget for EnginePanel<'_> {
                 .map_or("--".into(), |s| format!("{:02}", s + 1));
             let name = Span::from(format!("{marker}{:<10}", track.name));
             let name = if selected {
-                name.fg(ACCENT).bold()
+                name.fg(accent()).bold()
             } else {
                 name
             };
             lines.push(Line::from(vec![
                 name,
-                Span::from(meter(track.level, 8)).fg(Color::Green),
+                Span::from(meter(track.level, 8)).fg(meter_color()),
                 Span::raw(format!(
                     " ▶{slice}  {} cortes  ciclo {}{}  pista {}",
                     track.slices.len(),
@@ -685,6 +712,8 @@ impl Widget for HelpLine<'_> {
              Enter · Esc cerrar"
         } else if self.0.completion.is_some() {
             "COMPLETAR: Tab aceptar · ↑↓ elegir y Enter aceptar · Esc cerrar · Enter sin elegir: salto de línea"
+        } else if !self.0.key_help.is_empty() {
+            self.0.key_help.as_str()
         } else if self.0.playing_mode {
             "TOCAR: 1-0 q-i cortes · ←→ preescucha · m mute · s solo · Ctrl-O pista · Ctrl-T marcha/paro · F1 paleta · Esc editor"
         } else {
@@ -694,25 +723,25 @@ impl Widget for HelpLine<'_> {
         };
         if let Some(prompt) = &self.0.prompt {
             Line::from(vec![
-                Span::from("orden> ").fg(ACCENT).bold(),
+                Span::from("orden> ").fg(accent()).bold(),
                 Span::raw(format!("{prompt}█  ")),
                 Span::from(
                     "exportar [archivo.wav] [compases] · guardar [proyecto] · \
                      abrir proyecto · muestras carpeta · etiquetar corte nombre · bpm N · \
                      bloque nombre [etiquetas] [-- descripción] · remuestrear [pista] · Esc cancelar",
                 )
-                .fg(DIM),
+                .fg(dim()),
             ])
             .render(area, buf);
             return;
         }
         let message = &self.0.message;
         let line = if message.is_empty() {
-            Line::from(keys).fg(DIM)
+            Line::from(keys).fg(dim())
         } else {
             Line::from(vec![
                 Span::raw(format!("{message}  ")),
-                Span::from(keys).fg(DIM),
+                Span::from(keys).fg(dim()),
             ])
         };
         line.render(area, buf);
@@ -727,7 +756,7 @@ impl Widget for SamplePanel<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let view = self.0;
         let Some(track) = view.selected.and_then(|i| view.tracks.get(i)) else {
-            Paragraph::new(Line::from("sin pistas").fg(DIM))
+            Paragraph::new(Line::from("sin pistas").fg(dim()))
                 .block(Block::bordered().title(" sample "))
                 .render(area, buf);
             return;
@@ -782,7 +811,7 @@ impl Widget for SamplePanel<'_> {
                         y1: lo as f64,
                         x2: x as f64,
                         y2: hi as f64,
-                        color: if lit { ACCENT } else { WAVE },
+                        color: if lit { accent() } else { wave_color() },
                     });
                 }
                 // Marcas de los cortes encima.
@@ -794,7 +823,7 @@ impl Widget for SamplePanel<'_> {
                         y1: -1.0,
                         x2: x,
                         y2: 1.0,
-                        color: SLICE,
+                        color: slice_color(),
                     });
                 }
             })
@@ -813,7 +842,7 @@ impl Widget for SamplePanel<'_> {
                     inner.x + column,
                     inner.y,
                     text.chars().take(room).collect::<String>(),
-                    Style::new().fg(SLICE).bold(),
+                    Style::new().fg(slice_color()).bold(),
                 );
             }
         }
@@ -829,7 +858,7 @@ impl Widget for SamplePanel<'_> {
                     inner.x + column,
                     inner.y,
                     text.chars().take(room).collect::<String>(),
-                    Style::new().fg(Color::Black).bg(SLICE).bold(),
+                    Style::new().fg(Color::Black).bg(slice_color()).bold(),
                 );
             }
         }
@@ -901,9 +930,9 @@ impl Widget for TrackerPanel<'_> {
                 .collect();
             let span = Span::from(format!("{:<TRACKER_COLUMN$}", format!("{name}{mark}")));
             header.push(if !view.audible(i) {
-                span.fg(DIM)
+                span.fg(dim())
             } else if view.selected == Some(i) {
-                span.fg(ACCENT).bold()
+                span.fg(accent()).bold()
             } else {
                 span.bold()
             });
@@ -919,7 +948,7 @@ impl Widget for TrackerPanel<'_> {
                 .map_or(0, |s| s.saturating_sub(visible / 2))
                 .min(rows - visible)
         };
-        let playing = Style::new().bg(Color::Blue).fg(Color::White).bold();
+        let playing = Style::new().bg(playing_color()).fg(Color::White).bold();
         for (row, step) in (first..rows).take(visible).enumerate() {
             let here: Vec<bool> = positions.iter().map(|p| *p == Some(step)).collect();
             // Todas las pistas que suenan, en esta fila: la fila entera.
@@ -929,7 +958,7 @@ impl Widget for TrackerPanel<'_> {
             let mut spans = vec![if here.iter().any(|h| *h) && !whole {
                 number.style(playing)
             } else {
-                number.fg(DIM)
+                number.fg(dim())
             }];
             for (i, track) in view.tracks.iter().enumerate() {
                 let cell = track.steps.get(step);
@@ -943,7 +972,7 @@ impl Widget for TrackerPanel<'_> {
                 let span = if cell.is_some_and(Option::is_some) && view.audible(i) {
                     Span::raw(text)
                 } else {
-                    Span::from(text).fg(DIM)
+                    Span::from(text).fg(dim())
                 };
                 spans.push(if here[i] && !whole {
                     span.style(playing)
@@ -962,7 +991,7 @@ impl Widget for TrackerPanel<'_> {
                 ..inner
             };
             if whole {
-                buf.set_style(row_area, Style::new().bg(Color::Blue));
+                buf.set_style(row_area, Style::new().bg(playing_color()));
             }
             line.render(row_area, buf);
         }
@@ -1000,7 +1029,7 @@ impl Widget for FxPanel<'_> {
         let inner = block.inner(area);
         block.render(area, buf);
         if view.tracks.is_empty() {
-            Line::from("sin pistas").fg(DIM).render(inner, buf);
+            Line::from("sin pistas").fg(dim()).render(inner, buf);
             return;
         }
         // Tantas columnas como quepan; las pistas que no caben no se dibujan.
@@ -1012,26 +1041,26 @@ impl Widget for FxPanel<'_> {
             let width = column.width.saturating_sub(7).clamp(4, 12) as usize;
             let name = Span::from(track.name.clone()).bold();
             let name = if view.selected == Some(i) {
-                name.fg(ACCENT)
+                name.fg(accent())
             } else {
                 name
             };
             let mut title = vec![name];
             if track.mute {
-                title.push(Span::from(" MUTE").fg(Color::Black).bg(ERROR));
+                title.push(Span::from(" MUTE").fg(Color::Black).bg(error_color()));
             } else if track.solo {
                 title.push(Span::from(" SOLO").fg(Color::Black).bg(Color::Yellow));
             } else if !view.audible(i) {
-                title.push(Span::from(" (solo de otra)").fg(DIM));
+                title.push(Span::from(" (solo de otra)").fg(dim()));
             }
             if track.swing > 50.0 {
-                title.push(Span::from(format!(" · swing {}", track.swing)).fg(DIM));
+                title.push(Span::from(format!(" · swing {}", track.swing)).fg(dim()));
             }
             if track.gate {
-                title.push(Span::from(" · gate").fg(DIM));
+                title.push(Span::from(" · gate").fg(dim()));
             }
             if let Some(group) = track.choke {
-                title.push(Span::from(format!(" · choke {group}")).fg(DIM));
+                title.push(Span::from(format!(" · choke {group}")).fg(dim()));
             }
             let mut lines = vec![
                 Line::from(title),
@@ -1041,26 +1070,26 @@ impl Widget for FxPanel<'_> {
                         track.gain / engine::MAX_GAIN,
                         width.saturating_sub(4),
                     ))
-                    .fg(ACCENT),
+                    .fg(accent()),
                     // Envíos a los buses: `→ d0.30 r0.15`.
-                    Span::from(sends_text(track.sends)).fg(DIM),
+                    Span::from(sends_text(track.sends)).fg(dim()),
                 ]),
                 Line::from(vec![
                     Span::raw("nivel "),
                     Span::from(meter(track.level, width)).fg(if track.clipping {
-                        ERROR
+                        error_color()
                     } else {
-                        Color::Green
+                        meter_color()
                     }),
                     if track.clipping {
-                        Span::from(" SAT").fg(ERROR).bold()
+                        Span::from(" SAT").fg(error_color()).bold()
                     } else {
                         Span::raw("")
                     },
                 ]),
             ];
             if track.fx.is_empty() {
-                lines.push(Line::from("sin efectos").fg(DIM));
+                lines.push(Line::from("sin efectos").fg(dim()));
             }
             for (i, fx) in track.fx.iter().enumerate() {
                 // Los parámetros que se mueven (ramp, lfo): `∿cutoff`.
@@ -1077,7 +1106,7 @@ impl Widget for FxPanel<'_> {
                     } else {
                         format!(" {}", moving.join(" "))
                     })
-                    .fg(ACCENT),
+                    .fg(accent()),
                 ]));
             }
             Paragraph::new(lines).render(*column, buf);
