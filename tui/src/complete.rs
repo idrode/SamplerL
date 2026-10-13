@@ -11,13 +11,15 @@
 //! - dentro de `sample("...")`, los WAV de la carpeta de muestras;
 //! - dentro de `track("...")`, las pistas ya definidas; dentro de
 //!   `chance(p, "...")`, sus efectos;
-//! - al inicio de línea, funciones globales, snippets, variables locales y
-//!   palabras clave (en mitad de una expresión, lo mismo sin snippets);
+//! - al inicio de línea, funciones globales, snippets, bloques de la
+//!   biblioteca, variables locales y palabras clave (en mitad de una
+//!   expresión, lo mismo sin snippets ni bloques);
 //! - dentro de `steps("...")`, las etiquetas de corte conocidas para el
 //!   paso que se escribe (si empieza por letra);
 //! - dentro de cualquier otra cadena o comentario, nada.
 
 use script::api::{self, Receiver};
+use script::blocks::Block;
 
 /// Una opción del autocompletado.
 #[derive(Debug, Clone, PartialEq)]
@@ -68,7 +70,8 @@ const MAX_DEPTH: usize = 8;
 
 /// Contexto del cursor en (`row`, `col`), con `col` en caracteres. `wavs`
 /// da los archivos de la carpeta de muestras (solo se llama dentro de
-/// `sample("...")`); `labels`, las etiquetas de corte conocidas. `None`:
+/// `sample("...")`); `labels`, las etiquetas de corte conocidas; `blocks`,
+/// los bloques de la biblioteca (al inicio de línea). `None`:
 /// ahí no se completa nada (un número de corte o un sufijo en
 /// `steps("...")`, otra cadena, un comentario o un número).
 pub fn context(
@@ -77,6 +80,7 @@ pub fn context(
     col: usize,
     wavs: impl FnOnce() -> Vec<String>,
     labels: &[String],
+    blocks: &[Block],
 ) -> Option<Context> {
     let mut before = String::new();
     for line in lines.iter().take(row) {
@@ -145,6 +149,7 @@ pub fn context(
                 insert: s.template.into(),
             }
         }));
+        candidates.extend(blocks.iter().map(block));
     }
     candidates.extend(locals(&all).into_iter().map(|name| Candidate {
         label: name.clone(),
@@ -163,6 +168,24 @@ pub fn context(
         }));
     }
     Some(Context { prefix, candidates })
+}
+
+/// Opción de un bloque de la biblioteca: se inserta como un snippet.
+fn block(b: &Block) -> Candidate {
+    let tags: String = b.tags.iter().map(|t| format!(" #{t}")).collect();
+    let preview = b.preview();
+    let mut description = b.description.clone();
+    if !description.is_empty() {
+        description.push('\n');
+    }
+    description.push_str(preview.lines().next().unwrap_or(""));
+    Candidate {
+        label: b.name.clone(),
+        kind: "bloque".into(),
+        signature: format!("bloque {} ({}){tags}", b.name, b.scope.label()),
+        description,
+        insert: b.body.clone(),
+    }
 }
 
 /// Contexto dentro de una cadena: depende de la llamada en la que está.
@@ -827,7 +850,7 @@ mod tests {
         let lines: Vec<String> = lines.iter().map(|l| l.replace('|', "")).collect();
         let wavs: Vec<String> = wavs.iter().map(|w| w.to_string()).collect();
         let labels = ["kick".to_string(), "snare".to_string(), "hat".to_string()];
-        context(&lines, row, col, || wavs, &labels)
+        context(&lines, row, col, || wavs, &labels, &[])
     }
 
     fn labels(context: &Context) -> Vec<String> {
@@ -850,6 +873,45 @@ mod tests {
         // En mitad de una expresión no hay snippets.
         let c = at("local x = gh|").unwrap();
         assert!(labels(&c).is_empty());
+    }
+
+    #[test]
+    fn line_start_offers_library_blocks_like_snippets() {
+        let block = Block {
+            name: "fantasma".into(),
+            description: "Ghost notes".into(),
+            tags: vec!["ghost".into()],
+            body: "track(\"${g}\", amen)\n".into(),
+            scope: script::blocks::Scope::Global,
+            path: "fantasma.lua".into(),
+        };
+        let at_blocks = |text: &str| {
+            let (before, after) = text.split_once('|').unwrap();
+            let lines: Vec<String> = format!("{before}{after}")
+                .lines()
+                .map(String::from)
+                .collect();
+            let row = before.lines().count().max(1) - 1;
+            let col = before.lines().last().unwrap_or("").chars().count();
+            context(
+                &lines,
+                row,
+                col,
+                Vec::new,
+                &[],
+                std::slice::from_ref(&block),
+            )
+        };
+        let c = at_blocks("  fan|").unwrap();
+        let m = c.matches();
+        assert_eq!(m.len(), 1);
+        assert_eq!(m[0].kind, "bloque");
+        assert_eq!(m[0].signature, "bloque fantasma (global) #ghost");
+        assert_eq!(m[0].description, "Ghost notes\ntrack(\"g\", amen)");
+        assert_eq!(m[0].insert, "track(\"${g}\", amen)\n");
+        // En mitad de una expresión, no.
+        let c = at_blocks("local x = fan|").unwrap();
+        assert!(c.matches().is_empty());
     }
 
     #[test]
@@ -964,7 +1026,7 @@ mod tests {
         assert!(at(&format!("{SONG}track(\"d\", amen):steps(\"kick^|")).is_none());
         // Sin etiquetas conocidas, nada.
         let lines = vec!["x:steps(\"k".to_string()];
-        assert!(context(&lines, 0, 10, Vec::new, &[]).is_none());
+        assert!(context(&lines, 0, 10, Vec::new, &[], &[]).is_none());
     }
 
     #[test]

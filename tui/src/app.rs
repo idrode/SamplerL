@@ -937,6 +937,7 @@ impl App {
             col,
             || list_wavs(&folder),
             &labels,
+            &self.blocks.blocks,
         )?;
         let matches = context.matches();
         if matches.is_empty() {

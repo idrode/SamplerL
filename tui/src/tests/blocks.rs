@@ -385,6 +385,40 @@ fn quick_slots_yank_and_paste_like_vim_registers() {
     assert_eq!(current_line(&app), "-- bpm");
 }
 
+#[test]
+fn blocks_show_up_in_the_completion_with_their_fields() {
+    let (path, mut app, _engine) = open("block_complete", Some(SONG));
+    write_block(&global_dir(&path), "fantasma.lua", GHOST_BLOCK);
+    app.set_global_blocks(Some(global_dir(&path)));
+    app.editor.move_cursor(CursorMove::Bottom);
+    app.editor.move_cursor(CursorMove::End);
+    type_text(&mut app, "\nfan");
+    assert_eq!(completion_items(&app), ["fantasma"]);
+    let screen = text_of(&mut app);
+    assert!(
+        screen.contains("bloque fantasma (global) #ghost #hats"),
+        "{screen}"
+    );
+    app.handle(special(Key::Tab));
+    let lines = app.editor.lines().to_vec();
+    assert_eq!(lines[4], "track(\"ghost\", amen:slice_at(2))");
+    assert_eq!(selection_text(&app), "ghost");
+    app.handle(special(Key::Tab));
+    assert_eq!(selection_text(&app), "2");
+    // Tras el último campo, al final del bloque.
+    app.handle(special(Key::Tab));
+    assert_eq!(app.editor.selection_range(), None);
+    assert_eq!(app.editor.cursor(), (6, 0));
+
+    // Un bloque nuevo en disco aparece sin reiniciar (la biblioteca se
+    // relee al abrir el selector y cada medio segundo).
+    write_block(&global_dir(&path), "lento.lua", "bpm(${90})\n");
+    palette(&mut app, "insertar un bloque");
+    app.handle(esc());
+    type_text(&mut app, "len");
+    assert_eq!(completion_items(&app), ["lento"]);
+}
+
 /// `cargo test -p tui pantalla_bloques -- --ignored --nocapture`
 #[test]
 #[ignore]
