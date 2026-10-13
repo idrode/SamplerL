@@ -111,3 +111,19 @@ fn the_master_meter_sees_the_sum_before_the_limiter() {
     // Se vacía al leerlo.
     assert_eq!(controller.status().master, engine::MasterStatus::default());
 }
+
+#[test]
+fn the_position_follows_the_song_in_steps() {
+    let (mut controller, mut engine) = engine::new_engine(48_000);
+    assert_eq!(controller.position(), None);
+    controller.set_bpm(120.0).unwrap();
+    controller.start().unwrap();
+    // 120 BPM: 6000 frames por paso. Tras 15000 frames, el paso 2,5.
+    engine::offline::render(&mut engine, 15_000, 2);
+    assert_eq!(controller.position(), Some(2.5));
+    // Leerla no vacía los picos ni cambia nada.
+    assert_eq!(controller.position(), Some(2.5));
+    controller.stop().unwrap();
+    engine::offline::render(&mut engine, 100, 2);
+    assert_eq!(controller.position(), None);
+}

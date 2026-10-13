@@ -306,6 +306,9 @@ fn the_audio_thread_never_allocates() {
     });
     assert_eq!(n, 0, "reservas con rampa de tempo y compás de 7/8");
 
+    // La posición se publica en cada bloque (un atómico): sin reservas.
+    assert!(controller.position().is_some());
+
     controller.stop().unwrap();
     controller.start().unwrap();
     let n = counted(|| {

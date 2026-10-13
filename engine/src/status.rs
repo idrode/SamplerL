@@ -59,6 +59,9 @@ pub(crate) struct SharedStatus {
     step: AtomicU64,
     global: AtomicU64,
     bar_steps: AtomicU64,
+    /// Posición de la canción en pasos (bits de un f64) al acabar el último
+    /// bloque; `NONE` con el transporte parado.
+    position: AtomicU64,
     hit_start: [AtomicU64; MAX_TRACKS],
     peak: [AtomicU32; MAX_TRACKS],
     master_peak: AtomicU32,
@@ -74,6 +77,7 @@ impl SharedStatus {
             step: AtomicU64::new(NONE),
             global: AtomicU64::new(0),
             bar_steps: AtomicU64::new(16),
+            position: AtomicU64::new(NONE),
             hit_start: std::array::from_fn(|_| AtomicU64::new(NONE)),
             peak: std::array::from_fn(|_| AtomicU32::new(0)),
             master_peak: AtomicU32::new(0),
@@ -82,6 +86,18 @@ impl SharedStatus {
     }
 
     // --- Escritura (hilo de audio) ---
+
+    /// Posición en pasos (con decimales); `None`, parado.
+    pub fn set_position(&self, steps: Option<f64>) {
+        self.position
+            .store(steps.map_or(NONE, f64::to_bits), Relaxed);
+    }
+
+    /// La posición, sin tocar nada más (los picos no se vacían).
+    pub fn position(&self) -> Option<f64> {
+        let bits = self.position.load(Relaxed);
+        (bits != NONE).then(|| f64::from_bits(bits))
+    }
 
     pub fn set_transport(&self, running: bool, bpm: f64) {
         self.running.store(running, Relaxed);

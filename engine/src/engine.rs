@@ -936,6 +936,14 @@ impl Controller {
         self.status.snapshot()
     }
 
+    /// Dónde va la canción, en pasos con decimales desde que arrancó (la
+    /// semicorchea global y la fracción del paso), al acabar el último
+    /// bloque de audio; `None` con el secuenciador parado. Para cuantizar
+    /// lo que se toca en vivo (grabar). No vacía los picos de `status`.
+    pub fn position(&self) -> Option<f64> {
+        self.status.position()
+    }
+
     /// Las notas MIDI que han salido de las pistas desde la última vez (en
     /// orden, con su frame), para mandarlas a un puerto.
     pub fn midi_events(&mut self) -> impl Iterator<Item = MidiNote> + '_ {
@@ -1026,6 +1034,11 @@ impl Engine {
         self.playing.store(playing, Ordering::Relaxed);
         self.status
             .set_transport(self.transport.running, self.transport.bpm());
+        self.status.set_position(
+            self.transport
+                .running
+                .then(|| self.transport.position_steps(self.sample_rate)),
+        );
     }
 
     fn handle(&mut self, cmd: Command) {
