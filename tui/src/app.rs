@@ -209,8 +209,10 @@ pub struct App {
     browser: Option<Browser>,
     /// Tap tempo en curso (espacio golpea, Enter pone el tempo).
     tapping: Option<crate::tap::TapTempo>,
-    /// Ranuras rápidas 1-9 (como los registros de vim; duran la sesión).
+    /// Ranuras rápidas 1-9 (como los registros de vim).
     slots: [Option<String>; SLOTS],
+    /// Carpeta donde se guardan las ranuras entre sesiones (`N.txt`).
+    slots_dir: Option<PathBuf>,
     /// Esperando el número de ranura.
     slot_prompt: Option<SlotOp>,
     /// Atajos de teclado (los de la configuración o los de siempre).
@@ -271,6 +273,7 @@ impl App {
             browser: None,
             tapping: None,
             slots: Default::default(),
+            slots_dir: None,
             slot_prompt: None,
             keys: Keymap::default(),
             midi: crate::midi::MidiConfig::default(),
@@ -1694,6 +1697,37 @@ impl App {
         };
     }
 
+    /// Carpeta de las ranuras (`ranuras/` en la de configuración): lee las
+    /// que haya. Un archivo que no se puede leer se avisa y la ranura se
+    /// queda vacía; si la carpeta falta, se crea al guardar la primera.
+    pub fn set_slots_dir(&mut self, dir: Option<PathBuf>) {
+        self.slots_dir = dir;
+        let Some(dir) = &self.slots_dir else { return };
+        let mut problems = Vec::new();
+        for (i, slot) in self.slots.iter_mut().enumerate() {
+            let path = dir.join(format!("{}.txt", i + 1));
+            match std::fs::read_to_string(&path) {
+                Ok(text) => *slot = Some(text),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => problems.push(format!("{}: {e}", path.display())),
+            }
+        }
+        if !problems.is_empty() {
+            self.message = format!("⚠ ranuras: {}", problems.join(" · "));
+        }
+    }
+
+    /// Guarda la ranura `slot` (desde 0) en su archivo. Devuelve el aviso
+    /// si no se pudo (la ranura sigue llena en esta sesión).
+    fn save_slot(&self, slot: usize) -> Option<String> {
+        let dir = self.slots_dir.as_ref()?;
+        let text = self.slots[slot].as_deref().unwrap_or("");
+        std::fs::create_dir_all(dir)
+            .and_then(|()| std::fs::write(dir.join(format!("{}.txt", slot + 1)), text))
+            .err()
+            .map(|e| format!(" (no se pudo guardar en {}: {e})", dir.display()))
+    }
+
     /// «Guardar en una ranura» / «Pegar una ranura»: espera el número.
     pub fn start_slot(&mut self, op: SlotOp) {
         if op == SlotOp::Paste && self.slots.iter().all(Option::is_none) {
@@ -1722,8 +1756,9 @@ impl App {
                 let text = editing::selection_or_line(&self.editor);
                 let lines = text.lines().count();
                 self.slots[slot] = Some(text);
+                let note = self.save_slot(slot).unwrap_or_default();
                 self.message = format!(
-                    "ranura {n}: {lines} {}",
+                    "ranura {n}: {lines} {}{note}",
                     if lines == 1 { "línea" } else { "líneas" }
                 );
             }

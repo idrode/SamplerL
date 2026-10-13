@@ -451,6 +451,8 @@ fn run_editor(path: &std::path::Path, allow_audio: bool, allow_midi: bool) -> Re
     };
     theme::set(config.theme);
     app.set_config(&config);
+    // Las ranuras 1-9, de una sesión a otra.
+    app.set_slots_dir(config::dir().map(|d| d.join("ranuras")));
     // MIDI solo si se pide: abre puertos del sistema.
     #[cfg(feature = "midi")]
     let _midi_in = if allow_midi {

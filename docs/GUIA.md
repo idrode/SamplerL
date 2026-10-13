@@ -439,8 +439,10 @@ Para mover trozos al vuelo sin ponerles nombre, como los registros de vim:
   cursor. Se deshace con un Ctrl-Z.
 
 Mientras espera el número se ve lo que hay en cada ranura; cualquier otra
-tecla cancela. Las ranuras duran mientras la interfaz está abierta; para
-guardar algo de verdad, hazlo bloque. Con F1 Enter se repite la última
+tecla cancela. Las ranuras se guardan de una sesión a otra en
+`~/.config/sampler/ranuras/` (`1.txt` a `9.txt`, texto tal cual: también
+se pueden editar a mano). Para guardar algo con nombre y etiquetas, hazlo
+bloque. Con F1 Enter se repite la última
 acción de la paleta, así que pegar otra vez es F1, Enter y el número.
 
 ### Configuración: teclas y colores

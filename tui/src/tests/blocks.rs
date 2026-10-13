@@ -433,3 +433,40 @@ fn pantalla_bloques() {
     palette(&mut app, "insertar un bloque");
     println!("{}", text(&draw(&mut app, 120, 40)));
 }
+
+#[test]
+fn slots_persist_between_sessions() {
+    let (path, mut app, _engine) = open_with_blocks("slots_persist");
+    let dir = path.parent().unwrap().join("config/sampler/ranuras");
+    app.set_slots_dir(Some(dir.clone()));
+    // Guardar crea la carpeta y el archivo.
+    app.editor.move_cursor(CursorMove::Jump(0, 0));
+    palette(&mut app, "guardar en una ranura");
+    app.handle(key('4'));
+    assert_eq!(
+        std::fs::read_to_string(dir.join("4.txt")).unwrap(),
+        "bpm(120)\n"
+    );
+
+    // Otra sesión: la ranura 4 sigue ahí y se pega.
+    let (_, mut other, _engine2) = open_with_blocks("slots_persist_2");
+    other.set_slots_dir(Some(dir.clone()));
+    other.editor.move_cursor(CursorMove::Bottom);
+    palette(&mut other, "pegar una ranura");
+    assert!(text_of(&mut other).contains(" 4 bpm(120)"));
+    other.handle(key('4'));
+    assert_eq!(other.text_for_test().matches("bpm(120)").count(), 2);
+
+    // Un archivo que no se puede leer: aviso y la ranura vacía.
+    std::fs::write(dir.join("7.txt"), [0xff, 0xfe]).unwrap();
+    let (_, mut third, _engine3) = open_with_blocks("slots_persist_3");
+    third.set_slots_dir(Some(dir));
+    assert!(
+        third.view().message.starts_with("⚠ ranuras: "),
+        "{}",
+        third.view().message
+    );
+    palette(&mut third, "pegar una ranura");
+    third.handle(key('7'));
+    assert_eq!(third.view().message, "la ranura 7 está vacía");
+}
