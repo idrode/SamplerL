@@ -4,6 +4,9 @@ mod complete;
 mod config;
 mod diagnose;
 mod editing;
+mod midi;
+#[cfg(feature = "midi")]
+mod midi_io;
 mod model;
 mod palette;
 mod tap;
@@ -18,7 +21,7 @@ use std::time::Duration;
 use engine::{DetectOptions, Detector, Pattern, Slices, Step};
 
 const USAGE: &str = "\
-uso: tui --edit <canción.lua | proyecto.sampler> [--allow-audio]   (interfaz)
+uso: tui --edit <canción.lua | proyecto.sampler> [--allow-audio] [--allow-midi]   (interfaz)
      tui <archivo.wav> --render <salida.wav>
      tui <archivo.wav> --detect-bpm               (propone bpm() y compases)
      tui --script <canción.lua> --render <salida.wav> [--bars M] [--metronome] [--track pista]
@@ -37,6 +40,7 @@ uso: tui --edit <canción.lua | proyecto.sampler> [--allow-audio]   (interfaz)
   --min-gap  separación mínima entre cortes en ms (por defecto 40)
   --detector detección de transitorios: flux (flujo espectral, por defecto) o energy
   --metronome  añade al render el clic del metrónomo (si no, nunca lo lleva)
+  --allow-midi abre los puertos MIDI virtuales «sampler entrada» y «sampler salida» (ALSA)
 
 Sin --render, tui se niega a reproducir por la tarjeta de sonido salvo con
 --allow-audio (ver CLAUDE.md: no usarlo en sesiones automáticas).";
@@ -74,6 +78,7 @@ fn run() -> Result<(), BoxError> {
     let mut path = None;
     let mut render_to = None;
     let mut allow_audio = false;
+    let mut allow_midi = false;
     let mut pattern = None;
     let mut slices = None;
     let mut bpm = None;
@@ -93,6 +98,7 @@ fn run() -> Result<(), BoxError> {
         match arg.as_str() {
             "--render" => render_to = Some(value()?),
             "--allow-audio" => allow_audio = true,
+            "--allow-midi" => allow_midi = true,
             "--metronome" => metronome = true,
             "--detect-bpm" => detect = true,
             "--pattern" => {
@@ -141,7 +147,7 @@ fn run() -> Result<(), BoxError> {
         if path.is_some() || script.is_some() || render_to.is_some() || pattern.is_some() {
             return Err(format!("--edit no se combina con otras opciones\n{USAGE}").into());
         }
-        return run_editor(std::path::Path::new(&edit), allow_audio);
+        return run_editor(std::path::Path::new(&edit), allow_audio, allow_midi);
     }
     if let Some(script) = script {
         if path.is_some() || pattern.is_some() || slices.is_some() || min_gap_ms.is_some() {
@@ -412,7 +418,7 @@ fn play_script(path: &str) -> Result<(), BoxError> {
 
 /// Interfaz de terminal. Sin `--allow-audio`, el motor avanza con una salida
 /// nula (a ritmo real, sin abrir la tarjeta): se ve todo y no suena nada.
-fn run_editor(path: &std::path::Path, allow_audio: bool) -> Result<(), BoxError> {
+fn run_editor(path: &std::path::Path, allow_audio: bool, allow_midi: bool) -> Result<(), BoxError> {
     use ratatui::crossterm::event::{self, Event, KeyEventKind};
 
     let (controller, engine) = engine::new_engine(RENDER_RATE);
@@ -445,13 +451,33 @@ fn run_editor(path: &std::path::Path, allow_audio: bool) -> Result<(), BoxError>
     };
     theme::set(config.theme);
     app.set_config(&config);
+    // MIDI solo si se pide: abre puertos del sistema.
+    #[cfg(feature = "midi")]
+    let _midi_in = if allow_midi {
+        let (tx, rx) = rtrb::RingBuffer::new(midi_io::QUEUE);
+        app.set_midi_input(rx);
+        Some(midi_io::open_input(tx).map_err(|e| format!("MIDI: {e}"))?)
+    } else {
+        None
+    };
+    #[cfg(not(feature = "midi"))]
+    if allow_midi {
+        return Err("--allow-midi: compilado sin la feature midi".into());
+    }
+    // Con MIDI se mira la cola más a menudo (menos retraso en las notas).
+    let poll = if allow_midi {
+        Duration::from_millis(2)
+    } else {
+        Duration::from_millis(30)
+    };
 
     let mut terminal = ratatui::init();
     let result = (|| -> Result<(), BoxError> {
         loop {
+            app.poll_midi();
             app.tick();
             terminal.draw(|frame| ui::draw(frame, &mut app))?;
-            if event::poll(Duration::from_millis(30))? {
+            if event::poll(poll)? {
                 match event::read()? {
                     Event::Key(key) if key.kind != KeyEventKind::Release => {
                         if app.handle(key.into()) == app::Flow::Quit {

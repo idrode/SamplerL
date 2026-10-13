@@ -215,6 +215,11 @@ pub struct App {
     slot_prompt: Option<SlotOp>,
     /// Atajos de teclado (los de la configuración o los de siempre).
     keys: Keymap,
+    /// Entrada MIDI: qué se hace con ella, el tempo del reloj y la cola
+    /// por la que llegan los mensajes del puerto (sin bloqueos).
+    midi: crate::midi::MidiConfig,
+    clock: crate::midi::ClockTempo,
+    midi_in: Option<rtrb::Consumer<crate::midi::TimedEvent>>,
 }
 
 impl App {
@@ -266,6 +271,9 @@ impl App {
             slots: Default::default(),
             slot_prompt: None,
             keys: Keymap::default(),
+            midi: crate::midi::MidiConfig::default(),
+            clock: crate::midi::ClockTempo::default(),
+            midi_in: None,
         };
         app.reload_blocks();
         app.load();
@@ -326,6 +334,7 @@ impl App {
     /// en el hilo que dibuja). Sus avisos van al mensaje.
     pub fn set_config(&mut self, config: &Config) {
         self.keys = config.keys.clone();
+        self.midi = config.midi;
         if !config.warnings.is_empty() {
             self.message = config
                 .warnings
@@ -1257,8 +1266,63 @@ impl App {
         }
     }
 
+    /// La cola por la que llegan los mensajes del puerto MIDI de entrada.
+    #[cfg_attr(not(feature = "midi"), allow(dead_code))]
+    pub fn set_midi_input(&mut self, input: rtrb::Consumer<crate::midi::TimedEvent>) {
+        self.midi_in = Some(input);
+    }
+
+    /// Atiende los mensajes MIDI que han llegado.
+    pub fn poll_midi(&mut self) {
+        while let Some(event) = self.midi_in.as_mut().and_then(|q| q.pop().ok()) {
+            self.midi_event(event);
+        }
+    }
+
+    /// Un mensaje MIDI: una nota dispara un corte de la pista seleccionada
+    /// (la misma ruta que los pads del modo tocar, con su velocidad como
+    /// volumen); con `reloj = true`, el reloj pone el tempo (entra al
+    /// compás) y Start/Stop la marcha.
+    pub fn midi_event(&mut self, event: crate::midi::TimedEvent) {
+        use crate::midi::MidiEvent;
+        match event.event {
+            MidiEvent::NoteOn {
+                channel,
+                note,
+                velocity,
+            } => {
+                if let Some(index) = self.midi.slice_for(channel, note) {
+                    self.play_pad_with_gain(index, velocity as f32 / 127.0);
+                }
+            }
+            MidiEvent::NoteOff { .. } => {}
+            _ if !self.midi.clock => {}
+            MidiEvent::Clock => {
+                if let Some(bpm) = self.clock.pulse(event.micros)
+                    && self.controller.set_bpm(bpm).is_ok()
+                {
+                    self.message = format!("reloj MIDI: {bpm} BPM (entra en el siguiente compás)");
+                }
+            }
+            MidiEvent::Start | MidiEvent::Continue => {
+                self.clock.reset();
+                let _ = self.controller.start();
+                self.message = "reloj MIDI: en marcha".into();
+            }
+            MidiEvent::Stop => {
+                let _ = self.controller.stop();
+                self.message = "reloj MIDI: parado".into();
+            }
+        }
+    }
+
     /// Dispara ya el corte `index` (desde 0) de la pista seleccionada.
     pub fn play_pad(&mut self, index: usize) {
+        self.play_pad_with_gain(index, 1.0);
+    }
+
+    /// Como [`App::play_pad`], con un volumen para el golpe.
+    fn play_pad_with_gain(&mut self, index: usize, gain: f32) {
         let Some(track) = self.host.song().and_then(|s| s.tracks.get(self.selected)) else {
             self.message = "no hay pistas".into();
             return;
@@ -1280,7 +1344,7 @@ impl App {
             .map_or(String::new(), |l| format!(" ({l})"));
         self.message = match self
             .controller
-            .play_slice_shaped(slot, &sample, &slices, index, shape)
+            .play_slice_with_gain(slot, &sample, &slices, index, shape, gain)
         {
             Ok(()) => {
                 self.selected_slice = index;

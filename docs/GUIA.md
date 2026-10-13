@@ -507,6 +507,30 @@ paleta de 256.
 
 <!-- config:fin -->
 
+### MIDI
+
+Con `--allow-midi` (`tui --edit canción.lua --allow-midi`), la interfaz
+abre un puerto MIDI virtual de ALSA, **sampler entrada**: conéctale un
+teclado, unos pads o un secuenciador con `aconnect` (`aconnect -l` lista
+los puertos; `aconnect "Mi teclado" "sampler"`) o desde su programa. Cada
+nota dispara un corte de la pista seleccionada, igual que los pads del
+modo tocar (con su forma, su choke y su volumen), y la velocidad de la
+nota es el volumen del golpe. La nota 36 (el bombo de General MIDI) es el
+corte 1, la 37 el 2... Se puede cambiar en la configuración:
+
+```toml
+[midi]
+nota_base = 60     # la nota del corte 1
+canal = 10         # solo este canal (sin él, todos)
+reloj = true       # el reloj MIDI pone el tempo
+```
+
+Con `reloj = true`, el reloj MIDI que llegue (24 pulsos por negra) pone el
+tempo: se calcula con los pulsos de las últimas cuatro negras (por mínimos
+cuadrados, así el jitter no lo mueve) y solo cambia si cambia de verdad;
+entra al empezar el compás, como un `bpm()`. Start y Continue arrancan el
+secuenciador y Stop lo para. Sin `--allow-midi` no se abre nada.
+
 ### Editor
 
 Los del widget de texto (`ratatui-textarea`): flechas para moverse, Tab

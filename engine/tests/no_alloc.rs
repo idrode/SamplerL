@@ -275,6 +275,10 @@ fn the_audio_thread_never_allocates() {
     controller
         .play_slice_shaped(7, &sample, &slices, 0, engine::SliceShape::DEFAULT)
         .unwrap();
+    // Una nota MIDI: un pad con su velocidad.
+    controller
+        .play_slice_with_gain(7, &sample, &slices, 1, engine::SliceShape::DEFAULT, 0.4)
+        .unwrap();
     let n = counted(|| {
         for _ in 0..20 {
             engine.process(&mut out, 2);

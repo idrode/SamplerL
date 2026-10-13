@@ -2342,6 +2342,7 @@ mod config;
 mod grid;
 mod import;
 mod length;
+mod midi_in;
 mod resample;
 mod sends;
 mod shapes;

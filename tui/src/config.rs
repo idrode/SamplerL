@@ -22,6 +22,7 @@ use std::path::{Path, PathBuf};
 
 use ratatui_textarea::{Input, Key};
 
+use crate::midi::MidiConfig;
 use crate::palette::Action;
 use crate::theme::{self, Theme};
 
@@ -323,6 +324,8 @@ impl Keymap {
 pub struct Config {
     pub keys: Keymap,
     pub theme: Theme,
+    /// `[midi]`: nota del corte 1, canal y reloj.
+    pub midi: MidiConfig,
     /// Avisos (archivo que falta o roto, claves desconocidas, choques...).
     pub warnings: Vec<String>,
 }
@@ -393,8 +396,30 @@ impl Config {
                         }
                     }
                 }
+                "midi" => {
+                    for (key, value) in inner {
+                        let number = value.as_integer();
+                        match (key.as_str(), number, value.as_bool()) {
+                            ("nota_base", Some(n), _) if (0..=127).contains(&n) => {
+                                config.midi.base_note = n as u8
+                            }
+                            ("canal", Some(n), _) if (1..=16).contains(&n) => {
+                                config.midi.channel = Some(n as u8)
+                            }
+                            ("reloj", _, Some(on)) => config.midi.clock = on,
+                            ("nota_base" | "canal" | "reloj", _, _) => config.warnings.push(
+                                format!(
+                                    "[midi] {key}: valor no válido (nota_base 0-127, canal 1-16, reloj true/false)"
+                                ),
+                            ),
+                            _ => config.warnings.push(format!(
+                                "[midi] «{key}» no existe (hay: nota_base, canal, reloj)"
+                            )),
+                        }
+                    }
+                }
                 other => config.warnings.push(format!(
-                    "{name}: sección [{other}] desconocida (hay: teclas, colores)"
+                    "{name}: sección [{other}] desconocida (hay: teclas, colores, midi)"
                 )),
             }
         }

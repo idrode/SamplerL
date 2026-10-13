@@ -647,6 +647,26 @@ impl Controller {
         index: usize,
         shape: SliceShape,
     ) -> Result<(), SendError> {
+        self.play_slice_with_gain(track, sample, slices, index, shape, 1.0)
+    }
+
+    /// Como [`Controller::play_slice_shaped`], con un volumen para el golpe
+    /// (de 0 a `MAX_GAIN`; la velocidad de una nota MIDI).
+    pub fn play_slice_with_gain(
+        &mut self,
+        track: usize,
+        sample: &Arc<Sample>,
+        slices: &Slices,
+        index: usize,
+        shape: SliceShape,
+        gain: f32,
+    ) -> Result<(), SendError> {
+        if !(0.0..=crate::sequencer::MAX_GAIN).contains(&gain) {
+            return Err(SendError::InvalidStep {
+                step: index,
+                reason: "ganancia fuera de rango (0 a 4)",
+            });
+        }
         let range = slices.get(index).ok_or(SendError::NoSuchSlice {
             index,
             count: slices.len(),
@@ -655,7 +675,7 @@ impl Controller {
             step: index,
             reason,
         })?;
-        self.play_range_shaped(track, sample.clone(), shape.range(range), shape)
+        self.play_range_shaped(track, sample.clone(), shape.range(range), shape, gain)
     }
 
     /// Reproduce los frames `range` del sample (se recorta a su longitud) en
@@ -675,7 +695,7 @@ impl Controller {
         sample: Arc<Sample>,
         range: Range<usize>,
     ) -> Result<(), SendError> {
-        self.play_range_shaped(track, sample, range, SliceShape::DEFAULT)
+        self.play_range_shaped(track, sample, range, SliceShape::DEFAULT, 1.0)
     }
 
     fn play_range_shaped(
@@ -684,6 +704,7 @@ impl Controller {
         sample: Arc<Sample>,
         range: Range<usize>,
         shape: SliceShape,
+        gain: f32,
     ) -> Result<(), SendError> {
         if track >= MAX_TRACKS {
             return Err(SendError::NoSuchTrack(track));
@@ -692,6 +713,7 @@ impl Controller {
         let start = range.start.min(end);
         let playback = Playback {
             shape,
+            gain,
             ..Playback::NORMAL
         };
         let cmd = Command::Play {
