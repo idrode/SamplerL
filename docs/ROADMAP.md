@@ -105,7 +105,53 @@ entre archivos: el script sigue siendo uno solo).
 - Un bloque con Lua no válido no rompe nada: al cargarlo da el error de
   siempre y sigue sonando lo anterior.
 
-## Fase G: lo que más cambia el sonido
+## Fase G: lo que más cambia el sonido ✅
+
+Hecha: `pista:length(n)`, `sample:stretch()`, `bus()` y `pista:send()`,
+`:fx("compressor")` y `:fx("distortion")`, `ramp()`, `lfo()` y `~` en la
+notación. Ver «Fase G» en el Estado de `CLAUDE.md` y las secciones 3 y 4
+de `docs/GUIA.md`. Decisiones:
+
+- **Longitud**: los pasos siguen siendo semicorcheas y el reloj, los
+  compases de 16 (los cambios entran al empezar un compás). Una pista de
+  `n` pasos toca la semicorchea global `g` como su paso `g % n`, alineada
+  con la canción desde que arranca (no desde que entra el patrón): recargar
+  no la desfasa. En esas pistas `every`, `fill`, `chance` y `humanize`
+  cuentan vueltas del patrón; el swing sigue los contratiempos de la
+  canción. `:length()` va antes de `:steps()`. Con 16 pasos, idéntico bit
+  a bit (huellas en `script/tests/golden.rs`).
+- **Time-stretch**: WSOLA en Rust puro, sin dependencias, al cargar, por
+  tramos de golpe a golpe (los transitorios y los inicios de los cortes):
+  cada golpe empieza exactamente en su sitio escalado y dentro de cada
+  tramo se copian ventanas de 32 ms desplazadas hasta ±8 ms para que
+  encajen, así que el tono no cambia. Para breaks (×0,7-×1,4) suena limpio
+  y no añade dependencias de C ni problemas en ARM64; Rubber Band
+  (vocoder de fase con preservación de transitorios) daría más calidad
+  con proporciones grandes o material tonal, pero obligaría a una
+  dependencia de C++: queda como idea, tras una feature opcional.
+- **Envíos**: dos buses globales (delay y reverb Freeverb), post-fader, con
+  buffers reservados al crear el motor; los parámetros entran en el lote
+  al compás. Un bus sin entrada y con la cola apagada se duerme (no suma
+  nada: sin envíos, la salida es idéntica bit a bit) y se vacía.
+- **Compresor y distorsión**: efectos de la cadena de cada pista
+  (compresor por picos, estéreo enlazado; distorsión `tanh`).
+- **Automatización**: curvas en el patrón (entran al compás) que dependen
+  solo de la posición de la canción (deterministas, alineadas al
+  recargar); `ramp` es un diente de sierra que se repite. Los parameter
+  locks (`~`) son del corte del primer filtro y duran hasta el siguiente
+  golpe. Todo se suaviza ~5 ms y el filtro recalcula sus coeficientes cada
+  32 frames.
+
+Sitios que asumían 16 pasos: todos adaptados salvo estos, que quedan así a
+propósito o con un límite. El diagnóstico en vivo solo conoce la longitud
+si `:length(n)` lleva un número escrito tal cual y está en la misma cadena
+de `track(...)` (o en la que define esa pista): con una variable no cuenta
+los pasos (los revisa uno a uno) y un `local t = track(...)` seguido de
+`t:steps(...)` después de otro `track(` se mide con la longitud de ese
+otro. El tracker tiene 16 filas a la vista y se desplaza con las pistas
+más largas. Exportar la canción entera tiene un tope de 256 compases (con
+longitudes que no encajan, como 61 y 63 pasos, el ciclo común sería
+enorme).
 
 Reglas de siempre, con especial cuidado en el motor: nada de reservas ni
 mutex en el hilo de audio (cada cosa nueva entra en `no_alloc.rs`),
