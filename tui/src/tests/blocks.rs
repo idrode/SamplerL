@@ -238,6 +238,75 @@ fn a_block_with_invalid_lua_keeps_the_previous_song_playing() {
     assert_eq!(audio(true), audio(false));
 }
 
+#[test]
+fn blocks_are_updated_with_the_selection_and_deleted_after_confirming() {
+    let (path, mut app, _engine) = open_with_blocks("block_update");
+    write_block(&global_dir(&path), "fantasma.lua", GHOST_BLOCK);
+    write_block(&global_dir(&path), "lento.lua", "bpm(90)\n");
+    let local = path.parent().unwrap().join("blocks");
+    write_block(
+        &local,
+        "lento.lua",
+        "-- descripción: del proyecto\nbpm(80)\n",
+    );
+
+    // Actualizar pide una selección.
+    palette(&mut app, "actualizar un bloque");
+    assert!(app.view().block_picker.is_none());
+    assert!(app.view().message.contains("selecciona"));
+
+    select_lines(&mut app, 0, 0);
+    palette(&mut app, "actualizar un bloque");
+    type_query(&mut app, "fantasma");
+    app.handle(special(Key::Enter));
+    // El primer Enter solo pide confirmación.
+    let screen = text_of(&mut app);
+    assert!(
+        screen.contains("Enter otra vez para sustituir el texto de «fantasma»"),
+        "{screen}"
+    );
+    assert!(
+        std::fs::read_to_string(global_dir(&path).join("fantasma.lua"))
+            .unwrap()
+            .contains("slice_at")
+    );
+    // Moverse la quita.
+    app.handle(special(Key::Down));
+    assert!(app.view().block_picker.unwrap().confirm.is_empty());
+    app.handle(special(Key::Up));
+    app.handle(special(Key::Enter));
+    app.handle(special(Key::Enter));
+    assert!(app.view().block_picker.is_none());
+    assert!(
+        app.view().message.contains("actualizado"),
+        "{}",
+        app.view().message
+    );
+    // Conserva la cabecera.
+    assert_eq!(
+        std::fs::read_to_string(global_dir(&path).join("fantasma.lua")).unwrap(),
+        "-- nombre: fantasma\n-- descripción: Ghost notes suaves en contratiempos\n\
+         -- etiquetas: ghost, hats\n\nbpm(120)\n"
+    );
+
+    // Borrar el del proyecto deja ver el global del mismo nombre.
+    palette(&mut app, "borrar un bloque");
+    type_query(&mut app, "lento");
+    assert_eq!(app.view().block_picker.unwrap().description, "del proyecto");
+    app.handle(special(Key::Enter));
+    assert!(text_of(&mut app).contains("Enter otra vez para borrar «lento»"));
+    app.handle(special(Key::Enter));
+    assert!(!local.join("lento.lua").exists());
+    let message = app.view().message;
+    assert!(message.contains("queda el global"), "{message}");
+    // Esc cancela sin borrar.
+    palette(&mut app, "borrar un bloque");
+    app.handle(special(Key::Enter));
+    app.handle(esc());
+    assert!(global_dir(&path).join("fantasma.lua").exists());
+    assert!(!app.view().playing_mode);
+}
+
 /// `cargo test -p tui pantalla_bloques -- --ignored --nocapture`
 #[test]
 #[ignore]

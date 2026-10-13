@@ -85,6 +85,9 @@ struct Palette {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlockMode {
     Insert,
+    /// Sustituir su texto por la selección (conserva la cabecera).
+    Update,
+    Delete,
 }
 
 /// Selector de bloques abierto: lista filtrable con vista previa.
@@ -93,6 +96,12 @@ struct BlockPicker {
     mode: BlockMode,
     query: String,
     selected: usize,
+    /// Texto nuevo al actualizar (la selección al abrirlo, sin sangría
+    /// común).
+    body: String,
+    /// Bloque elegido una vez al actualizar o borrar: Enter otra vez lo
+    /// confirma.
+    armed: Option<String>,
 }
 
 /// Qué hacer tras una tecla.
@@ -1060,6 +1069,16 @@ impl App {
 
     /// Abre el selector de bloques (relee la biblioteca antes).
     pub fn open_block_picker(&mut self, mode: BlockMode) {
+        let body = match mode {
+            BlockMode::Update => match editing::selected_text(&self.editor) {
+                Some(text) => editing::dedent(&text),
+                None => {
+                    self.message = "selecciona antes el texto nuevo del bloque".into();
+                    return;
+                }
+            },
+            _ => String::new(),
+        };
         self.blocks.reload();
         self.completion = None;
         if self.blocks.blocks.is_empty() {
@@ -1077,6 +1096,8 @@ impl App {
             mode,
             query: String::new(),
             selected: 0,
+            body,
+            armed: None,
         });
     }
 
@@ -1104,25 +1125,64 @@ impl App {
                 let Some(name) = matches.get(picker.selected).cloned() else {
                     return Flow::Continue;
                 };
-                let mode = picker.mode;
-                self.block_picker = None;
-                match mode {
+                // Actualizar y borrar piden confirmación: Enter otra vez.
+                if picker.mode != BlockMode::Insert && picker.armed.as_ref() != Some(&name) {
+                    picker.armed = Some(name);
+                    return Flow::Continue;
+                }
+                let picker = self.block_picker.take().unwrap();
+                match picker.mode {
                     BlockMode::Insert => self.insert_block(&name),
+                    BlockMode::Update => self.update_block(&name, &picker.body),
+                    BlockMode::Delete => self.delete_block(&name),
                 }
             }
-            Key::Up if count > 0 => picker.selected = (picker.selected + count - 1) % count,
-            Key::Down if count > 0 => picker.selected = (picker.selected + 1) % count,
+            Key::Up if count > 0 => {
+                picker.selected = (picker.selected + count - 1) % count;
+                picker.armed = None;
+            }
+            Key::Down if count > 0 => {
+                picker.selected = (picker.selected + 1) % count;
+                picker.armed = None;
+            }
             Key::Backspace => {
                 picker.query.pop();
                 picker.selected = 0;
+                picker.armed = None;
             }
             Key::Char(c) if !input.ctrl && !input.alt => {
                 picker.query.push(c);
                 picker.selected = 0;
+                picker.armed = None;
             }
             _ => {}
         }
         Flow::Continue
+    }
+
+    /// Sustituye el texto de un bloque (conserva su cabecera y su archivo).
+    fn update_block(&mut self, name: &str, body: &str) {
+        self.message = match self.blocks.update(name, body) {
+            Ok(block) => format!("bloque «{name}» actualizado ({})", block.path.display()),
+            Err(e) => format!("no se pudo actualizar el bloque: {e}"),
+        };
+    }
+
+    /// Borra el archivo de un bloque.
+    fn delete_block(&mut self, name: &str) {
+        self.message = match self.blocks.delete(name) {
+            Ok(block) => {
+                let mut message = format!("bloque «{name}» borrado ({})", block.path.display());
+                if let Some(other) = self.blocks.get(name) {
+                    message.push_str(&format!(
+                        "; queda el {} del mismo nombre",
+                        other.scope.label()
+                    ));
+                }
+                message
+            }
+            Err(e) => format!("no se pudo borrar el bloque: {e}"),
+        };
     }
 
     /// Marca el siguiente campo pendiente.
@@ -1243,6 +1303,8 @@ impl App {
             Action::LabelSlice => self.start_labeling(),
             Action::SaveBlock => self.start_save_block(),
             Action::InsertBlock => self.open_block_picker(BlockMode::Insert),
+            Action::UpdateBlock => self.open_block_picker(BlockMode::Update),
+            Action::DeleteBlock => self.open_block_picker(BlockMode::Delete),
             Action::Mute => self.toggle_live(false),
             Action::Solo => self.toggle_live(true),
             Action::ClearMuteSolo => self.clear_live(),
@@ -1826,8 +1888,18 @@ impl App {
                 BlockPickerView {
                     title: match p.mode {
                         BlockMode::Insert => "insertar un bloque",
+                        BlockMode::Update => "actualizar un bloque con la selección",
+                        BlockMode::Delete => "borrar un bloque",
                     }
                     .into(),
+                    confirm: p.armed.as_ref().map_or(String::new(), |name| match p.mode {
+                        BlockMode::Update => {
+                            format!(
+                                "Enter otra vez para sustituir el texto de «{name}» · Esc cancela"
+                            )
+                        }
+                        _ => format!("Enter otra vez para borrar «{name}» · Esc cancela"),
+                    }),
                     query: p.query.clone(),
                     items: matches
                         .iter()

@@ -95,6 +95,8 @@ pub struct BlockPickerView {
     /// Descripción y texto (sin marcas de campo) del elegido.
     pub description: String,
     pub preview: Vec<String>,
+    /// Confirmación pendiente (actualizar o borrar), o vacío.
+    pub confirm: String,
 }
 
 /// Popup de autocompletado.

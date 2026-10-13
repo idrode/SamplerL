@@ -209,6 +209,8 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Corte anterior | Selecciona el corte anterior de la pista (sin tocarlo) | — |
 | Guardar la selección como bloque | Abre «bloque » para escribir nombre, etiquetas y `-- descripción`; va a la biblioteca global | — |
 | Insertar un bloque | Lista filtrable (nombre, etiquetas, descripción) con vista previa; Tab salta entre sus campos `${...}` | — |
+| Actualizar un bloque con la selección | Elige un bloque y sustituye su texto por la selección (conserva nombre, descripción y etiquetas); Enter dos veces | — |
+| Borrar un bloque | Elige un bloque y borra su archivo; Enter dos veces | — |
 | Salir | Sale (pide confirmación si hay cambios sin guardar) | Ctrl-Q |
 | Snippet: `amen`, `fill`, `ghost`, `intro`, `euclid`, `melodia`, `groove` | Inserta el snippet en el cursor (ver «Snippets» en la sección 4) | — |
 

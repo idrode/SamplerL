@@ -76,7 +76,8 @@ const PICKER_PREVIEW: usize = 16;
 pub fn picker_area(screen: Rect, view: &BlockPickerView) -> Rect {
     let width = screen.width.saturating_sub(4).min(90);
     let preview = view.preview.len().clamp(3, PICKER_PREVIEW) as u16;
-    let height = (PICKER_ROWS + preview + 6).min(screen.height.saturating_sub(2));
+    let confirm = u16::from(!view.confirm.is_empty());
+    let height = (PICKER_ROWS + preview + confirm + 6).min(screen.height.saturating_sub(2));
     Rect {
         x: screen.x + (screen.width - width) / 2,
         y: screen.y + (screen.height - height).min(1),
@@ -131,6 +132,9 @@ impl Widget for BlockPickerPopup<'_> {
             lines.push(Line::raw(""));
         }
         lines.push(Line::from("─".repeat(width)).fg(DIM));
+        if !view.confirm.is_empty() {
+            lines.push(Line::from(view.confirm.clone()).fg(Color::Yellow).bold());
+        }
         if !view.description.is_empty() {
             lines.push(Line::from(view.description.clone()).italic());
         }

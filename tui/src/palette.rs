@@ -40,6 +40,8 @@ pub enum Action {
     PreviousSlice,
     SaveBlock,
     InsertBlock,
+    UpdateBlock,
+    DeleteBlock,
     Quit,
 }
 
@@ -239,6 +241,18 @@ pub const ACTIONS: &[ActionDef] = &[
         action: Action::InsertBlock,
         name: "Insertar un bloque",
         description: "Lista filtrable (nombre, etiquetas, descripción) con vista previa; Tab salta entre sus campos `${...}`",
+        keys: "",
+    },
+    ActionDef {
+        action: Action::UpdateBlock,
+        name: "Actualizar un bloque con la selección",
+        description: "Elige un bloque y sustituye su texto por la selección (conserva nombre, descripción y etiquetas); Enter dos veces",
+        keys: "",
+    },
+    ActionDef {
+        action: Action::DeleteBlock,
+        name: "Borrar un bloque",
+        description: "Elige un bloque y borra su archivo; Enter dos veces",
         keys: "",
     },
     ActionDef {
