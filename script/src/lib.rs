@@ -37,6 +37,7 @@ use engine::{
     MAX_TRACKS, Pattern, STEPS, Sample, SendError, Slices, Step, valid_bpm,
 };
 pub mod api;
+pub mod blocks;
 pub mod patterns;
 pub mod project;
 mod watch;

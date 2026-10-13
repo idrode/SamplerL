@@ -1316,7 +1316,9 @@ pub fn chance_effect(name: &str) -> Option<&'static ChanceEffect> {
 }
 
 /// Quita las marcas `${` `}` de una plantilla y devuelve el texto y los
-/// parámetros marcados como rangos de caracteres (no bytes).
+/// parámetros marcados como rangos de caracteres (no bytes). Un `${` sin
+/// cerrar se queda como texto (los bloques de la biblioteca los escribe el
+/// usuario).
 pub fn expand_template(template: &str) -> (String, Vec<std::ops::Range<usize>>) {
     let mut text = String::new();
     let mut marks = Vec::new();
@@ -1326,7 +1328,10 @@ pub fn expand_template(template: &str) -> (String, Vec<std::ops::Range<usize>>) 
         text.push_str(&rest[..open]);
         chars += rest[..open].chars().count();
         let after = &rest[open + 2..];
-        let close = after.find('}').expect("plantilla con ${ sin cerrar");
+        let Some(close) = after.find('}') else {
+            text.push_str(&rest[open..]);
+            return (text, marks);
+        };
         let inner = &after[..close];
         let len = inner.chars().count();
         text.push_str(inner);
@@ -1501,6 +1506,11 @@ mod tests {
         assert_eq!(text, "fx(\"filter\", { cutoff = 3000 })");
         assert_eq!(marks, vec![4..10, 24..28]);
         assert_eq!(expand_template("count()"), ("count()".into(), vec![]));
+        // Un campo sin cerrar se queda como texto.
+        let (text, marks) = expand_template("a(${1}, \"${b\")");
+        assert_eq!(text, "a(1, \"${b\")");
+        assert_eq!(marks.first(), Some(&(2..3)));
+        assert_eq!(marks.len(), 1);
     }
 
     #[test]
