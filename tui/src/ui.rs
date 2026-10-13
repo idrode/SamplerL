@@ -917,6 +917,21 @@ impl Widget for TrackerPanel<'_> {
     }
 }
 
+/// Envíos de una pista a los buses, para el panel de efectos: `
+/// → d0.30 r0.15` (vacío sin envíos).
+pub fn sends_text(sends: [f32; 2]) -> String {
+    let parts: Vec<String> = [("d", sends[0]), ("r", sends[1])]
+        .iter()
+        .filter(|(_, s)| *s > 0.0)
+        .map(|(bus, s)| format!("{bus}{s:.2}"))
+        .collect();
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!(" → {}", parts.join(" "))
+    }
+}
+
 /// Alto del panel de efectos: nombre, volumen, nivel y hasta 4 efectos.
 pub const FX_PANEL_HEIGHT: u16 = 3 + engine::MAX_FX as u16 + 2;
 /// Ancho mínimo de cada columna del panel de efectos.
@@ -969,6 +984,8 @@ impl Widget for FxPanel<'_> {
                         width.saturating_sub(4),
                     ))
                     .fg(ACCENT),
+                    // Envíos a los buses: `→ d0.30 r0.15`.
+                    Span::from(sends_text(track.sends)).fg(DIM),
                 ]),
                 Line::from(vec![
                     Span::raw("nivel "),

@@ -175,6 +175,8 @@ pub struct TrackView {
     pub labels: Vec<Option<String>>,
     /// Cortes con el inicio ajustado a mano.
     pub adjusted: Vec<bool>,
+    /// Envíos a los buses: `[delay, reverb]`.
+    pub sends: [f32; 2],
     /// Swing en porcentaje (50 = recto; 0 si no se ha dicho).
     pub swing: f32,
     /// La pista sola pasó de ±1 hace poco.

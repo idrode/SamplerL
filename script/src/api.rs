@@ -428,6 +428,43 @@ pub const FUNCTIONS: &[Function] = &[
         example: Some("bpm(170)\nmetronome(true)\n"),
     },
     Function {
+        name: "bus",
+        receiver: Receiver::Global,
+        signature: "bus(nombre, parámetros)",
+        returns: None,
+        summary: "Parámetros de un bus de envío (delay o reverb), para toda la canción.",
+        doc: "Hay dos buses que comparten todas las pistas: un delay sincronizado al \
+              tempo y una reverb. Cada pista les manda una parte de su salida con \
+              `pista:send(nombre, nivel)` (después de su volumen, mute y solo) y lo \
+              que devuelven se suma al master antes del limitador. Sin `bus()`, los \
+              valores por defecto. Los cambios entran al empezar el compás, como \
+              el tempo; la cola del delay y de la reverb sigue sonando aunque se \
+              pare el secuenciador. Una clave desconocida da error.",
+        params: &[
+            Param {
+                name: "nombre",
+                description: "`\"delay\"` o `\"reverb\"`",
+            },
+            Param {
+                name: "parámetros",
+                description: "tabla con los de la tabla de abajo (los que falten, por defecto)",
+            },
+        ],
+        template: "bus(\"${delay}\", { time = \"${1/8}\", feedback = ${0.4} })",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             bus(\"delay\", { time = \"3/16\", feedback = 0.5, level = 0.7 })\n\
+             bus(\"reverb\", { size = 0.8, damp = 0.4 })\n\
+             track(\"drums\", amen)\n  \
+             :steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\")\n  \
+             :send(\"reverb\", 0.2)\n\
+             -- Solo la caja, al delay.\n\
+             track(\"caja\", amen:slice_at(2))\n  \
+             :steps(\". . . .  x . . .  . . . .  x . . .\")\n  \
+             :send(\"delay\", 0.6)\n",
+        ),
+    },
+    Function {
         name: "euclid",
         receiver: Receiver::Global,
         signature: "euclid(k, n [, golpe [, pasos]])",
@@ -1047,6 +1084,35 @@ pub const FUNCTIONS: &[Function] = &[
         ),
     },
     Function {
+        name: "send",
+        receiver: Receiver::Track,
+        signature: "pista:send(bus, nivel)",
+        returns: Some(Receiver::Track),
+        summary: "Manda una parte de la pista al bus de delay o de reverb (0 a 1).",
+        doc: "El envío va después del volumen, el mute y el solo de la pista: una \
+              pista en mute no suena tampoco en el delay (pero lo que ya estaba en \
+              la cola sigue). Entra con el patrón, al empezar el compás, suavizado \
+              para que no haga clic. Los parámetros de los buses, con `bus()`.",
+        params: &[
+            Param {
+                name: "bus",
+                description: "`\"delay\"` o `\"reverb\"`",
+            },
+            Param {
+                name: "nivel",
+                description: "cuánto se manda (0 a 1; 0 quita el envío)",
+            },
+        ],
+        template: "send(\"${reverb}\", ${0.3})",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             track(\"drums\", amen)\n  \
+             :steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\")\n  \
+             :send(\"delay\", 0.3)\n  \
+             :send(\"reverb\", 0.15)\n",
+        ),
+    },
+    Function {
         name: "every",
         receiver: Receiver::Track,
         signature: "pista:every(n, función)",
@@ -1257,6 +1323,80 @@ pub const EFFECTS: &[Effect] = &[
     },
 ];
 
+/// Buses de envío para `bus(nombre, parámetros)` y `pista:send(nombre,
+/// nivel)`.
+pub const BUSES: &[Effect] = &[
+    Effect {
+        name: "delay",
+        aliases: &[],
+        summary: "Delay sincronizado al tempo: repeticiones cada time, cada una feedback veces la anterior.",
+        params: &[
+            FxParam {
+                name: "time",
+                description: "tiempo entre repeticiones (negra, corchea con puntillo, corchea, semicorchea)",
+                default: Some("\"1/8\""),
+                valid: "`\"1/4\"`, `\"3/16\"`, `\"1/8\"` o `\"1/16\"`",
+                values: &["1/4", "3/16", "1/8", "1/16"],
+                template: "time = \"${1/8}\"",
+            },
+            FxParam {
+                name: "feedback",
+                description: "cuánto de cada repetición vuelve a entrar",
+                default: Some("0.4"),
+                valid: "0–0.95",
+                values: &[],
+                template: "feedback = ${0.4}",
+            },
+            FxParam {
+                name: "level",
+                description: "volumen de lo que devuelve el bus",
+                default: Some("0.8"),
+                valid: "0–1",
+                values: &[],
+                template: "level = ${0.8}",
+            },
+        ],
+        template: "{ time = \"${1/8}\", feedback = ${0.4} }",
+    },
+    Effect {
+        name: "reverb",
+        aliases: &[],
+        summary: "Reverb (Freeverb): una sala para todas las pistas.",
+        params: &[
+            FxParam {
+                name: "size",
+                description: "tamaño de la sala (cola más larga)",
+                default: Some("0.7"),
+                valid: "0–1",
+                values: &[],
+                template: "size = ${0.7}",
+            },
+            FxParam {
+                name: "damp",
+                description: "cuánto se apagan los agudos de la cola",
+                default: Some("0.5"),
+                valid: "0–1",
+                values: &[],
+                template: "damp = ${0.5}",
+            },
+            FxParam {
+                name: "level",
+                description: "volumen de lo que devuelve el bus",
+                default: Some("0.8"),
+                valid: "0–1",
+                values: &[],
+                template: "level = ${0.8}",
+            },
+        ],
+        template: "{ size = ${0.7}, damp = ${0.5} }",
+    },
+];
+
+/// Bus de envío por nombre.
+pub fn bus(name: &str) -> Option<&'static Effect> {
+    BUSES.iter().find(|b| b.name == name)
+}
+
 /// Efectos de `:chance`.
 pub const CHANCE_EFFECTS: &[ChanceEffect] = &[
     ChanceEffect {
@@ -1435,6 +1575,31 @@ fn with_aliases(name: &str, aliases: &[&str]) -> String {
     text
 }
 
+/// Tabla de parámetros de unos efectos (o buses) para la guía.
+fn params_table(what: &str, effects: &[Effect]) -> String {
+    let mut out = format!(
+        "| {what} | Parámetro | Qué es | Por defecto | Valores |\n| --- | --- | --- | --- | --- |\n"
+    );
+    for e in effects {
+        for (i, p) in e.params.iter().enumerate() {
+            let name = if i == 0 {
+                with_aliases(e.name, e.aliases)
+            } else {
+                String::new()
+            };
+            let default = p.default.map_or("obligatorio".into(), code);
+            out.push_str(&format!(
+                "| {name} | {} | {} | {default} | {} |\n",
+                code(p.name),
+                p.description,
+                p.valid
+            ));
+        }
+    }
+    out.push('\n');
+    out
+}
+
 /// Sección de la API de `docs/GUIA.md` (entre las marcas `api:inicio` y
 /// `api:fin`), generada a partir del registro.
 pub fn guide_markdown() -> String {
@@ -1457,27 +1622,8 @@ pub fn guide_markdown() -> String {
             out.push('\n');
         }
         match (f.receiver, f.name) {
-            (Receiver::Track, "fx") => {
-                out.push_str("| Efecto | Parámetro | Qué es | Por defecto | Valores |\n");
-                out.push_str("| --- | --- | --- | --- | --- |\n");
-                for e in EFFECTS {
-                    for (i, p) in e.params.iter().enumerate() {
-                        let name = if i == 0 {
-                            with_aliases(e.name, e.aliases)
-                        } else {
-                            String::new()
-                        };
-                        let default = p.default.map_or("obligatorio".into(), code);
-                        out.push_str(&format!(
-                            "| {name} | {} | {} | {default} | {} |\n",
-                            code(p.name),
-                            p.description,
-                            p.valid
-                        ));
-                    }
-                }
-                out.push('\n');
-            }
+            (Receiver::Track, "fx") => out.push_str(&params_table("Efecto", EFFECTS)),
+            (Receiver::Global, "bus") => out.push_str(&params_table("Bus", BUSES)),
             (Receiver::Global, "scale") => {
                 out.push_str("| Escala | Qué es | Semitonos |\n| --- | --- | --- |\n");
                 for s in SCALES {

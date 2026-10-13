@@ -547,6 +547,35 @@ bpm(170)
 metronome(true)
 ```
 
+### `bus(nombre, parámetros)`
+
+Parámetros de un bus de envío (delay o reverb), para toda la canción. Hay dos buses que comparten todas las pistas: un delay sincronizado al tempo y una reverb. Cada pista les manda una parte de su salida con `pista:send(nombre, nivel)` (después de su volumen, mute y solo) y lo que devuelven se suma al master antes del limitador. Sin `bus()`, los valores por defecto. Los cambios entran al empezar el compás, como el tempo; la cola del delay y de la reverb sigue sonando aunque se pare el secuenciador. Una clave desconocida da error.
+
+- `nombre`: `"delay"` o `"reverb"`
+- `parámetros`: tabla con los de la tabla de abajo (los que falten, por defecto)
+
+| Bus | Parámetro | Qué es | Por defecto | Valores |
+| --- | --- | --- | --- | --- |
+| `"delay"` | `time` | tiempo entre repeticiones (negra, corchea con puntillo, corchea, semicorchea) | `"1/8"` | `"1/4"`, `"3/16"`, `"1/8"` o `"1/16"` |
+|  | `feedback` | cuánto de cada repetición vuelve a entrar | `0.4` | 0–0.95 |
+|  | `level` | volumen de lo que devuelve el bus | `0.8` | 0–1 |
+| `"reverb"` | `size` | tamaño de la sala (cola más larga) | `0.7` | 0–1 |
+|  | `damp` | cuánto se apagan los agudos de la cola | `0.5` | 0–1 |
+|  | `level` | volumen de lo que devuelve el bus | `0.8` | 0–1 |
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+bus("delay", { time = "3/16", feedback = 0.5, level = 0.7 })
+bus("reverb", { size = 0.8, damp = 0.4 })
+track("drums", amen)
+  :steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+  :send("reverb", 0.2)
+-- Solo la caja, al delay.
+track("caja", amen:slice_at(2))
+  :steps(". . . .  x . . .  . . . .  x . . .")
+  :send("delay", 0.6)
+```
+
 ### `euclid(k, n [, golpe [, pasos]])`
 
 Patrón euclídeo: k golpes repartidos por igual en n pasos, repetido hasta llenar el patrón. Devuelve texto en mini-notación para `steps`. Empieza por un golpe (el paso `i` suena si `i·k mod n < k`); para desplazarlo, `rotate`. El ritmo se repite hasta llenar `pasos` (16 por defecto; para una pista con `:length(n)`, pasa su longitud) y se corta ahí si `n` no lo divide. El golpe puede ser cualquier paso que suene, con sufijos o una etiqueta.
@@ -934,6 +963,23 @@ track("drums", amen)
   :fx("bitcrush", { bits = 6, downsample = 2 })
 ```
 
+### `pista:send(bus, nivel)`
+
+Devuelve: pista.
+
+Manda una parte de la pista al bus de delay o de reverb (0 a 1). El envío va después del volumen, el mute y el solo de la pista: una pista en mute no suena tampoco en el delay (pero lo que ya estaba en la cola sigue). Entra con el patrón, al empezar el compás, suavizado para que no haga clic. Los parámetros de los buses, con `bus()`.
+
+- `bus`: `"delay"` o `"reverb"`
+- `nivel`: cuánto se manda (0 a 1; 0 quita el envío)
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen)
+  :steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+  :send("delay", 0.3)
+  :send("reverb", 0.15)
+```
+
 ### `pista:every(n, función)`
 
 Devuelve: pista.
@@ -1294,7 +1340,11 @@ la vista; «Reiniciar medidores» (paleta) los quita. Si se nota apretado:
 - baja el volumen de las pistas con `:gain()`, sobre todo cuando dos pistas
   tocan el mismo golpe a la vez (break + refuerzo de bombo);
 - baja golpes concretos con `@` (`5@0.6`);
-- recuerda que `@` y `:gain()` llegan hasta 4: más de 1 sube el volumen.
+- recuerda que `@` y `:gain()` llegan hasta 4: más de 1 sube el volumen;
+- el delay y la reverb (`:send()`, `bus()`) se suman al master antes del
+  limitador: con mucho feedback y envíos altos, baja su `level` o los
+  envíos. El panel de efectos enseña los envíos de cada pista (`→ d0.30
+  r0.15`: delay y reverb).
 
 ### Errores comunes de Lua
 

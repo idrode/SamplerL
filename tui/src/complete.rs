@@ -251,6 +251,28 @@ fn string_context(
                     insert: e.name.into(),
                 })
                 .collect(),
+            ("bus", 0) | ("send", 0) => api::BUSES
+                .iter()
+                .map(|b| Candidate {
+                    label: b.name.into(),
+                    kind: "bus".into(),
+                    signature: if name == "bus" {
+                        format!(
+                            "bus(\"{}\", {{ {} }})",
+                            b.name,
+                            b.params
+                                .iter()
+                                .map(|p| p.name)
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )
+                    } else {
+                        format!("send(\"{}\", nivel)", b.name)
+                    },
+                    description: b.summary.into(),
+                    insert: b.name.into(),
+                })
+                .collect(),
             ("track", 0) => track_names(all)
                 .into_iter()
                 .map(|n| Candidate {
@@ -512,10 +534,15 @@ impl Scan {
         else {
             return None;
         };
-        if name != "fx" || *arg != 1 {
+        if *arg != 1 {
             return None;
         }
-        api::effect(strings.first()?.as_deref()?)
+        // La tabla de `fx("efecto", { ... })` o de `bus("delay", { ... })`.
+        match name.as_str() {
+            "fx" => api::effect(strings.first()?.as_deref()?),
+            "bus" => api::bus(strings.first()?.as_deref()?),
+            _ => None,
+        }
     }
 }
 
@@ -599,8 +626,13 @@ pub fn help_at(lines: &[String], row: usize, col: usize) -> Option<Help> {
                     .join(", ")
             ),
         };
+        let call = if api::bus(effect.name).is_some_and(|b| std::ptr::eq(b, effect)) {
+            "bus"
+        } else {
+            "fx"
+        };
         return Some(Help {
-            signature: format!("fx(\"{}\", {{ ... }})", effect.name),
+            signature: format!("{call}(\"{}\", {{ ... }})", effect.name),
             description,
         });
     }

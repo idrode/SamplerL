@@ -171,6 +171,29 @@ fn the_audio_thread_never_allocates() {
     });
     assert_eq!(n, 0, "reservas con longitudes variables");
 
+    // Envíos al delay y a la reverb, con cambio de parámetros al compás.
+    let sending = Pattern::from_bars(sample.clone(), &slices, &bars[..1])
+        .unwrap()
+        .with_sends([0.8, 0.6])
+        .unwrap();
+    controller.set_track_pattern(5, Some(sending)).unwrap();
+    controller
+        .set_buses(engine::Buses {
+            delay: engine::DelayParams {
+                division: engine::Division::Quarter,
+                feedback: 0.9,
+                level: 1.0,
+            },
+            ..engine::Buses::default()
+        })
+        .unwrap();
+    let n = counted(|| {
+        for _ in 0..400 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas con envíos");
+
     controller.stop().unwrap();
     controller.start().unwrap();
     let n = counted(|| {

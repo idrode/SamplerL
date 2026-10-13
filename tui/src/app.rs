@@ -960,6 +960,7 @@ impl App {
                 && matches[0].label == context.prefix
                 && matches[0].insert == context.prefix
                 && matches[0].kind != "efecto"
+                && matches[0].kind != "bus"
             {
                 return None;
             }
@@ -1032,10 +1033,13 @@ impl App {
         let insert = candidate.insert.clone();
         // Un efecto dentro de `fx("...", { ... })`: la tabla se regenera
         // con los parámetros del efecto nuevo.
-        if let Some(effect) = (candidate.kind == "efecto")
-            .then(|| api::effect(&candidate.label))
-            .flatten()
-        {
+        let effect = match candidate.kind.as_str() {
+            "efecto" => api::effect(&candidate.label),
+            // `bus("...", { ... })`: la tabla de parámetros del bus.
+            "bus" => api::bus(&candidate.label),
+            _ => None,
+        };
+        if let Some(effect) = effect {
             let fields = self.grouped(|editor| {
                 editing::insert_template(editor, replace, &insert);
                 editing::replace_fx_table(editor, effect)
@@ -1924,6 +1928,7 @@ impl App {
                             labels: t.labels.clone(),
                             adjusted: t.adjusted.clone(),
                             swing: t.swing,
+                            sends: t.sends,
                             clipping: slot.is_some_and(|s| {
                                 self.track_clip_until[s].is_some_and(|u| Instant::now() < u)
                             }),

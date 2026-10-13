@@ -33,8 +33,9 @@ use std::time::{Duration, Instant, SystemTime};
 
 use engine::notation::{check_label, parse_pattern_labeled, split_label};
 use engine::{
-    Batch, Controller, FilterKind, Fx, MAX_CYCLE_BARS, MAX_FX, MAX_GAIN, MAX_RETRIG, MAX_SEMITONES,
-    MAX_STEPS, MAX_TRACKS, Pattern, STEPS, Sample, SendError, Slices, Step, valid_bpm,
+    Batch, Buses, Controller, Division, FilterKind, Fx, MAX_CYCLE_BARS, MAX_FX, MAX_GAIN,
+    MAX_RETRIG, MAX_SEMITONES, MAX_STEPS, MAX_TRACKS, Pattern, STEPS, Sample, SendError, Slices,
+    Step, valid_bpm,
 };
 pub mod api;
 pub mod blocks;
@@ -90,6 +91,8 @@ pub struct Song {
     /// Metrónomo pedido con `metronome()`; `None` deja el que haya. No entra
     /// en el render salvo que se pida ([`Song::render_with_metronome`]).
     pub metronome: Option<bool>,
+    /// Parámetros de los buses de envío (`bus()`; si no, por defecto).
+    pub buses: Buses,
     /// Avisos de la carga que no la impiden (por ejemplo, etiquetas del
     /// proyecto que no se aplican porque el script corta el sample en otro
     /// número de cortes).
@@ -123,6 +126,8 @@ pub struct TrackDef {
     pub swing: f32,
     /// Humanize (`:humanize()`).
     pub humanize: Option<Humanize>,
+    /// Envíos a los buses (`:send()`): `[delay, reverb]`.
+    pub sends: [f32; engine::bus::BUSES],
     /// Silenciada (`:mute()`).
     pub mute: bool,
     /// En solo (`:solo()`).
@@ -494,6 +499,7 @@ impl ScriptHost {
         let state = Rc::new(RefCell::new(Builder {
             bpm: None,
             metronome: None,
+            buses: Buses::default(),
             tracks: Vec::new(),
             expanding: Rc::new(Cell::new(false)),
         }));
@@ -505,11 +511,12 @@ impl ScriptHost {
         self.samples = std::mem::take(&mut *cache.borrow_mut());
         result.map_err(|e| ScriptError::from_lua(&e))?;
 
-        let (bpm, metronome, tracks, expanding) = {
+        let (bpm, metronome, buses, tracks, expanding) = {
             let mut builder = state.borrow_mut();
             (
                 builder.bpm.or(self.default_bpm),
                 builder.metronome,
+                builder.buses,
                 std::mem::take(&mut builder.tracks),
                 builder.expanding.clone(),
             )
@@ -542,6 +549,7 @@ impl ScriptHost {
             bpm,
             tracks: expanded?,
             metronome,
+            buses,
             warnings,
         })
     }
@@ -663,6 +671,108 @@ impl ScriptHost {
             lua.create_function(move |lua, on: Option<bool>| {
                 g(lua, "metronome")?;
                 st.borrow_mut().metronome = Some(on.unwrap_or(true));
+                Ok(())
+            })?,
+        )?;
+
+        let st = state.clone();
+        let g = guard.clone();
+        globals.set(
+            "bus",
+            lua.create_function(move |lua, (name, params): (String, Option<Table>)| {
+                g(lua, "bus")?;
+                let who = format!("bus(\"{name}\")");
+                let Some(def) = api::bus(&name) else {
+                    return Err(fail(
+                        lua,
+                        format!(
+                            "{who}: no existe ({})",
+                            names(api::BUSES.iter().map(|b| b.name))
+                        ),
+                    ));
+                };
+                let known: Vec<&str> = def.params.iter().map(|p| p.name).collect();
+                let get = |key: &str| -> mlua::Result<Option<Value>> {
+                    match &params {
+                        Some(p) => p.get::<Option<Value>>(key),
+                        None => Ok(None),
+                    }
+                };
+                if let Some(params) = &params {
+                    for pair in params.pairs::<Value, Value>() {
+                        let (key, _) = pair?;
+                        let key = match key {
+                            Value::String(s) => s.to_str()?.to_string(),
+                            other => format!("{other:?}"),
+                        };
+                        if !known.contains(&key.as_str()) {
+                            return Err(fail(
+                                lua,
+                                format!(
+                                    "{who}: parámetro desconocido \"{key}\" (admite: {})",
+                                    known.join(", ")
+                                ),
+                            ));
+                        }
+                    }
+                }
+                let number = |key: &str, default: f32, max: f32| -> mlua::Result<f32> {
+                    let value = match get(key)? {
+                        None => default,
+                        Some(Value::Integer(i)) => i as f32,
+                        Some(Value::Number(n)) => n as f32,
+                        Some(_) => {
+                            return Err(fail(lua, format!("{who}: {key} tiene que ser un número")));
+                        }
+                    };
+                    if !(0.0..=max).contains(&value) {
+                        return Err(fail(
+                            lua,
+                            format!("{who}: {key} = {value} fuera de rango (0 a {max})"),
+                        ));
+                    }
+                    Ok(value)
+                };
+                let mut builder = st.borrow_mut();
+                let buses = &mut builder.buses;
+                match name.as_str() {
+                    "delay" => {
+                        let d = engine::DelayParams::default();
+                        let division = match get("time")? {
+                            None => d.division,
+                            Some(Value::String(text)) => {
+                                let text = text.to_str()?.to_string();
+                                Division::parse(&text).ok_or_else(|| {
+                                    fail(
+                                        lua,
+                                        format!(
+                                            "{who}: time = \"{text}\" no existe (\"1/4\", \"3/16\", \"1/8\" o \"1/16\")"
+                                        ),
+                                    )
+                                })?
+                            }
+                            Some(_) => {
+                                return Err(fail(
+                                    lua,
+                                    format!("{who}: time va entre comillas: \"1/8\""),
+                                ));
+                            }
+                        };
+                        buses.delay = engine::DelayParams {
+                            division,
+                            feedback: number("feedback", d.feedback, engine::bus::MAX_FEEDBACK)?,
+                            level: number("level", d.level, 1.0)?,
+                        };
+                    }
+                    _ => {
+                        let r = engine::ReverbParams::default();
+                        buses.reverb = engine::ReverbParams {
+                            size: number("size", r.size, 1.0)?,
+                            damp: number("damp", r.damp, 1.0)?,
+                            level: number("level", r.level, 1.0)?,
+                        };
+                    }
+                }
                 Ok(())
             })?,
         )?;
@@ -798,6 +908,7 @@ impl ScriptHost {
                                     adjusted: source.adjusted.clone(),
                                     swing: STRAIGHT_SWING,
                                     humanize: None,
+                                    sends: [0.0; engine::bus::BUSES],
                                     mute: false,
                                     solo: false,
                                     origin: source.origin.clone(),
@@ -865,6 +976,7 @@ fn song_batch(song: &Song, slots: &[Option<String>; MAX_TRACKS]) -> Result<Batch
     if let Some(bpm) = song.bpm {
         batch.set_bpm(bpm);
     }
+    batch.set_buses(song.buses);
     for (slot, assigned) in slots.iter().enumerate() {
         let pattern = match assigned {
             Some(name) => {
@@ -872,6 +984,7 @@ fn song_batch(song: &Song, slots: &[Option<String>; MAX_TRACKS]) -> Result<Batch
                 let pattern = Pattern::from_bars(track.sample.clone(), &track.slices, &track.bars)
                     .and_then(|p| p.with_gain(track.gain))
                     .and_then(|p| p.with_fx(&track.fx))
+                    .and_then(|p| p.with_sends(track.sends))
                     .map(|p| p.with_mute(track.mute).with_solo(track.solo))
                     .map_err(|e| ScriptError::new(format!("pista \"{name}\": {e}")))?;
                 Some(pattern)
@@ -973,6 +1086,7 @@ fn fail(lua: &Lua, message: impl fmt::Display) -> mlua::Error {
 struct Builder {
     bpm: Option<f64>,
     metronome: Option<bool>,
+    buses: Buses,
     tracks: Vec<TrackBuild>,
     /// Activo mientras se llaman las funciones de `every`.
     expanding: Rc<Cell<bool>>,
@@ -1848,6 +1962,31 @@ impl UserData for TrackHandle {
                 Ok(this.clone())
             },
         );
+
+        // `:send(bus, nivel)`: parte de la pista al delay o a la reverb.
+        methods.add_method("send", |lua, this, (bus, level): (String, f32)| {
+            let index = match bus.as_str() {
+                "delay" => engine::bus::DELAY,
+                "reverb" => engine::bus::REVERB,
+                other => {
+                    return Err(fail(
+                        lua,
+                        format!(
+                            "send(\"{other}\"): el bus no existe ({})",
+                            names(api::BUSES.iter().map(|b| b.name))
+                        ),
+                    ));
+                }
+            };
+            if !(0.0..=engine::bus::MAX_SEND).contains(&level) {
+                return Err(fail(
+                    lua,
+                    format!("send(\"{bus}\", {level}): el nivel va de 0 a 1"),
+                ));
+            }
+            this.with_track(|t| t.def.sends[index] = level);
+            Ok(this.clone())
+        });
 
         // `:mute([sí])` y `:solo([sí])`: entran con el patrón, al compás.
         methods.add_method("mute", |_, this, on: Option<bool>| {

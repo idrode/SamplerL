@@ -122,6 +122,8 @@ pub struct Pattern {
     pub(crate) mute: bool,
     /// En solo desde el script (`:solo()`); se suma al solo en vivo.
     pub(crate) solo: bool,
+    /// Envío a cada bus (delay, reverb), de 0 a `MAX_SEND`.
+    pub(crate) sends: [f32; crate::bus::BUSES],
 }
 
 impl Pattern {
@@ -178,7 +180,24 @@ impl Pattern {
             fx: [None; MAX_FX],
             mute: false,
             solo: false,
+            sends: [0.0; crate::bus::BUSES],
         })
+    }
+
+    /// Envíos de la pista a los buses: `[delay, reverb]`, de 0 a
+    /// [`crate::bus::MAX_SEND`], después de su volumen (entran con el
+    /// patrón).
+    pub fn with_sends(mut self, sends: [f32; crate::bus::BUSES]) -> Result<Self, SendError> {
+        if sends
+            .iter()
+            .any(|s| !(0.0..=crate::bus::MAX_SEND).contains(s))
+        {
+            return Err(SendError::InvalidBus(
+                "nivel de envío fuera de rango (0 a 1)",
+            ));
+        }
+        self.sends = sends;
+        Ok(self)
     }
 
     /// Pista silenciada (entra con el patrón, al empezar el compás).

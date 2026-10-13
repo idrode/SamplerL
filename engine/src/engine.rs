@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use rtrb::{Consumer, Producer, RingBuffer};
 
+use crate::bus::{BUSES, Buses, Rack};
 use crate::fx::{FxState, MAX_FX};
 use crate::limiter::{LIMIT_THRESHOLD, soft_limit};
 use crate::metronome::Metronome;
@@ -23,7 +24,7 @@ const GARBAGE_CAPACITY: usize = COMMAND_CAPACITY * 2;
 pub const MAX_TRACKS: usize = 8;
 /// Frames por trozo de mezcla. Los buffers de pista y maestro tienen este
 /// tamaño fijo; los bloques del callback se procesan en trozos.
-const CHUNK: usize = 256;
+pub(crate) const CHUNK: usize = 256;
 /// Constante de tiempo del suavizado del volumen de pista.
 const GAIN_SMOOTHING_SECONDS: f32 = 0.005;
 /// Duración de los fundidos de entrada y salida de cada voz.
@@ -48,6 +49,8 @@ enum Command {
     },
     /// BPM para el siguiente compás.
     SetBpm(f64),
+    /// Parámetros de los buses de envío para el siguiente compás.
+    SetBuses(Buses),
     /// Empieza un lote: los cambios se guardan aparte hasta `CommitBatch`.
     BeginBatch,
     /// Hace efectivos a la vez todos los cambios del lote.
@@ -206,6 +209,8 @@ pub enum SendError {
     InvalidCycle(usize),
     /// Longitud de patrón fuera de rango (o vueltas de distinta longitud).
     InvalidLength(usize),
+    /// Envío o parámetro de un bus fuera de rango.
+    InvalidBus(&'static str),
 }
 
 impl fmt::Display for SendError {
@@ -216,6 +221,7 @@ impl fmt::Display for SendError {
                 write!(f, "no existe el corte {index} (hay {count})")
             }
             SendError::InvalidFx(reason) => write!(f, "efecto: {reason}"),
+            SendError::InvalidBus(reason) => write!(f, "envío: {reason}"),
             SendError::InvalidCycle(bars) => write!(
                 f,
                 "ciclo de {bars} compases fuera de rango (1 a {})",
@@ -252,6 +258,7 @@ impl std::error::Error for SendError {}
 #[derive(Default)]
 pub struct Batch {
     bpm: Option<f64>,
+    buses: Option<Buses>,
     patterns: Vec<(usize, Option<Pattern>)>,
 }
 
@@ -262,6 +269,12 @@ impl Batch {
 
     pub fn set_bpm(&mut self, bpm: f64) -> &mut Self {
         self.bpm = Some(bpm);
+        self
+    }
+
+    /// Parámetros de los buses de envío (delay y reverb).
+    pub fn set_buses(&mut self, buses: Buses) -> &mut Self {
+        self.buses = Some(buses);
         self
     }
 
@@ -313,6 +326,8 @@ struct Track {
     /// La voz acaba de empezar desde el silencio: el mute/solo entra de
     /// golpe (no hay nada que suavizar).
     fresh: bool,
+    /// Nivel de cada envío, que se acerca suavemente al del patrón.
+    sends: [f32; BUSES],
 }
 
 /// Disparos pendientes de una pista: el golpe empieza en `start` (el
@@ -351,6 +366,7 @@ impl Default for Track {
             live_solo: false,
             audible: 1.0,
             fresh: false,
+            sends: [0.0; BUSES],
         }
     }
 }
@@ -385,6 +401,12 @@ pub struct Engine {
     /// mute), y la que hace su fundido al ser sustituida.
     preview: Option<Voice>,
     preview_fading: Option<Voice>,
+    /// Buses de envío (delay y reverb), sus parámetros pendientes y lo que
+    /// les mandan las pistas en cada trozo.
+    rack: Rack,
+    pending_buses: Option<Buses>,
+    staged_buses: Option<Buses>,
+    send_buf: [[f32; 2 * CHUNK]; BUSES],
 }
 
 /// Crea el par controlador/motor. `sample_rate` es la frecuencia a la que
@@ -416,6 +438,10 @@ pub fn new_engine(sample_rate: u32) -> (Controller, Engine) {
             metronome: Metronome::default(),
             preview: None,
             preview_fading: None,
+            rack: Rack::new(sample_rate),
+            pending_buses: None,
+            staged_buses: None,
+            send_buf: [[0.0; 2 * CHUNK]; BUSES],
         },
     )
 }
@@ -526,8 +552,14 @@ impl Controller {
         if let Some(&(track, _)) = batch.patterns.iter().find(|(t, _)| *t >= MAX_TRACKS) {
             return Err(SendError::NoSuchTrack(track));
         }
+        if let Some(buses) = &batch.buses {
+            buses.validate().map_err(SendError::InvalidBus)?;
+        }
         self.collect_garbage();
-        let needed = 2 + batch.patterns.len() + usize::from(batch.bpm.is_some());
+        let needed = 2
+            + batch.patterns.len()
+            + usize::from(batch.bpm.is_some())
+            + usize::from(batch.buses.is_some());
         if self.commands.slots() < needed {
             return Err(SendError::QueueFull);
         }
@@ -539,11 +571,21 @@ impl Controller {
         if let Some(bpm) = batch.bpm {
             push(Command::SetBpm(bpm));
         }
+        if let Some(buses) = batch.buses {
+            push(Command::SetBuses(buses));
+        }
         for (track, pattern) in batch.patterns {
             push(Command::SetPattern { track, pattern });
         }
         push(Command::CommitBatch);
         Ok(())
+    }
+
+    /// Cambia los parámetros de los buses de envío. Entran al empezar el
+    /// siguiente compás (o al arrancar).
+    pub fn set_buses(&mut self, buses: Buses) -> Result<(), SendError> {
+        buses.validate().map_err(SendError::InvalidBus)?;
+        self.send(Command::SetBuses(buses), None)
     }
 
     /// Arranca el secuenciador en el paso 0, aplicando lo pendiente.
@@ -635,8 +677,13 @@ impl Controller {
 }
 
 impl Engine {
+    /// Cambia la frecuencia del motor (en el hilo de control, antes de
+    /// arrancar la salida): los buffers de los buses se vuelven a reservar.
     pub(crate) fn set_sample_rate(&mut self, sample_rate: u32) {
         self.sample_rate = sample_rate;
+        let params = self.rack.params;
+        self.rack = Rack::new(sample_rate);
+        self.rack.params = params;
     }
 
     /// Rellena `out` (entrelazado, `channels` canales) con el siguiente bloque.
@@ -728,11 +775,21 @@ impl Engine {
                     self.transport.pending_bpm = Some(bpm);
                 }
             }
+            Command::SetBuses(buses) => {
+                if self.batch_open {
+                    self.staged_buses = Some(buses);
+                } else {
+                    self.pending_buses = Some(buses);
+                }
+            }
             Command::BeginBatch => self.batch_open = true,
             Command::CommitBatch => {
                 self.batch_open = false;
                 if let Some(bpm) = self.staged_bpm.take() {
                     self.transport.pending_bpm = Some(bpm);
+                }
+                if let Some(buses) = self.staged_buses.take() {
+                    self.pending_buses = Some(buses);
                 }
                 for t in 0..MAX_TRACKS {
                     if let Some(change) = self.tracks[t].staged.take()
@@ -789,6 +846,11 @@ impl Engine {
         let next = self.transport.next_step_frame(self.sample_rate);
         // Semicorchea de la canción: cada pista la lee con su longitud.
         let global = bar * STEPS as u64 + step as u64;
+        if step == 0
+            && let Some(buses) = self.pending_buses.take()
+        {
+            self.rack.params = buses;
+        }
         for t in 0..MAX_TRACKS {
             if step == 0
                 && let Some(change) = self.tracks[t].pending.take()
@@ -802,6 +864,7 @@ impl Engine {
                 // suavizado: el primer golpe suena con él desde el principio.
                 if !track.voice.as_ref().is_some_and(Voice::is_active) && track.fading.is_none() {
                     track.gain = track.pattern.as_ref().map_or(1.0, |p| p.gain);
+                    track.sends = track.pattern.as_ref().map_or([0.0; BUSES], |p| p.sends);
                 }
                 for (i, state) in track.fx.iter_mut().enumerate() {
                     let fx = track.pattern.as_ref().and_then(|p| p.fx[i]);
@@ -882,9 +945,14 @@ impl Engine {
         let smoothing = 1.0 - (-1.0 / (GAIN_SMOOTHING_SECONDS * self.sample_rate as f32)).exp();
         // Con alguna pista en solo, solo suenan las que lo están.
         let any_solo = self.tracks.iter().any(Track::soloed);
+        for buf in &mut self.send_buf {
+            buf[..2 * n].fill(0.0);
+        }
+        let mut fed = [false; BUSES];
         for t in 0..MAX_TRACKS {
             let track = &mut self.tracks[t];
             let target = track.pattern.as_ref().map_or(1.0, |p| p.gain);
+            let target_sends = track.pattern.as_ref().map_or([0.0; BUSES], |p| p.sends);
             let audible = if track.muted() || (any_solo && !track.soloed()) {
                 0.0
             } else {
@@ -895,6 +963,7 @@ impl Engine {
                 // En silencio no hay nada que suavizar: el siguiente golpe
                 // empieza ya con el volumen nuevo y los efectos sin memoria.
                 track.gain = target;
+                track.sends = target_sends;
                 for state in &mut track.fx {
                     state.reset();
                 }
@@ -917,11 +986,14 @@ impl Engine {
 
             let master = &mut self.master[..2 * n];
             let mut peak = 0.0f32;
-            for (dst, src) in master
+            let sending: [bool; BUSES] =
+                std::array::from_fn(|b| target_sends[b] > 0.0 || track.sends[b] > 0.0);
+            for (k, (dst, src)) in master
                 .as_chunks_mut::<2>()
                 .0
                 .iter_mut()
                 .zip(buf.as_chunks::<2>().0)
+                .enumerate()
             {
                 track.gain += (target - track.gain) * smoothing;
                 // Mute y solo también se suavizan: las voces siguen su curso
@@ -932,6 +1004,17 @@ impl Engine {
                 dst[0] += l;
                 dst[1] += r;
                 peak = peak.max(l.abs()).max(r.abs());
+                // Envíos después del volumen, el mute y el solo.
+                for b in 0..BUSES {
+                    if !sending[b] {
+                        continue;
+                    }
+                    track.sends[b] += (target_sends[b] - track.sends[b]) * smoothing;
+                    let send = track.sends[b];
+                    self.send_buf[b][2 * k] += send * l;
+                    self.send_buf[b][2 * k + 1] += send * r;
+                    fed[b] |= send > 0.0 && (l != 0.0 || r != 0.0);
+                }
             }
             self.status.add_peak(t, peak);
 
@@ -941,6 +1024,14 @@ impl Engine {
                 self.discard(done.sample);
             }
         }
+        // Lo que devuelven los buses (los dormidos no tocan nada).
+        self.rack.mix_into(
+            &self.send_buf,
+            fed,
+            n,
+            self.transport.bpm(),
+            &mut self.master[..2 * n],
+        );
         // La preescucha, directa al master.
         let master = &mut self.master[..2 * n];
         if let Some(voice) = &mut self.preview {
