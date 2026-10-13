@@ -11,7 +11,9 @@ use ratatui::widgets::canvas::{Canvas, Line as CanvasLine};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
 
 use crate::app::App;
-use crate::model::{BlockPickerView, CompletionView, PaletteView, ViewModel, fx_text, step_text};
+use crate::model::{
+    BlockPickerView, CompletionView, PaletteView, SlotsView, ViewModel, fx_text, step_text,
+};
 
 pub const ERROR: Color = Color::Red;
 /// Fondo de la línea con error (rojo oscuro de la paleta de 256 colores).
@@ -59,8 +61,61 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     if let Some(palette) = &view.palette {
         frame.render_widget(PalettePopup(palette), palette_area(frame.area()));
     }
+    if let Some(slots) = &view.slots {
+        frame.render_widget(SlotsPopup(slots), slots_area(frame.area()));
+    }
     if let Some(picker) = &view.block_picker {
         frame.render_widget(BlockPickerPopup(picker), picker_area(frame.area(), picker));
+    }
+}
+
+/// Sitio de las ranuras: centradas arriba, una fila por ranura.
+pub fn slots_area(screen: Rect) -> Rect {
+    let width = screen.width.saturating_sub(4).min(72);
+    let height = (crate::app::SLOTS as u16 + 2).min(screen.height);
+    Rect {
+        x: screen.x + (screen.width - width) / 2,
+        y: screen.y + (screen.height - height).min(2),
+        width,
+        height,
+    }
+}
+
+/// Ranuras rápidas: número, cuántas líneas tiene y la primera con texto.
+pub struct SlotsPopup<'a>(pub &'a SlotsView);
+
+impl Widget for SlotsPopup<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let view = self.0;
+        Clear.render(area, buf);
+        let block = Block::bordered()
+            .border_style(Style::new().fg(ACCENT))
+            .title(format!(" {} · 1-9 · Esc ", view.title));
+        let lines: Vec<Line> = view
+            .items
+            .iter()
+            .enumerate()
+            .map(|(i, slot)| {
+                let number = Span::from(format!(" {} ", i + 1)).fg(ACCENT).bold();
+                match slot {
+                    None => Line::from(vec![number, Span::from("vacía").fg(DIM)]),
+                    Some(lines) => {
+                        let first = lines.iter().find(|l| !l.trim().is_empty());
+                        // Cuántas líneas, delante (la primera puede no caber).
+                        let count = match lines.len() {
+                            0 | 1 => String::new(),
+                            n => format!("{n} líneas · "),
+                        };
+                        Line::from(vec![
+                            number,
+                            Span::from(count).fg(DIM),
+                            Span::raw(first.map_or("", |l| l.trim()).to_string()),
+                        ])
+                    }
+                }
+            })
+            .collect();
+        Paragraph::new(lines).block(block).render(area, buf);
     }
 }
 
@@ -565,6 +620,8 @@ impl Widget for HelpLine<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let keys = if self.0.palette.is_some() {
             "PALETA: escribe para filtrar · ↑↓ elegir · Enter ejecutar · Esc cerrar"
+        } else if self.0.slots.is_some() {
+            "RANURA: pulsa 1-9 · cualquier otra tecla cancela"
         } else if self.0.block_picker.is_some() {
             "BLOQUES: escribe para filtrar (nombre, #etiqueta, descripción) · ↑↓ elegir · \
              Enter · Esc cerrar"

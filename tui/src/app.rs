@@ -14,8 +14,8 @@ use crate::complete::{self, Candidate};
 use crate::diagnose;
 use crate::editing;
 use crate::model::{
-    BlockPickerView, CompletionView, ErrorView, MasterView, PaletteView, TrackView, TransportView,
-    ViewModel, Waveform, error_line,
+    BlockPickerView, CompletionView, ErrorView, MasterView, PaletteView, SlotsView, TrackView,
+    TransportView, ViewModel, Waveform, error_line,
 };
 use crate::palette::{self, Action, Item};
 
@@ -104,6 +104,17 @@ struct BlockPicker {
     armed: Option<String>,
 }
 
+/// Número de ranuras rápidas.
+pub const SLOTS: usize = 9;
+
+/// Qué se hace con la ranura cuyo número se pulse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SlotOp {
+    /// Guardar la selección (o la línea del cursor).
+    Yank,
+    Paste,
+}
+
 /// Qué hacer tras una tecla.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Flow {
@@ -180,6 +191,10 @@ pub struct App {
     blocks: Library,
     /// Selector de bloques abierto.
     block_picker: Option<BlockPicker>,
+    /// Ranuras rápidas 1-9 (como los registros de vim; duran la sesión).
+    slots: [Option<String>; SLOTS],
+    /// Esperando el número de ranura.
+    slot_prompt: Option<SlotOp>,
 }
 
 impl App {
@@ -226,6 +241,8 @@ impl App {
             global_blocks: None,
             blocks: Library::default(),
             block_picker: None,
+            slots: Default::default(),
+            slot_prompt: None,
         };
         app.reload_blocks();
         app.load();
@@ -1185,6 +1202,51 @@ impl App {
         };
     }
 
+    /// «Guardar en una ranura» / «Pegar una ranura»: espera el número.
+    pub fn start_slot(&mut self, op: SlotOp) {
+        if op == SlotOp::Paste && self.slots.iter().all(Option::is_none) {
+            self.message = "las ranuras están vacías: «Guardar en una ranura» primero".into();
+            return;
+        }
+        self.completion = None;
+        self.slot_prompt = Some(op);
+        self.message = match op {
+            SlotOp::Yank => {
+                "guardar la selección (o la línea) en la ranura: pulsa 1-9 · Esc cancela"
+            }
+            SlotOp::Paste => "pegar la ranura: pulsa 1-9 · Esc cancela",
+        }
+        .into();
+    }
+
+    /// Guarda en la ranura `n` (desde 1) la selección o la línea del
+    /// cursor, o la pega en el cursor (se deshace de una vez).
+    pub fn run_slot(&mut self, op: SlotOp, n: usize) {
+        let Some(slot) = n.checked_sub(1).filter(|&i| i < SLOTS) else {
+            return;
+        };
+        match op {
+            SlotOp::Yank => {
+                let text = editing::selection_or_line(&self.editor);
+                let lines = text.lines().count();
+                self.slots[slot] = Some(text);
+                self.message = format!(
+                    "ranura {n}: {lines} {}",
+                    if lines == 1 { "línea" } else { "líneas" }
+                );
+            }
+            SlotOp::Paste => {
+                let Some(text) = self.slots[slot].clone() else {
+                    self.message = format!("la ranura {n} está vacía");
+                    return;
+                };
+                self.marks.clear();
+                self.grouped(|editor| editing::paste(editor, &text));
+                self.message = format!("ranura {n} pegada");
+            }
+        }
+    }
+
     /// Marca el siguiente campo pendiente.
     fn next_mark(&mut self) -> bool {
         match self.marks.next(&mut self.editor) {
@@ -1305,6 +1367,8 @@ impl App {
             Action::InsertBlock => self.open_block_picker(BlockMode::Insert),
             Action::UpdateBlock => self.open_block_picker(BlockMode::Update),
             Action::DeleteBlock => self.open_block_picker(BlockMode::Delete),
+            Action::YankSlot => self.start_slot(SlotOp::Yank),
+            Action::PasteSlot => self.start_slot(SlotOp::Paste),
             Action::Mute => self.toggle_live(false),
             Action::Solo => self.toggle_live(true),
             Action::ClearMuteSolo => self.clear_live(),
@@ -1660,6 +1724,15 @@ impl App {
         if self.block_picker.is_some() {
             return self.handle_block_picker(input);
         }
+        if let Some(op) = self.slot_prompt.take() {
+            match input.key {
+                Key::Char(c @ '1'..='9') if !input.ctrl && !input.alt => {
+                    self.run_slot(op, c as usize - '0' as usize);
+                }
+                _ => self.message = "ranura cancelada".into(),
+            }
+            return Flow::Continue;
+        }
         if input.key == Key::F(1) {
             self.open_palette();
             return Flow::Continue;
@@ -1862,7 +1935,8 @@ impl App {
             diagnostics: diagnose::steps_diagnostics(self.editor.lines(), &self.known_labels()),
             help: (self.mode == Mode::Edit
                 && self.palette.is_none()
-                && self.block_picker.is_none())
+                && self.block_picker.is_none()
+                && self.slot_prompt.is_none())
             .then(|| {
                 let cursor = self.editor.cursor();
                 complete::help_at(self.editor.lines(), cursor.0, cursor.1)
@@ -1881,6 +1955,18 @@ impl App {
                     items: matches.into_iter().map(|e| (e.name, e.keys)).collect(),
                     selected: p.selected,
                 }
+            }),
+            slots: self.slot_prompt.map(|op| SlotsView {
+                title: match op {
+                    SlotOp::Yank => "guardar en la ranura",
+                    SlotOp::Paste => "pegar la ranura",
+                }
+                .into(),
+                items: self
+                    .slots
+                    .iter()
+                    .map(|s| s.as_ref().map(|t| t.lines().map(String::from).collect()))
+                    .collect(),
             }),
             block_picker: self.block_picker.as_ref().map(|p| {
                 let matches = self.picker_matches();

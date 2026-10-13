@@ -310,6 +310,15 @@ pub fn selected_text(editor: &TextArea) -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
+/// La selección o, si no hay, la línea del cursor entera (con su salto de
+/// línea, como `yy` de vim).
+pub fn selection_or_line(editor: &TextArea) -> String {
+    selected_text(editor).unwrap_or_else(|| {
+        let row = editor.cursor().0;
+        format!("{}\n", editor.lines().get(row).map_or("", String::as_str))
+    })
+}
+
 /// Quita la sangría común de las líneas con texto.
 pub fn dedent(text: &str) -> String {
     let indent = text
@@ -326,6 +335,17 @@ pub fn dedent(text: &str) -> String {
         out.push(String::new());
     }
     out.join("\n")
+}
+
+/// Pega texto en el cursor. Si acaba en salto de línea (líneas enteras),
+/// va al principio de la línea del cursor y la empuja hacia abajo, como
+/// `P` de vim.
+pub fn paste(editor: &mut TextArea, text: &str) {
+    editor.cancel_selection();
+    if text.ends_with('\n') {
+        editor.move_cursor(CursorMove::Head);
+    }
+    editor.insert_str(text);
 }
 
 /// Duplica las líneas seleccionadas o la del cursor debajo de sí mismas;

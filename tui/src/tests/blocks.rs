@@ -307,6 +307,84 @@ fn blocks_are_updated_with_the_selection_and_deleted_after_confirming() {
     assert!(!app.view().playing_mode);
 }
 
+#[test]
+fn quick_slots_yank_and_paste_like_vim_registers() {
+    let (_, mut app, _engine) = open_with_blocks("slots");
+    // Todas vacías: pegar lo dice y no espera número.
+    palette(&mut app, "pegar una ranura");
+    assert!(app.view().slots.is_none());
+    assert!(app.view().message.contains("vacías"));
+
+    // Sin selección, la línea entera (con su salto de línea).
+    app.editor.move_cursor(CursorMove::Jump(0, 3));
+    palette(&mut app, "guardar en una ranura");
+    let screen = text_of(&mut app);
+    assert!(screen.contains("guardar en la ranura · 1-9"), "{screen}");
+    assert!(screen.contains("RANURA: pulsa 1-9"), "{screen}");
+    app.handle(key('1'));
+    assert_eq!(app.view().message, "ranura 1: 1 línea");
+    assert!(app.view().slots.is_none());
+    assert_eq!(current_line(&app), "bpm(120)", "no escribe el número");
+
+    // Una selección de varias líneas.
+    select_lines(&mut app, 2, 3);
+    palette(&mut app, "guardar en una ranura");
+    app.handle(key('3'));
+    assert_eq!(app.view().message, "ranura 3: 2 líneas");
+
+    // La lista enseña lo que hay en cada una.
+    palette(&mut app, "pegar una ranura");
+    let screen = text_of(&mut app);
+    assert!(screen.contains(" 1 bpm(120)"), "{screen}");
+    assert!(screen.contains(" 2 vacía"), "{screen}");
+    assert!(screen.contains(" 3 2 líneas · track(\"drums\""), "{screen}");
+    // Otra tecla cancela sin escribir.
+    app.handle(key('x'));
+    assert_eq!(app.view().message, "ranura cancelada");
+    assert!(
+        !app.editor
+            .lines()
+            .iter()
+            .any(|l| l.contains('x') && l.len() == 1)
+    );
+
+    // Una ranura vacía.
+    palette(&mut app, "pegar una ranura");
+    app.handle(key('2'));
+    assert_eq!(app.view().message, "la ranura 2 está vacía");
+
+    // Líneas enteras: encima de la del cursor, aunque esté en mitad.
+    app.editor.cancel_selection();
+    app.editor.move_cursor(CursorMove::Jump(1, 5));
+    palette(&mut app, "pegar una ranura");
+    app.handle(key('1'));
+    let lines = app.editor.lines().to_vec();
+    assert_eq!(
+        lines[0..3],
+        [
+            "bpm(120)",
+            "bpm(120)",
+            "local amen = sample(\"break.wav\"):slice(2)"
+        ]
+    );
+    // Se deshace de una vez.
+    app.handle(ctrl('z'));
+    assert_eq!(app.editor.lines().len(), 4);
+
+    // Un trozo que no acaba en salto de línea va en el cursor.
+    app.editor.move_cursor(CursorMove::Jump(0, 0));
+    app.editor.start_selection();
+    app.editor.move_cursor(CursorMove::Jump(0, 3));
+    palette(&mut app, "guardar en una ranura");
+    app.handle(key('9'));
+    app.editor.move_cursor(CursorMove::Bottom);
+    app.editor.move_cursor(CursorMove::End);
+    type_text(&mut app, "\n-- ");
+    palette(&mut app, "pegar una ranura");
+    app.handle(key('9'));
+    assert_eq!(current_line(&app), "-- bpm");
+}
+
 /// `cargo test -p tui pantalla_bloques -- --ignored --nocapture`
 #[test]
 #[ignore]

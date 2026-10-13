@@ -28,6 +28,8 @@ pub struct ViewModel {
     pub palette: Option<PaletteView>,
     /// Selector de bloques abierto.
     pub block_picker: Option<BlockPickerView>,
+    /// Esperando el número de una ranura rápida.
+    pub slots: Option<SlotsView>,
     /// Nombre del proyecto abierto, si lo hay.
     pub project: Option<String>,
     /// Mensaje informativo de la última acción.
@@ -79,6 +81,15 @@ pub struct PaletteView {
     pub selected: usize,
     /// Descripción de la elegida.
     pub description: String,
+}
+
+/// Ranuras rápidas 1-9 mientras se espera el número.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SlotsView {
+    /// «guardar en la ranura» o «pegar la ranura».
+    pub title: String,
+    /// Líneas de cada ranura (`None`: vacía).
+    pub items: Vec<Option<Vec<String>>>,
 }
 
 /// Selector de bloques de la biblioteca.

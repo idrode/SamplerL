@@ -42,6 +42,8 @@ pub enum Action {
     InsertBlock,
     UpdateBlock,
     DeleteBlock,
+    YankSlot,
+    PasteSlot,
     Quit,
 }
 
@@ -253,6 +255,18 @@ pub const ACTIONS: &[ActionDef] = &[
         action: Action::DeleteBlock,
         name: "Borrar un bloque",
         description: "Elige un bloque y borra su archivo; Enter dos veces",
+        keys: "",
+    },
+    ActionDef {
+        action: Action::YankSlot,
+        name: "Guardar en una ranura (1-9)",
+        description: "Guarda la selección (o la línea del cursor) en la ranura del número que se pulse, como los registros de vim",
+        keys: "",
+    },
+    ActionDef {
+        action: Action::PasteSlot,
+        name: "Pegar una ranura (1-9)",
+        description: "Pega la ranura del número que se pulse; las líneas enteras van encima de la del cursor",
         keys: "",
     },
     ActionDef {
