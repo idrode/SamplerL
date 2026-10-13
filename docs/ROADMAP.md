@@ -220,7 +220,41 @@ fade_out })`. Ver «Fase H» en el Estado de `CLAUDE.md`. Decisiones:
   nuevo reutilizable en el proyecto, por render offline.
 - Normalizar, recortar el silencio y poner fundidos al importar un sample.
 
-## Fase I: comodidad
+## Fase I: comodidad ✅
+
+Hecha: explorador de samples, tap tempo, `bpm_ramp()` y `meter()`,
+`config.toml` (teclas, colores y `[midi]`), entrada MIDI (notas y reloj),
+`pista:midi()` hacia un synth y ranuras que persisten. Ver «Fase I» en el
+Estado de `CLAUDE.md`. Decisiones:
+
+- **Explorador**: un popup como el de los bloques; preescucha por la voz
+  aparte (la de los cortes), así nunca toca las pistas; Enter escribe
+  `sample("ruta")` en el cursor.
+- **Tempo**: el tap tempo propone y escribe `bpm(N)` (no cambia el tempo a
+  escondidas). La rampa da a cada compás su tempo (cuantizado al compás,
+  los pasos siguen al frame); recargar el mismo script no la reinicia. El
+  compás (`meter`) cambia los pasos por compás; el transporte cuenta
+  semicorcheas acumuladas para que las pistas sigan alineadas. Para que
+  el delay no haga clic, su retardo se desliza ~50 ms cuando cambia el
+  tempo.
+- **Configuración**: TOML (crate `toml`, Rust puro, solo lectura). F1 abre
+  siempre la paleta y no se puede dar a otra cosa: la paleta nunca queda
+  fuera de alcance. Las teclas sin Ctrl/Alt (salvo F y Esc) no valen
+  (escribirían texto). Colores con degradación a 256 sin truecolor. Si
+  falta o está roto, por defecto y un aviso.
+- **MIDI**: `midir` (ALSA, la misma biblioteca que ya usa cpal) tras la
+  feature `midi`, activada por defecto (`--no-default-features` compila sin
+  ella); nada se abre sin `--allow-midi`. Puertos virtuales («sampler
+  entrada», «sampler salida») en vez de buscar dispositivos: se conectan
+  con `aconnect`. La entrada pasa por una cola sin bloqueos a la
+  aplicación, que la atiende cada 2 ms con la misma ruta que los pads (así
+  usa la pista seleccionada, su forma y su choke). El reloj se estima por
+  mínimos cuadrados sobre cuatro negras, con histéresis de 0,5 BPM, y
+  entra al compás. La salida la genera el motor con el frame exacto de
+  cada golpe (cola sin bloqueos) y la interfaz la manda; el jitter es el
+  del bloque de audio y del bucle (unos ms). Nada de esto se ha probado
+  con dispositivos reales: la lógica, con mensajes y destinos simulados.
+- **Ranuras**: texto tal cual en `~/.config/sampler/ranuras/N.txt`.
 
 - Explorador de samples en la interfaz, con preescucha.
 - Entrada MIDI (notas que disparan cortes) y reloj MIDI; salida MIDI hacia
