@@ -655,6 +655,10 @@ impl Widget for EnginePanel<'_> {
                 } else {
                     Span::raw("")
                 },
+                match &view.recording {
+                    Some(rec) => Span::from(format!("   ● {rec}")).fg(error_color()).bold(),
+                    None => Span::raw(""),
+                },
             ]),
             master_line(&view.master),
         ];

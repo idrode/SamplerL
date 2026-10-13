@@ -74,10 +74,19 @@ proyecto). Ver «Fase D» en el Estado de `CLAUDE.md`.
 
 ## Fase E: estructura y versiones
 
+En curso: hecha la grabación de lo tocado («Grabar lo tocado» en la
+paleta, orden `grabar [N]`; ver el Estado de `CLAUDE.md`). Decisiones: la
+grabación empieza en el compás siguiente y cuantiza cada golpe al paso
+más cercano de la rejilla de la canción (con la posición en pasos que
+publica el motor); graba la pista seleccionada al empezar, por la misma
+ruta que los pads (así también las notas MIDI); escribe texto en el
+cursor, sin cargar nada. Faltan las secciones con línea de tiempo, el
+historial de versiones y el A/B de variantes.
+
 - Secciones con nombre y línea de tiempo.
 - Historial de versiones del script con marca de tiempo.
 - A/B de variantes.
-- Grabar lo tocado en el modo tocar como un patrón de `steps`.
+- Grabar lo tocado en el modo tocar como un patrón de `steps`. ✅
 
 ## Fase F: biblioteca de bloques ✅
 

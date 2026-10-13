@@ -207,6 +207,8 @@ pub struct App {
     block_picker: Option<BlockPicker>,
     /// Explorador de samples abierto.
     browser: Option<Browser>,
+    /// Grabación de lo tocado en curso.
+    recording: Option<crate::record::Recording>,
     /// Tap tempo en curso (espacio golpea, Enter pone el tempo).
     tapping: Option<crate::tap::TapTempo>,
     /// Ranuras rápidas 1-9 (como los registros de vim).
@@ -272,6 +274,7 @@ impl App {
             block_picker: None,
             browser: None,
             tapping: None,
+            recording: None,
             slots: Default::default(),
             slots_dir: None,
             slot_prompt: None,
@@ -381,6 +384,7 @@ impl App {
             "muestras" | "samples" => self.set_samples(args.first().copied()),
             "etiquetar" | "label" => self.label_slice(&args),
             "bpm" => self.set_bpm_line(args.first().copied()),
+            "grabar" | "record" => self.start_recording(args.first().copied()),
             "remuestrear" | "remuestrear!" | "resample" => {
                 self.resample(&args, command.ends_with('!'))
             }
@@ -834,6 +838,83 @@ impl App {
             _ => {}
         }
         Flow::Continue
+    }
+
+    /// `grabar [N]`: graba N compases (1 por defecto) de lo que se toca en
+    /// la pista seleccionada, desde el compás siguiente.
+    fn start_recording(&mut self, bars: Option<&str>) {
+        let Some(track) = self.host.song().and_then(|s| s.tracks.get(self.selected)) else {
+            self.message = "no hay pistas".into();
+            return;
+        };
+        let name = track.name.clone();
+        let (Some(status), Some(_)) = (self.status, self.controller.position()) else {
+            self.message = "arranca el secuenciador (marcha) para grabar".into();
+            return;
+        };
+        let bar_steps = status.bar_steps.max(1);
+        let most = engine::MAX_STEPS / bar_steps;
+        let bars = match bars.map(str::parse::<usize>) {
+            None => 1,
+            Some(Ok(n)) if (1..=most).contains(&n) => n,
+            _ => {
+                self.message = format!("uso: grabar N (de 1 a {most} compases)");
+                return;
+            }
+        };
+        // Desde el principio del compás siguiente.
+        let bar_start = status.global - status.step.unwrap_or(0) as u64;
+        let start = if status.step.is_some() {
+            bar_start + bar_steps as u64
+        } else {
+            0
+        };
+        self.recording = Some(crate::record::Recording::new(&name, start, bars, bar_steps));
+        self.message = format!(
+            "● grabando {name} en el compás siguiente, {bars} {}: toca (pads o MIDI); «Grabar lo tocado» otra vez para antes",
+            if bars == 1 { "compás" } else { "compases" }
+        );
+    }
+
+    /// Mira cómo va la grabación: si ha acabado, la escribe; si se paró el
+    /// secuenciador, la deja.
+    fn watch_recording(&mut self) {
+        let Some(rec) = &self.recording else { return };
+        match self.controller.position() {
+            None => {
+                self.recording = None;
+                self.message = "grabación cancelada: se paró el secuenciador".into();
+            }
+            Some(position) if rec.done(position) => self.finish_recording(),
+            Some(_) => {}
+        }
+    }
+
+    /// Escribe lo grabado en el cursor como `steps("...")` (con
+    /// `length(N):` delante si no son 16 pasos), en un paso de deshacer.
+    fn finish_recording(&mut self) {
+        let Some(rec) = self.recording.take() else {
+            return;
+        };
+        let labels = self
+            .host
+            .song()
+            .and_then(|s| s.tracks.iter().find(|t| t.name == rec.track))
+            .map(|t| t.labels.clone())
+            .unwrap_or_default();
+        let steps = format!("steps(\"{}\")", rec.notation(&labels));
+        let text = if rec.steps == engine::STEPS {
+            steps
+        } else {
+            format!("length({}):{steps}", rec.steps)
+        };
+        self.completion = None;
+        self.marks.clear();
+        self.grouped(|editor| editor.insert_str(&text));
+        self.message = format!(
+            "grabado {} en el cursor ({} pasos); Ctrl-S para cargarlo",
+            rec.track, rec.steps
+        );
     }
 
     /// «Tap tempo»: empieza a contar golpes (este es el primero). Espacio
@@ -1371,6 +1452,13 @@ impl App {
         {
             Ok(()) => {
                 self.selected_slice = index;
+                // Grabando esta pista: se apunta en el paso más cercano.
+                let position = self.controller.position();
+                if let (Some(rec), Some(position)) = (&mut self.recording, position)
+                    && rec.track == name
+                {
+                    rec.hit(position, index, gain);
+                }
                 format!("▶ {name}: corte {}{label}", index + 1)
             }
             Err(engine::SendError::NoSuchSlice { count, .. }) => {
@@ -1911,6 +1999,14 @@ impl App {
             Action::Resample => self.start_resample(),
             Action::Browser => self.open_browser(),
             Action::TapTempo => self.start_tap(Instant::now()),
+            Action::Record => {
+                if self.recording.is_some() {
+                    self.finish_recording();
+                } else {
+                    self.prompt = Some("grabar 1".into());
+                    self.message = "grabar N: los compases que se graban (Enter empieza en el compás siguiente)".into();
+                }
+            }
             Action::JoinSlice => self.join_selected(),
             Action::PreviousSlice => self.select_slice(false),
             Action::Quit => {
@@ -2398,6 +2494,7 @@ impl App {
             self.blocks.reload();
         }
         self.flush_midi();
+        self.watch_recording();
         let status = self.controller.status();
         let now = Instant::now();
         let hold = Some(now + WARNING_HOLD);
@@ -2611,6 +2708,21 @@ impl App {
             message: self.message.clone(),
             transport,
             metronome: self.metronome,
+            recording: self
+                .recording
+                .as_ref()
+                .map(|rec| match self.controller.position() {
+                    Some(p) if rec.waiting(p) => {
+                        format!("REC {}: al compás", rec.track)
+                    }
+                    Some(p) => format!(
+                        "REC {} {}/{}",
+                        rec.track,
+                        rec.bar(p),
+                        rec.steps / status.map_or(engine::STEPS, |s| s.bar_steps.max(1))
+                    ),
+                    None => format!("REC {}", rec.track),
+                }),
             tracks,
             selected,
             selected_slice,

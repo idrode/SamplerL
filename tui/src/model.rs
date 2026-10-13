@@ -49,6 +49,9 @@ pub struct ViewModel {
     pub transport: TransportView,
     /// Metrónomo encendido.
     pub metronome: bool,
+    /// Grabación en curso: «REC drums 1/2» o, hasta que empieza el
+    /// compás, «REC drums: al compás».
+    pub recording: Option<String>,
     /// Pistas en el orden del script.
     pub tracks: Vec<TrackView>,
     /// Pista seleccionada (índice en `tracks`).

@@ -43,6 +43,7 @@ pub enum Action {
     Resample,
     Browser,
     TapTempo,
+    Record,
     SaveBlock,
     InsertBlock,
     UpdateBlock,
@@ -248,6 +249,12 @@ pub const ACTIONS: &[ActionDef] = &[
         action: Action::JoinSlice,
         name: "Unir el corte seleccionado con el anterior",
         description: "Quita su marca: el anterior se alarga hasta donde acababa este (se guarda en el proyecto)",
+        keys: "",
+    },
+    ActionDef {
+        action: Action::Record,
+        name: "Grabar lo tocado",
+        description: "Abre «grabar 1»: graba N compases de lo que tocas (pads o MIDI) en la pista seleccionada, desde el compás siguiente, y lo escribe como steps(\"...\") en el cursor; otra vez, para antes",
         keys: "",
     },
     ActionDef {

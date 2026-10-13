@@ -251,6 +251,7 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Corte anterior | Selecciona el corte anterior de la pista (sin tocarlo) | — |
 | Partir el corte seleccionado | Añade un corte en su mitad (se guarda en el proyecto; las etiquetas y ajustes siguientes se corren) | — |
 | Unir el corte seleccionado con el anterior | Quita su marca: el anterior se alarga hasta donde acababa este (se guarda en el proyecto) | — |
+| Grabar lo tocado | Abre «grabar 1»: graba N compases de lo que tocas (pads o MIDI) en la pista seleccionada, desde el compás siguiente, y lo escribe como steps("...") en el cursor; otra vez, para antes | — |
 | Tap tempo | Golpea el pulso con espacio (media de los últimos 8 golpes); Enter pone bpm(N) en el script | espacio (al golpear) |
 | Explorador de samples | Los WAV de la carpeta de muestras: filtra, ↑↓ preescucha (sin tocar las pistas), Enter inserta sample("...") | — |
 | Remuestrear la pista seleccionada | Abre «remuestrear pista »: graba su salida (render offline) como un WAV nuevo en la carpeta de samples | — |
@@ -344,6 +345,21 @@ La vista del sample marca los cortes ajustados con `*` y da la posición
 del seleccionado; «Quitar el ajuste del corte» lo devuelve al detector. En
 Lua, `cortes:move(i, ms)`.
 
+**Grabar lo tocado.** «Grabar lo tocado» (paleta) deja escrita la orden
+`grabar 1`; cambia el número por los compases que quieras (Enter). La
+grabación empieza al principio del compás siguiente (el panel del motor
+dice `● REC drums: al compás` y luego `● REC drums 1/2`) y registra los
+cortes que disparas en la pista seleccionada, con las teclas del modo
+tocar o por MIDI, cada uno en el paso más cercano (un golpe hasta medio
+paso antes del compás cuenta como el primero; dos en el mismo paso, el
+último). Al acabar escribe en el cursor del editor `steps("...")` con lo
+tocado: cada corte por su etiqueta o su número, con `@volumen` si no fue a
+tope (la velocidad MIDI), agrupado por tiempos. Con más de 16 pasos (dos
+compases, o otro compás), escribe `length(32):steps("...")`. Se deshace con
+un Ctrl-Z. «Grabar lo tocado» otra vez para antes y escribe lo que haya;
+parar el secuenciador la cancela. Pon el cursor detrás de
+`track("drums"):` antes de grabar y Ctrl-S lo carga.
+
 «Partir el corte seleccionado» y «Unir el corte seleccionado con el
 anterior» (paleta) añaden un corte en la mitad del seleccionado o quitan
 su marca. Se guardan en el proyecto (`partir`, `unir`) y las etiquetas y
@@ -372,6 +388,7 @@ proyecto o, si no hay, a la del script.
 | `muestras [carpeta]` | Cambia la carpeta de los samples (sin argumento, dice cuál es) |
 | `bpm N` | Cambia la línea `bpm(...)` del script por `bpm(N)` (o la añade al principio), sin guardar |
 | `etiquetar corte [nombre]` | Pone una etiqueta a un corte de la pista seleccionada (sin nombre, la quita). Se guarda en el proyecto abierto y se recarga |
+| `grabar [N]` | Graba N compases (1 por defecto) de lo que tocas en la pista seleccionada, desde el compás siguiente, y lo escribe como `steps("...")` en el cursor (ver «Modo tocar») |
 | `remuestrear [pista\|master] [compases] [archivo.wav]` | Graba por render offline la salida de la pista (por defecto la seleccionada, en solo) o del master como un WAV en la carpeta de samples (`<pista>-remuestreo.wav`; con `!`, sustituye uno que ya exista). Sin compases, lo que tarda en repetirse |
 | `bloque nombre [etiquetas] [-- descripción]` | Guarda el texto seleccionado como bloque en la biblioteca global (`bloque-proyecto`: en la del proyecto; con `!`, sustituye uno que se llame igual). Ver «Biblioteca de bloques» |
 

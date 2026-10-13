@@ -9,6 +9,7 @@ mod midi;
 mod midi_io;
 mod model;
 mod palette;
+mod record;
 mod tap;
 #[cfg(test)]
 mod tests;
