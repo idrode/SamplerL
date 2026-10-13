@@ -1366,6 +1366,40 @@ pub const FUNCTIONS: &[Function] = &[
         ),
     },
     Function {
+        name: "midi",
+        receiver: Receiver::Track,
+        signature: "pista:midi(canal [, nota_base])",
+        returns: Some(Receiver::Track),
+        summary: "Cada golpe sale también como una nota MIDI (corte 1 = nota_base, 36 por defecto).",
+        doc: "Con `--allow-midi`, las notas salen por el puerto virtual «sampler \
+              salida» (ALSA): conéctalo a Surge XT u otro synth (ver «MIDI» en la \
+              sección 2). La nota es `nota_base` más el número de corte menos 1, la \
+              velocidad sale del volumen del paso (`@`) y cada nota dura lo que su \
+              paso (o su parte, con retrigger). Una pista en mute, o fuera del \
+              solo, no manda nada. El sample sigue sonando: para oír solo el synth, \
+              `:gain(0)`. Los pads del modo tocar no mandan notas.",
+        params: &[
+            Param {
+                name: "canal",
+                description: "canal MIDI, de 1 a 16",
+            },
+            Param {
+                name: "nota_base",
+                description: "la nota del corte 1 (0 a 127; 36 por defecto)",
+            },
+        ],
+        template: "midi(${1}, ${48})",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             -- Una línea de bajo para el synth: el corte 1 es do (48), el 3, re.\n\
+             track(\"bajo\", amen)\n  \
+             :steps(\"1 . . 1  . . 3 .  1 . . .  5 . 3 .\")\n  \
+             :midi(2, 48)\n  \
+             -- Bajo, para que mande el synth (con 0, solo el synth).\n  \
+             :gain(0.3)\n",
+        ),
+    },
+    Function {
         name: "send",
         receiver: Receiver::Track,
         signature: "pista:send(bus, nivel)",

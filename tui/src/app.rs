@@ -220,6 +220,8 @@ pub struct App {
     midi: crate::midi::MidiConfig,
     clock: crate::midi::ClockTempo,
     midi_in: Option<rtrb::Consumer<crate::midi::TimedEvent>>,
+    /// Destino de las notas que salen de las pistas con `:midi()`.
+    midi_out: Option<Box<dyn crate::midi::MidiSink>>,
 }
 
 impl App {
@@ -274,6 +276,7 @@ impl App {
             midi: crate::midi::MidiConfig::default(),
             clock: crate::midi::ClockTempo::default(),
             midi_in: None,
+            midi_out: None,
         };
         app.reload_blocks();
         app.load();
@@ -1270,6 +1273,23 @@ impl App {
     #[cfg_attr(not(feature = "midi"), allow(dead_code))]
     pub fn set_midi_input(&mut self, input: rtrb::Consumer<crate::midi::TimedEvent>) {
         self.midi_in = Some(input);
+    }
+
+    /// Adónde mandar las notas MIDI de las pistas.
+    #[cfg_attr(not(feature = "midi"), allow(dead_code))]
+    pub fn set_midi_output(&mut self, sink: Box<dyn crate::midi::MidiSink>) {
+        self.midi_out = Some(sink);
+    }
+
+    /// Manda las notas MIDI que han salido del motor (si no hay destino,
+    /// se tiran: la cola no se queda llena).
+    fn flush_midi(&mut self) {
+        let notes: Vec<engine::MidiNote> = self.controller.midi_events().collect();
+        if let Some(sink) = &mut self.midi_out {
+            for note in notes {
+                sink.send(&note.bytes());
+            }
+        }
     }
 
     /// Atiende los mensajes MIDI que han llegado.
@@ -2342,6 +2362,7 @@ impl App {
             // Los bloques pueden cambiar fuera (otro editor, git...).
             self.blocks.reload();
         }
+        self.flush_midi();
         let status = self.controller.status();
         let now = Instant::now();
         let hold = Some(now + WARNING_HOLD);
@@ -2428,6 +2449,7 @@ impl App {
                             swing: t.swing,
                             gate: t.gate,
                             choke: t.choke,
+                            midi: t.midi,
                             sends: t.sends,
                             clipping: slot.is_some_and(|s| {
                                 self.track_clip_until[s].is_some_and(|u| Instant::now() < u)

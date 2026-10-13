@@ -59,6 +59,24 @@ pub fn parse(bytes: &[u8]) -> Option<MidiEvent> {
     }
 }
 
+/// Adónde van las notas MIDI que salen de las pistas: el puerto virtual
+/// (`midi_io`) o, en los tests, una lista.
+pub trait MidiSink {
+    fn send(&mut self, bytes: &[u8]);
+}
+
+/// Un destino que guarda lo que recibe (para probar sin dispositivos).
+#[cfg(test)]
+#[derive(Debug, Clone, Default)]
+pub struct Recorder(pub std::rc::Rc<std::cell::RefCell<Vec<Vec<u8>>>>);
+
+#[cfg(test)]
+impl MidiSink for Recorder {
+    fn send(&mut self, bytes: &[u8]) {
+        self.0.borrow_mut().push(bytes.to_vec());
+    }
+}
+
 /// Qué se hace con el MIDI que entra (`[midi]` de la configuración).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MidiConfig {

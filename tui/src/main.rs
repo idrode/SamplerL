@@ -456,6 +456,9 @@ fn run_editor(path: &std::path::Path, allow_audio: bool, allow_midi: bool) -> Re
     let _midi_in = if allow_midi {
         let (tx, rx) = rtrb::RingBuffer::new(midi_io::QUEUE);
         app.set_midi_input(rx);
+        app.set_midi_output(Box::new(
+            midi_io::open_output().map_err(|e| format!("MIDI: {e}"))?,
+        ));
         Some(midi_io::open_input(tx).map_err(|e| format!("MIDI: {e}"))?)
     } else {
         None

@@ -207,6 +207,8 @@ fn the_audio_thread_never_allocates() {
         ])
         .unwrap()
         .with_sends([0.8, 0.6])
+        .unwrap()
+        .with_midi(Some((10, 36)))
         .unwrap();
     controller.set_track_pattern(5, Some(sending)).unwrap();
     controller

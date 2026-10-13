@@ -21,6 +21,34 @@ const COMMAND_CAPACITY: usize = 64;
 // secuenciador no la llenan: cada elemento sale de un comando y el
 // controlador la recoge antes de cada envío.
 const GARBAGE_CAPACITY: usize = COMMAND_CAPACITY * 2;
+/// Notas MIDI que caben en la cola de salida sin que nadie las lea (si se
+/// llena, las siguientes se pierden: nunca se bloquea ni se reserva).
+const MIDI_CAPACITY: usize = 512;
+
+/// Una nota MIDI que sale de una pista (`Pattern::with_midi`), con el frame
+/// exacto del motor en que toca. Velocidad 0: note off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MidiNote {
+    /// Frame desde que arrancó el transporte.
+    pub frame: u64,
+    /// Canal, de 1 a 16.
+    pub channel: u8,
+    pub note: u8,
+    pub velocity: u8,
+}
+
+impl MidiNote {
+    /// Los tres bytes del mensaje (note on, o note off con velocidad 0).
+    pub fn bytes(&self) -> [u8; 3] {
+        let channel = (self.channel.clamp(1, 16) - 1) & 0x0f;
+        if self.velocity == 0 {
+            [0x80 | channel, self.note, 0]
+        } else {
+            [0x90 | channel, self.note, self.velocity]
+        }
+    }
+}
+
 /// Número máximo de pistas. Cada una tiene su patrón y su voz.
 pub const MAX_TRACKS: usize = 8;
 /// Frames por trozo de mezcla. Los buffers de pista y maestro tienen este
@@ -448,6 +476,7 @@ enum Garbage {
 pub struct Controller {
     commands: Producer<Command>,
     garbage: Consumer<Garbage>,
+    midi: Consumer<MidiNote>,
     playing: Arc<AtomicBool>,
     status: Arc<SharedStatus>,
 }
@@ -478,6 +507,8 @@ struct Track {
     fresh: bool,
     /// Nivel de cada envío, que se acerca suavemente al del patrón.
     sends: [f32; BUSES],
+    /// Nota MIDI que suena (canal, nota) y el frame de su note off.
+    midi_off: Option<(u8, u8, u64)>,
     /// Corte del primer filtro puesto por el último golpe (`~`).
     lock: Option<f32>,
     /// Valor (suavizado) de cada parámetro automatizable de cada efecto
@@ -522,6 +553,7 @@ impl Default for Track {
             audible: 1.0,
             fresh: false,
             sends: [0.0; BUSES],
+            midi_off: None,
             lock: None,
             mods: [[None; 2]; MAX_FX],
         }
@@ -561,6 +593,8 @@ pub struct Engine {
     /// Buses de envío (delay y reverb), sus parámetros pendientes y lo que
     /// les mandan las pistas en cada trozo.
     rack: Rack,
+    /// Cola de las notas MIDI que salen de las pistas.
+    midi: Producer<MidiNote>,
     pending_buses: Option<Buses>,
     staged_buses: Option<Buses>,
     staged_ramp: Option<TempoRamp>,
@@ -573,12 +607,14 @@ pub struct Engine {
 pub fn new_engine(sample_rate: u32) -> (Controller, Engine) {
     let (cmd_tx, cmd_rx) = RingBuffer::new(COMMAND_CAPACITY);
     let (garbage_tx, garbage_rx) = RingBuffer::new(GARBAGE_CAPACITY);
+    let (midi_tx, midi_rx) = RingBuffer::new(MIDI_CAPACITY);
     let playing = Arc::new(AtomicBool::new(false));
     let status = Arc::new(SharedStatus::new(crate::sequencer::DEFAULT_BPM));
     (
         Controller {
             commands: cmd_tx,
             garbage: garbage_rx,
+            midi: midi_rx,
             playing: playing.clone(),
             status: status.clone(),
         },
@@ -598,6 +634,7 @@ pub fn new_engine(sample_rate: u32) -> (Controller, Engine) {
             preview: None,
             preview_fading: None,
             rack: Rack::new(sample_rate),
+            midi: midi_tx,
             pending_buses: None,
             staged_buses: None,
             staged_ramp: None,
@@ -899,6 +936,12 @@ impl Controller {
         self.status.snapshot()
     }
 
+    /// Las notas MIDI que han salido de las pistas desde la última vez (en
+    /// orden, con su frame), para mandarlas a un puerto.
+    pub fn midi_events(&mut self) -> impl Iterator<Item = MidiNote> + '_ {
+        std::iter::from_fn(|| self.midi.pop().ok())
+    }
+
     /// Libera aquí (fuera del hilo de audio) los samples que el motor ya no usa.
     pub fn collect_garbage(&mut self) {
         while self.garbage.pop().is_ok() {}
@@ -959,6 +1002,7 @@ impl Engine {
                 n = n.min((next.min(next_retrig) - now) as usize);
             }
             self.mix(n);
+            self.midi_due(self.transport.frame + n as u64);
             write_out(
                 &self.master[..2 * n],
                 &mut out[offset * channels..(offset + n) * channels],
@@ -1069,9 +1113,11 @@ impl Engine {
             Command::Stop => {
                 self.transport.running = false;
                 self.metronome.stop();
+                let now = self.transport.frame;
                 for t in 0..MAX_TRACKS {
                     self.tracks[t].retrig = None;
                     self.trigger(t, None);
+                    self.midi_note_off(t, now);
                 }
             }
             Command::SetMute { track, on } => self.tracks[track].live_mute = on,
@@ -1199,10 +1245,65 @@ impl Engine {
         if pattern.gate {
             voice = voice.with_gate(gate);
         }
+        let midi = pattern.midi;
         self.status.set_hit(t, hit.start);
         self.tracks[t].lock = hit.lock;
         self.trigger(t, Some(voice));
         self.choke(t);
+        if let Some((channel, base)) = midi {
+            self.midi_note_on(t, channel, base, hit, gate);
+        }
+    }
+
+    /// La nota MIDI de un golpe de una pista con `with_midi`: la anterior
+    /// se apaga, y esta suena lo que su paso (o su parte del retrigger). Si
+    /// la pista no se oye (mute, o solo de otra), no sale nada.
+    fn midi_note_on(&mut self, t: usize, channel: u8, base: u8, hit: Trigger, gate: usize) {
+        let now = self.transport.frame;
+        self.midi_note_off(t, now);
+        let any_solo = self.tracks.iter().any(Track::soloed);
+        let track = &self.tracks[t];
+        if track.muted() || (any_solo && !track.soloed()) {
+            return;
+        }
+        let Some(note) = u8::try_from(base as usize + hit.slice)
+            .ok()
+            .filter(|n| *n <= 127)
+        else {
+            return;
+        };
+        let velocity = (hit.playback.gain * 100.0).round().clamp(1.0, 127.0) as u8;
+        let _ = self.midi.push(MidiNote {
+            frame: now,
+            channel,
+            note,
+            velocity,
+        });
+        self.tracks[t].midi_off = Some((channel, note, now + gate.max(1) as u64));
+    }
+
+    /// Apaga ya (en `frame`) la nota MIDI que suena en la pista, si hay.
+    fn midi_note_off(&mut self, t: usize, frame: u64) {
+        if let Some((channel, note, _)) = self.tracks[t].midi_off.take() {
+            let _ = self.midi.push(MidiNote {
+                frame,
+                channel,
+                note,
+                velocity: 0,
+            });
+        }
+    }
+
+    /// Apaga las notas MIDI cuyo paso ha acabado (con el frame exacto en
+    /// que tocaba).
+    fn midi_due(&mut self, upto: u64) {
+        for t in 0..MAX_TRACKS {
+            if let Some((_, _, at)) = self.tracks[t].midi_off
+                && at <= upto
+            {
+                self.midi_note_off(t, at);
+            }
+        }
     }
 
     /// Corta (con el fundido mínimo) las voces de las demás pistas del

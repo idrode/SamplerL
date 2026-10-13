@@ -1059,6 +1059,9 @@ impl Widget for FxPanel<'_> {
             if track.gate {
                 title.push(Span::from(" · gate").fg(dim()));
             }
+            if let Some((channel, base)) = track.midi {
+                title.push(Span::from(format!(" · MIDI {channel}/{base}")).fg(dim()));
+            }
             if let Some(group) = track.choke {
                 title.push(Span::from(format!(" · choke {group}")).fg(dim()));
             }

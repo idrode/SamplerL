@@ -140,6 +140,8 @@ pub struct TrackDef {
     pub gate: bool,
     /// Grupo de choke (`:choke(n)`).
     pub choke: Option<u8>,
+    /// Notas MIDI de sus golpes (`:midi(canal, nota_base)`).
+    pub midi: Option<(u8, u8)>,
     /// Silenciada (`:mute()`).
     pub mute: bool,
     /// En solo (`:solo()`).
@@ -1167,6 +1169,7 @@ impl ScriptHost {
                                     shapes: Vec::new(),
                                     gate: false,
                                     choke: None,
+                                    midi: None,
                                     mute: false,
                                     solo: false,
                                     origin: source.origin.clone(),
@@ -1255,6 +1258,7 @@ fn song_batch(song: &Song, slots: &[Option<String>; MAX_TRACKS]) -> Result<Batch
                     .and_then(|p| p.with_sends(track.sends))
                     .and_then(|p| p.with_shapes(&track.shapes))
                     .and_then(|p| p.with_choke(track.choke))
+                    .and_then(|p| p.with_midi(track.midi))
                     .map(|p| p.with_gate(track.gate))
                     .map(|p| p.with_mute(track.mute).with_solo(track.solo))
                     .map_err(|e| ScriptError::new(format!("pista \"{name}\": {e}")))?;
@@ -2681,6 +2685,20 @@ impl UserData for TrackHandle {
                 }
             };
             this.with_track(|t| t.def.gate = gate);
+            Ok(this.clone())
+        });
+
+        // `:midi(canal, nota_base)`: cada golpe sale también como una nota
+        // MIDI (con `--allow-midi`, por «sampler salida»).
+        methods.add_method("midi", |lua, this, (channel, base): (i64, Option<i64>)| {
+            let base = base.unwrap_or(36);
+            if !(1..=16).contains(&channel) || !(0..=127).contains(&base) {
+                return Err(fail(
+                    lua,
+                    format!("midi({channel}, {base}): el canal va de 1 a 16 y la nota de 0 a 127"),
+                ));
+            }
+            this.with_track(|t| t.def.midi = Some((channel as u8, base as u8)));
             Ok(this.clone())
         });
 

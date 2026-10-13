@@ -510,7 +510,7 @@ paleta de 256.
 ### MIDI
 
 Con `--allow-midi` (`tui --edit canción.lua --allow-midi`), la interfaz
-abre un puerto MIDI virtual de ALSA, **sampler entrada**: conéctale un
+abre dos puertos MIDI virtuales de ALSA. A **sampler entrada** conéctale un
 teclado, unos pads o un secuenciador con `aconnect` (`aconnect -l` lista
 los puertos; `aconnect "Mi teclado" "sampler"`) o desde su programa. Cada
 nota dispara un corte de la pista seleccionada, igual que los pads del
@@ -530,6 +530,29 @@ tempo: se calcula con los pulsos de las últimas cuatro negras (por mínimos
 cuadrados, así el jitter no lo mueve) y solo cambia si cambia de verdad;
 entra al empezar el compás, como un `bpm()`. Start y Continue arrancan el
 secuenciador y Stop lo para. Sin `--allow-midi` no se abre nada.
+
+**Salida hacia un synth (Surge XT).** Con `--allow-midi` también se abre
+**sampler salida**. Una pista con `:midi(canal, nota_base)` manda cada
+golpe como una nota: el corte 1 es `nota_base`, el 2 la siguiente... La
+velocidad sale del volumen del paso y cada nota dura lo que su paso. El
+sample sigue sonando; para oír solo el synth, `:gain(0)`. Para tocar con
+Surge XT:
+
+1. Abre Surge XT (la versión independiente, o en tu DAW) y, en sus
+   opciones de audio y MIDI, elige como entrada **sampler salida**. O
+   conéctalos a mano: `aconnect -l` lista los puertos con sus números y
+   `aconnect 128:1 129:0` une el del sampler (cliente:puerto) con el de
+   Surge.
+2. Pon en Surge el canal que use la pista (o que escuche todos).
+3. Para grabar lo que suena en Surge por PipeWire: `wpctl status` o
+   `pw-cli ls Node` dan el nombre de su nodo, y `pw-record --target
+   "Surge XT" surge.wav` lo graba a un WAV, que luego puedes cortar como
+   cualquier otro sample.
+
+Las notas salen en cuanto el motor las da, con su frame exacto; el retraso
+y el jitter son los del bloque de audio y del bucle de la interfaz (unos
+pocos ms). No lo he podido probar con dispositivos reales: la lógica está
+probada con un destino simulado.
 
 ### Editor
 
@@ -1279,6 +1302,25 @@ Grupo de choke (1 a 16): un golpe de la pista calla a las demás del grupo. Como
 local amen = sample("amen.wav"):slice(8)
 track("abierto", amen:slice_at(3)):steps("x . . .  . . x .  x . . .  . . x ."):choke(1)
 track("cerrado", amen:slice_at(5)):steps(". . x .  . . . x  . . x .  . . . x"):choke(1)
+```
+
+### `pista:midi(canal [, nota_base])`
+
+Devuelve: pista.
+
+Cada golpe sale también como una nota MIDI (corte 1 = nota_base, 36 por defecto). Con `--allow-midi`, las notas salen por el puerto virtual «sampler salida» (ALSA): conéctalo a Surge XT u otro synth (ver «MIDI» en la sección 2). La nota es `nota_base` más el número de corte menos 1, la velocidad sale del volumen del paso (`@`) y cada nota dura lo que su paso (o su parte, con retrigger). Una pista en mute, o fuera del solo, no manda nada. El sample sigue sonando: para oír solo el synth, `:gain(0)`. Los pads del modo tocar no mandan notas.
+
+- `canal`: canal MIDI, de 1 a 16
+- `nota_base`: la nota del corte 1 (0 a 127; 36 por defecto)
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+-- Una línea de bajo para el synth: el corte 1 es do (48), el 3, re.
+track("bajo", amen)
+  :steps("1 . . 1  . . 3 .  1 . . .  5 . 3 .")
+  :midi(2, 48)
+  -- Bajo, para que mande el synth (con 0, solo el synth).
+  :gain(0.3)
 ```
 
 ### `pista:send(bus, nivel)`

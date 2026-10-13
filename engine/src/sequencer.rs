@@ -149,6 +149,8 @@ pub struct Pattern {
     /// Grupo de choke: un golpe corta lo que suena en las demás pistas del
     /// mismo grupo.
     pub(crate) choke: Option<u8>,
+    /// Notas MIDI de sus golpes: (canal 1-16, nota del corte 1).
+    pub(crate) midi: Option<(u8, u8)>,
 }
 
 impl Pattern {
@@ -209,7 +211,20 @@ impl Pattern {
             automation: [None; MAX_AUTOMATIONS],
             gate: false,
             choke: None,
+            midi: None,
         })
+    }
+
+    /// Manda cada golpe como una nota MIDI por `canal` (1 a 16): el corte 1
+    /// es `base`, el 2 `base + 1`... (ver `Controller::midi_events`).
+    pub fn with_midi(self, midi: Option<(u8, u8)>) -> Result<Self, SendError> {
+        if midi.is_some_and(|(c, b)| !(1..=16).contains(&c) || b > 127) {
+            return Err(SendError::InvalidStep {
+                step: 0,
+                reason: "MIDI: canal de 1 a 16 y nota de 0 a 127",
+            });
+        }
+        Ok(Pattern { midi, ..self })
     }
 
     /// Modo gate (`true`) u one-shot (`false`, por defecto).
