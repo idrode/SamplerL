@@ -28,6 +28,8 @@ pub struct ViewModel {
     pub palette: Option<PaletteView>,
     /// Selector de bloques abierto.
     pub block_picker: Option<BlockPickerView>,
+    /// Explorador de samples abierto.
+    pub browser: Option<BrowserView>,
     /// Esperando el número de una ranura rápida.
     pub slots: Option<SlotsView>,
     /// Nombre del proyecto abierto, si lo hay.
@@ -90,6 +92,18 @@ pub struct SlotsView {
     pub title: String,
     /// Líneas de cada ranura (`None`: vacía).
     pub items: Vec<Option<Vec<String>>>,
+}
+
+/// Explorador de samples.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct BrowserView {
+    pub query: String,
+    /// Archivos que pasan el filtro (rutas relativas a `folder`).
+    pub items: Vec<String>,
+    pub selected: usize,
+    /// Duración del elegido (al preescucharlo) o el error al leerlo.
+    pub info: String,
+    pub folder: String,
 }
 
 /// Selector de bloques de la biblioteca.

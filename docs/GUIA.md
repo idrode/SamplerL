@@ -46,6 +46,12 @@ del sample» (paleta) hace lo mismo con el sample de la pista seleccionada
 y deja escrita la orden `bpm 140`: Enter cambia (o añade) la línea `bpm()`
 del script, sin guardar. En Lua, `sample(...):detect_bpm()`.
 
+Para elegir un WAV sin salir de la interfaz, «Explorador de samples»
+(paleta) lista los de la carpeta de muestras y sus subcarpetas: escribe
+para filtrar por nombre, ↑ ↓ eligen y preescuchan cada uno en la voz
+aparte (sin tocar las pistas), Tab lo vuelve a sonar, Enter escribe
+`sample("ruta")` en el cursor y Esc cierra.
+
 Para tocar el break **a otro tempo sin cambiar su tono**, estíralo:
 `sample("amen.wav"):stretch(140):slice(8)` lo pasa de 140 al tempo de la
 canción (sin el número, usa el que detecta). Cada golpe cae en la rejilla
@@ -238,6 +244,7 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Corte anterior | Selecciona el corte anterior de la pista (sin tocarlo) | — |
 | Partir el corte seleccionado | Añade un corte en su mitad (se guarda en el proyecto; las etiquetas y ajustes siguientes se corren) | — |
 | Unir el corte seleccionado con el anterior | Quita su marca: el anterior se alarga hasta donde acababa este (se guarda en el proyecto) | — |
+| Explorador de samples | Los WAV de la carpeta de muestras: filtra, ↑↓ preescucha (sin tocar las pistas), Enter inserta sample("...") | — |
 | Remuestrear la pista seleccionada | Abre «remuestrear pista »: graba su salida (render offline) como un WAV nuevo en la carpeta de samples | — |
 | Guardar la selección como bloque | Abre «bloque » para escribir nombre, etiquetas y `-- descripción`; va a la biblioteca global | — |
 | Insertar un bloque | Lista filtrable (nombre, etiquetas, descripción) con vista previa; Tab salta entre sus campos `${...}` | — |

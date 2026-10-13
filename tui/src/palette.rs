@@ -41,6 +41,7 @@ pub enum Action {
     SplitSlice,
     JoinSlice,
     Resample,
+    Browser,
     SaveBlock,
     InsertBlock,
     UpdateBlock,
@@ -246,6 +247,12 @@ pub const ACTIONS: &[ActionDef] = &[
         action: Action::JoinSlice,
         name: "Unir el corte seleccionado con el anterior",
         description: "Quita su marca: el anterior se alarga hasta donde acababa este (se guarda en el proyecto)",
+        keys: "",
+    },
+    ActionDef {
+        action: Action::Browser,
+        name: "Explorador de samples",
+        description: "Los WAV de la carpeta de muestras: filtra, ↑↓ preescucha (sin tocar las pistas), Enter inserta sample(\"...\")",
         keys: "",
     },
     ActionDef {

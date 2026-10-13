@@ -14,8 +14,8 @@ use crate::complete::{self, Candidate};
 use crate::diagnose;
 use crate::editing;
 use crate::model::{
-    BlockPickerView, CompletionView, ErrorView, MasterView, PaletteView, SlotsView, TrackView,
-    TransportView, ViewModel, Waveform, error_line,
+    BlockPickerView, BrowserView, CompletionView, ErrorView, MasterView, PaletteView, SlotsView,
+    TrackView, TransportView, ViewModel, Waveform, error_line,
 };
 use crate::palette::{self, Action, Item};
 
@@ -102,6 +102,19 @@ struct BlockPicker {
     /// Bloque elegido una vez al actualizar o borrar: Enter otra vez lo
     /// confirma.
     armed: Option<String>,
+}
+
+/// Explorador de samples abierto.
+#[derive(Clone, Default)]
+struct Browser {
+    query: String,
+    selected: usize,
+    /// WAV de la carpeta de muestras (rutas relativas).
+    files: Vec<String>,
+    /// Samples ya leídos para la preescucha (por ruta).
+    loaded: HashMap<String, Arc<Sample>>,
+    /// Lo que se sabe del elegido (duración, error al leerlo...).
+    info: String,
 }
 
 /// Número de ranuras rápidas.
@@ -191,6 +204,8 @@ pub struct App {
     blocks: Library,
     /// Selector de bloques abierto.
     block_picker: Option<BlockPicker>,
+    /// Explorador de samples abierto.
+    browser: Option<Browser>,
     /// Ranuras rápidas 1-9 (como los registros de vim; duran la sesión).
     slots: [Option<String>; SLOTS],
     /// Esperando el número de ranura.
@@ -241,6 +256,7 @@ impl App {
             global_blocks: None,
             blocks: Library::default(),
             block_picker: None,
+            browser: None,
             slots: Default::default(),
             slot_prompt: None,
         };
@@ -671,6 +687,117 @@ impl App {
             ),
             Err(e) => format!("no se pudo remuestrear: {e}"),
         };
+    }
+
+    /// «Explorador de samples»: los WAV de la carpeta de muestras.
+    pub fn open_browser(&mut self) {
+        self.completion = None;
+        let files = crate::browser::list(&self.sample_folder());
+        self.message = if files.is_empty() {
+            format!("no hay WAV en {}", self.sample_folder().display())
+        } else {
+            "↑↓ elegir y preescuchar · Tab otra vez · Enter inserta sample(\"...\") · Esc cierra"
+                .into()
+        };
+        self.browser = Some(Browser {
+            files,
+            ..Browser::default()
+        });
+    }
+
+    /// Los archivos del explorador que pasan el filtro.
+    fn browser_matches(&self) -> Vec<String> {
+        self.browser.as_ref().map_or_else(Vec::new, |b| {
+            crate::browser::filter(&b.files, &b.query)
+                .into_iter()
+                .cloned()
+                .collect()
+        })
+    }
+
+    /// Preescucha el archivo elegido en el explorador (en la voz aparte:
+    /// no toca las pistas).
+    fn browser_preview(&mut self) {
+        let Some(file) = self
+            .browser_matches()
+            .get(self.browser.as_ref().map_or(0, |b| b.selected))
+            .cloned()
+        else {
+            return;
+        };
+        let path = self.sample_folder().join(&file);
+        let rate = self.sample_rate;
+        let Some(browser) = &mut self.browser else {
+            return;
+        };
+        let sample = match browser.loaded.get(&file) {
+            Some(sample) => sample.clone(),
+            None => match Sample::load_wav(&path, rate) {
+                Ok(sample) => {
+                    let sample = Arc::new(sample);
+                    browser.loaded.insert(file.clone(), sample.clone());
+                    sample
+                }
+                Err(e) => {
+                    browser.info = format!("{file}: {e}");
+                    return;
+                }
+            },
+        };
+        browser.info = format!(
+            "{file} · {:.2} s",
+            sample.frames() as f64 / sample.sample_rate() as f64
+        );
+        let whole = engine::Slices::grid(&sample, 1);
+        if let Err(e) = self.controller.preview_slice(&sample, &whole, 0) {
+            self.message = format!("motor: {e}");
+        }
+    }
+
+    /// Tecla con el explorador abierto.
+    fn handle_browser(&mut self, input: Input) -> Flow {
+        let matches = self.browser_matches();
+        let count = matches.len();
+        let Some(browser) = &mut self.browser else {
+            return Flow::Continue;
+        };
+        match input.key {
+            Key::Esc => {
+                self.browser = None;
+                let _ = self.controller.stop_preview();
+                self.message = String::new();
+            }
+            Key::Enter => {
+                let file = matches.get(browser.selected).cloned();
+                self.browser = None;
+                let _ = self.controller.stop_preview();
+                if let Some(file) = file {
+                    let text = format!("sample(\"{file}\")");
+                    self.marks.clear();
+                    self.grouped(|editor| editor.insert_str(&text));
+                    self.message = format!("{text} en el script");
+                }
+            }
+            Key::Up | Key::Down if count > 0 => {
+                browser.selected = if input.key == Key::Up {
+                    (browser.selected + count - 1) % count
+                } else {
+                    (browser.selected + 1) % count
+                };
+                self.browser_preview();
+            }
+            Key::Tab => self.browser_preview(),
+            Key::Backspace => {
+                browser.query.pop();
+                browser.selected = 0;
+            }
+            Key::Char(c) if !input.ctrl && !input.alt => {
+                browser.query.push(c);
+                browser.selected = 0;
+            }
+            _ => {}
+        }
+        Flow::Continue
     }
 
     /// Abre la línea de órdenes para remuestrear la pista seleccionada.
@@ -1601,6 +1728,7 @@ impl App {
             Action::NextSlice => self.select_slice(true),
             Action::SplitSlice => self.split_selected(),
             Action::Resample => self.start_resample(),
+            Action::Browser => self.open_browser(),
             Action::JoinSlice => self.join_selected(),
             Action::PreviousSlice => self.select_slice(false),
             Action::Quit => {
@@ -1946,6 +2074,9 @@ impl App {
         if self.block_picker.is_some() {
             return self.handle_block_picker(input);
         }
+        if self.browser.is_some() {
+            return self.handle_browser(input);
+        }
         if let Some(op) = self.slot_prompt.take() {
             match input.key {
                 Key::Char(c @ '1'..='9') if !input.ctrl && !input.alt => {
@@ -2177,6 +2308,7 @@ impl App {
             help: (self.mode == Mode::Edit
                 && self.palette.is_none()
                 && self.block_picker.is_none()
+                && self.browser.is_none()
                 && self.slot_prompt.is_none())
             .then(|| {
                 let cursor = self.editor.cursor();
@@ -2208,6 +2340,16 @@ impl App {
                     .iter()
                     .map(|s| s.as_ref().map(|t| t.lines().map(String::from).collect()))
                     .collect(),
+            }),
+            browser: self.browser.as_ref().map(|b| {
+                let items = self.browser_matches();
+                BrowserView {
+                    query: b.query.clone(),
+                    selected: b.selected.min(items.len().saturating_sub(1)),
+                    items,
+                    info: b.info.clone(),
+                    folder: self.sample_folder().display().to_string(),
+                }
             }),
             block_picker: self.block_picker.as_ref().map(|p| {
                 let matches = self.picker_matches();

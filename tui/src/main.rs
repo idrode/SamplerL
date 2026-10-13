@@ -1,4 +1,5 @@
 mod app;
+mod browser;
 mod complete;
 mod diagnose;
 mod editing;

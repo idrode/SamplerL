@@ -12,7 +12,8 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
 
 use crate::app::App;
 use crate::model::{
-    BlockPickerView, CompletionView, PaletteView, SlotsView, ViewModel, fx_text, step_text,
+    BlockPickerView, BrowserView, CompletionView, PaletteView, SlotsView, ViewModel, fx_text,
+    step_text,
 };
 
 pub const ERROR: Color = Color::Red;
@@ -63,6 +64,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
     if let Some(slots) = &view.slots {
         frame.render_widget(SlotsPopup(slots), slots_area(frame.area()));
+    }
+    if let Some(browser) = &view.browser {
+        frame.render_widget(BrowserPopup(browser), palette_area(frame.area()));
     }
     if let Some(picker) = &view.block_picker {
         frame.render_widget(BlockPickerPopup(picker), picker_area(frame.area(), picker));
@@ -116,6 +120,52 @@ impl Widget for SlotsPopup<'_> {
             })
             .collect();
         Paragraph::new(lines).block(block).render(area, buf);
+    }
+}
+
+/// Explorador de samples: lo escrito, los WAV que coinciden y lo que se sabe
+/// del elegido.
+pub struct BrowserPopup<'a>(pub &'a BrowserView);
+
+impl Widget for BrowserPopup<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let view = self.0;
+        Clear.render(area, buf);
+        let block = Block::bordered()
+            .border_style(Style::new().fg(ACCENT))
+            .title(format!(" samples · {} · ↑↓ Tab Enter Esc ", view.folder));
+        let inner = block.inner(area);
+        block.render(area, buf);
+        if inner.height < 4 {
+            return;
+        }
+        let width = inner.width as usize;
+        let mut lines = vec![
+            Line::from(vec![
+                Span::from("› ").fg(ACCENT).bold(),
+                Span::raw(format!("{}█", view.query)),
+            ]),
+            Line::from("─".repeat(width)).fg(DIM),
+        ];
+        let rows = (inner.height as usize).saturating_sub(4);
+        let first = view.selected.saturating_sub(rows.saturating_sub(1));
+        if view.items.is_empty() {
+            lines.push(Line::from(" ningún WAV coincide").fg(DIM));
+        }
+        for (i, name) in view.items.iter().enumerate().skip(first).take(rows) {
+            let line = Line::raw(format!(" {name}"));
+            lines.push(if i == view.selected {
+                line.style(Style::new().fg(Color::Black).bg(ACCENT))
+            } else {
+                line
+            });
+        }
+        while lines.len() < rows + 2 {
+            lines.push(Line::raw(""));
+        }
+        lines.push(Line::from("─".repeat(width)).fg(DIM));
+        lines.push(Line::from(view.info.clone()).fg(DIM));
+        Paragraph::new(lines).render(inner, buf);
     }
 }
 
@@ -628,6 +678,8 @@ impl Widget for HelpLine<'_> {
             "PALETA: escribe para filtrar · ↑↓ elegir · Enter ejecutar · Esc cerrar"
         } else if self.0.slots.is_some() {
             "RANURA: pulsa 1-9 · cualquier otra tecla cancela"
+        } else if self.0.browser.is_some() {
+            "SAMPLES: escribe para filtrar · ↑↓ elegir y preescuchar · Tab preescuchar · Enter insertar · Esc cerrar"
         } else if self.0.block_picker.is_some() {
             "BLOQUES: escribe para filtrar (nombre, #etiqueta, descripción) · ↑↓ elegir · \
              Enter · Esc cerrar"
