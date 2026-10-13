@@ -31,10 +31,10 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
-use engine::notation::{check_label, parse_steps_labeled, split_label};
+use engine::notation::{check_label, parse_pattern_labeled, split_label};
 use engine::{
     Batch, Controller, FilterKind, Fx, MAX_CYCLE_BARS, MAX_FX, MAX_GAIN, MAX_RETRIG, MAX_SEMITONES,
-    MAX_TRACKS, Pattern, STEPS, Sample, SendError, Slices, Step, valid_bpm,
+    MAX_STEPS, MAX_TRACKS, Pattern, STEPS, Sample, SendError, Slices, Step, valid_bpm,
 };
 pub mod api;
 pub mod blocks;
@@ -72,8 +72,13 @@ const MAX_SWING: f32 = 75.0;
 /// Compases que se tiran los dados de `chance` antes de repetirse.
 pub const CHANCE_CYCLE_BARS: u64 = 16;
 
-/// Pasos de un compás.
-pub type Bar = [Option<Step>; STEPS];
+/// Compases como mucho de la canción entera ([`Song::length_bars`]): con
+/// longitudes que no encajan entre sí (7 contra 11 pasos), el ciclo común
+/// puede ser enorme.
+pub const MAX_SONG_BARS: u64 = 256;
+
+/// Pasos de una vuelta del patrón de una pista (16 = un compás).
+pub type Bar = Vec<Option<Step>>;
 
 /// Modelo de estado que produce un script. Las vistas leerán esto.
 #[derive(Clone)]
@@ -98,10 +103,13 @@ pub struct TrackDef {
     /// Ruta del WAV tal como se resolvió.
     pub path: PathBuf,
     pub slices: Slices,
-    /// Patrón base (`:steps()`).
+    /// Pasos de una vuelta del patrón (`:length()`, 16 por defecto).
+    pub length: usize,
+    /// Patrón base (`:steps()`), de `length` pasos.
     pub steps: Bar,
-    /// Ciclo de compases con `every` y `chance` ya aplicados: en el compás
-    /// `b` de la canción suena `bars[b % bars.len()]`.
+    /// Ciclo de vueltas con `every` y `chance` ya aplicados: en la vuelta
+    /// `v` de la canción suena `bars[v % bars.len()]` (con 16 pasos, una
+    /// vuelta es un compás; ver [`TrackDef::lap`]).
     pub bars: Vec<Bar>,
     /// Volumen de la pista (`:gain()`), lineal.
     pub gain: f32,
@@ -122,6 +130,23 @@ pub struct TrackDef {
     /// De qué sample y qué `slice(n)` salen los cortes (para etiquetarlos
     /// desde la interfaz y guardarlo en el proyecto).
     pub origin: SliceOrigin,
+}
+
+impl TrackDef {
+    /// Vuelta y paso (desde 0) que toca esta pista en el paso `step` del
+    /// compás `bar` de la canción.
+    pub fn lap(&self, bar: u64, step: usize) -> (u64, usize) {
+        let global = bar * STEPS as u64 + step as u64;
+        let length = self.length.max(1) as u64;
+        (global / length, (global % length) as usize)
+    }
+
+    /// Pasos de la vuelta `lap` (la variante del ciclo que le toca).
+    pub fn lap_steps(&self, lap: u64) -> &Bar {
+        self.bars
+            .get((lap % self.bars.len().max(1) as u64) as usize)
+            .unwrap_or(&self.steps)
+    }
 }
 
 /// `:humanize(ms, volumen [, semilla])`: cada golpe se retrasa al azar
@@ -573,9 +598,12 @@ impl ScriptHost {
         // también dentro de `every`.
         globals.set(
             "euclid",
-            lua.create_function(|lua, (k, n, hit): (i64, i64, Option<String>)| {
-                patterns::euclid(k, n, hit.as_deref().unwrap_or("x")).map_err(|e| fail(lua, e))
-            })?,
+            lua.create_function(
+                |lua, (k, n, hit, length): (i64, i64, Option<String>, Option<i64>)| {
+                    patterns::euclid(k, n, hit.as_deref().unwrap_or("x"), length)
+                        .map_err(|e| fail(lua, e))
+                },
+            )?,
         )?;
 
         globals.set(
@@ -659,7 +687,8 @@ impl ScriptHost {
                                     sample: source.sample.clone(),
                                     path: source.path.clone(),
                                     slices: source.slices.clone(),
-                                    steps: [None; STEPS],
+                                    length: STEPS,
+                                    steps: vec![None; STEPS],
                                     bars: Vec::new(),
                                     gain: 1.0,
                                     fx: Vec::new(),
@@ -674,6 +703,7 @@ impl ScriptHost {
                                 labels: source.labels.clone(),
                                 stale: source.stale.clone(),
                                 transforms: Vec::new(),
+                                steps_set: false,
                             };
                             // Redefinir una pista en el mismo script la reemplaza.
                             match builder.tracks.iter_mut().find(|t| t.def.name == name) {
@@ -748,15 +778,21 @@ fn song_batch(song: &Song, slots: &[Option<String>; MAX_TRACKS]) -> Result<Batch
 }
 
 impl Song {
-    /// Compases que dura la canción entera: el mínimo común múltiplo de los
-    /// ciclos de sus pistas (con `every`/`chance`), y al menos `min_bars`
-    /// (redondeado a ciclos completos).
+    /// Compases que dura la canción entera hasta repetirse: el mínimo
+    /// común múltiplo de los ciclos de sus pistas (vueltas de `every`/
+    /// `chance` por su longitud, y el compás de 16 pasos), y al menos
+    /// `min_bars` (redondeado a ciclos completos). Como mucho
+    /// [`MAX_SONG_BARS`].
     pub fn length_bars(&self, min_bars: u64) -> u64 {
-        let cycle = self
-            .tracks
-            .iter()
-            .fold(1u64, |acc, t| lcm(acc, t.bars.len().max(1) as u64));
-        cycle * min_bars.div_ceil(cycle).max(1)
+        let steps = self.tracks.iter().fold(STEPS as u64, |acc, t| {
+            lcm(acc, (t.bars.len().max(1) * t.length.max(1)) as u64)
+                .min(MAX_SONG_BARS * STEPS as u64 + 1)
+        });
+        let cycle = steps.div_ceil(STEPS as u64);
+        if cycle > MAX_SONG_BARS {
+            return MAX_SONG_BARS;
+        }
+        (cycle * min_bars.div_ceil(cycle).max(1)).min(MAX_SONG_BARS)
     }
 
     /// Renderiza `bars` compases de la canción offline, en un motor aparte
@@ -845,6 +881,9 @@ struct TrackBuild {
     /// Etiquetas del proyecto de otro `slice(n)` (para explicar errores).
     stale: Rc<Vec<(String, usize)>>,
     transforms: Vec<Transform>,
+    /// Ya se llamó a `:steps()` (luego `:length()` no puede cambiar la
+    /// longitud).
+    steps_set: bool,
 }
 
 enum Transform {
@@ -870,9 +909,10 @@ enum Fill {
     Mute,
 }
 
-/// Aplica un relleno a los últimos `count` pasos de un compás.
+/// Aplica un relleno a los últimos `count` pasos de una vuelta (todos si
+/// la vuelta es más corta).
 fn apply_fill(bar: &mut Bar, count: usize, effect: Fill) {
-    let start = STEPS - count;
+    let start = bar.len() - count.min(bar.len());
     // Golpe que se repite en stutter y roll: el primero del relleno o, si es
     // silencio, el último antes; si no hay, el primero del compás.
     let source = bar[..=start]
@@ -925,14 +965,22 @@ fn expand(track: TrackBuild, rng: &mut Rng, timing: Timing) -> Result<TrackDef, 
         labels,
         stale,
         transforms,
+        steps_set: _,
     } = track;
     def.labels = labels.borrow().clone();
-    // Humanize cambia cada compás: el ciclo es de 16 como con `chance`.
+    // Humanize cambia cada vuelta: el ciclo es de 16 como con `chance`.
     let mut cycle = if def.humanize.is_some() {
         CHANCE_CYCLE_BARS
     } else {
         1u64
     };
+    // El swing va en los contratiempos de la rejilla de la canción: con una
+    // longitud impar, una vuelta empieza en tiempo y la siguiente en
+    // contratiempo, así que hacen falta dos variantes.
+    let swing = swing_delay(def.swing);
+    if swing > 0.0 && def.length % 2 == 1 {
+        cycle = lcm(cycle, 2);
+    }
     for transform in &transforms {
         let n = match transform {
             Transform::Every { n, .. } | Transform::Fill { n, .. } => *n,
@@ -949,12 +997,13 @@ fn expand(track: TrackBuild, rng: &mut Rng, timing: Timing) -> Result<TrackDef, 
 
     let mut bars = Vec::with_capacity(cycle as usize);
     for b in 0..cycle {
-        let mut steps = def.steps;
+        let mut steps = def.steps.clone();
         for transform in &transforms {
             match transform {
                 Transform::Every { n, func } if b % n == 0 => {
                     let bar = BarHandle {
-                        steps: Rc::new(RefCell::new(steps)),
+                        steps: Rc::new(RefCell::new(steps.clone())),
+                        length: def.length,
                         labels: Rc::new(def.labels.clone()),
                         stale: stale.clone(),
                         count: def.origin.count,
@@ -963,7 +1012,7 @@ fn expand(track: TrackBuild, rng: &mut Rng, timing: Timing) -> Result<TrackDef, 
                     let shared = bar.steps.clone();
                     func.call::<()>(bar)
                         .map_err(|e| ScriptError::from_lua(&e))?;
-                    steps = *shared.borrow();
+                    steps = shared.borrow().clone();
                 }
                 Transform::Every { .. } => {}
                 Transform::Fill {
@@ -985,13 +1034,17 @@ fn expand(track: TrackBuild, rng: &mut Rng, timing: Timing) -> Result<TrackDef, 
         }
         bars.push(steps);
     }
-    // Swing: los contratiempos de semicorchea (pasos 2, 4, 6... desde 1)
-    // se retrasan.
-    let swing = swing_delay(def.swing);
+    // Swing: los contratiempos de semicorchea de la canción (pasos 2, 4,
+    // 6... desde 1 en cada compás) se retrasan.
     if swing > 0.0 {
-        for bar in &mut bars {
-            for step in bar.iter_mut().skip(1).step_by(2).flatten() {
-                step.delay = (step.delay + swing).min(engine::MAX_DELAY);
+        let length = def.length;
+        for (lap, bar) in bars.iter_mut().enumerate() {
+            for (i, slot) in bar.iter_mut().enumerate() {
+                if let Some(step) = slot
+                    && (lap * length + i) % 2 == 1
+                {
+                    step.delay = (step.delay + swing).min(engine::MAX_DELAY);
+                }
             }
         }
     }
@@ -1381,9 +1434,10 @@ fn checked_steps(
     labels: &[Option<String>],
     stale: &StaleLabels,
     text: &str,
+    length: usize,
 ) -> mlua::Result<Bar> {
     let slices = labels.len();
-    let steps = parse_steps_labeled(text, labels).map_err(|e| {
+    let steps = parse_pattern_labeled(text, length, labels).map_err(|e| {
         // Una etiqueta del proyecto de otro `slice(n)`: decirlo.
         let hint = split_label(&e.token)
             .and_then(|(name, _)| stale.labels.iter().find(|(n, _)| n == name))
@@ -1555,19 +1609,51 @@ impl UserData for TrackHandle {
 
         // `:steps("1 . 3' ...")`: patrón base en mini-notación.
         methods.add_method("steps", |lua, this, text: String| {
-            let (labels, stale, count) = this.with_track(|t| {
+            let (labels, stale, count, length) = this.with_track(|t| {
                 (
                     t.labels.borrow().clone(),
                     t.stale.clone(),
                     t.def.origin.count,
+                    t.def.length,
                 )
             });
             let stale = StaleLabels {
                 labels: &stale,
                 count,
             };
-            let steps = checked_steps(lua, &this.name, &labels, &stale, &text)?;
-            this.with_track(|t| t.def.steps = steps);
+            let steps = checked_steps(lua, &this.name, &labels, &stale, &text, length)?;
+            this.with_track(|t| {
+                t.def.steps = steps;
+                t.steps_set = true;
+            });
+            Ok(this.clone())
+        });
+
+        // `:length(n)`: pasos de una vuelta del patrón (16 por defecto). Va
+        // antes de `:steps()`, que entonces pide n pasos.
+        methods.add_method("length", |lua, this, n: i64| {
+            if !(1..=MAX_STEPS as i64).contains(&n) {
+                return Err(fail(
+                    lua,
+                    format!("length({n}): la longitud va de 1 a {MAX_STEPS} pasos"),
+                ));
+            }
+            let n = n as usize;
+            let (set, current) = this.with_track(|t| (t.steps_set, t.def.length));
+            if set && current != n {
+                return Err(fail(
+                    lua,
+                    format!(
+                        "length({n}): steps ya tiene {current} pasos; pon :length({n}) antes de :steps()"
+                    ),
+                ));
+            }
+            this.with_track(|t| {
+                t.def.length = n;
+                if !t.steps_set {
+                    t.def.steps = vec![None; n];
+                }
+            });
             Ok(this.clone())
         });
 
@@ -1663,8 +1749,11 @@ impl UserData for TrackHandle {
                     return Err(fail(lua, format!("{who}: n va de 1 a {MAX_CYCLE_BARS}")));
                 }
                 let count = count.unwrap_or(4);
-                if !(1..=STEPS as i64).contains(&count) {
-                    return Err(fail(lua, format!("{who}: los pasos van de 1 a {STEPS}")));
+                if !(1..=MAX_STEPS as i64).contains(&count) {
+                    return Err(fail(
+                        lua,
+                        format!("{who}: los pasos van de 1 a {MAX_STEPS}"),
+                    ));
                 }
                 let effect = match effect.as_str() {
                     "stutter" => Fill::Stutter(check_retrig(lua, value.unwrap_or(4.0) as i64)?),
@@ -1734,9 +1823,11 @@ impl UserData for TrackHandle {
     }
 }
 
-/// El compás que recibe la función de `every`.
+/// El compás (la vuelta del patrón) que recibe la función de `every`.
 struct BarHandle {
     steps: Rc<RefCell<Bar>>,
+    /// Pasos de la vuelta (la longitud de la pista).
+    length: usize,
     labels: Rc<Vec<Option<String>>>,
     stale: Rc<Vec<(String, usize)>>,
     count: usize,
@@ -1753,6 +1844,7 @@ impl BarHandle {
     fn handle(&self) -> BarHandle {
         BarHandle {
             steps: self.steps.clone(),
+            length: self.length,
             labels: self.labels.clone(),
             stale: self.stale.clone(),
             count: self.count,
@@ -1769,7 +1861,7 @@ impl UserData for BarHandle {
                 labels: &this.stale,
                 count: this.count,
             };
-            let steps = checked_steps(lua, &this.track, &this.labels, &stale, &text)?;
+            let steps = checked_steps(lua, &this.track, &this.labels, &stale, &text, this.length)?;
             *this.steps.borrow_mut() = steps;
             Ok(this.handle())
         });

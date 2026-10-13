@@ -60,7 +60,8 @@ fn render_odd_blocks(engine: &mut Engine, frames: usize) -> Vec<f32> {
 
 fn pattern(sample: &Arc<Sample>, slices: &Slices, steps: &str) -> Pattern {
     let steps: Vec<Option<usize>> = steps.split_whitespace().map(|s| s.parse().ok()).collect();
-    Pattern::new(sample.clone(), slices, steps.try_into().unwrap()).unwrap()
+    let steps: [Option<usize>; engine::STEPS] = steps.try_into().unwrap();
+    Pattern::new(sample.clone(), slices, steps).unwrap()
 }
 
 const ALTERNATING: &str = "0 1 0 1  0 1 0 1  0 1 0 1  0 1 0 1";

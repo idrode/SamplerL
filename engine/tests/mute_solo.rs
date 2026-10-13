@@ -21,7 +21,8 @@ fn sample() -> (Arc<Sample>, Slices) {
 fn pattern(steps: &str) -> Pattern {
     let (sample, slices) = sample();
     let steps: Vec<Option<usize>> = steps.split_whitespace().map(|s| s.parse().ok()).collect();
-    Pattern::new(sample, &slices, steps.try_into().unwrap()).unwrap()
+    let steps: [Option<usize>; engine::STEPS] = steps.try_into().unwrap();
+    Pattern::new(sample, &slices, steps).unwrap()
 }
 
 const A: &str = "0 . . .  0 . . .  0 . . .  0 . . .";

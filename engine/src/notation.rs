@@ -1,4 +1,5 @@
-//! Mini-notación de patrones: 16 pasos separados por espacios.
+//! Mini-notación de patrones: pasos separados por espacios (16 por
+//! defecto; tantos como la longitud de la pista, ver [`parse_pattern_labeled`]).
 //!
 //! - `.` silencio (lo que sonaba sigue sonando).
 //! - `3` corte número 3 (desde 1). `x` equivale a `1`.
@@ -12,7 +13,7 @@
 
 use std::fmt;
 
-use crate::sequencer::{STEPS, Step};
+use crate::sequencer::{MAX_STEPS, STEPS, Step};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct NotationError {
@@ -44,23 +45,45 @@ pub fn parse_steps_labeled(
     text: &str,
     labels: &[Option<String>],
 ) -> Result<[Option<Step>; STEPS], NotationError> {
+    let steps = parse_pattern_labeled(text, STEPS, labels)?;
+    Ok(steps.try_into().expect("tiene STEPS pasos"))
+}
+
+/// Lee un patrón de `length` pasos (de 1 a [`MAX_STEPS`]; la longitud de la
+/// pista), con etiquetas como [`parse_steps_labeled`].
+pub fn parse_pattern_labeled(
+    text: &str,
+    length: usize,
+    labels: &[Option<String>],
+) -> Result<Vec<Option<Step>>, NotationError> {
+    let error = |message: String| NotationError {
+        step: None,
+        token: String::new(),
+        message,
+    };
+    if !(1..=MAX_STEPS).contains(&length) {
+        return Err(error(format!(
+            "la longitud del patrón va de 1 a {MAX_STEPS} pasos (es {length})"
+        )));
+    }
     let tokens: Vec<&str> = text.split_whitespace().collect();
-    if tokens.len() != STEPS {
-        return Err(NotationError {
-            step: None,
-            token: String::new(),
-            message: format!("el patrón necesita {STEPS} pasos, tiene {}", tokens.len()),
-        });
+    if tokens.len() != length {
+        return Err(error(format!(
+            "el patrón necesita {length} pasos, tiene {}",
+            tokens.len()
+        )));
     }
-    let mut steps = [None; STEPS];
-    for (i, (slot, token)) in steps.iter_mut().zip(&tokens).enumerate() {
-        *slot = parse_step_labeled(token, labels).map_err(|message| NotationError {
-            step: Some(i + 1),
-            token: token.to_string(),
-            message,
-        })?;
-    }
-    Ok(steps)
+    tokens
+        .iter()
+        .enumerate()
+        .map(|(i, token)| {
+            parse_step_labeled(token, labels).map_err(|message| NotationError {
+                step: Some(i + 1),
+                token: token.to_string(),
+                message,
+            })
+        })
+        .collect()
 }
 
 /// Lee un paso: `.`, o corte con sufijos opcionales.

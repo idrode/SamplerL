@@ -925,7 +925,7 @@ mod tests {
             track,
             "métodos de pista, en el orden del registro"
         );
-        assert!(track.starts_with(&["steps".into(), "gain".into()]));
+        assert!(track.starts_with(&["steps".into(), "length".into(), "gain".into()]));
         assert_eq!(c.matches()[0].kind, "método de pista");
         let c = at("local s = sample(\"amen.wav\")\ns:|").unwrap();
         assert_eq!(labels(&c), ["detect_bpm", "slice"]);
@@ -1121,7 +1121,10 @@ mod tests {
             "valor: el valor del efecto, si lo lleva · retrig: Retrigger del golpe"
         );
         let h = help(&format!("{SONG}track(\"d\", amen):steps(\"1 . |")).unwrap();
-        assert_eq!(h.description, "texto: 16 pasos separados por espacios");
+        assert_eq!(
+            h.description,
+            "texto: pasos separados por espacios: 16, o los de :length(n)"
+        );
         let h = help("local a = sample(\"am|").unwrap();
         assert_eq!(h.signature, "sample(ruta) → sample");
         // En la tabla de fx: el efecto y, sobre una clave, su rango.

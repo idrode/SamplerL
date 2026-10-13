@@ -142,6 +142,35 @@ fn the_audio_thread_never_allocates() {
     });
     assert_eq!(n, 0, "reservas al parar la preescucha");
 
+    // Longitudes variables: 12 y 32 pasos con ciclo, en polirritmia.
+    let laps = |length: usize| -> Vec<Vec<Option<Step>>> {
+        (0..3)
+            .map(|lap| {
+                (0..length)
+                    .map(|k| ((k + lap) % 3 == 0).then(|| Step::new(k % 2).with_delay(0.2)))
+                    .collect()
+            })
+            .collect()
+    };
+    controller
+        .set_track_pattern(
+            3,
+            Some(Pattern::from_bars(sample.clone(), &slices, &laps(12)).unwrap()),
+        )
+        .unwrap();
+    controller
+        .set_track_pattern(
+            4,
+            Some(Pattern::from_bars(sample.clone(), &slices, &laps(32)).unwrap()),
+        )
+        .unwrap();
+    let n = counted(|| {
+        for _ in 0..400 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas con longitudes variables");
+
     controller.stop().unwrap();
     controller.start().unwrap();
     let n = counted(|| {

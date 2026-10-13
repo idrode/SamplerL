@@ -430,13 +430,15 @@ pub const FUNCTIONS: &[Function] = &[
     Function {
         name: "euclid",
         receiver: Receiver::Global,
-        signature: "euclid(k, n [, golpe])",
+        signature: "euclid(k, n [, golpe [, pasos]])",
         returns: None,
-        summary: "Patrón euclídeo: k golpes repartidos por igual en n pasos, repetido hasta 16.",
+        summary: "Patrón euclídeo: k golpes repartidos por igual en n pasos, repetido hasta llenar el patrón.",
         doc: "Devuelve texto en mini-notación para `steps`. Empieza por un golpe (el paso \
-              `i` suena si `i·k mod n < k`); para desplazarlo, `rotate`. Si `n` no \
-              divide a 16, el ritmo se repite y se corta en el paso 16. El golpe \
-              puede ser cualquier paso que suene, con sufijos o una etiqueta.",
+              `i` suena si `i·k mod n < k`); para desplazarlo, `rotate`. El ritmo se \
+              repite hasta llenar `pasos` (16 por defecto; para una pista con \
+              `:length(n)`, pasa su longitud) y se corta ahí si `n` no lo divide. \
+              El golpe puede ser cualquier paso que suene, con sufijos o una \
+              etiqueta.",
         params: &[
             Param {
                 name: "k",
@@ -444,11 +446,15 @@ pub const FUNCTIONS: &[Function] = &[
             },
             Param {
                 name: "n",
-                description: "pasos del ritmo (1 a 16)",
+                description: "pasos del ritmo (1 a 64)",
             },
             Param {
                 name: "golpe",
                 description: "el paso que suena (por defecto \"x\", el corte 1)",
+            },
+            Param {
+                name: "pasos",
+                description: "longitud del patrón que devuelve (1 a 64; por defecto 16)",
             },
         ],
         template: "euclid(${3}, ${8}, \"${x}\")",
@@ -456,7 +462,9 @@ pub const FUNCTIONS: &[Function] = &[
             "local amen = sample(\"amen.wav\"):slice(8)\n\
              -- \"1 . . 1  . . 1 .  1 . . 1  . . 1 .\"\n\
              track(\"kick\", amen):steps(euclid(3, 8, \"1\"))\n\
-             track(\"hats\", amen):steps(euclid(5, 16, \"2@0.6\"))\n",
+             track(\"hats\", amen):steps(euclid(5, 16, \"2@0.6\"))\n\
+             -- Tres golpes en 12 pasos, contra el compás de 16.\n\
+             track(\"tres\", amen):length(12):steps(euclid(3, 12, \"3\", 12))\n",
         ),
     },
     Function {
@@ -470,7 +478,7 @@ pub const FUNCTIONS: &[Function] = &[
         params: &[
             Param {
                 name: "patrón",
-                description: "16 pasos en mini-notación",
+                description: "patrón en mini-notación (de 1 a 64 pasos)",
             },
             Param {
                 name: "n",
@@ -496,7 +504,7 @@ pub const FUNCTIONS: &[Function] = &[
               golpe suene al revés está el sufijo `'` (y `c:reverse()` en `every`).",
         params: &[Param {
             name: "patrón",
-            description: "16 pasos en mini-notación",
+            description: "patrón en mini-notación (de 1 a 64 pasos)",
         }],
         template: "reverse_pattern(\"${1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .}\")",
         example: Some(
@@ -521,7 +529,7 @@ pub const FUNCTIONS: &[Function] = &[
         params: &[
             Param {
                 name: "patrón",
-                description: "16 pasos en mini-notación",
+                description: "patrón en mini-notación (de 1 a 64 pasos)",
             },
             Param {
                 name: "p",
@@ -547,14 +555,14 @@ pub const FUNCTIONS: &[Function] = &[
         receiver: Receiver::Global,
         signature: "shuffle(patrón [, semilla])",
         returns: None,
-        summary: "Los mismos 16 pasos en otro orden al azar.",
+        summary: "Los mismos pasos en otro orden al azar.",
         doc: "Conserva cada golpe y cada silencio, solo los cambia de sitio. La semilla \
               funciona como en `mutate`: con ella, siempre el mismo orden; sin ella, \
               el azar de la carga (como `chance`).",
         params: &[
             Param {
                 name: "patrón",
-                description: "16 pasos en mini-notación",
+                description: "patrón en mini-notación (de 1 a 64 pasos)",
             },
             Param {
                 name: "semilla",
@@ -631,7 +639,7 @@ pub const FUNCTIONS: &[Function] = &[
         params: &[
             Param {
                 name: "grados",
-                description: "16 pasos: grados de la escala o `.`",
+                description: "pasos: grados de la escala o `.`",
             },
             Param {
                 name: "golpe",
@@ -777,17 +785,48 @@ pub const FUNCTIONS: &[Function] = &[
         receiver: Receiver::Track,
         signature: "pista:steps(texto)",
         returns: Some(Receiver::Track),
-        summary: "Patrón del compás en mini-notación (16 pasos).",
-        doc: "La notación está en la sección 3. Los cortes que no existen dan error \
-              en esa línea.",
+        summary: "Patrón de la pista en mini-notación (16 pasos, o los de :length).",
+        doc: "La notación está en la sección 3. Lleva tantos pasos como la longitud \
+              de la pista (16, o la de `:length(n)`, que va antes). Los cortes que no \
+              existen dan error en esa línea.",
         params: &[Param {
             name: "texto",
-            description: "16 pasos separados por espacios",
+            description: "pasos separados por espacios: 16, o los de :length(n)",
         }],
         template: "steps(\"${1 . . .  . . . .  . . . .  . . . .}\")",
         example: Some(
             "local amen = sample(\"amen.wav\"):slice(8)\n\
              track(\"drums\", amen):steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\")\n",
+        ),
+    },
+    Function {
+        name: "length",
+        receiver: Receiver::Track,
+        signature: "pista:length(n)",
+        returns: Some(Receiver::Track),
+        summary: "Pasos de una vuelta del patrón (16 por defecto, de 1 a 64): polirritmia entre pistas.",
+        doc: "Va antes de `:steps()`, que entonces lleva `n` pasos. Los pasos siguen \
+              siendo semicorcheas: una pista de 12 pasos da la vuelta cada 12 y se \
+              desfasa contra el compás de 16 (cada 3 compases vuelven a coincidir); \
+              una de 32 ocupa dos compases. Las vueltas van alineadas con la canción \
+              desde que arranca, aunque se recargue. En una pista así, `every`, \
+              `fill`, `chance` y `humanize` cuentan vueltas del patrón en vez de \
+              compases, y los cambios del script siguen entrando al empezar un \
+              compás.",
+        params: &[Param {
+            name: "n",
+            description: "pasos de una vuelta (1 a 64)",
+        }],
+        template: "length(${16})",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             track(\"drums\", amen):steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\")\n\
+             -- 3 contra 4: un charles de 12 pasos sobre el compás de 16.\n\
+             track(\"hats\", amen):length(12):steps(\"3 . 3@0.5 .  3 . . 3  . 3@0.5 . .\")\n\
+             -- Dos compases de bombo.\n\
+             track(\"kick\", amen:slice_at(1))\n  \
+             :length(32)\n  \
+             :steps(\"x . . .  . . . .  x . . .  . . . .  x . . .  . . x .  . . . .  . . . .\")\n",
         ),
     },
     Function {
@@ -888,7 +927,7 @@ pub const FUNCTIONS: &[Function] = &[
             },
             Param {
                 name: "pasos",
-                description: "cuántos pasos del final (1 a 16; por defecto 4)",
+                description: "cuántos pasos del final (1 a 64, como mucho la longitud; por defecto 4)",
             },
             Param {
                 name: "valor",
@@ -983,7 +1022,8 @@ pub const FUNCTIONS: &[Function] = &[
         signature: "pista:every(n, función)",
         returns: Some(Receiver::Track),
         summary: "En los compases 0, n, 2n... llama a función(compás).",
-        doc: "Como en Tidal, cuenta los compases de la canción. La función puede \
+        doc: "Como en Tidal, cuenta los compases de la canción (en una pista con \
+              `:length(n)`, las vueltas de su patrón). La función puede \
               cambiar ese compás con los métodos de la tabla de abajo, que se \
               pueden encadenar. Dentro de la función no se puede llamar a `track`, \
               `bpm` ni `sample`.",
@@ -1048,7 +1088,7 @@ pub const FUNCTIONS: &[Function] = &[
         doc: "",
         params: &[Param {
             name: "texto",
-            description: "16 pasos en mini-notación",
+            description: "pasos en mini-notación (tantos como la longitud de la pista)",
         }],
         template: "steps(\"${1 . . .  . . . .  . . . .  . . . .}\")",
         example: None,
@@ -1273,6 +1313,14 @@ pub const SNIPPETS: &[Snippet] = &[
                    track(\"${melodia}\", amen)\n  \
                    :steps(escala:melody(\"${1 . 3 .  5 . 3 .  8 . 7 .  5 . 3 .}\", \"${3}\"))\n  \
                    :gain(${0.6})\n",
+        requires: "local amen = sample(\"amen.wav\"):slice(8)\n",
+    },
+    Snippet {
+        name: "polirritmo",
+        summary: "Pista de otra longitud (12 pasos contra el compás de 16): polirritmia.",
+        template: "track(\"${tres}\", amen)\n  \
+                   :length(${12})\n  \
+                   :steps(\"${3 . . 3@0.5  . . 3 .  . 3@0.5 . .}\")\n",
         requires: "local amen = sample(\"amen.wav\"):slice(8)\n",
     },
     Snippet {

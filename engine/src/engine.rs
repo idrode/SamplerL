@@ -9,7 +9,7 @@ use crate::fx::{FxState, MAX_FX};
 use crate::limiter::{LIMIT_THRESHOLD, soft_limit};
 use crate::metronome::Metronome;
 use crate::sample::Sample;
-use crate::sequencer::{Pattern, Transport, Trigger, valid_bpm};
+use crate::sequencer::{Pattern, STEPS, Transport, Trigger, valid_bpm};
 use crate::slice::Slices;
 use crate::status::{SharedStatus, Status};
 
@@ -204,6 +204,8 @@ pub enum SendError {
     InvalidFx(&'static str),
     /// Ciclo de patrón con un número de compases fuera de rango.
     InvalidCycle(usize),
+    /// Longitud de patrón fuera de rango (o vueltas de distinta longitud).
+    InvalidLength(usize),
 }
 
 impl fmt::Display for SendError {
@@ -218,6 +220,11 @@ impl fmt::Display for SendError {
                 f,
                 "ciclo de {bars} compases fuera de rango (1 a {})",
                 crate::sequencer::MAX_CYCLE_BARS
+            ),
+            SendError::InvalidLength(steps) => write!(
+                f,
+                "patrón de {steps} pasos fuera de rango (1 a {})",
+                crate::sequencer::MAX_STEPS
             ),
             SendError::InvalidTrackGain(gain) => {
                 write!(f, "volumen de pista {gain} fuera de rango (0 a 4)")
@@ -780,6 +787,8 @@ impl Engine {
         self.status.set_step(bar, step);
         self.metronome.on_step(step, self.sample_rate);
         let next = self.transport.next_step_frame(self.sample_rate);
+        // Semicorchea de la canción: cada pista la lee con su longitud.
+        let global = bar * STEPS as u64 + step as u64;
         for t in 0..MAX_TRACKS {
             if step == 0
                 && let Some(change) = self.tracks[t].pending.take()
@@ -802,10 +811,7 @@ impl Engine {
                     self.discard_pattern(old);
                 }
             }
-            let hit = self.tracks[t]
-                .pattern
-                .as_ref()
-                .and_then(|p| p.bars[(bar % p.bars.len() as u64) as usize][step]);
+            let hit = self.tracks[t].pattern.as_ref().and_then(|p| p.hit(global));
             let Some(hit) = hit else {
                 // Un paso vacío no corta los subdisparos pendientes de un
                 // golpe retrasado del paso anterior.

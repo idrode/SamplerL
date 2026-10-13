@@ -5,7 +5,7 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use engine::{Fx, STEPS, Sample, Step};
+use engine::{Fx, Sample, Step};
 
 pub use crate::complete::Help;
 pub use crate::diagnose::Diagnostic;
@@ -151,10 +151,15 @@ pub struct TrackView {
     /// Resumen de la forma de onda del sample.
     pub waveform: Arc<Waveform>,
     pub slices: Vec<Range<usize>>,
-    /// Compases del ciclo (`every`/`chance`).
+    /// Vueltas del ciclo (`every`/`chance`; con 16 pasos, compases).
     pub cycle: usize,
-    /// Pasos del compás que está sonando (variante del ciclo).
-    pub steps: [Option<Step>; STEPS],
+    /// Pasos de una vuelta del patrón (`:length()`, 16 por defecto).
+    pub length: usize,
+    /// Pasos de la vuelta que está sonando (variante del ciclo).
+    pub steps: Vec<Option<Step>>,
+    /// Paso de su patrón (desde 0) que sonó el último, con el
+    /// secuenciador en marcha.
+    pub position: Option<usize>,
     /// Corte que sonó por última vez (índice desde 0).
     pub playing_slice: Option<usize>,
     /// Medidor de nivel (pico con caída), de 0 a 1.

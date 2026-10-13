@@ -1889,7 +1889,9 @@ impl App {
                         let playing_slice = track_status
                             .and_then(|ts| ts.hit_start)
                             .and_then(|start| t.slices.iter().position(|r| r.start == start));
-                        let bar = (transport.bar % t.bars.len().max(1) as u64) as usize;
+                        // Vuelta y paso de esta pista (con su longitud) en el
+                        // último paso que sonó.
+                        let (lap, position) = t.lap(transport.bar, transport.step.unwrap_or(0));
                         let waveform = self
                             .waveforms
                             .get(&(Arc::as_ptr(&t.sample) as usize))
@@ -1906,7 +1908,12 @@ impl App {
                             waveform,
                             slices: t.slices.iter().collect(),
                             cycle: t.bars.len(),
-                            steps: t.bars.get(bar).copied().unwrap_or(t.steps),
+                            length: t.length,
+                            steps: t.lap_steps(lap).clone(),
+                            position: transport
+                                .step
+                                .filter(|_| transport.running)
+                                .map(|_| position),
                             playing_slice,
                             level: slot.map_or(0.0, |s| self.meters[s]),
                             gain: t.gain,

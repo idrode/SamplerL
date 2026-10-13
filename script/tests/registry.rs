@@ -230,7 +230,14 @@ fn every_snippet_runs_after_what_it_requires() {
     assert_eq!(
         names,
         [
-            "amen", "fill", "ghost", "intro", "euclid", "melodia", "groove"
+            "amen",
+            "fill",
+            "ghost",
+            "intro",
+            "euclid",
+            "melodia",
+            "polirritmo",
+            "groove"
         ]
     );
 }

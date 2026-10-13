@@ -95,8 +95,15 @@ fn euclid_sounds_like_the_pattern_it_writes() {
         2,
     );
     same(&a, &b);
-    let e = error(&dir, "track(\"d\", amen):steps(euclid(3, 20))");
-    assert_eq!(e, "song.lua:3: euclid(3, 20): n va de 1 a 16");
+    let e = error(&dir, "track(\"d\", amen):steps(euclid(3, 70))");
+    assert_eq!(e, "song.lua:3: euclid(3, 70): n va de 1 a 64");
+    // Un n que no cabe en 16 pasos da un patrón que steps no acepta en una
+    // pista de 16: el error lo da steps.
+    let e = error(&dir, "track(\"d\", amen):steps(euclid(3, 8, \"x\", 12))");
+    assert_eq!(
+        e,
+        "song.lua:3: steps: el patrón necesita 16 pasos, tiene 12"
+    );
 }
 
 #[test]
@@ -119,8 +126,8 @@ fn rotate_sounds_like_the_pattern_it_writes() {
     );
     same(&a, &b);
     assert_eq!(
-        error(&dir, "rotate(\"1 2\", 1)"),
-        "song.lua:3: rotate(patrón, 1): el patrón necesita 16 pasos, tiene 2"
+        error(&dir, "rotate(\"\", 1)"),
+        "song.lua:3: rotate(patrón, 1): el patrón necesita de 1 a 64 pasos, tiene 0"
     );
 }
 
@@ -455,7 +462,7 @@ fn fill_sounds_like_the_bars_it_writes() {
             .contains("fill: efecto \"glitch\" no existe (stutter, roll, reverse, pitch, mute)")
     );
     assert!(
-        error(&dir, "track(\"d\", amen):fill(\"roll\", 4, 20)").contains("los pasos van de 1 a 16")
+        error(&dir, "track(\"d\", amen):fill(\"roll\", 4, 70)").contains("los pasos van de 1 a 64")
     );
     assert!(
         error(&dir, "track(\"d\", amen):fill(\"stutter\", 4, 2, 40)").contains("fuera de rango")

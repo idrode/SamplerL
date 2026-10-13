@@ -41,8 +41,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let popup = draw_editor(frame, app, &view, left);
     // Motor arriba (una línea por pista), sample y tracker debajo.
     let engine_height = (view.tracks.len() as u16 + 4).clamp(5, 12);
-    // El tracker pide sus 16 filas (más cabecera y bordes); el sample se
-    // queda con lo que sobre. Si no cabe, el tracker se desplaza.
+    // El tracker pide 16 filas (más cabecera y bordes); el sample se queda
+    // con lo que sobre. Si no cabe (o hay pistas más largas), se desplaza.
     let [engine_area, sample_area, tracker_area] = Layout::vertical([
         Constraint::Length(engine_height),
         Constraint::Min(6),
@@ -600,9 +600,15 @@ impl Widget for EnginePanel<'_> {
                 name,
                 Span::from(meter(track.level, 8)).fg(Color::Green),
                 Span::raw(format!(
-                    " ▶{slice}  {} cortes  ciclo {}  pista {}",
+                    " ▶{slice}  {} cortes  ciclo {}{}  pista {}",
                     track.slices.len(),
                     track.cycle,
+                    // Longitud distinta del compás: polirritmia.
+                    if track.length == engine::STEPS || track.length == 0 {
+                        String::new()
+                    } else {
+                        format!("  {} pasos", track.length)
+                    },
                     track.slot.map_or("-".into(), |s| (s + 1).to_string()),
                 )),
             ]));
@@ -788,8 +794,10 @@ fn slice_mark(track: &crate::model::TrackView, i: usize) -> String {
 /// Ancho de cada columna del tracker.
 const TRACKER_COLUMN: usize = 11;
 
-/// Tracker vertical: un paso por fila y una columna por pista, con la fila
-/// que está sonando resaltada.
+/// Tracker vertical: un paso por fila y una columna por pista, con el paso
+/// que suena en cada pista resaltado. Tiene tantas filas como la pista más
+/// larga; una pista más corta deja en blanco las que no tiene. Si todas
+/// están en la misma fila (las de 16 pasos), se resalta la fila entera.
 pub struct TrackerPanel<'a>(pub &'a ViewModel);
 
 impl Widget for TrackerPanel<'_> {
@@ -802,7 +810,21 @@ impl Widget for TrackerPanel<'_> {
         if inner.height < 2 {
             return;
         }
-        let current = t.step.filter(|_| t.running);
+        // Paso de cada pista; la fila que se sigue al desplazarse es la de la
+        // pista seleccionada (o la primera que suene).
+        let positions: Vec<Option<usize>> = view.tracks.iter().map(|t| t.position).collect();
+        let current = view
+            .selected
+            .and_then(|i| positions.get(i).copied().flatten())
+            .or_else(|| positions.iter().flatten().next().copied())
+            .or(t.step.filter(|_| t.running && view.tracks.is_empty()));
+        let rows = view
+            .tracks
+            .iter()
+            .map(|t| t.steps.len())
+            .max()
+            .unwrap_or(engine::STEPS)
+            .max(1);
 
         // Cabecera con los nombres de las pistas.
         let mut header = vec![Span::raw("   ")];
@@ -829,34 +851,50 @@ impl Widget for TrackerPanel<'_> {
         }
         Line::from(header).render(Rect { height: 1, ..inner }, buf);
 
-        // Si no caben las 16 filas, se desplaza para ver la que suena.
+        // Si no caben todas las filas, se desplaza para ver la que suena.
         let visible = (inner.height - 1) as usize;
-        let first = if visible >= engine::STEPS {
+        let first = if visible >= rows {
             0
         } else {
             current
                 .map_or(0, |s| s.saturating_sub(visible / 2))
-                .min(engine::STEPS - visible)
+                .min(rows - visible)
         };
-        for (row, step) in (first..engine::STEPS).take(visible).enumerate() {
-            let mut spans = vec![Span::from(format!("{step:02} ")).fg(DIM)];
+        let playing = Style::new().bg(Color::Blue).fg(Color::White).bold();
+        for (row, step) in (first..rows).take(visible).enumerate() {
+            let here: Vec<bool> = positions.iter().map(|p| *p == Some(step)).collect();
+            // Todas las pistas que suenan, en esta fila: la fila entera.
+            let whole = here.iter().any(|h| *h)
+                && positions.iter().zip(&here).all(|(p, h)| p.is_none() || *h);
+            let number = Span::from(format!("{step:02} "));
+            let mut spans = vec![if here.iter().any(|h| *h) && !whole {
+                number.style(playing)
+            } else {
+                number.fg(DIM)
+            }];
             for (i, track) in view.tracks.iter().enumerate() {
-                let cell = &track.steps[step];
-                let cell_text: String = step_text(cell, &track.labels)
+                let cell = track.steps.get(step);
+                let cell_text: String = cell
+                    .map_or(String::new(), |c| step_text(c, &track.labels))
                     .chars()
                     .take(TRACKER_COLUMN - 1)
                     .collect();
                 let text = format!("{cell_text:<TRACKER_COLUMN$}");
                 // Las pistas que no se oyen (mute, o solo de otra), atenuadas.
-                spans.push(if cell.is_some() && view.audible(i) {
+                let span = if cell.is_some_and(Option::is_some) && view.audible(i) {
                     Span::raw(text)
                 } else {
                     Span::from(text).fg(DIM)
+                };
+                spans.push(if here[i] && !whole {
+                    span.style(playing)
+                } else {
+                    span
                 });
             }
             let mut line = Line::from(spans);
-            if current == Some(step) {
-                line = line.style(Style::new().bg(Color::Blue).fg(Color::White).bold());
+            if whole {
+                line = line.style(playing);
             }
             let y = inner.y + 1 + row as u16;
             let row_area = Rect {
@@ -864,7 +902,7 @@ impl Widget for TrackerPanel<'_> {
                 height: 1,
                 ..inner
             };
-            if current == Some(step) {
+            if whole {
                 buf.set_style(row_area, Style::new().bg(Color::Blue));
             }
             line.render(row_area, buf);

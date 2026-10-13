@@ -406,11 +406,11 @@ fn sample_panel_follows_the_selected_track() {
 
 fn tracker_view(step: Option<usize>, running: bool) -> ViewModel {
     use engine::Step;
-    let mut drums = [None; engine::STEPS];
+    let mut drums = vec![None; engine::STEPS];
     drums[0] = Some(Step::new(0));
     drums[5] = Some(Step::new(2).reversed().with_pitch(7.0));
     drums[12] = Some(Step::new(1).with_retrig(4));
-    let mut kick = [None; engine::STEPS];
+    let mut kick = vec![None; engine::STEPS];
     kick[5] = Some(Step::new(0).with_gain(0.5));
     ViewModel {
         transport: TransportView {
@@ -422,12 +422,16 @@ fn tracker_view(step: Option<usize>, running: bool) -> ViewModel {
         tracks: vec![
             TrackView {
                 name: "drums".into(),
+                length: drums.len(),
                 steps: drums,
+                position: step.filter(|_| running),
                 ..TrackView::default()
             },
             TrackView {
                 name: "kick".into(),
+                length: kick.len(),
                 steps: kick,
+                position: step.filter(|_| running),
                 ..TrackView::default()
             },
         ],
@@ -2317,3 +2321,4 @@ fn slices_are_nudged_with_keys_and_saved_in_the_project() {
 }
 
 mod blocks;
+mod length;

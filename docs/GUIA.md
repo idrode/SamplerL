@@ -214,7 +214,7 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Guardar en una ranura (1-9) | Guarda la selección (o la línea del cursor) en la ranura del número que se pulse, como los registros de vim | — |
 | Pegar una ranura (1-9) | Pega la ranura del número que se pulse; las líneas enteras van encima de la del cursor | — |
 | Salir | Sale (pide confirmación si hay cambios sin guardar) | Ctrl-Q |
-| Snippet: `amen`, `fill`, `ghost`, `intro`, `euclid`, `melodia`, `groove` | Inserta el snippet en el cursor (ver «Snippets» en la sección 4) | — |
+| Snippet: `amen`, `fill`, `ghost`, `intro`, `euclid`, `melodia`, `polirritmo`, `groove` | Inserta el snippet en el cursor (ver «Snippets» en la sección 4) | — |
 
 <!-- paleta:fin -->
 
@@ -236,7 +236,7 @@ Qué ofrece según dónde esté el cursor:
 
 | Dónde | Opciones |
 | --- | --- |
-| Inicio de línea | Funciones globales (`bpm`, `sample`, `track`), snippets (`amen`, `fill`, `ghost`, `intro`, `euclid`, `melodia`, `groove`), bloques de tu biblioteca (ver «Biblioteca de bloques»), variables locales y palabras clave de Lua |
+| Inicio de línea | Funciones globales (`bpm`, `sample`, `track`), snippets (`amen`, `fill`, `ghost`, `intro`, `euclid`, `melodia`, `polirritmo`, `groove`), bloques de tu biblioteca (ver «Biblioteca de bloques»), variables locales y palabras clave de Lua |
 | Tras `:` | Los métodos del objeto: de sample, de cortes, de pista o del compás de `every` (si no se sabe qué es, todos) |
 | Dentro de `fx("...")` | Los efectos; dentro de la tabla, sus parámetros, y en `type = "..."` sus valores |
 | Dentro de `sample("...")` | Los WAV de la carpeta de muestras (la del proyecto o la del script) |
@@ -403,6 +403,29 @@ Un patrón son **16 pasos** (semicorcheas de un compás de 4/4) separados por
 espacios. Los espacios de más no cuentan, así que se pueden agrupar por
 tiempos.
 
+Cada pista puede tener **otra longitud** con `pista:length(n)` (de 1 a 64
+pasos, antes de `:steps()`): sus pasos siguen siendo semicorcheas, pero el
+patrón da la vuelta cada `n`. Una pista de 12 pasos contra una de 16 hace
+polirritmia (3 contra 4: vuelven a coincidir cada 3 compases) y una de 32
+ocupa dos compases. Las vueltas van alineadas con la canción desde que
+arranca el secuenciador, así que recargar no las desplaza; los cambios
+siguen entrando al empezar un compás.
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+track("tres", amen):length(12):steps("3 . . 3@0.5  . . 3 .  . 3@0.5 . .")
+```
+
+En una pista así, `every`, `fill`, `chance` y `humanize` cuentan vueltas
+de su patrón en vez de compases, y el swing sigue cayendo en los
+contratiempos de la canción (con una longitud impar, una vuelta empieza en
+tiempo y la siguiente a contratiempo). El tracker tiene tantas filas como
+la pista más larga y resalta el paso de cada pista; el panel del motor
+dice `12 pasos` junto a las pistas que no son de 16. Exportar la canción
+entera dura hasta que todas las pistas vuelven a coincidir (como mucho 256
+compases).
+
 | Símbolo | Significado | Ejemplo |
 | --- | --- | --- |
 | `3` | Corte 3 (se cuenta desde 1) | `3` |
@@ -424,8 +447,11 @@ puede acabar así.
 Mientras escribes, el editor revisa cada `steps("...")` sin esperar a
 guardar: el paso con error sale subrayado en rojo y el aviso (`⚠ línea N:
 ...`) aparece al pie del editor. Comprueba la notación, las etiquetas, que
-haya 16 pasos y los rangos de volumen, pitch y retrigger; los cortes que no
-existen se ven al cargar. Las etiquetas que conoce son las de lo último
+haya tantos pasos como la longitud de la pista (16, o el número de
+`:length(n)` escrito en la misma cadena de `track(...)` o en la que define
+esa pista; si `n` no es un número escrito tal cual, no los cuenta) y los
+rangos de volumen, pitch y retrigger; los cortes que no existen se ven al
+cargar. Las etiquetas que conoce son las de lo último
 cargado, las del proyecto y las que el texto pone con `:name()`, de
 cualquier pista: si una etiqueta no es de esa pista, lo dice la carga.
 
@@ -515,26 +541,29 @@ bpm(170)
 metronome(true)
 ```
 
-### `euclid(k, n [, golpe])`
+### `euclid(k, n [, golpe [, pasos]])`
 
-Patrón euclídeo: k golpes repartidos por igual en n pasos, repetido hasta 16. Devuelve texto en mini-notación para `steps`. Empieza por un golpe (el paso `i` suena si `i·k mod n < k`); para desplazarlo, `rotate`. Si `n` no divide a 16, el ritmo se repite y se corta en el paso 16. El golpe puede ser cualquier paso que suene, con sufijos o una etiqueta.
+Patrón euclídeo: k golpes repartidos por igual en n pasos, repetido hasta llenar el patrón. Devuelve texto en mini-notación para `steps`. Empieza por un golpe (el paso `i` suena si `i·k mod n < k`); para desplazarlo, `rotate`. El ritmo se repite hasta llenar `pasos` (16 por defecto; para una pista con `:length(n)`, pasa su longitud) y se corta ahí si `n` no lo divide. El golpe puede ser cualquier paso que suene, con sufijos o una etiqueta.
 
 - `k`: golpes (0 a n)
-- `n`: pasos del ritmo (1 a 16)
+- `n`: pasos del ritmo (1 a 64)
 - `golpe`: el paso que suena (por defecto "x", el corte 1)
+- `pasos`: longitud del patrón que devuelve (1 a 64; por defecto 16)
 
 ```lua
 local amen = sample("amen.wav"):slice(8)
 -- "1 . . 1  . . 1 .  1 . . 1  . . 1 ."
 track("kick", amen):steps(euclid(3, 8, "1"))
 track("hats", amen):steps(euclid(5, 16, "2@0.6"))
+-- Tres golpes en 12 pasos, contra el compás de 16.
+track("tres", amen):length(12):steps(euclid(3, 12, "3", 12))
 ```
 
 ### `rotate(patrón, n)`
 
 Desplaza un patrón n pasos: positivo, más tarde; negativo, antes. Los pasos que se salen por un lado entran por el otro. Devuelve texto en mini-notación; se puede combinar con las demás funciones de patrones.
 
-- `patrón`: 16 pasos en mini-notación
+- `patrón`: patrón en mini-notación (de 1 a 64 pasos)
 - `n`: pasos que se desplaza (negativo: hacia antes)
 
 ```lua
@@ -549,7 +578,7 @@ track("kick", amen):steps(rotate(euclid(3, 8, "1"), 2))
 
 El patrón al revés: el último paso pasa a ser el primero. Invierte el orden de los pasos, no el sonido de cada golpe: para que un golpe suene al revés está el sufijo `'` (y `c:reverse()` en `every`).
 
-- `patrón`: 16 pasos en mini-notación
+- `patrón`: patrón en mini-notación (de 1 a 64 pasos)
 
 ```lua
 local amen = sample("amen.wav"):slice(8)
@@ -563,7 +592,7 @@ track("drums", amen)
 
 Cambia cada paso, con probabilidad p, por otro del mismo patrón al azar. Se queda con los golpes y silencios del patrón, solo los cambia de sitio aquí y allá. Con `semilla`, el resultado es siempre el mismo. Sin ella, el azar sigue la regla de `chance`: se tira al cargar (otro en cada carga, salvo con la semilla fija de los tests), y dentro de `every` cada compás sale distinto y el ciclo se repite.
 
-- `patrón`: 16 pasos en mini-notación
+- `patrón`: patrón en mini-notación (de 1 a 64 pasos)
 - `p`: probabilidad de cambiar cada paso (0 a 1)
 - `semilla`: número entero; con la misma, el mismo resultado
 
@@ -578,9 +607,9 @@ track("drums", amen)
 
 ### `shuffle(patrón [, semilla])`
 
-Los mismos 16 pasos en otro orden al azar. Conserva cada golpe y cada silencio, solo los cambia de sitio. La semilla funciona como en `mutate`: con ella, siempre el mismo orden; sin ella, el azar de la carga (como `chance`).
+Los mismos pasos en otro orden al azar. Conserva cada golpe y cada silencio, solo los cambia de sitio. La semilla funciona como en `mutate`: con ella, siempre el mismo orden; sin ella, el azar de la carga (como `chance`).
 
-- `patrón`: 16 pasos en mini-notación
+- `patrón`: patrón en mini-notación (de 1 a 64 pasos)
 - `semilla`: número entero; con la misma, el mismo orden
 
 ```lua
@@ -640,7 +669,7 @@ track("d", amen):steps("3 . . .  3^" .. quinta .. " . . .  3 . . .  3^12 . . .")
 
 Convierte un patrón de grados en uno de pasos con pitch: "1 3 5 3" → "1^0 1^3 1^7 1^3". Cada paso de `grados` es un grado (o `.`), con los sufijos que quieras salvo `^`: `5@0.5` da el golpe con el pitch del grado 5 a medio volumen. Devuelve texto en mini-notación para `steps`.
 
-- `grados`: 16 pasos: grados de la escala o `.`
+- `grados`: pasos: grados de la escala o `.`
 - `golpe`: el corte que suena (número o etiqueta; por defecto "1")
 
 ### `sample:detect_bpm()`
@@ -721,13 +750,32 @@ track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
 
 Devuelve: pista.
 
-Patrón del compás en mini-notación (16 pasos). La notación está en la sección 3. Los cortes que no existen dan error en esa línea.
+Patrón de la pista en mini-notación (16 pasos, o los de :length). La notación está en la sección 3. Lleva tantos pasos como la longitud de la pista (16, o la de `:length(n)`, que va antes). Los cortes que no existen dan error en esa línea.
 
-- `texto`: 16 pasos separados por espacios
+- `texto`: pasos separados por espacios: 16, o los de :length(n)
 
 ```lua
 local amen = sample("amen.wav"):slice(8)
 track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+```
+
+### `pista:length(n)`
+
+Devuelve: pista.
+
+Pasos de una vuelta del patrón (16 por defecto, de 1 a 64): polirritmia entre pistas. Va antes de `:steps()`, que entonces lleva `n` pasos. Los pasos siguen siendo semicorcheas: una pista de 12 pasos da la vuelta cada 12 y se desfasa contra el compás de 16 (cada 3 compases vuelven a coincidir); una de 32 ocupa dos compases. Las vueltas van alineadas con la canción desde que arranca, aunque se recargue. En una pista así, `every`, `fill`, `chance` y `humanize` cuentan vueltas del patrón en vez de compases, y los cambios del script siguen entrando al empezar un compás.
+
+- `n`: pasos de una vuelta (1 a 64)
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+-- 3 contra 4: un charles de 12 pasos sobre el compás de 16.
+track("hats", amen):length(12):steps("3 . 3@0.5 .  3 . . 3  . 3@0.5 . .")
+-- Dos compases de bombo.
+track("kick", amen:slice_at(1))
+  :length(32)
+  :steps("x . . .  . . . .  x . . .  . . . .  x . . .  . . x .  . . . .  . . . .")
 ```
 
 ### `pista:gain(g)`
@@ -784,7 +832,7 @@ Relleno: los últimos pasos del último compás de cada n, con un efecto. En los
 
 - `efecto`: el efecto (ver la tabla)
 - `n`: cada cuántos compases (1 a 64)
-- `pasos`: cuántos pasos del final (1 a 16; por defecto 4)
+- `pasos`: cuántos pasos del final (1 a 64, como mucho la longitud; por defecto 4)
 - `valor`: el valor del efecto, si lo lleva
 
 | Efecto | Valor | Qué hace |
@@ -867,7 +915,7 @@ track("drums", amen)
 
 Devuelve: pista.
 
-En los compases 0, n, 2n... llama a función(compás). Como en Tidal, cuenta los compases de la canción. La función puede cambiar ese compás con los métodos de la tabla de abajo, que se pueden encadenar. Dentro de la función no se puede llamar a `track`, `bpm` ni `sample`.
+En los compases 0, n, 2n... llama a función(compás). Como en Tidal, cuenta los compases de la canción (en una pista con `:length(n)`, las vueltas de su patrón). La función puede cambiar ese compás con los métodos de la tabla de abajo, que se pueden encadenar. Dentro de la función no se puede llamar a `track`, `bpm` ni `sample`.
 
 - `n`: cada cuántos compases (1 a 64)
 - `función`: recibe el compás (`function(c) ... end`)
@@ -927,6 +975,7 @@ Trozos de script con campos para rellenar. Se insertan desde el autocompletado (
 | `intro` | Pista de intro: pocos golpes, filtrada y más baja. |
 | `euclid` | Pista con un ritmo euclídeo (k golpes repartidos en n pasos). |
 | `melodia` | Melodía con un corte sobre una escala: grados que se convierten en pitch. |
+| `polirritmo` | Pista de otra longitud (12 pasos contra el compás de 16): polirritmia. |
 | `groove` | Swing y humanize en una pista existente, para que no suene a máquina. |
 
 `amen`:
@@ -984,6 +1033,15 @@ local escala = scale("minor", "C")
 track("melodia", amen)
   :steps(escala:melody("1 . 3 .  5 . 3 .  8 . 7 .  5 . 3 .", "3"))
   :gain(0.6)
+```
+
+`polirritmo` (las primeras líneas son lo que necesita tener antes):
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+track("tres", amen)
+  :length(12)
+  :steps("3 . . 3@0.5  . . 3 .  . 3@0.5 . .")
 ```
 
 `groove` (las primeras líneas son lo que necesita tener antes):
@@ -1224,7 +1282,8 @@ comandos. Mientras tanto sigue sonando lo anterior.
 song.lua:2: steps: el patrón necesita 16 pasos, tiene 4
 ```
 
-El patrón tiene que tener exactamente 16 pasos. Rellena con `.`.
+El patrón tiene que tener exactamente 16 pasos (o los de `:length(n)`, que
+va antes de `:steps()`). Rellena con `.`.
 
 ```text
 song.lua:2: steps: el corte 9 no existe ("drums" tiene 8)

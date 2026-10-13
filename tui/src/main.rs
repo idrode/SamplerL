@@ -11,7 +11,7 @@ mod ui;
 use std::sync::Arc;
 use std::time::Duration;
 
-use engine::{DetectOptions, Detector, Pattern, STEPS, Slices, Step};
+use engine::{DetectOptions, Detector, Pattern, Slices, Step};
 
 const USAGE: &str = "\
 uso: tui --edit <canción.lua | proyecto.sampler> [--allow-audio]   (interfaz)
@@ -22,7 +22,7 @@ uso: tui --edit <canción.lua | proyecto.sampler> [--allow-audio]   (interfaz)
      tui <archivo.wav> --render <salida.wav> --pattern \"1 . 3 . ...\" \
 [--slices N] [--bpm B] [--bars M] [--min-gap MS] [--detector flux|energy] [--metronome]
 
-  --pattern  16 pasos separados por espacios (mini-notación):
+  --pattern  pasos separados por espacios (mini-notación; 16 = un compás, de 1 a 64):
                3      corte 3 (desde 1; \"x\" = 1)      .      silencio
                3'     reverse                         3^7    pitch +7 semitonos (^-5, ^0.5...)
                3@0.5  volumen (0 a 4)                 3r4    retrigger/stutter (1 a 16)
@@ -47,7 +47,7 @@ type BoxError = Box<dyn std::error::Error>;
 
 /// Opciones del secuenciador para `--render`.
 struct Sequence {
-    pattern: [Option<Step>; STEPS],
+    pattern: Vec<Option<Step>>,
     slices: usize,
     bpm: f64,
     bars: u64,
@@ -91,7 +91,9 @@ fn run() -> Result<(), BoxError> {
             "--metronome" => metronome = true,
             "--detect-bpm" => detect = true,
             "--pattern" => {
-                let steps = engine::notation::parse_steps(&value()?)
+                let text = value()?;
+                let length = text.split_whitespace().count();
+                let steps = engine::notation::parse_pattern_labeled(&text, length, &[])
                     .map_err(|e| format!("--pattern: {e}"))?;
                 pattern = Some(steps);
             }
@@ -254,7 +256,7 @@ fn render_sequence(path: &str, out: &str, sequence: &Sequence) -> Result<(), Box
         );
     }
 
-    let pattern = Pattern::from_steps(sample, &slices, sequence.pattern).map_err(|e| match e {
+    let pattern = Pattern::from_steps(sample, &slices, &sequence.pattern).map_err(|e| match e {
         engine::SendError::NoSuchSlice { index, count } => {
             format!("el patrón usa el corte {} pero solo hay {count}", index + 1)
         }

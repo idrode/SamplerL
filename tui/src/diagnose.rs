@@ -1,12 +1,14 @@
 //! Diagnóstico en vivo de la notación de `steps("...")`: mientras se
-//! escribe, sin cargar el script. Usa el mismo lector de la notación que el
+//! escribe, sin cargar el script. La longitud que se pide es la de la
+//! pista ([`track_lengths`]): la de `:length(n)` en la misma cadena de
+//! `track(...)` o en la definición de esa pista, o 16. Usa el mismo lector de la notación que el
 //! motor ([`engine::notation`]) y los mismos rangos (ganancia, pitch y
 //! retrigger) que valida el script al cargar.
 
 use std::ops::Range;
 
-use engine::notation::{parse_step_labeled, parse_steps_labeled};
-use engine::{MAX_GAIN, MAX_RETRIG, MAX_SEMITONES};
+use engine::notation::{parse_pattern_labeled, parse_step_labeled};
+use engine::{MAX_GAIN, MAX_RETRIG, MAX_SEMITONES, STEPS};
 
 /// Un problema en una línea del editor.
 #[derive(Debug, Clone, PartialEq)]
@@ -25,8 +27,12 @@ pub struct Diagnostic {
 /// carga).
 pub fn steps_diagnostics(lines: &[String], labels: &[String]) -> Vec<Diagnostic> {
     let labels: Vec<Option<String>> = labels.iter().cloned().map(Some).collect();
+    let lengths = track_lengths(lines);
     let mut out = Vec::new();
+    let mut line_start = 0;
     for (row, line) in lines.iter().enumerate() {
+        let offset = line_start;
+        line_start += line.chars().count() + 1;
         let chars: Vec<char> = line.chars().collect();
         let code_end = comment_start(&chars);
         let mut i = 0;
@@ -55,7 +61,8 @@ pub fn steps_diagnostics(lines: &[String], labels: &[String]) -> Vec<Diagnostic>
                 .find(|&k| chars[k] == quote)
                 .unwrap_or(chars.len());
             let content: String = chars[start..end].iter().collect();
-            if let Some((cols, message)) = check(&content, &labels) {
+            let length = lengths.at(offset + at);
+            if let Some((cols, message)) = check(&content, &labels, length) {
                 let cols = if cols.is_empty() {
                     // Sin pasos: se subrayan las comillas.
                     start.saturating_sub(1)..(end + 1).min(chars.len())
@@ -75,10 +82,14 @@ pub fn steps_diagnostics(lines: &[String], labels: &[String]) -> Vec<Diagnostic>
 }
 
 /// Comprueba un patrón: primero cada paso (así, mientras se escribe, el
-/// error de un paso se ve aunque falten pasos), luego cuántos hay y luego
-/// los rangos. Devuelve las columnas (dentro del patrón) que se subrayan y
-/// el mensaje.
-fn check(content: &str, labels: &[Option<String>]) -> Option<(Range<usize>, String)> {
+/// error de un paso se ve aunque falten pasos), luego cuántos hay (si se
+/// sabe la longitud de la pista) y luego los rangos. Devuelve las columnas
+/// (dentro del patrón) que se subrayan y el mensaje.
+fn check(
+    content: &str,
+    labels: &[Option<String>],
+    length: Option<usize>,
+) -> Option<(Range<usize>, String)> {
     let tokens = tokens(content);
     let text = |i: usize| -> String {
         content
@@ -96,7 +107,8 @@ fn check(content: &str, labels: &[Option<String>]) -> Option<(Range<usize>, Stri
             ));
         }
     }
-    let steps = match parse_steps_labeled(content, labels) {
+    let length = length.unwrap_or(tokens.len().max(1));
+    let steps = match parse_pattern_labeled(content, length, labels) {
         Ok(steps) => steps,
         Err(e) => {
             let cols = match (tokens.first(), tokens.last()) {
@@ -136,6 +148,145 @@ fn tokens(content: &str) -> Vec<Range<usize>> {
                 start = None;
             }
             _ => {}
+        }
+    }
+    out
+}
+
+/// Longitud de cada cadena de `track(...)` del texto (de un `track(` al
+/// siguiente), para saber cuántos pasos pide cada `steps`.
+pub struct Lengths {
+    /// Desde dónde (en caracteres del texto, con un salto por línea) vale
+    /// cada longitud; `None`: no se sabe (`:length(n)` con algo que no es
+    /// un número).
+    chains: Vec<(usize, Option<usize>)>,
+}
+
+impl Lengths {
+    /// Longitud de la pista en la posición `at` del texto (16 antes del
+    /// primer `track(`).
+    pub fn at(&self, at: usize) -> Option<usize> {
+        self.chains
+            .iter()
+            .rev()
+            .find(|(start, _)| *start <= at)
+            .map_or(Some(STEPS), |(_, length)| *length)
+    }
+}
+
+/// Longitudes de las cadenas de `track(...)`: la de su `:length(n)` o, si
+/// no tiene, la de otra cadena de la misma pista (`track("d")` recupera
+/// una pista definida antes), o 16.
+pub fn track_lengths(lines: &[String]) -> Lengths {
+    let text: Vec<char> = lines.join("\n").chars().collect();
+    let code = mask(&text);
+    let mut starts = Vec::new();
+    let mut i = 0;
+    while let Some(at) = find(&code, "track", i) {
+        i = at + 5;
+        let ident = |c: char| c.is_alphanumeric() || c == '_';
+        let before = at.checked_sub(1).map(|j| code[j]);
+        if before.is_some_and(|c| ident(c) || c == '.' || c == ':') {
+            continue;
+        }
+        let mut j = i;
+        while code.get(j) == Some(&' ') {
+            j += 1;
+        }
+        if code.get(j) == Some(&'(') {
+            starts.push((at, j + 1));
+        }
+    }
+    // Nombre (primer argumento literal) y `:length(n)` de cada cadena.
+    let mut chains: Vec<(usize, Option<String>, Option<Option<usize>>)> = Vec::new();
+    for (k, &(at, open)) in starts.iter().enumerate() {
+        let end = starts.get(k + 1).map_or(code.len(), |s| s.0);
+        let mut j = open;
+        while text.get(j) == Some(&' ') {
+            j += 1;
+        }
+        let name = text
+            .get(j)
+            .filter(|c| **c == '"' || **c == '\'')
+            .and_then(|q| {
+                let close = (j + 1..end).find(|&e| text[e] == *q)?;
+                Some(text[j + 1..close].iter().collect::<String>())
+            });
+        let mut length = None;
+        let mut from = open;
+        while let Some(l) = find(&code[..end], ":length", from) {
+            from = l + 7;
+            let rest: String = code[from..end].iter().collect();
+            let rest = rest.trim_start();
+            let Some(args) = rest.strip_prefix('(') else {
+                continue;
+            };
+            let inner = args.split(')').next().unwrap_or("").trim();
+            length = Some(inner.parse::<usize>().ok());
+        }
+        chains.push((at, name, length));
+    }
+    let chains = chains
+        .iter()
+        .map(|(at, name, length)| {
+            let length = match length {
+                Some(length) => *length,
+                // La de la cadena que define esa pista con :length, si hay.
+                None => chains
+                    .iter()
+                    .filter(|(_, other, l)| other.is_some() && other == name && l.is_some())
+                    .map(|(_, _, l)| l.unwrap())
+                    .next()
+                    .unwrap_or(Some(STEPS)),
+            };
+            (*at, length)
+        })
+        .collect();
+    Lengths { chains }
+}
+
+/// El texto con las cadenas y los comentarios cambiados por espacios (los
+/// saltos de línea se conservan), para buscar llamadas solo en el código.
+fn mask(text: &[char]) -> Vec<char> {
+    let mut out = text.to_vec();
+    let mut i = 0;
+    let blank = |out: &mut Vec<char>, range: Range<usize>| {
+        for c in &mut out[range] {
+            if *c != '\n' {
+                *c = ' ';
+            }
+        }
+    };
+    while i < text.len() {
+        let c = text[i];
+        if text[i..].starts_with(&['-', '-']) {
+            // Comentario largo `--[[ ... ]]` o hasta el final de la línea.
+            let end = if text[i + 2..].starts_with(&['[', '[']) {
+                find(text, "]]", i + 4).map_or(text.len(), |e| e + 2)
+            } else {
+                (i..text.len())
+                    .find(|&e| text[e] == '\n')
+                    .unwrap_or(text.len())
+            };
+            blank(&mut out, i..end);
+            i = end;
+        } else if c == '"' || c == '\'' {
+            let mut e = i + 1;
+            while e < text.len() && text[e] != c && text[e] != '\n' {
+                if text[e] == '\\' {
+                    e += 1;
+                }
+                e += 1;
+            }
+            let end = (e + 1).min(text.len());
+            blank(&mut out, i..end);
+            i = end;
+        } else if text[i..].starts_with(&['[', '[']) {
+            let end = find(text, "]]", i + 2).map_or(text.len(), |e| e + 2);
+            blank(&mut out, i..end);
+            i = end;
+        } else {
+            i += 1;
         }
     }
     out
@@ -273,6 +424,41 @@ mod tests {
         // Vacío: las comillas.
         let line = r#":steps("")"#;
         assert_eq!(diagnose(line)[0].cols, 7..9);
+    }
+
+    #[test]
+    fn the_step_count_follows_the_track_length() {
+        // Con :length(12) en la cadena, pide 12.
+        let ok = "track(\"d\", a):length(12):steps(\"1 . . .  . . . .  . . . .\")";
+        assert!(diagnose(ok).is_empty(), "{:?}", diagnose(ok));
+        let d = diagnose("track(\"d\", a)\n  :length(12)\n  :steps(\"1 . . .\")");
+        assert_eq!(d[0].message, "steps: el patrón necesita 12 pasos, tiene 4");
+        assert_eq!(d[0].row, 2);
+        // La siguiente pista vuelve a 16.
+        let two = "track(\"a\", a):length(3):steps(\"1 . .\")\n\
+                   track(\"b\", a):steps(\"1 . .\")";
+        let d = diagnose(two);
+        assert_eq!(d.len(), 1);
+        assert_eq!(d[0].row, 1);
+        assert!(d[0].message.contains("necesita 16 pasos"));
+        // every y track("nombre") usan la longitud de la pista.
+        let laps = "track(\"a\", a):length(6):steps(\"1 . . . . .\")\n\
+                    track(\"b\", a):steps(\"1 . . .  . . . .  . . . .  . . . .\")\n\
+                    track(\"a\"):every(2, function(c) c:steps(\"1 . . . . 1\") end)";
+        assert!(diagnose(laps).is_empty(), "{:?}", diagnose(laps));
+        // Con una longitud que no es un número, no se cuentan los pasos
+        // (pero se revisa cada uno).
+        let unknown = "track(\"a\", a):length(n):steps(\"1 . ?\")";
+        let d = diagnose(unknown);
+        assert_eq!(d.len(), 1);
+        assert!(d[0].message.contains("paso 3"), "{}", d[0].message);
+        assert!(diagnose("track(\"a\", a):length(n):steps(\"1 .\")").is_empty());
+        // `track(` en un comentario o una cadena no cuenta.
+        let masked = "track(\"a\", a):length(3):steps(\"1 . .\")\n\
+                      -- track(\"b\", a)\n\
+                      print(\"track(\")\n\
+                      track(\"a\"):every(2, function(c) c:steps(\"1 1 1\") end)";
+        assert!(diagnose(masked).is_empty(), "{:?}", diagnose(masked));
     }
 
     #[test]

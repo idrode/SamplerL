@@ -1,4 +1,11 @@
-//! Secuenciador de 16 pasos: patrón de cortes, BPM y transporte.
+//! Secuenciador: patrones de cortes, BPM y transporte.
+//!
+//! El reloj va en semicorcheas y compases de 16 pasos (los cambios entran
+//! al empezar un compás). Cada pista tiene su propia longitud de patrón
+//! (`Pattern::length`, de 1 a [`MAX_STEPS`]): toca la semicorchea global
+//! `g` como el paso `g % longitud` de la vuelta `g / longitud`, así que una
+//! pista de 12 pasos contra otra de 16 hace polirritmia y queda alineada con
+//! la canción aunque se recargue. Con 16 pasos, vuelta = compás.
 
 use std::sync::Arc;
 
@@ -7,8 +14,11 @@ use crate::fx::{Fx, MAX_FX};
 use crate::sample::Sample;
 use crate::slice::Slices;
 
-/// Pasos por compás (semicorcheas en 4/4).
+/// Pasos por compás (semicorcheas en 4/4) y longitud por defecto de un
+/// patrón.
 pub const STEPS: usize = 16;
+/// Longitud máxima de un patrón, en pasos.
+pub const MAX_STEPS: usize = 64;
 /// Pasos por negra.
 const STEPS_PER_BEAT: f64 = 4.0;
 pub const MIN_BPM: f64 = 20.0;
@@ -23,7 +33,8 @@ pub const MAX_RETRIG: u8 = 16;
 /// Retraso máximo de un golpe, en fracción de paso: siempre suena antes
 /// del paso siguiente.
 pub const MAX_DELAY: f32 = 0.9;
-/// Compases máximos del ciclo de variantes de un patrón.
+/// Vueltas máximas del ciclo de variantes de un patrón (compases, con 16
+/// pasos).
 pub const MAX_CYCLE_BARS: usize = 64;
 
 /// Un paso del patrón: qué corte suena y cómo.
@@ -93,14 +104,16 @@ pub(crate) struct Trigger {
     pub delay: f32,
 }
 
-/// Patrón de un compás. Los pasos se resuelven a rangos de frames y
-/// parámetros de reproducción en el hilo de control, así el motor solo copia
+/// Patrón de una pista. Los pasos se resuelven a rangos de frames y
+/// parámetros de reproducción en el hilo de control, así el motor solo lee
 /// este valor (sin reservas).
 pub struct Pattern {
     pub(crate) sample: Arc<Sample>,
-    /// Ciclo de compases: en el compás `b` de la canción suena
-    /// `bars[b % bars.len()]`. Un patrón fijo tiene un solo compás.
-    pub(crate) bars: Vec<[Option<Trigger>; STEPS]>,
+    /// Pasos de una vuelta del patrón.
+    length: usize,
+    /// Ciclo de vueltas, seguidas: en la vuelta `v` de la canción suenan los
+    /// pasos `(v % ciclo) · length ..`. Un patrón fijo tiene una sola vuelta.
+    steps: Vec<Option<Trigger>>,
     /// Volumen de la pista (lineal), aplicado después de sus voces.
     pub(crate) gain: f32,
     /// Efectos de la pista, en orden.
@@ -113,41 +126,54 @@ pub struct Pattern {
 
 impl Pattern {
     /// `steps[i]` es el número de corte que suena en el paso `i`, o `None`
-    /// para no disparar nada (lo que sonaba sigue sonando).
+    /// para no disparar nada (lo que sonaba sigue sonando). La longitud del
+    /// patrón es la de `steps` (de 1 a [`MAX_STEPS`]; 16 es un compás).
     pub fn new(
         sample: Arc<Sample>,
         slices: &Slices,
-        steps: [Option<usize>; STEPS],
+        steps: impl AsRef<[Option<usize>]>,
     ) -> Result<Self, SendError> {
-        Self::from_steps(sample, slices, steps.map(|s| s.map(Step::new)))
+        let steps: Vec<Option<Step>> = steps.as_ref().iter().map(|s| s.map(Step::new)).collect();
+        Self::from_steps(sample, slices, steps)
     }
 
     /// Como [`Pattern::new`], con volumen, pitch y reverse por paso.
     pub fn from_steps(
         sample: Arc<Sample>,
         slices: &Slices,
-        steps: [Option<Step>; STEPS],
+        steps: impl AsRef<[Option<Step>]>,
     ) -> Result<Self, SendError> {
         Self::from_bars(sample, slices, &[steps])
     }
 
-    /// Patrón de varios compases que se repiten en ciclo: en el compás `b`
-    /// de la canción suena `bars[b % bars.len()]` (de 1 a `MAX_CYCLE_BARS`).
-    pub fn from_bars(
+    /// Patrón de varias vueltas que se repiten en ciclo: en la vuelta `v`
+    /// de la canción suena `bars[v % bars.len()]` (de 1 a
+    /// `MAX_CYCLE_BARS`). Todas con la misma longitud, de 1 a
+    /// [`MAX_STEPS`]; con 16 pasos, cada vuelta es un compás.
+    pub fn from_bars<B: AsRef<[Option<Step>]>>(
         sample: Arc<Sample>,
         slices: &Slices,
-        bars: &[[Option<Step>; STEPS]],
+        bars: &[B],
     ) -> Result<Self, SendError> {
         if bars.is_empty() || bars.len() > MAX_CYCLE_BARS {
             return Err(SendError::InvalidCycle(bars.len()));
         }
-        let resolved = bars
-            .iter()
-            .map(|steps| resolve_bar(&sample, slices, steps))
-            .collect::<Result<Vec<_>, _>>()?;
+        let length = bars[0].as_ref().len();
+        if !(1..=MAX_STEPS).contains(&length) {
+            return Err(SendError::InvalidLength(length));
+        }
+        let mut steps = Vec::with_capacity(length * bars.len());
+        for bar in bars {
+            let bar = bar.as_ref();
+            if bar.len() != length {
+                return Err(SendError::InvalidLength(bar.len()));
+            }
+            resolve_bar(&sample, slices, bar, &mut steps)?;
+        }
         Ok(Pattern {
             sample,
-            bars: resolved,
+            length,
+            steps,
             gain: 1.0,
             fx: [None; MAX_FX],
             mute: false,
@@ -183,6 +209,25 @@ impl Pattern {
         Ok(self)
     }
 
+    /// Pasos de una vuelta.
+    pub fn length(&self) -> usize {
+        self.length
+    }
+
+    /// Vueltas del ciclo de variantes.
+    pub fn cycle(&self) -> usize {
+        self.steps.len() / self.length
+    }
+
+    /// Lo que suena en la semicorchea `global` de la canción (contada desde
+    /// que arrancó el transporte): el paso `global % length` de la vuelta
+    /// `global / length`.
+    pub(crate) fn hit(&self, global: u64) -> Option<Trigger> {
+        let length = self.length as u64;
+        let lap = (global / length) % self.cycle() as u64;
+        self.steps[(lap * length + global % length) as usize]
+    }
+
     /// Volumen de la pista que toca este patrón (lineal, de 0 a `MAX_GAIN`).
     /// Entra con el patrón, al empezar el compás, con un suavizado de ~5 ms.
     pub fn with_gain(mut self, gain: f32) -> Result<Self, SendError> {
@@ -194,15 +239,19 @@ impl Pattern {
     }
 }
 
-/// Resuelve los pasos de un compás a rangos de frames y parámetros.
+/// Resuelve los pasos de una vuelta a rangos de frames y parámetros y los
+/// añade a `out`.
 fn resolve_bar(
     sample: &Sample,
     slices: &Slices,
-    steps: &[Option<Step>; STEPS],
-) -> Result<[Option<Trigger>; STEPS], SendError> {
-    let mut resolved = [None; STEPS];
-    for (i, (slot, step)) in resolved.iter_mut().zip(steps.iter().copied()).enumerate() {
-        let Some(step) = step else { continue };
+    steps: &[Option<Step>],
+    out: &mut Vec<Option<Trigger>>,
+) -> Result<(), SendError> {
+    for (i, step) in steps.iter().copied().enumerate() {
+        let Some(step) = step else {
+            out.push(None);
+            continue;
+        };
         let range = slices.get(step.slice).ok_or(SendError::NoSuchSlice {
             index: step.slice,
             count: slices.len(),
@@ -220,7 +269,7 @@ fn resolve_bar(
         if !(0.0..=MAX_DELAY).contains(&step.delay) {
             return Err(invalid("retraso fuera de rango (0 a 0,9 pasos)"));
         }
-        *slot = Some(Trigger {
+        out.push(Some(Trigger {
             start: range.start,
             end: range.end.min(sample.frames()),
             playback: Playback {
@@ -230,9 +279,9 @@ fn resolve_bar(
             },
             retrig: step.retrig,
             delay: step.delay,
-        });
+        }));
     }
-    Ok(resolved)
+    Ok(())
 }
 
 /// Frames de un paso a `bpm` y `sample_rate`.

@@ -1,23 +1,25 @@
 //! Funciones que generan o transforman patrones en mini-notación: reciben y
-//! devuelven texto de 16 pasos que luego se pasa a `steps`. No conocen los
+//! devuelven texto (de 1 a 64 pasos; 16 en un compás) que luego se pasa a
+//! `steps`. No conocen los
 //! cortes de ninguna pista: cada paso se trata como una palabra (`3`,
 //! `kick^7`, `.`), y lo valida `steps` al usarse.
 
-use engine::STEPS;
+use engine::{MAX_STEPS, STEPS};
 
-/// Pasos de un patrón (exactamente 16), o un error con quién lo pidió.
+/// Pasos de un patrón (de 1 a `MAX_STEPS`; los cuenta `steps` con la
+/// longitud de la pista), o un error con quién lo pidió.
 pub fn tokens(text: &str, who: &str) -> Result<Vec<String>, String> {
     let tokens: Vec<String> = text.split_whitespace().map(String::from).collect();
-    if tokens.len() != STEPS {
+    if !(1..=MAX_STEPS).contains(&tokens.len()) {
         return Err(format!(
-            "{who}: el patrón necesita {STEPS} pasos, tiene {}",
+            "{who}: el patrón necesita de 1 a {MAX_STEPS} pasos, tiene {}",
             tokens.len()
         ));
     }
     Ok(tokens)
 }
 
-/// Patrón de 16 pasos agrupado por tiempos: `1 . 2 .  3 . 4 .  ...`.
+/// Patrón agrupado por tiempos: `1 . 2 .  3 . 4 .  ...`.
 pub fn format(tokens: &[String]) -> String {
     tokens
         .chunks(4)
@@ -38,17 +40,22 @@ fn check_hit(hit: &str, who: &str) -> Result<(), String> {
 
 /// Ritmo euclídeo: `k` golpes repartidos lo más igual posible en `n`
 /// pasos, empezando por un golpe (el paso `i` suena si `i·k mod n < k`).
-/// Se repite hasta llenar los 16 pasos. `hit` es el paso que suena.
-pub fn euclid(k: i64, n: i64, hit: &str) -> Result<String, String> {
+/// Se repite hasta llenar `length` pasos (16 por defecto: un compás). `hit`
+/// es el paso que suena.
+pub fn euclid(k: i64, n: i64, hit: &str, length: Option<i64>) -> Result<String, String> {
     let who = format!("euclid({k}, {n})");
-    if !(1..=STEPS as i64).contains(&n) {
-        return Err(format!("{who}: n va de 1 a {STEPS}"));
+    let length = length.unwrap_or(STEPS as i64);
+    if !(1..=MAX_STEPS as i64).contains(&length) {
+        return Err(format!("{who}: los pasos van de 1 a {MAX_STEPS}"));
+    }
+    if !(1..=MAX_STEPS as i64).contains(&n) {
+        return Err(format!("{who}: n va de 1 a {MAX_STEPS}"));
     }
     if !(0..=n).contains(&k) {
         return Err(format!("{who}: k va de 0 a n ({n})"));
     }
     check_hit(hit, &who)?;
-    let tokens: Vec<String> = (0..STEPS as i64)
+    let tokens: Vec<String> = (0..length)
         .map(|i| {
             let i = i % n;
             if (i * k) % n < k {
@@ -104,7 +111,7 @@ impl Rng {
     }
 }
 
-/// Cambia cada paso, con probabilidad `p`, por uno de los 16 del propio
+/// Cambia cada paso, con probabilidad `p`, por uno de los del propio
 /// patrón elegido al azar (así se queda con su vocabulario de golpes y
 /// silencios).
 pub fn mutate(text: &str, p: f64, rng: &mut Rng) -> Result<String, String> {
@@ -125,7 +132,7 @@ pub fn mutate(text: &str, p: f64, rng: &mut Rng) -> Result<String, String> {
     Ok(format(&mutated))
 }
 
-/// Los mismos 16 pasos en otro orden al azar (Fisher-Yates).
+/// Los mismos pasos en otro orden al azar (Fisher-Yates).
 pub fn shuffle(text: &str, rng: &mut Rng) -> Result<String, String> {
     let mut tokens = tokens(text, "shuffle")?;
     for i in (1..tokens.len()).rev() {
@@ -197,31 +204,53 @@ mod tests {
     #[test]
     fn euclidean_rhythms() {
         assert_eq!(
-            euclid(3, 8, "x").unwrap(),
+            euclid(3, 8, "x", None).unwrap(),
             "x . . x  . . x .  x . . x  . . x ."
         );
         assert_eq!(
-            euclid(4, 16, "kick").unwrap(),
+            euclid(4, 16, "kick", None).unwrap(),
             "kick . . .  kick . . .  kick . . .  kick . . ."
         );
         assert_eq!(
-            euclid(5, 8, "3^7").unwrap(),
+            euclid(5, 8, "3^7", None).unwrap(),
             "3^7 . 3^7 .  3^7 3^7 . 3^7  3^7 . 3^7 .  3^7 3^7 . 3^7"
         );
         // n que no divide a 16: se repite y se corta.
         assert_eq!(
-            euclid(2, 5, "x").unwrap(),
+            euclid(2, 5, "x", None).unwrap(),
             "x . . x  . x . .  x . x .  . x . x"
         );
         assert_eq!(
-            euclid(0, 4, "x").unwrap(),
+            euclid(0, 4, "x", None).unwrap(),
             ". . . .  . . . .  . . . .  . . . ."
         );
-        assert_eq!(euclid(16, 16, "x").unwrap().matches('x').count(), 16);
-        assert!(euclid(3, 17, "x").unwrap_err().contains("n va de 1 a 16"));
-        assert!(euclid(9, 8, "x").unwrap_err().contains("k va de 0 a n (8)"));
-        assert!(euclid(3, 8, ".").unwrap_err().contains("el golpe"));
-        assert!(euclid(3, 8, "1 2").unwrap_err().contains("el golpe"));
+        assert_eq!(euclid(16, 16, "x", None).unwrap().matches('x').count(), 16);
+        assert!(
+            euclid(3, 65, "x", None)
+                .unwrap_err()
+                .contains("n va de 1 a 64")
+        );
+        // Con otra longitud: 12 pasos (un 3 contra 4) o 32.
+        assert_eq!(
+            euclid(3, 12, "x", Some(12)).unwrap(),
+            "x . . .  x . . .  x . . ."
+        );
+        assert_eq!(
+            euclid(5, 32, "x", Some(32)).unwrap().matches('x').count(),
+            5
+        );
+        assert!(
+            euclid(3, 8, "x", Some(0))
+                .unwrap_err()
+                .contains("los pasos van de 1 a 64")
+        );
+        assert!(
+            euclid(9, 8, "x", None)
+                .unwrap_err()
+                .contains("k va de 0 a n (8)")
+        );
+        assert!(euclid(3, 8, ".", None).unwrap_err().contains("el golpe"));
+        assert!(euclid(3, 8, "1 2", None).unwrap_err().contains("el golpe"));
     }
 
     #[test]
@@ -237,9 +266,11 @@ mod tests {
         );
         assert_eq!(rotate(p, 16).unwrap(), p);
         assert_eq!(rotate(p, 35).unwrap(), rotate(p, 3).unwrap());
+        // Cualquier longitud (la cuenta `steps` con la de la pista).
+        assert_eq!(rotate("1 2 3", 1).unwrap(), "3 1 2");
         assert_eq!(
-            rotate("1 .", 1).unwrap_err(),
-            "rotate(patrón, 1): el patrón necesita 16 pasos, tiene 2"
+            rotate("", 1).unwrap_err(),
+            "rotate(patrón, 1): el patrón necesita de 1 a 64 pasos, tiene 0"
         );
     }
 
@@ -251,8 +282,9 @@ mod tests {
             "kick^7 15 14 13  12 11 10 9  8 7 6 5  4 3 2' 1"
         );
         assert_eq!(reverse_pattern(&reverse_pattern(p).unwrap()).unwrap(), p);
+        assert_eq!(reverse_pattern("1 2 3").unwrap(), "3 2 1");
         assert!(
-            reverse_pattern("1")
+            reverse_pattern(" ")
                 .unwrap_err()
                 .starts_with("reverse_pattern: ")
         );
@@ -302,7 +334,7 @@ mod tests {
         sorted.sort_by_key(|t| t.parse::<u32>().unwrap());
         assert_eq!(format(&sorted), p, "los mismos pasos");
         assert!(
-            shuffle("1 2", &mut Rng::new(1))
+            shuffle("", &mut Rng::new(1))
                 .unwrap_err()
                 .starts_with("shuffle: ")
         );
@@ -358,16 +390,17 @@ mod tests {
     }
 
     #[test]
-    fn tokens_need_sixteen_steps() {
+    fn tokens_need_one_to_sixty_four_steps() {
         assert_eq!(
             tokens("1 . 2 .  . . . .  . . . .  . . . .", "x")
                 .unwrap()
                 .len(),
             16
         );
+        assert_eq!(tokens("1 .", "rotate").unwrap().len(), 2);
         assert_eq!(
-            tokens("1 .", "rotate").unwrap_err(),
-            "rotate: el patrón necesita 16 pasos, tiene 2"
+            tokens(&". ".repeat(65), "rotate").unwrap_err(),
+            "rotate: el patrón necesita de 1 a 64 pasos, tiene 65"
         );
     }
 }
