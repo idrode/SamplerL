@@ -329,13 +329,16 @@ impl App {
             "muestras" | "samples" => self.set_samples(args.first().copied()),
             "etiquetar" | "label" => self.label_slice(&args),
             "bpm" => self.set_bpm_line(args.first().copied()),
+            "remuestrear" | "remuestrear!" | "resample" => {
+                self.resample(&args, command.ends_with('!'))
+            }
             "bloque" | "bloque!" | "bloque-proyecto" | "bloque-proyecto!" => {
                 self.save_block(command, rest)
             }
             other => {
                 self.message = format!(
                     "orden desconocida «{other}» (exportar, guardar, abrir, muestras, etiquetar, \
-                     bpm, bloque)"
+                     bpm, bloque, remuestrear)"
                 );
             }
         }
@@ -592,6 +595,95 @@ impl App {
                 index + 1
             ),
         };
+    }
+
+    /// `remuestrear [pista|master] [compases] [archivo.wav]`: graba por
+    /// render offline la salida de una pista (en solo, con sus efectos y sus
+    /// envíos) o del master como un WAV en la carpeta de samples, para
+    /// usarlo con `sample("...")`. Sin pista, la seleccionada; sin compases,
+    /// lo que tarda en repetirse. No sobrescribe salvo con `!`.
+    fn resample(&mut self, args: &[&str], overwrite: bool) {
+        let Some(song) = self.host.song() else {
+            self.message = "no hay nada cargado que remuestrear".into();
+            return;
+        };
+        let mut args = args.iter().copied().peekable();
+        let selected = song.tracks.get(self.selected).map(|t| t.name.clone());
+        let target = match args.peek() {
+            Some(&"master") => {
+                args.next();
+                None
+            }
+            Some(name) if song.tracks.iter().any(|t| t.name == *name) => {
+                let name = name.to_string();
+                args.next();
+                Some(name)
+            }
+            _ => match selected {
+                Some(name) => Some(name),
+                None => {
+                    self.message = "no hay pistas".into();
+                    return;
+                }
+            },
+        };
+        let bars = match args.peek().map(|a| a.parse::<u64>()) {
+            Some(Ok(bars)) if (1..=256).contains(&bars) => {
+                args.next();
+                bars
+            }
+            Some(Ok(bars)) => {
+                self.message = format!("compases no válidos: {bars} (1 a 256)");
+                return;
+            }
+            _ => match &target {
+                Some(name) => song.track_length_bars(name).unwrap_or(1),
+                None => song.length_bars(1),
+            },
+        };
+        let label = target.clone().unwrap_or_else(|| "master".into());
+        let mut file = args
+            .next()
+            .map_or_else(|| format!("{label}-remuestreo.wav"), String::from);
+        if Path::new(&file).extension().is_none() {
+            file.push_str(".wav");
+        }
+        let path = self.sample_folder().join(&file);
+        if path.exists() && !overwrite {
+            self.message = format!(
+                "{} ya existe: «remuestrear! ...» lo sustituye",
+                path.display()
+            );
+            return;
+        }
+        let audio = match &target {
+            Some(name) => song.render_track(self.sample_rate, bars, name).unwrap(),
+            None => song.render(self.sample_rate, bars),
+        };
+        let result = audio.map_err(|e| e.to_string()).and_then(|audio| {
+            engine::offline::write_wav(&path, &audio, 2, self.sample_rate)
+                .map_err(|e| e.to_string())
+        });
+        self.message = match result {
+            Ok(()) => format!(
+                "remuestreo de {label}: {bars} compases en {} · úsalo con sample(\"{file}\")",
+                path.display()
+            ),
+            Err(e) => format!("no se pudo remuestrear: {e}"),
+        };
+    }
+
+    /// Abre la línea de órdenes para remuestrear la pista seleccionada.
+    pub fn start_resample(&mut self) {
+        let name = self
+            .host
+            .song()
+            .and_then(|s| s.tracks.get(self.selected))
+            .map_or_else(|| "master".to_string(), |t| t.name.clone());
+        self.prompt = Some(format!("remuestrear {name} "));
+        self.message =
+            "remuestrear [pista|master] [compases] [archivo.wav]: Enter graba en la carpeta de samples"
+                .into();
     }
 
     /// «Partir el corte seleccionado»: un corte nuevo en su mitad (se guarda
@@ -1508,6 +1600,7 @@ impl App {
             Action::ClearSliceAdjust => self.adjust_slice(None),
             Action::NextSlice => self.select_slice(true),
             Action::SplitSlice => self.split_selected(),
+            Action::Resample => self.start_resample(),
             Action::JoinSlice => self.join_selected(),
             Action::PreviousSlice => self.select_slice(false),
             Action::Quit => {

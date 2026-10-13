@@ -110,6 +110,15 @@ cortes detectados con su posición en ms.
 Desde la interfaz, la orden `exportar` (F2) hace lo mismo con lo que está
 cargado.
 
+**Remuestrear** es grabar la salida de una pista (o del master) como un
+sample nuevo para volver a cortarlo y tocarlo. Con `--track pista` (y
+`--script`), `--render` graba solo esa pista, como si estuviera en solo:
+con sus efectos, su volumen, sus envíos y la cola de los buses (y el
+limitador). Sin `--bars`, dura lo que la pista tarda en repetirse. En la
+interfaz, «Remuestrear la pista seleccionada» (paleta) o la orden
+`remuestrear` (ver la línea de órdenes) lo dejan en la carpeta de samples,
+listo para `sample("drums-remuestreo.wav")`.
+
 Para escuchar en otra máquina: `scp laptop:~/sampler/renders/ritmo.wav .`
 
 ### Proyectos
@@ -222,6 +231,7 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Corte anterior | Selecciona el corte anterior de la pista (sin tocarlo) | — |
 | Partir el corte seleccionado | Añade un corte en su mitad (se guarda en el proyecto; las etiquetas y ajustes siguientes se corren) | — |
 | Unir el corte seleccionado con el anterior | Quita su marca: el anterior se alarga hasta donde acababa este (se guarda en el proyecto) | — |
+| Remuestrear la pista seleccionada | Abre «remuestrear pista »: graba su salida (render offline) como un WAV nuevo en la carpeta de samples | — |
 | Guardar la selección como bloque | Abre «bloque » para escribir nombre, etiquetas y `-- descripción`; va a la biblioteca global | — |
 | Insertar un bloque | Lista filtrable (nombre, etiquetas, descripción) con vista previa; Tab salta entre sus campos `${...}` | — |
 | Actualizar un bloque con la selección | Elige un bloque y sustituye su texto por la selección (conserva nombre, descripción y etiquetas); Enter dos veces | — |
@@ -340,6 +350,7 @@ proyecto o, si no hay, a la del script.
 | `muestras [carpeta]` | Cambia la carpeta de los samples (sin argumento, dice cuál es) |
 | `bpm N` | Cambia la línea `bpm(...)` del script por `bpm(N)` (o la añade al principio), sin guardar |
 | `etiquetar corte [nombre]` | Pone una etiqueta a un corte de la pista seleccionada (sin nombre, la quita). Se guarda en el proyecto abierto y se recarga |
+| `remuestrear [pista\|master] [compases] [archivo.wav]` | Graba por render offline la salida de la pista (por defecto la seleccionada, en solo) o del master como un WAV en la carpeta de samples (`<pista>-remuestreo.wav`; con `!`, sustituye uno que ya exista). Sin compases, lo que tarda en repetirse |
 | `bloque nombre [etiquetas] [-- descripción]` | Guarda el texto seleccionado como bloque en la biblioteca global (`bloque-proyecto`: en la del proyecto; con `!`, sustituye uno que se llame igual). Ver «Biblioteca de bloques» |
 
 ### Biblioteca de bloques

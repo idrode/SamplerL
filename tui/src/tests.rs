@@ -2338,6 +2338,7 @@ mod automation;
 mod blocks;
 mod grid;
 mod length;
+mod resample;
 mod sends;
 mod shapes;
 mod stretch;

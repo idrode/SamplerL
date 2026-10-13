@@ -17,7 +17,7 @@ const USAGE: &str = "\
 uso: tui --edit <canción.lua | proyecto.sampler> [--allow-audio]   (interfaz)
      tui <archivo.wav> --render <salida.wav>
      tui <archivo.wav> --detect-bpm               (propone bpm() y compases)
-     tui --script <canción.lua> --render <salida.wav> [--bars M] [--metronome]
+     tui --script <canción.lua> --render <salida.wav> [--bars M] [--metronome] [--track pista]
      tui --script <canción.lua> --allow-audio     (reproduce y recarga al guardar)
      tui <archivo.wav> --render <salida.wav> --pattern \"1 . 3 . ...\" \
 [--slices N] [--bpm B] [--bars M] [--min-gap MS] [--detector flux|energy] [--metronome]
@@ -80,6 +80,7 @@ fn run() -> Result<(), BoxError> {
     let mut edit = None;
     let mut metronome = false;
     let mut detect = false;
+    let mut track = None;
     while let Some(arg) = args.next() {
         let mut value = || {
             args.next()
@@ -101,6 +102,7 @@ fn run() -> Result<(), BoxError> {
             "--bpm" => bpm = Some(parse_number::<f64>("--bpm", &value()?)?),
             "--bars" => bars = Some(parse_number::<u64>("--bars", &value()?)?),
             "--script" => script = Some(value()?),
+            "--track" => track = Some(value()?),
             "--edit" => edit = Some(value()?),
             "--detector" => {
                 detector = Some(match value()?.as_str() {
@@ -145,7 +147,10 @@ fn run() -> Result<(), BoxError> {
             .into());
         }
         return match render_to {
-            Some(out) => render_script(&script, &out, bars.unwrap_or(DEFAULT_BARS), metronome),
+            Some(out) => match track {
+                Some(track) => render_track(&script, &out, &track, bars),
+                None => render_script(&script, &out, bars.unwrap_or(DEFAULT_BARS), metronome),
+            },
             None if allow_audio => play_script(&script),
             None => Err(format!(
                 "no se reproduce por la tarjeta de sonido sin --allow-audio; \
@@ -314,6 +319,25 @@ fn detect_tempo(path: &str) -> Result<(), BoxError> {
 }
 
 /// Carga una canción en Lua y renderiza `bars` compases a su tempo.
+/// `--script canción.lua --render salida.wav --track pista`: solo esa
+/// pista (remuestreo), por defecto lo que tarda en repetirse.
+fn render_track(path: &str, out: &str, track: &str, bars: Option<u64>) -> Result<(), BoxError> {
+    let mut host = script::ScriptHost::new(RENDER_RATE);
+    let (mut controller, _engine) = engine::new_engine(RENDER_RATE);
+    let song = host
+        .load_file(&mut controller, std::path::Path::new(path))?
+        .clone();
+    let bars = bars
+        .or(song.track_length_bars(track))
+        .unwrap_or(DEFAULT_BARS);
+    let audio = song
+        .render_track(RENDER_RATE, bars, track)
+        .ok_or_else(|| format!("--track: no hay ninguna pista \"{track}\""))??;
+    engine::offline::write_wav(out, &audio, 2, RENDER_RATE)?;
+    println!("{out}: pista \"{track}\", {bars} compases");
+    Ok(())
+}
+
 fn render_script(path: &str, out: &str, bars: u64, metronome: bool) -> Result<(), BoxError> {
     let mut host = script::ScriptHost::new(RENDER_RATE);
     let (mut controller, mut engine) = engine::new_engine(RENDER_RATE);

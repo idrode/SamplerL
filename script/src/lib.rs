@@ -1172,6 +1172,49 @@ impl Song {
         bars: u64,
         metronome: bool,
     ) -> Result<Vec<f32>, ScriptError> {
+        self.render_all(sample_rate, bars, metronome)
+    }
+
+    /// Renderiza solo la pista `name` (remuestreo): como si estuviera en
+    /// solo (y sin mute), con sus efectos, su volumen, sus envíos y lo que
+    /// devuelven los buses, y el limitador del master. `None` si no existe.
+    pub fn render_track(
+        &self,
+        sample_rate: u32,
+        bars: u64,
+        name: &str,
+    ) -> Option<Result<Vec<f32>, ScriptError>> {
+        if !self.tracks.iter().any(|t| t.name == name) {
+            return None;
+        }
+        let mut song = self.clone();
+        for track in &mut song.tracks {
+            track.solo = track.name == name;
+            if track.solo {
+                track.mute = false;
+            }
+        }
+        Some(song.render_all(sample_rate, bars, false))
+    }
+
+    /// Compases que tarda la pista `name` en repetirse (su ciclo de
+    /// vueltas con su longitud, en compases enteros), como mucho
+    /// [`MAX_SONG_BARS`].
+    pub fn track_length_bars(&self, name: &str) -> Option<u64> {
+        let track = self.tracks.iter().find(|t| t.name == name)?;
+        let steps = lcm(
+            STEPS as u64,
+            (track.bars.len().max(1) * track.length.max(1)) as u64,
+        );
+        Some(steps.div_ceil(STEPS as u64).min(MAX_SONG_BARS))
+    }
+
+    fn render_all(
+        &self,
+        sample_rate: u32,
+        bars: u64,
+        metronome: bool,
+    ) -> Result<Vec<f32>, ScriptError> {
         let mut slots: [Option<String>; MAX_TRACKS] = Default::default();
         for (slot, track) in slots.iter_mut().zip(&self.tracks) {
             *slot = Some(track.name.clone());

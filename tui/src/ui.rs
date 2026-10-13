@@ -647,7 +647,7 @@ impl Widget for HelpLine<'_> {
                 Span::from(
                     "exportar [archivo.wav] [compases] · guardar [proyecto] · \
                      abrir proyecto · muestras carpeta · etiquetar corte nombre · bpm N · \
-                     bloque nombre [etiquetas] [-- descripción] · Esc cancelar",
+                     bloque nombre [etiquetas] [-- descripción] · remuestrear [pista] · Esc cancelar",
                 )
                 .fg(DIM),
             ])
