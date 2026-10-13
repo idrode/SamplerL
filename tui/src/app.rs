@@ -14,8 +14,8 @@ use crate::complete::{self, Candidate};
 use crate::diagnose;
 use crate::editing;
 use crate::model::{
-    CompletionView, ErrorView, MasterView, PaletteView, TrackView, TransportView, ViewModel,
-    Waveform, error_line,
+    BlockPickerView, CompletionView, ErrorView, MasterView, PaletteView, TrackView, TransportView,
+    ViewModel, Waveform, error_line,
 };
 use crate::palette::{self, Action, Item};
 
@@ -77,6 +77,20 @@ struct EditGroup {
 /// Paleta de comandos abierta (F1).
 #[derive(Debug, Clone, Default)]
 struct Palette {
+    query: String,
+    selected: usize,
+}
+
+/// Qué hace el selector de bloques con el elegido.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlockMode {
+    Insert,
+}
+
+/// Selector de bloques abierto: lista filtrable con vista previa.
+#[derive(Debug, Clone)]
+struct BlockPicker {
+    mode: BlockMode,
     query: String,
     selected: usize,
 }
@@ -155,6 +169,8 @@ pub struct App {
     global_blocks: Option<PathBuf>,
     /// Biblioteca de bloques (global y del proyecto).
     blocks: Library,
+    /// Selector de bloques abierto.
+    block_picker: Option<BlockPicker>,
 }
 
 impl App {
@@ -200,6 +216,7 @@ impl App {
             redo_groups: Vec::new(),
             global_blocks: None,
             blocks: Library::default(),
+            block_picker: None,
         };
         app.reload_blocks();
         app.load();
@@ -1026,6 +1043,88 @@ impl App {
         self.message = format!("snippet {name}: Tab salta al siguiente campo");
     }
 
+    /// Inserta un bloque de la biblioteca en el cursor, como un snippet.
+    pub fn insert_block(&mut self, name: &str) {
+        let Some(block) = self.blocks.get(name).cloned() else {
+            self.message = format!("no hay ningún bloque «{name}»");
+            return;
+        };
+        self.completion = None;
+        self.insert_template(0, &block.body);
+        self.message = if api::expand_template(&block.body).1.is_empty() {
+            format!("bloque {name} insertado")
+        } else {
+            format!("bloque {name}: Tab salta al siguiente campo")
+        };
+    }
+
+    /// Abre el selector de bloques (relee la biblioteca antes).
+    pub fn open_block_picker(&mut self, mode: BlockMode) {
+        self.blocks.reload();
+        self.completion = None;
+        if self.blocks.blocks.is_empty() {
+            self.message = "no hay bloques: selecciona texto y «Guardar la selección como \
+                            bloque» en la paleta"
+                .into();
+            return;
+        }
+        self.message = match self.blocks.warnings.as_slice() {
+            [] => String::new(),
+            [one] => format!("⚠ {one}"),
+            [first, rest @ ..] => format!("⚠ {first} (+{} más)", rest.len()),
+        };
+        self.block_picker = Some(BlockPicker {
+            mode,
+            query: String::new(),
+            selected: 0,
+        });
+    }
+
+    /// Bloques que coinciden con lo escrito en el selector.
+    fn picker_matches(&self) -> Vec<&blocks::Block> {
+        let query = self.block_picker.as_ref().map_or("", |p| p.query.as_str());
+        self.blocks.filter(query)
+    }
+
+    /// Tecla con el selector de bloques abierto: escribir filtra, flechas
+    /// eligen, Enter hace la acción y Esc cierra.
+    fn handle_block_picker(&mut self, input: Input) -> Flow {
+        let matches: Vec<String> = self
+            .picker_matches()
+            .iter()
+            .map(|b| b.name.clone())
+            .collect();
+        let count = matches.len();
+        let Some(picker) = &mut self.block_picker else {
+            return Flow::Continue;
+        };
+        match input.key {
+            Key::Esc => self.block_picker = None,
+            Key::Enter => {
+                let Some(name) = matches.get(picker.selected).cloned() else {
+                    return Flow::Continue;
+                };
+                let mode = picker.mode;
+                self.block_picker = None;
+                match mode {
+                    BlockMode::Insert => self.insert_block(&name),
+                }
+            }
+            Key::Up if count > 0 => picker.selected = (picker.selected + count - 1) % count,
+            Key::Down if count > 0 => picker.selected = (picker.selected + 1) % count,
+            Key::Backspace => {
+                picker.query.pop();
+                picker.selected = 0;
+            }
+            Key::Char(c) if !input.ctrl && !input.alt => {
+                picker.query.push(c);
+                picker.selected = 0;
+            }
+            _ => {}
+        }
+        Flow::Continue
+    }
+
     /// Marca el siguiente campo pendiente.
     fn next_mark(&mut self) -> bool {
         match self.marks.next(&mut self.editor) {
@@ -1143,6 +1242,7 @@ impl App {
             Action::Commands => self.prompt = Some(String::new()),
             Action::LabelSlice => self.start_labeling(),
             Action::SaveBlock => self.start_save_block(),
+            Action::InsertBlock => self.open_block_picker(BlockMode::Insert),
             Action::Mute => self.toggle_live(false),
             Action::Solo => self.toggle_live(true),
             Action::ClearMuteSolo => self.clear_live(),
@@ -1495,6 +1595,9 @@ impl App {
         if self.palette.is_some() {
             return self.handle_palette(input);
         }
+        if self.block_picker.is_some() {
+            return self.handle_block_picker(input);
+        }
         if input.key == Key::F(1) {
             self.open_palette();
             return Flow::Continue;
@@ -1695,12 +1798,14 @@ impl App {
                 message: e.message.clone(),
             }),
             diagnostics: diagnose::steps_diagnostics(self.editor.lines(), &self.known_labels()),
-            help: (self.mode == Mode::Edit && self.palette.is_none())
-                .then(|| {
-                    let cursor = self.editor.cursor();
-                    complete::help_at(self.editor.lines(), cursor.0, cursor.1)
-                })
-                .flatten(),
+            help: (self.mode == Mode::Edit
+                && self.palette.is_none()
+                && self.block_picker.is_none())
+            .then(|| {
+                let cursor = self.editor.cursor();
+                complete::help_at(self.editor.lines(), cursor.0, cursor.1)
+            })
+            .flatten(),
             file: name,
             dirty: self.dirty(),
             playing_mode: self.mode == Mode::Play,
@@ -1713,6 +1818,30 @@ impl App {
                         .map_or(String::new(), |e| e.description.clone()),
                     items: matches.into_iter().map(|e| (e.name, e.keys)).collect(),
                     selected: p.selected,
+                }
+            }),
+            block_picker: self.block_picker.as_ref().map(|p| {
+                let matches = self.picker_matches();
+                let selected = matches.get(p.selected);
+                BlockPickerView {
+                    title: match p.mode {
+                        BlockMode::Insert => "insertar un bloque",
+                    }
+                    .into(),
+                    query: p.query.clone(),
+                    items: matches
+                        .iter()
+                        .map(|b| {
+                            let tags: Vec<String> =
+                                b.tags.iter().map(|t| format!("#{t}")).collect();
+                            (b.name.clone(), b.scope.label().into(), tags.join(" "))
+                        })
+                        .collect(),
+                    selected: p.selected,
+                    description: selected.map_or(String::new(), |b| b.description.clone()),
+                    preview: selected.map_or_else(Vec::new, |b| {
+                        b.preview().lines().map(String::from).collect()
+                    }),
                 }
             }),
             completion: self.completion.as_ref().map(|c| {

@@ -39,6 +39,7 @@ pub enum Action {
     NextSlice,
     PreviousSlice,
     SaveBlock,
+    InsertBlock,
     Quit,
 }
 
@@ -232,6 +233,12 @@ pub const ACTIONS: &[ActionDef] = &[
         action: Action::SaveBlock,
         name: "Guardar la selección como bloque",
         description: "Abre «bloque » para escribir nombre, etiquetas y `-- descripción`; va a la biblioteca global",
+        keys: "",
+    },
+    ActionDef {
+        action: Action::InsertBlock,
+        name: "Insertar un bloque",
+        description: "Lista filtrable (nombre, etiquetas, descripción) con vista previa; Tab salta entre sus campos `${...}`",
         keys: "",
     },
     ActionDef {

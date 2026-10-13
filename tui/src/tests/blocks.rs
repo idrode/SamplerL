@@ -109,3 +109,146 @@ fn the_selection_is_saved_as_a_block_from_the_palette() {
         app.view().message
     );
 }
+
+/// Escribe un bloque a mano en una carpeta.
+fn write_block(dir: &Path, file: &str, text: &str) {
+    std::fs::create_dir_all(dir).unwrap();
+    std::fs::write(dir.join(file), text).unwrap();
+}
+
+const GHOST_BLOCK: &str = "-- nombre: fantasma\n\
+                           -- descripción: Ghost notes suaves en contratiempos\n\
+                           -- etiquetas: ghost, hats\n\
+                           \n\
+                           track(\"${ghost}\", amen:slice_at(${2}))\n  \
+                           :steps(\". x@0.2 . .  . x@0.2 . .  . x@0.2 . .  . . x@0.2 .\")\n";
+
+fn picker_names(app: &App) -> Vec<String> {
+    app.view()
+        .block_picker
+        .map(|p| p.items.into_iter().map(|(n, _, _)| n).collect())
+        .unwrap_or_default()
+}
+
+#[test]
+fn blocks_are_inserted_from_a_filterable_list_with_preview() {
+    let (path, mut app, _engine) = open_with_blocks("block_insert");
+    // Sin bloques, lo dice y no abre nada.
+    palette(&mut app, "insertar un bloque");
+    assert!(app.view().block_picker.is_none());
+    assert!(app.view().message.contains("no hay bloques"));
+
+    write_block(&global_dir(&path), "fantasma.lua", GHOST_BLOCK);
+    write_block(
+        &path.parent().unwrap().join("blocks"),
+        "lento.lua",
+        "-- etiquetas: tempo\nbpm(${90})\n",
+    );
+    app.editor.move_cursor(CursorMove::Bottom);
+    app.editor.move_cursor(CursorMove::End);
+    type_text(&mut app, "\n");
+    palette(&mut app, "insertar un bloque");
+    let screen = text_of(&mut app);
+    assert!(screen.contains("insertar un bloque"), "{screen}");
+    assert!(screen.contains("#ghost #hats global"), "{screen}");
+    assert!(screen.contains("#tempo proyecto"), "{screen}");
+    assert!(screen.contains("BLOQUES: escribe para filtrar"), "{screen}");
+    assert_eq!(picker_names(&app), ["fantasma", "lento"]);
+    // Vista previa del elegido, sin las marcas de campo.
+    assert!(
+        screen.contains("Ghost notes suaves en contratiempos"),
+        "{screen}"
+    );
+    assert!(
+        screen.contains("track(\"ghost\", amen:slice_at(2))"),
+        "{screen}"
+    );
+
+    // Filtrar por etiqueta; escribir no toca el texto.
+    type_query(&mut app, "#tempo");
+    assert_eq!(picker_names(&app), ["lento"]);
+    assert!(text_of(&mut app).contains("bpm(90)"));
+    type_query(&mut app, "zzz");
+    assert!(text_of(&mut app).contains("ningún bloque coincide"));
+    // Esc cierra sin entrar en modo tocar.
+    app.handle(esc());
+    assert!(app.view().block_picker.is_none());
+    assert!(!app.view().playing_mode);
+    assert_eq!(current_line(&app), "");
+
+    // Insertar: campos con Tab, como los snippets.
+    palette(&mut app, "insertar un bloque");
+    type_query(&mut app, "ghost");
+    app.handle(special(Key::Enter));
+    assert!(app.view().block_picker.is_none());
+    assert_eq!(selection_text(&app), "ghost");
+    type_text(&mut app, "suave");
+    app.handle(special(Key::Tab));
+    assert_eq!(selection_text(&app), "2");
+    let lines = app.editor.lines().to_vec();
+    assert_eq!(lines[4], "track(\"suave\", amen:slice_at(2))");
+    assert!(lines[5].starts_with("  :steps("));
+    app.handle(ctrl('s'));
+    let view = app.view();
+    assert!(view.error.is_none(), "{:?}", view.error);
+    assert_eq!(view.tracks[2].name, "suave");
+    // Se deshace de una vez.
+    let before = app.editor.lines().to_vec();
+    palette(&mut app, "insertar un bloque");
+    type_query(&mut app, "lento");
+    app.handle(special(Key::Enter));
+    assert_ne!(app.editor.lines(), before);
+    assert_eq!(
+        app.view().message,
+        "bloque lento: Tab salta al siguiente campo"
+    );
+    app.handle(ctrl('z'));
+    assert_eq!(app.editor.lines(), before);
+}
+
+/// Un bloque con Lua no válido se inserta como texto; al cargarlo da el
+/// error de siempre y el audio no cambia.
+#[test]
+fn a_block_with_invalid_lua_keeps_the_previous_song_playing() {
+    let audio = |broken: bool| {
+        let (path, mut app, mut engine) = open_with_blocks(if broken {
+            "block_broken"
+        } else {
+            "block_broken_ref"
+        });
+        if broken {
+            write_block(
+                &global_dir(&path),
+                "roto.lua",
+                "track(\"${x}\", :steps(\"1 . . .\"\nbpm(\n",
+            );
+            app.editor.move_cursor(CursorMove::Bottom);
+            palette(&mut app, "insertar un bloque");
+            app.handle(special(Key::Enter));
+            app.handle(ctrl('s'));
+            let screen = text_of(&mut app);
+            assert!(screen.contains("✗"), "{screen}");
+            assert!(
+                screen.contains("error: sigue sonando lo anterior"),
+                "{screen}"
+            );
+        }
+        offline::render(&mut engine, 32 * STEP, 2)
+    };
+    assert_eq!(audio(true), audio(false));
+}
+
+/// `cargo test -p tui pantalla_bloques -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn pantalla_bloques() {
+    let (path, mut app, _engine) = open_with_blocks("block_screen");
+    write_block(&global_dir(&path), "fantasma.lua", GHOST_BLOCK);
+    write_block(
+        &path.parent().unwrap().join("blocks"),
+        "lento.lua",
+        "-- etiquetas: tempo\nbpm(${90})\n",
+    );
+    palette(&mut app, "insertar un bloque");
+    println!("{}", text(&draw(&mut app, 120, 40)));
+}

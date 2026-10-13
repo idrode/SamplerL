@@ -26,6 +26,8 @@ pub struct ViewModel {
     pub completion: Option<CompletionView>,
     /// Paleta de comandos abierta.
     pub palette: Option<PaletteView>,
+    /// Selector de bloques abierto.
+    pub block_picker: Option<BlockPickerView>,
     /// Nombre del proyecto abierto, si lo hay.
     pub project: Option<String>,
     /// Mensaje informativo de la última acción.
@@ -77,6 +79,22 @@ pub struct PaletteView {
     pub selected: usize,
     /// Descripción de la elegida.
     pub description: String,
+}
+
+/// Selector de bloques de la biblioteca.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct BlockPickerView {
+    /// Qué se hace con el elegido («insertar un bloque»...).
+    pub title: String,
+    /// Lo escrito para filtrar.
+    pub query: String,
+    /// Bloques que coinciden: nombre, carpeta («global», «proyecto») y
+    /// etiquetas (`#a #b`).
+    pub items: Vec<(String, String, String)>,
+    pub selected: usize,
+    /// Descripción y texto (sin marcas de campo) del elegido.
+    pub description: String,
+    pub preview: Vec<String>,
 }
 
 /// Popup de autocompletado.

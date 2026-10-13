@@ -11,7 +11,7 @@ use ratatui::widgets::canvas::{Canvas, Line as CanvasLine};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
 
 use crate::app::App;
-use crate::model::{CompletionView, PaletteView, ViewModel, fx_text, step_text};
+use crate::model::{BlockPickerView, CompletionView, PaletteView, ViewModel, fx_text, step_text};
 
 pub const ERROR: Color = Color::Red;
 /// Fondo de la línea con error (rojo oscuro de la paleta de 256 colores).
@@ -58,6 +58,93 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
     if let Some(palette) = &view.palette {
         frame.render_widget(PalettePopup(palette), palette_area(frame.area()));
+    }
+    if let Some(picker) = &view.block_picker {
+        frame.render_widget(BlockPickerPopup(picker), picker_area(frame.area(), picker));
+    }
+}
+
+/// Filas de bloques visibles en el selector.
+const PICKER_ROWS: u16 = 8;
+
+/// Líneas de vista previa que se intentan mostrar en el selector.
+const PICKER_PREVIEW: usize = 16;
+
+/// Sitio del selector de bloques: centrado arriba, como mucho 90 columnas;
+/// de alto, la lista y la vista previa del elegido (hasta
+/// [`PICKER_PREVIEW`] líneas), sin salirse de la pantalla.
+pub fn picker_area(screen: Rect, view: &BlockPickerView) -> Rect {
+    let width = screen.width.saturating_sub(4).min(90);
+    let preview = view.preview.len().clamp(3, PICKER_PREVIEW) as u16;
+    let height = (PICKER_ROWS + preview + 6).min(screen.height.saturating_sub(2));
+    Rect {
+        x: screen.x + (screen.width - width) / 2,
+        y: screen.y + (screen.height - height).min(1),
+        width,
+        height,
+    }
+}
+
+/// Selector de bloques: lo escrito, los que coinciden (con su carpeta y
+/// sus etiquetas), la descripción y el texto del elegido.
+pub struct BlockPickerPopup<'a>(pub &'a BlockPickerView);
+
+impl Widget for BlockPickerPopup<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let view = self.0;
+        Clear.render(area, buf);
+        let block = Block::bordered()
+            .border_style(Style::new().fg(ACCENT))
+            .title(format!(" {} · ↑↓ Enter Esc ", view.title));
+        let inner = block.inner(area);
+        block.render(area, buf);
+        if inner.height < 4 {
+            return;
+        }
+        let width = inner.width as usize;
+        let mut lines = vec![
+            Line::from(vec![
+                Span::from("› ").fg(ACCENT).bold(),
+                Span::raw(format!("{}█", view.query)),
+            ]),
+            Line::from("─".repeat(width)).fg(DIM),
+        ];
+        let rows = (PICKER_ROWS as usize).min(inner.height as usize - 3);
+        let first = view.selected.saturating_sub(rows.saturating_sub(1));
+        if view.items.is_empty() {
+            lines.push(Line::from(" ningún bloque coincide").fg(DIM));
+        }
+        for (i, (name, scope, tags)) in view.items.iter().enumerate().skip(first).take(rows) {
+            let detail = format!("{tags} {scope} ");
+            let pad = width.saturating_sub(name.chars().count() + detail.chars().count() + 1);
+            let line = Line::from(vec![
+                Span::raw(format!(" {name}{}", " ".repeat(pad))),
+                Span::from(detail).fg(DIM),
+            ]);
+            lines.push(if i == view.selected {
+                line.style(Style::new().fg(Color::Black).bg(ACCENT))
+            } else {
+                line
+            });
+        }
+        while lines.len() < rows + 2 {
+            lines.push(Line::raw(""));
+        }
+        lines.push(Line::from("─".repeat(width)).fg(DIM));
+        if !view.description.is_empty() {
+            lines.push(Line::from(view.description.clone()).italic());
+        }
+        let room = (inner.height as usize).saturating_sub(lines.len());
+        let shown = view.preview.len().min(room);
+        for (i, text) in view.preview.iter().take(shown).enumerate() {
+            if i + 1 == shown && shown < view.preview.len() {
+                lines
+                    .push(Line::from(format!("… ({} líneas más)", view.preview.len() - i)).fg(DIM));
+            } else {
+                lines.push(Line::from(text.clone()).fg(Color::Cyan));
+            }
+        }
+        Paragraph::new(lines).render(inner, buf);
     }
 }
 
@@ -474,6 +561,9 @@ impl Widget for HelpLine<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let keys = if self.0.palette.is_some() {
             "PALETA: escribe para filtrar · ↑↓ elegir · Enter ejecutar · Esc cerrar"
+        } else if self.0.block_picker.is_some() {
+            "BLOQUES: escribe para filtrar (nombre, #etiqueta, descripción) · ↑↓ elegir · \
+             Enter · Esc cerrar"
         } else if self.0.completion.is_some() {
             "COMPLETAR: Tab aceptar · ↑↓ elegir y Enter aceptar · Esc cerrar · Enter sin elegir: salto de línea"
         } else if self.0.playing_mode {
