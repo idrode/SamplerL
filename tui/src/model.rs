@@ -180,6 +180,9 @@ pub struct TrackView {
     pub adjusted: Vec<bool>,
     /// Envíos a los buses: `[delay, reverb]`.
     pub sends: [f32; 2],
+    /// Modo gate y grupo de choke.
+    pub gate: bool,
+    pub choke: Option<u8>,
     /// Swing en porcentaje (50 = recto; 0 si no se ha dicho).
     pub swing: f32,
     /// La pista sola pasó de ±1 hace poco.

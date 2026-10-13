@@ -975,6 +975,12 @@ impl Widget for FxPanel<'_> {
             if track.swing > 50.0 {
                 title.push(Span::from(format!(" · swing {}", track.swing)).fg(DIM));
             }
+            if track.gate {
+                title.push(Span::from(" · gate").fg(DIM));
+            }
+            if let Some(group) = track.choke {
+                title.push(Span::from(format!(" · choke {group}")).fg(DIM));
+            }
             let mut lines = vec![
                 Line::from(title),
                 Line::from(vec![

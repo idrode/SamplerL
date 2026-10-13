@@ -34,8 +34,8 @@ use std::time::{Duration, Instant, SystemTime};
 use engine::notation::{check_label, parse_pattern_labeled, split_label};
 use engine::{
     Batch, Buses, Controller, Division, FilterKind, Fx, MAX_CYCLE_BARS, MAX_FX, MAX_GAIN,
-    MAX_RETRIG, MAX_SEMITONES, MAX_STEPS, MAX_TRACKS, Pattern, STEPS, Sample, SendError, Slices,
-    Step, valid_bpm,
+    MAX_RETRIG, MAX_SEMITONES, MAX_STEPS, MAX_TRACKS, Pattern, STEPS, Sample, SendError,
+    SliceShape, Slices, Step, valid_bpm,
 };
 pub mod api;
 pub mod blocks;
@@ -130,6 +130,12 @@ pub struct TrackDef {
     pub automation: Vec<engine::Automation>,
     /// Envíos a los buses (`:send()`): `[delay, reverb]`.
     pub sends: [f32; engine::bus::BUSES],
+    /// Forma de cada corte (`cortes:set()`), uno por corte.
+    pub shapes: Vec<SliceShape>,
+    /// Modo gate (`:mode("gate")`): cada golpe dura lo que su paso.
+    pub gate: bool,
+    /// Grupo de choke (`:choke(n)`).
+    pub choke: Option<u8>,
     /// Silenciada (`:mute()`).
     pub mute: bool,
     /// En solo (`:solo()`).
@@ -960,6 +966,9 @@ impl ScriptHost {
                                     humanize: None,
                                     sends: [0.0; engine::bus::BUSES],
                                     automation: Vec::new(),
+                                    shapes: Vec::new(),
+                                    gate: false,
+                                    choke: None,
                                     mute: false,
                                     solo: false,
                                     origin: source.origin.clone(),
@@ -970,6 +979,7 @@ impl ScriptHost {
                                 },
                                 labels: source.labels.clone(),
                                 stale: source.stale.clone(),
+                                shapes: source.shapes.clone(),
                                 transforms: Vec::new(),
                                 steps_set: false,
                             };
@@ -1037,6 +1047,9 @@ fn song_batch(song: &Song, slots: &[Option<String>; MAX_TRACKS]) -> Result<Batch
                     .and_then(|p| p.with_fx(&track.fx))
                     .and_then(|p| p.with_automation(&track.automation))
                     .and_then(|p| p.with_sends(track.sends))
+                    .and_then(|p| p.with_shapes(&track.shapes))
+                    .and_then(|p| p.with_choke(track.choke))
+                    .map(|p| p.with_gate(track.gate))
                     .map(|p| p.with_mute(track.mute).with_solo(track.solo))
                     .map_err(|e| ScriptError::new(format!("pista \"{name}\": {e}")))?;
                 Some(pattern)
@@ -1152,6 +1165,8 @@ struct TrackBuild {
     labels: Rc<RefCell<Vec<Option<String>>>>,
     /// Etiquetas del proyecto de otro `slice(n)` (para explicar errores).
     stale: Rc<Vec<(String, usize)>>,
+    /// Forma de los cortes, compartida con la variable como las etiquetas.
+    shapes: Rc<RefCell<Vec<SliceShape>>>,
     transforms: Vec<Transform>,
     /// Ya se llamó a `:steps()` (luego `:length()` no puede cambiar la
     /// longitud).
@@ -1236,10 +1251,12 @@ fn expand(track: TrackBuild, rng: &mut Rng, timing: Timing) -> Result<TrackDef, 
         mut def,
         labels,
         stale,
+        shapes,
         transforms,
         steps_set: _,
     } = track;
     def.labels = labels.borrow().clone();
+    def.shapes = shapes.borrow().clone();
     // Humanize cambia cada vuelta: el ciclo es de 16 como con `chance`.
     let mut cycle = if def.humanize.is_some() {
         CHANCE_CYCLE_BARS
@@ -1569,6 +1586,7 @@ impl UserData for SampleHandle {
             }
             // Las etiquetas del proyecto para este sample cortado así.
             let mut labels = vec![None; slices.len()];
+            let slices_len = slices.len();
             for label in this.labels.iter() {
                 if label.sample == this.name
                     && label.slices == count
@@ -1590,6 +1608,7 @@ impl UserData for SampleHandle {
                 stale: Rc::new(stale),
                 adjusted,
                 stretch: this.stretch,
+                shapes: Rc::new(RefCell::new(vec![SliceShape::DEFAULT; slices_len])),
             })
         });
     }
@@ -1611,11 +1630,97 @@ struct SlicedHandle {
     adjusted: Vec<bool>,
     /// Tempo de origen de `sample:stretch()`.
     stretch: Option<f64>,
+    /// Forma de cada corte (`:set()`); compartida por la variable y sus
+    /// pistas, como las etiquetas.
+    shapes: Rc<RefCell<Vec<SliceShape>>>,
+}
+
+/// Aplica una tabla de `cortes:set()` a la forma de un corte. Las claves
+/// salen del registro (`api::SLICE_PARAMS`).
+fn apply_slice_table(
+    lua: &Lua,
+    who: &str,
+    shape: &mut SliceShape,
+    table: &Table,
+) -> mlua::Result<()> {
+    let known: Vec<&str> = api::SLICE_PARAMS.iter().map(|p| p.name).collect();
+    for pair in table.pairs::<Value, Value>() {
+        let (key, value) = pair?;
+        let key = match key {
+            Value::String(s) => s.to_str()?.to_string(),
+            other => format!("{other:?}"),
+        };
+        let number = |v: &Value| -> mlua::Result<f32> {
+            match v {
+                Value::Integer(i) => Ok(*i as f32),
+                Value::Number(n) => Ok(*n as f32),
+                _ => Err(fail(lua, format!("{who}: {key} tiene que ser un número"))),
+            }
+        };
+        match key.as_str() {
+            "attack" => shape.attack_ms = number(&value)?,
+            "release" => shape.release_ms = number(&value)?,
+            _ => {
+                return Err(fail(
+                    lua,
+                    format!(
+                        "{who}: parámetro desconocido \"{key}\" (admite: {})",
+                        known.join(", ")
+                    ),
+                ));
+            }
+        }
+    }
+    shape
+        .validate()
+        .map_err(|e| fail(lua, format!("{who}: {e}")))
 }
 
 impl UserData for SlicedHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_method("count", |_, this, ()| Ok(this.slices.len()));
+
+        // `:set(i, { attack = ms, release = ms })` (o `:set({ ... })` para
+        // todos): la forma de un corte.
+        methods.add_method(
+            "set",
+            |lua, this, (first, second): (Value, Option<Table>)| {
+                let count = this.slices.len();
+                let (index, table) = match (first, second) {
+                    (Value::Table(table), None) => (None, table),
+                    (Value::Integer(i), Some(table)) => (Some(i), table),
+                    (Value::Number(n), Some(table)) if n.fract() == 0.0 => (Some(n as i64), table),
+                    _ => {
+                        return Err(fail(
+                            lua,
+                            "set(i, { ... }) para el corte i, o set({ ... }) para todos",
+                        ));
+                    }
+                };
+                let who = match index {
+                    Some(i) => format!("set({i})"),
+                    None => "set".to_string(),
+                };
+                let range = match index {
+                    Some(i) => {
+                        let i = usize::try_from(i - 1)
+                            .ok()
+                            .filter(|&i| i < count)
+                            .ok_or_else(|| {
+                                fail(lua, format!("{who}: el corte no existe (hay {count})"))
+                            })?;
+                        i..i + 1
+                    }
+                    None => 0..count,
+                };
+                let mut shapes = this.shapes.borrow_mut();
+                for shape in &mut shapes[range] {
+                    apply_slice_table(lua, &who, shape, &table)?;
+                }
+                drop(shapes);
+                Ok(this.clone())
+            },
+        );
 
         // `:slice_at(i)`: solo el corte `i` (desde 1), como fuente de un
         // único corte (en el patrón, `1`, `x` o su etiqueta).
@@ -1643,6 +1748,7 @@ impl UserData for SlicedHandle {
                 stale: this.stale.clone(),
                 adjusted: vec![this.adjusted[i]],
                 stretch: this.stretch,
+                shapes: Rc::new(RefCell::new(vec![this.shapes.borrow()[i]])),
             })
         });
 
@@ -2087,6 +2193,42 @@ impl UserData for TrackHandle {
                 Ok(this.clone())
             },
         );
+
+        // `:mode("gate" | "oneshot")`: cada golpe dura su paso, o el corte
+        // entero (por defecto).
+        methods.add_method("mode", |lua, this, mode: String| {
+            let gate = match mode.as_str() {
+                "gate" => true,
+                "oneshot" | "one-shot" => false,
+                other => {
+                    return Err(fail(
+                        lua,
+                        format!("mode(\"{other}\"): es \"gate\" u \"oneshot\""),
+                    ));
+                }
+            };
+            this.with_track(|t| t.def.gate = gate);
+            Ok(this.clone())
+        });
+
+        // `:choke(n)`: grupo de choke (0 o nil, ninguno).
+        methods.add_method("choke", |lua, this, group: Option<i64>| {
+            let group = match group.unwrap_or(0) {
+                0 => None,
+                g if (1..=engine::MAX_CHOKE as i64).contains(&g) => Some(g as u8),
+                g => {
+                    return Err(fail(
+                        lua,
+                        format!(
+                            "choke({g}): el grupo va de 1 a {} (0 lo quita)",
+                            engine::MAX_CHOKE
+                        ),
+                    ));
+                }
+            };
+            this.with_track(|t| t.def.choke = group);
+            Ok(this.clone())
+        });
 
         // `:send(bus, nivel)`: parte de la pista al delay o a la reverb.
         methods.add_method("send", |lua, this, (bus, level): (String, f32)| {

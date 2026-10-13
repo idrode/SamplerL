@@ -78,8 +78,8 @@ enum Command {
     StopPreview,
 }
 
-/// Cómo se reproduce un rango: ganancia, velocidad de lectura (pitch) y
-/// sentido.
+/// Cómo se reproduce un rango: ganancia, velocidad de lectura (pitch),
+/// sentido y la forma del corte (envolvente; ver [`SliceShape`]).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct Playback {
     pub gain: f32,
@@ -87,6 +87,7 @@ pub(crate) struct Playback {
     /// dura la mitad), 0.5 una octava abajo (y dura el doble).
     pub rate: f64,
     pub reverse: bool,
+    pub shape: SliceShape,
 }
 
 impl Playback {
@@ -94,8 +95,50 @@ impl Playback {
         gain: 1.0,
         rate: 1.0,
         reverse: false,
+        shape: SliceShape::DEFAULT,
     };
 }
+
+/// Forma de un corte: su envolvente (ataque y cola, en ms). Con 0, el
+/// fundido mínimo de siempre (1,5 ms), que evita los clics. Se fija por
+/// corte (`Pattern::with_shapes`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SliceShape {
+    /// Rampa de entrada, en ms.
+    pub attack_ms: f32,
+    /// Rampa de salida al final del corte (o al cerrarse la puerta en el
+    /// modo gate), en ms.
+    pub release_ms: f32,
+}
+
+impl SliceShape {
+    pub const DEFAULT: SliceShape = SliceShape {
+        attack_ms: 0.0,
+        release_ms: 0.0,
+    };
+
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if !(0.0..=MAX_ATTACK_MS).contains(&self.attack_ms) {
+            return Err("ataque fuera de rango (0 a 2000 ms)");
+        }
+        if !(0.0..=MAX_RELEASE_MS).contains(&self.release_ms) {
+            return Err("cola fuera de rango (0 a 5000 ms)");
+        }
+        Ok(())
+    }
+}
+
+impl Default for SliceShape {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+/// Ataque y cola máximos de un corte.
+pub const MAX_ATTACK_MS: f32 = 2000.0;
+pub const MAX_RELEASE_MS: f32 = 5000.0;
+/// Grupos de choke: de 1 a este.
+pub const MAX_CHOKE: u8 = 16;
 
 struct Voice {
     sample: Arc<Sample>,
@@ -105,14 +148,23 @@ struct Voice {
     /// Frames de salida ya renderizados y total que dura la voz.
     rendered: usize,
     length: usize,
+    /// Fundido mínimo (el de interrumpir una voz), y rampas de entrada y de
+    /// salida (al menos el mínimo; más con ataque o cola).
     fade: usize,
-    /// Frames que quedan del fundido de salida forzado (voz interrumpida).
-    release: Option<usize>,
+    fade_in: usize,
+    fade_out: usize,
+    /// Fundido de salida en curso: frames que quedan y total (voz
+    /// interrumpida o puerta cerrada en el modo gate).
+    release: Option<(usize, usize)>,
+    /// Modo gate: frame de salida en el que se cierra la puerta.
+    gate_at: Option<usize>,
 }
 
 impl Voice {
     fn new(sample: Arc<Sample>, start: usize, end: usize, playback: Playback) -> Self {
-        let fade = ((FADE_SECONDS * sample.sample_rate() as f32) as usize).max(1);
+        let rate = sample.sample_rate() as f32;
+        let fade = ((FADE_SECONDS * rate) as usize).max(1);
+        let ms = |ms: f32| (ms / 1000.0 * rate) as usize;
         // Último frame de salida: el que lee el último frame del rango.
         let length = match end - start {
             0 => 0,
@@ -126,31 +178,40 @@ impl Voice {
             rendered: 0,
             length,
             fade,
+            fade_in: fade.max(ms(playback.shape.attack_ms)),
+            fade_out: fade.max(ms(playback.shape.release_ms)),
             release: None,
+            gate_at: None,
         }
     }
 
+    /// Modo gate: la voz empieza su cola tras `frames` frames de salida.
+    fn with_gate(mut self, frames: usize) -> Self {
+        self.gate_at = Some(frames);
+        self
+    }
+
     fn is_active(&self) -> bool {
-        self.rendered < self.length && self.release != Some(0)
+        self.rendered < self.length && !matches!(self.release, Some((0, _)))
     }
 
     /// Empieza un fundido de salida aunque el corte no haya terminado.
     fn release(&mut self) {
         if self.release.is_none() {
-            self.release = Some(self.fade);
+            self.release = Some((self.fade, self.fade));
         }
     }
 
     /// Envolvente del frame actual: rampa de entrada desde el inicio de la
-    /// reproducción, de salida hacia su final y, si se interrumpió, la del
-    /// release. En tiempo de salida, así es igual con pitch o reverse.
+    /// reproducción, de salida hacia su final y, si se interrumpió (o se
+    /// cerró la puerta), la del release. En tiempo de salida, así es igual
+    /// con pitch o reverse.
     fn envelope(&self) -> f32 {
-        let from_start = self.rendered;
-        let to_end = self.length - 1 - self.rendered;
-        let fade = self.fade as f32;
-        let mut gain = (from_start.min(to_end) as f32 / fade).min(1.0);
-        if let Some(left) = self.release {
-            gain *= (left - 1) as f32 / fade;
+        let from_start = self.rendered as f32 / self.fade_in as f32;
+        let to_end = (self.length - 1 - self.rendered) as f32 / self.fade_out as f32;
+        let mut gain = from_start.min(to_end).min(1.0);
+        if let Some((left, total)) = self.release {
+            gain *= (left - 1) as f32 / total as f32;
         }
         gain
     }
@@ -177,6 +238,10 @@ impl Voice {
     /// Suma la voz en `out` (estéreo entrelazado).
     fn mix_into(&mut self, out: &mut [f32]) {
         for frame in out.as_chunks_mut::<2>().0 {
+            // Modo gate: al cerrarse la puerta empieza la cola.
+            if self.gate_at == Some(self.rendered) && self.release.is_none() {
+                self.release = Some((self.fade_out, self.fade_out));
+            }
             if !self.is_active() {
                 break;
             }
@@ -185,7 +250,7 @@ impl Voice {
             frame[0] += gain * l;
             frame[1] += gain * r;
             self.rendered += 1;
-            if let Some(left) = &mut self.release {
+            if let Some((left, _)) = &mut self.release {
                 *left -= 1;
             }
         }
@@ -485,11 +550,28 @@ impl Controller {
         slices: &Slices,
         index: usize,
     ) -> Result<(), SendError> {
+        self.play_slice_shaped(track, sample, slices, index, SliceShape::DEFAULT)
+    }
+
+    /// Como [`Controller::play_slice_on`], con la forma del corte (la de
+    /// su pista: `Pattern::with_shapes`).
+    pub fn play_slice_shaped(
+        &mut self,
+        track: usize,
+        sample: &Arc<Sample>,
+        slices: &Slices,
+        index: usize,
+        shape: SliceShape,
+    ) -> Result<(), SendError> {
         let range = slices.get(index).ok_or(SendError::NoSuchSlice {
             index,
             count: slices.len(),
         })?;
-        self.play_range_on(track, sample.clone(), range)
+        shape.validate().map_err(|reason| SendError::InvalidStep {
+            step: index,
+            reason,
+        })?;
+        self.play_range_shaped(track, sample.clone(), range, shape)
     }
 
     /// Reproduce los frames `range` del sample (se recorta a su longitud) en
@@ -509,12 +591,25 @@ impl Controller {
         sample: Arc<Sample>,
         range: Range<usize>,
     ) -> Result<(), SendError> {
+        self.play_range_shaped(track, sample, range, SliceShape::DEFAULT)
+    }
+
+    fn play_range_shaped(
+        &mut self,
+        track: usize,
+        sample: Arc<Sample>,
+        range: Range<usize>,
+        shape: SliceShape,
+    ) -> Result<(), SendError> {
         if track >= MAX_TRACKS {
             return Err(SendError::NoSuchTrack(track));
         }
         let end = range.end.min(sample.frames());
         let start = range.start.min(end);
-        let playback = Playback::NORMAL;
+        let playback = Playback {
+            shape,
+            ..Playback::NORMAL
+        };
         let cmd = Command::Play {
             track,
             sample,
@@ -768,6 +863,7 @@ impl Engine {
             } => {
                 self.status.set_hit(track, start);
                 self.trigger(track, Some(Voice::new(sample, start, end, playback)));
+                self.choke(track);
             }
             Command::SetPattern { track, pattern } => {
                 let track = &mut self.tracks[track];
@@ -915,7 +1011,7 @@ impl Engine {
                     start: now,
                     length,
                 });
-                self.play_hit(t, hit);
+                self.play_hit(t, hit, (length / hit.retrig as u64) as usize);
             } else {
                 // Retrasado: se dispara (con sus subdisparos) al llegar a su frame.
                 self.tracks[t].retrig = Some(Retrig {
@@ -936,18 +1032,41 @@ impl Engine {
         };
         retrig.done += 1;
         self.tracks[t].retrig = (retrig.done < retrig.count).then_some(retrig);
-        self.play_hit(t, retrig.hit);
+        let gate = retrig.length / retrig.count as u64;
+        self.play_hit(t, retrig.hit, gate as usize);
     }
 
-    /// Dispara `hit` con el sample del patrón actual de la pista.
-    fn play_hit(&mut self, t: usize, hit: Trigger) {
+    /// Dispara `hit` con el sample del patrón actual de la pista. En el
+    /// modo gate, la voz empieza su cola tras `gate` frames (lo que dura su
+    /// paso o su parte del retrigger). Corta las pistas de su grupo de
+    /// choke.
+    fn play_hit(&mut self, t: usize, hit: Trigger, gate: usize) {
         let Some(pattern) = &self.tracks[t].pattern else {
             return;
         };
-        let voice = Voice::new(pattern.sample.clone(), hit.start, hit.end, hit.playback);
+        let mut voice = Voice::new(pattern.sample.clone(), hit.start, hit.end, hit.playback);
+        if pattern.gate {
+            voice = voice.with_gate(gate);
+        }
         self.status.set_hit(t, hit.start);
         self.tracks[t].lock = hit.lock;
         self.trigger(t, Some(voice));
+        self.choke(t);
+    }
+
+    /// Corta (con el fundido mínimo) las voces de las demás pistas del
+    /// grupo de choke de la pista `t`, como el charles abierto que calla
+    /// al cerrado.
+    fn choke(&mut self, t: usize) {
+        let group = |track: &Track| track.pattern.as_ref().and_then(|p| p.choke);
+        let Some(g) = group(&self.tracks[t]) else {
+            return;
+        };
+        for u in 0..MAX_TRACKS {
+            if u != t && group(&self.tracks[u]) == Some(g) && self.tracks[u].voice.is_some() {
+                self.trigger(u, None);
+            }
+        }
     }
 
     /// Sustituye la voz principal de una pista; la anterior hace su fundido

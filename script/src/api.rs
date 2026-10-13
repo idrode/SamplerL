@@ -858,6 +858,34 @@ pub const FUNCTIONS: &[Function] = &[
         ),
     },
     Function {
+        name: "set",
+        receiver: Receiver::Slices,
+        signature: "cortes:set([i,] parámetros)",
+        returns: Some(Receiver::Slices),
+        summary: "Forma de un corte (o de todos, sin i): su ataque y su cola.",
+        doc: "Vale para todas las pistas que usan esta variable, también las \
+              definidas antes (como `:name`). Una clave desconocida da error. Los \
+              parámetros están en la tabla de abajo; los que no se dan quedan como \
+              estaban.",
+        params: &[
+            Param {
+                name: "i",
+                description: "el corte (desde 1); sin él, todos",
+            },
+            Param {
+                name: "parámetros",
+                description: "tabla con los de la tabla de abajo",
+            },
+        ],
+        template: "set(${1}, { attack = ${5}, release = ${40} })",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             -- El charles (corte 3), corto y sin chasquido; todos, con algo de cola.\n\
+             amen:set({ release = 20 }):set(3, { attack = 2, release = 5 })\n\
+             track(\"drums\", amen):steps(\"1 . 3 .  2 . 3 .  1 1 3 .  2 . 3 3\"):mode(\"gate\")\n",
+        ),
+    },
+    Function {
         name: "name",
         receiver: Receiver::Slices,
         signature: "cortes:name(i, nombre)",
@@ -1155,6 +1183,47 @@ pub const FUNCTIONS: &[Function] = &[
              :fx(\"filter\", { type = \"lowpass\", cutoff = 3000 })\n  \
              :fx(\"highpass\", { cutoff = 80, q = 0.9 })\n  \
              :fx(\"bitcrush\", { bits = 6, downsample = 2 })\n",
+        ),
+    },
+    Function {
+        name: "mode",
+        receiver: Receiver::Track,
+        signature: "pista:mode(modo)",
+        returns: Some(Receiver::Track),
+        summary: "\"gate\": cada golpe suena lo que dura su paso; \"oneshot\" (por defecto): el corte entero.",
+        doc: "En el modo gate la voz se cierra al acabar su paso (o su parte, con \
+              retrigger) y hace la cola del corte (`cortes:set(i, { release = ms })`, \
+              o el fundido mínimo de 1,5 ms). En one-shot el corte suena hasta su \
+              final o hasta el siguiente golpe de la pista.",
+        params: &[Param {
+            name: "modo",
+            description: "`\"gate\"` u `\"oneshot\"`",
+        }],
+        template: "mode(\"${gate}\")",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             track(\"drums\", amen):steps(\"1 1 2 2  3 3 4 4  5 5 6 6  7 7 8 8\"):mode(\"gate\")\n",
+        ),
+    },
+    Function {
+        name: "choke",
+        receiver: Receiver::Track,
+        signature: "pista:choke(grupo)",
+        returns: Some(Receiver::Track),
+        summary: "Grupo de choke (1 a 16): un golpe de la pista calla a las demás del grupo.",
+        doc: "Como en las cajas de ritmos, el charles cerrado calla al abierto: \
+              ponlos en el mismo grupo. El corte callado hace el fundido mínimo \
+              (1,5 ms). Vale también para los pads del modo tocar. `choke(0)` o \
+              `choke()` lo quita.",
+        params: &[Param {
+            name: "grupo",
+            description: "de 1 a 16 (0, ninguno)",
+        }],
+        template: "choke(${1})",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             track(\"abierto\", amen:slice_at(3)):steps(\"x . . .  . . x .  x . . .  . . x .\"):choke(1)\n\
+             track(\"cerrado\", amen:slice_at(5)):steps(\". . x .  . . . x  . . x .  . . . x\"):choke(1)\n",
         ),
     },
     Function {
@@ -1468,6 +1537,36 @@ pub const EFFECTS: &[Effect] = &[
         template: "{ drive = ${4}, mix = ${0.7} }",
     },
 ];
+
+/// Parámetros de `cortes:set([i,] { ... })`: la forma de un corte.
+pub const SLICE_PARAMS: &[FxParam] = &[
+    FxParam {
+        name: "attack",
+        description: "rampa de entrada, en ms (0: el fundido mínimo de 1,5 ms)",
+        default: Some("0"),
+        valid: "0–2000",
+        values: &[],
+        template: "attack = ${5}",
+    },
+    FxParam {
+        name: "release",
+        description: "cola al final del corte (o al cerrarse la puerta en el modo gate), en ms",
+        default: Some("0"),
+        valid: "0–5000",
+        values: &[],
+        template: "release = ${40}",
+    },
+];
+
+/// La tabla de `cortes:set()`, como un efecto (para el autocompletado y la
+/// ayuda de sus claves).
+pub const SLICE_TABLE: Effect = Effect {
+    name: "set",
+    aliases: &[],
+    summary: "Forma del corte.",
+    params: SLICE_PARAMS,
+    template: "{ attack = ${5}, release = ${40} }",
+};
 
 /// Buses de envío para `bus(nombre, parámetros)` y `pista:send(nombre,
 /// nivel)`.
@@ -1793,6 +1892,21 @@ pub fn guide_markdown() -> String {
         match (f.receiver, f.name) {
             (Receiver::Track, "fx") => out.push_str(&params_table("Efecto", EFFECTS)),
             (Receiver::Global, "bus") => out.push_str(&params_table("Bus", BUSES)),
+            (Receiver::Slices, "set") => {
+                out.push_str(
+                    "| Parámetro | Qué es | Por defecto | Valores |\n| --- | --- | --- | --- |\n",
+                );
+                for p in SLICE_PARAMS {
+                    let default = p.default.map_or("obligatorio".into(), code);
+                    out.push_str(&format!(
+                        "| {} | {} | {default} | {} |\n",
+                        code(p.name),
+                        p.description,
+                        p.valid
+                    ));
+                }
+                out.push('\n');
+            }
             (Receiver::Global, "scale") => {
                 out.push_str("| Escala | Qué es | Semitonos |\n| --- | --- | --- |\n");
                 for s in SCALES {

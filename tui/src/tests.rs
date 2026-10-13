@@ -2338,4 +2338,5 @@ mod automation;
 mod blocks;
 mod length;
 mod sends;
+mod shapes;
 mod stretch;

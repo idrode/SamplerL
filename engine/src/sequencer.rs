@@ -10,7 +10,7 @@
 use std::sync::Arc;
 
 use crate::automation::{Automation, MAX_AUTOMATIONS};
-use crate::engine::{Playback, SendError};
+use crate::engine::{MAX_CHOKE, Playback, SendError, SliceShape};
 use crate::fx::{Fx, MAX_FX};
 use crate::sample::Sample;
 use crate::slice::Slices;
@@ -109,6 +109,8 @@ impl Step {
 /// Paso ya resuelto: rango de frames y forma de reproducirlo.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct Trigger {
+    /// Corte (desde 0) del que sale.
+    pub slice: usize,
     pub start: usize,
     pub end: usize,
     pub playback: Playback,
@@ -141,6 +143,12 @@ pub struct Pattern {
     pub(crate) sends: [f32; crate::bus::BUSES],
     /// Parámetros de efecto automatizados.
     pub(crate) automation: [Option<Automation>; MAX_AUTOMATIONS],
+    /// Modo gate: cada golpe suena solo lo que dura su paso (luego, su
+    /// cola). Si no, one-shot: el corte entero.
+    pub(crate) gate: bool,
+    /// Grupo de choke: un golpe corta lo que suena en las demás pistas del
+    /// mismo grupo.
+    pub(crate) choke: Option<u8>,
 }
 
 impl Pattern {
@@ -199,7 +207,44 @@ impl Pattern {
             solo: false,
             sends: [0.0; crate::bus::BUSES],
             automation: [None; MAX_AUTOMATIONS],
+            gate: false,
+            choke: None,
         })
+    }
+
+    /// Modo gate (`true`) u one-shot (`false`, por defecto).
+    pub fn with_gate(self, gate: bool) -> Self {
+        Pattern { gate, ..self }
+    }
+
+    /// Grupo de choke (de 1 a [`MAX_CHOKE`]), o ninguno.
+    pub fn with_choke(self, group: Option<u8>) -> Result<Self, SendError> {
+        if group.is_some_and(|g| !(1..=MAX_CHOKE).contains(&g)) {
+            return Err(SendError::InvalidStep {
+                step: 0,
+                reason: "grupo de choke fuera de rango (1 a 16)",
+            });
+        }
+        Ok(Pattern {
+            choke: group,
+            ..self
+        })
+    }
+
+    /// Forma de cada corte (`shapes[i]` es la del corte `i`; los que falten,
+    /// la de siempre). Se aplica a todos los golpes del patrón.
+    pub fn with_shapes(mut self, shapes: &[SliceShape]) -> Result<Self, SendError> {
+        for (i, shape) in shapes.iter().enumerate() {
+            shape
+                .validate()
+                .map_err(|reason| SendError::InvalidStep { step: i, reason })?;
+        }
+        for hit in self.steps.iter_mut().flatten() {
+            if let Some(shape) = shapes.get(hit.slice) {
+                hit.playback.shape = *shape;
+            }
+        }
+        Ok(self)
     }
 
     /// Parámetros de efecto que cambian con el tiempo (ver
@@ -328,12 +373,14 @@ fn resolve_bar(
             return Err(invalid("corte por paso (~) fuera de rango (20 a 20000 Hz)"));
         }
         out.push(Some(Trigger {
+            slice: step.slice,
             start: range.start,
             end: range.end.min(sample.frames()),
             playback: Playback {
                 gain: step.gain,
                 rate: 2f64.powf(step.semitones as f64 / 12.0),
                 reverse: step.reverse,
+                shape: SliceShape::DEFAULT,
             },
             retrig: step.retrig,
             delay: step.delay,

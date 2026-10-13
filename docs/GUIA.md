@@ -283,8 +283,9 @@ de esta guía.
 | m | mute de la pista seleccionada (en vivo, sin esperar al compás) |
 | s | solo de la pista seleccionada (en vivo) |
 
-El corte suena al instante (no espera al compás), con el volumen y los
-efectos de la pista, y corta lo que sonaba en ella. El texto no se toca.
+El corte suena al instante (no espera al compás), con el volumen, los
+efectos, la forma del corte (`cortes:set`) y el grupo de choke de la
+pista, y corta lo que sonaba en ella. El texto no se toca.
 
 La **preescucha** (← →, espacio, o «Preescuchar el corte seleccionado» en
 la paleta) toca el corte en una voz aparte: no corta lo que suena en las
@@ -812,6 +813,27 @@ local caja = amen:slice_at(3)
 track("caja", caja):steps(". . . .  x . . .  . . . .  x . . .")
 ```
 
+### `cortes:set([i,] parámetros)`
+
+Devuelve: cortes.
+
+Forma de un corte (o de todos, sin i): su ataque y su cola. Vale para todas las pistas que usan esta variable, también las definidas antes (como `:name`). Una clave desconocida da error. Los parámetros están en la tabla de abajo; los que no se dan quedan como estaban.
+
+- `i`: el corte (desde 1); sin él, todos
+- `parámetros`: tabla con los de la tabla de abajo
+
+| Parámetro | Qué es | Por defecto | Valores |
+| --- | --- | --- | --- |
+| `attack` | rampa de entrada, en ms (0: el fundido mínimo de 1,5 ms) | `0` | 0–2000 |
+| `release` | cola al final del corte (o al cerrarse la puerta en el modo gate), en ms | `0` | 0–5000 |
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+-- El charles (corte 3), corto y sin chasquido; todos, con algo de cola.
+amen:set({ release = 20 }):set(3, { attack = 2, release = 5 })
+track("drums", amen):steps("1 . 3 .  2 . 3 .  1 1 3 .  2 . 3 3"):mode("gate")
+```
+
 ### `cortes:name(i, nombre)`
 
 Devuelve: cortes.
@@ -1013,6 +1035,33 @@ track("drums", amen)
   :fx("filter", { type = "lowpass", cutoff = 3000 })
   :fx("highpass", { cutoff = 80, q = 0.9 })
   :fx("bitcrush", { bits = 6, downsample = 2 })
+```
+
+### `pista:mode(modo)`
+
+Devuelve: pista.
+
+"gate": cada golpe suena lo que dura su paso; "oneshot" (por defecto): el corte entero. En el modo gate la voz se cierra al acabar su paso (o su parte, con retrigger) y hace la cola del corte (`cortes:set(i, { release = ms })`, o el fundido mínimo de 1,5 ms). En one-shot el corte suena hasta su final o hasta el siguiente golpe de la pista.
+
+- `modo`: `"gate"` u `"oneshot"`
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen):steps("1 1 2 2  3 3 4 4  5 5 6 6  7 7 8 8"):mode("gate")
+```
+
+### `pista:choke(grupo)`
+
+Devuelve: pista.
+
+Grupo de choke (1 a 16): un golpe de la pista calla a las demás del grupo. Como en las cajas de ritmos, el charles cerrado calla al abierto: ponlos en el mismo grupo. El corte callado hace el fundido mínimo (1,5 ms). Vale también para los pads del modo tocar. `choke(0)` o `choke()` lo quita.
+
+- `grupo`: de 1 a 16 (0, ninguno)
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+track("abierto", amen:slice_at(3)):steps("x . . .  . . x .  x . . .  . . x ."):choke(1)
+track("cerrado", amen:slice_at(5)):steps(". . x .  . . . x  . . x .  . . . x"):choke(1)
 ```
 
 ### `pista:send(bus, nivel)`

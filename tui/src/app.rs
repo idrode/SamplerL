@@ -874,13 +874,17 @@ impl App {
             track.slices.clone(),
             track.name.clone(),
         );
+        let shape = track.shapes.get(index).copied().unwrap_or_default();
         let label = track
             .labels
             .get(index)
             .cloned()
             .flatten()
             .map_or(String::new(), |l| format!(" ({l})"));
-        self.message = match self.controller.play_slice_on(slot, &sample, &slices, index) {
+        self.message = match self
+            .controller
+            .play_slice_shaped(slot, &sample, &slices, index, shape)
+        {
             Ok(()) => {
                 self.selected_slice = index;
                 format!("▶ {name}: corte {}{label}", index + 1)
@@ -1936,6 +1940,8 @@ impl App {
                             labels: t.labels.clone(),
                             adjusted: t.adjusted.clone(),
                             swing: t.swing,
+                            gate: t.gate,
+                            choke: t.choke,
                             sends: t.sends,
                             clipping: slot.is_some_and(|s| {
                                 self.track_clip_until[s].is_some_and(|u| Instant::now() < u)

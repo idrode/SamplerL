@@ -229,6 +229,49 @@ fn the_audio_thread_never_allocates() {
         "reservas con envíos, automatización y cortes por paso"
     );
 
+    // Modo gate, envolvente por corte y choke entre dos pistas.
+    let shaped = |steps: [Option<Step>; STEPS]| {
+        Pattern::from_steps(sample.clone(), &slices, steps)
+            .unwrap()
+            .with_gate(true)
+            .with_choke(Some(2))
+            .unwrap()
+            .with_shapes(&[
+                engine::SliceShape {
+                    attack_ms: 5.0,
+                    release_ms: 30.0,
+                },
+                engine::SliceShape::DEFAULT,
+            ])
+            .unwrap()
+    };
+    let mut odd = [None; STEPS];
+    let mut even = [None; STEPS];
+    for k in 0..STEPS {
+        if k % 2 == 0 {
+            even[k] = Some(Step::new(0).with_retrig(2));
+        } else {
+            odd[k] = Some(Step::new(1));
+        }
+    }
+    controller.set_track_pattern(6, Some(shaped(even))).unwrap();
+    controller.set_track_pattern(7, Some(shaped(odd))).unwrap();
+    let n = counted(|| {
+        for _ in 0..400 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas con gate, envolvente y choke");
+    controller
+        .play_slice_shaped(7, &sample, &slices, 0, engine::SliceShape::DEFAULT)
+        .unwrap();
+    let n = counted(|| {
+        for _ in 0..20 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas con un pad que hace choke");
+
     controller.stop().unwrap();
     controller.start().unwrap();
     let n = counted(|| {

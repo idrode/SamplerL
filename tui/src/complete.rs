@@ -548,13 +548,12 @@ impl Scan {
         else {
             return None;
         };
-        if *arg != 1 {
-            return None;
-        }
-        // La tabla de `fx("efecto", { ... })` o de `bus("delay", { ... })`.
-        match name.as_str() {
-            "fx" => api::effect(strings.first()?.as_deref()?),
-            "bus" => api::bus(strings.first()?.as_deref()?),
+        // La tabla de `fx("efecto", { ... })`, de `bus("delay", { ... })` o
+        // de `cortes:set([i,] { ... })`.
+        match (name.as_str(), *arg) {
+            ("fx", 1) => api::effect(strings.first()?.as_deref()?),
+            ("bus", 1) => api::bus(strings.first()?.as_deref()?),
+            ("set", 0 | 1) => Some(&api::SLICE_TABLE),
             _ => None,
         }
     }
@@ -640,13 +639,15 @@ pub fn help_at(lines: &[String], row: usize, col: usize) -> Option<Help> {
                     .join(", ")
             ),
         };
-        let call = if api::bus(effect.name).is_some_and(|b| std::ptr::eq(b, effect)) {
-            "bus"
+        let signature = if std::ptr::eq(effect, &api::SLICE_TABLE) {
+            "cortes:set([i,] { ... })".to_string()
+        } else if api::bus(effect.name).is_some_and(|b| std::ptr::eq(b, effect)) {
+            format!("bus(\"{}\", {{ ... }})", effect.name)
         } else {
-            "fx"
+            format!("fx(\"{}\", {{ ... }})", effect.name)
         };
         return Some(Help {
-            signature: format!("{call}(\"{}\", {{ ... }})", effect.name),
+            signature,
             description,
         });
     }
@@ -976,7 +977,7 @@ mod tests {
         let c = at("local s = sample(\"amen.wav\")\ns:|").unwrap();
         assert_eq!(labels(&c), ["detect_bpm", "stretch", "slice"]);
         let c = at(&format!("{SONG}amen:s|")).unwrap();
-        assert_eq!(labels(&c), ["slice_at"], "cortes");
+        assert_eq!(labels(&c), ["slice_at", "set"], "cortes");
         let c = at("sample(\"amen.wav\"):slice(8):|").unwrap();
         let slices: Vec<String> = api::functions(Receiver::Slices)
             .map(|f| f.name.to_string())

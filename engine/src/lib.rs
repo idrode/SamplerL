@@ -19,7 +19,10 @@ pub mod stretch;
 pub use automation::{Automation, Curve, LfoRate, MAX_AUTOMATIONS};
 pub use bpm::{BpmGuess, detect_bpm};
 pub use bus::{Buses, DelayParams, Division, ReverbParams};
-pub use engine::{Batch, Controller, Engine, MAX_TRACKS, SendError, new_engine};
+pub use engine::{
+    Batch, Controller, Engine, MAX_ATTACK_MS, MAX_CHOKE, MAX_RELEASE_MS, MAX_TRACKS, SendError,
+    SliceShape, new_engine,
+};
 pub use fx::{DEFAULT_Q, FilterKind, Fx, MAX_FX};
 pub use limiter::{LIMIT_THRESHOLD, soft_limit};
 pub use output::{NullOutput, Output, open_null_output, open_output};
