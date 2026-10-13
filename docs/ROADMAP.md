@@ -78,3 +78,23 @@ proyecto). Ver «Fase D» en el Estado de `CLAUDE.md`.
 - Historial de versiones del script con marca de tiempo.
 - A/B de variantes.
 - Grabar lo tocado en el modo tocar como un patrón de `steps`.
+
+## Fase F: biblioteca de bloques
+
+Bloques de código reutilizables: trozos de script guardados en archivos
+que se insertan como texto en el editor (nunca se cargan ni se enlazan
+entre archivos: el script sigue siendo uno solo).
+
+- Carpeta `blocks/` global (`~/.config/sampler/blocks/`) y otra del
+  proyecto (`blocks/` junto al proyecto o al script), con archivos `.lua`
+  con cabecera de nombre, descripción y etiquetas. Si falta la carpeta, se
+  crea sin error.
+- Paleta: guardar la selección como bloque (pide nombre y etiquetas),
+  insertar un bloque (lista filtrable con vista previa), actualizarlo con
+  la selección y borrarlo.
+- Ranuras rápidas 1-9, estilo registros de vim, para guardar y pegar
+  fragmentos al vuelo.
+- Los bloques salen en el autocompletado junto a los snippets, con campos
+  `${nombre}` que se rellenan saltando con Tab.
+- Un bloque con Lua no válido no rompe nada: al cargarlo da el error de
+  siempre y sigue sonando lo anterior.
