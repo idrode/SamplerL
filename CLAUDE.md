@@ -4,7 +4,7 @@ Sampler + secuenciador para remixes con amen breaks, controlado por código en v
 
 Guía de uso (inicio rápido, atajos, mini-notación, API de Lua, recetas y problemas): [docs/GUIA.md](docs/GUIA.md). Sus bloques de Lua y las recetas de `scripts/ejemplos/` se comprueban en `script/tests/guide.rs`. La sección de la API se genera desde el registro `script/src/api.rs`: al cambiar la API, actualiza el registro y ejecuta `cargo run -p script --example guia`.
 
-Hoja de ruta (fases A-F después de los pasos 1-7, con sus reglas comunes; la F se hizo antes que la E): [docs/ROADMAP.md](docs/ROADMAP.md).
+Hoja de ruta (fases A-I después de los pasos 1-7, con sus reglas comunes; la F se hizo antes que la E): [docs/ROADMAP.md](docs/ROADMAP.md). Fases pendientes: [E (estructura y versiones)](docs/ROADMAP.md#fase-e-estructura-y-versiones), [G (lo que más cambia el sonido)](docs/ROADMAP.md#fase-g-lo-que-más-cambia-el-sonido), [H (cortes y breaks)](docs/ROADMAP.md#fase-h-cortes-y-breaks) e [I (comodidad)](docs/ROADMAP.md#fase-i-comodidad).
 
 ## Idea central
 

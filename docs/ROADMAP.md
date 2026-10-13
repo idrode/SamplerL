@@ -104,3 +104,48 @@ entre archivos: el script sigue siendo uno solo).
   `${nombre}` que se rellenan saltando con Tab.
 - Un bloque con Lua no válido no rompe nada: al cargarlo da el error de
   siempre y sigue sonando lo anterior.
+
+## Fase G: lo que más cambia el sonido
+
+Reglas de siempre, con especial cuidado en el motor: nada de reservas ni
+mutex en el hilo de audio (cada cosa nueva entra en `no_alloc.rs`),
+cambios en lotes atómicos al compás, código portable (x86_64 y ARM64, sin
+intrínsecos ni `target-cpu=native`; dependencias de C/C++ solo tras una
+feature opcional), tests de render offline con semilla fija, y la guía y
+el Estado de `CLAUDE.md` al día si cambia la notación o el motor.
+
+1. **Longitud variable de patrón por pista** (`pista:length(n)`: 12, 24,
+   32 pasos...), con polirritmia entre pistas. Toca el motor, la
+   mini-notación, el diagnóstico en vivo, el tracker y el autocompletado.
+   Con `length(16)` la salida es idéntica bit a bit a la de antes.
+2. **Time-stretch al BPM del proyecto sin cambiar el tono**:
+   `sample:stretch(bpm_origen)`, o automático con `detect_bpm`. En Rust
+   puro (Rubber Band, si algún día, tras una feature opcional).
+3. **Delay sincronizado al tempo y reverb como envíos**: divisiones 1/4,
+   1/8 y 1/16 con feedback; `pista:send("delay", nivel)` y parámetros
+   globales de cada bus en el registro. Buffers fijos.
+4. **Compresor y distorsión** como efectos de pista.
+5. **Automatización**: `ramp(desde, hasta, "4 compases")`,
+   `lfo(frecuencia, mín, máx)` y valores por paso (parameter locks) en la
+   mini-notación, por ejemplo el cutoff. Cuantizada al compás,
+   determinista y sin clics (parámetros suavizados).
+
+## Fase H: cortes y breaks
+
+- Grupos de choke y modos one-shot/gate, con envolvente por corte (ataque
+  y cola).
+- Cortar por rejilla (8 o 16 divisiones iguales) y añadir o borrar cortes a
+  mano, además de moverlos.
+- Pan y duración por corte, ping-pong y bucle dentro de un corte.
+- Resampling: grabar la salida de una pista (o del master) como un sample
+  nuevo reutilizable en el proyecto, por render offline.
+- Normalizar, recortar el silencio y poner fundidos al importar un sample.
+
+## Fase I: comodidad
+
+- Explorador de samples en la interfaz, con preescucha.
+- Entrada MIDI (notas que disparan cortes) y reloj MIDI; salida MIDI hacia
+  Surge XT.
+- Tap tempo, rampas de BPM y cambios de compás.
+- Teclas y colores configurables en un archivo.
+- Ranuras 1-9 que se guardan entre sesiones.
