@@ -99,9 +99,23 @@ impl Playback {
     };
 }
 
-/// Forma de un corte: su envolvente (ataque y cola, en ms). Con 0, el
-/// fundido mínimo de siempre (1,5 ms), que evita los clics. Se fija por
-/// corte (`Pattern::with_shapes`).
+/// Cómo se lee un corte.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PlayMode {
+    /// Una vez, de principio a fin.
+    #[default]
+    Once,
+    /// En bucle dentro del corte hasta que otro golpe (o la puerta, o el
+    /// choke) lo corte.
+    Loop,
+    /// En bucle de ida y vuelta.
+    PingPong,
+}
+
+/// Forma de un corte: su envolvente (ataque y cola, en ms; con 0, el
+/// fundido mínimo de siempre, 1,5 ms, que evita los clics), su posición
+/// en el estéreo, qué parte suena y cómo se lee. Se fija por corte
+/// (`Pattern::with_shapes`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SliceShape {
     /// Rampa de entrada, en ms.
@@ -109,12 +123,21 @@ pub struct SliceShape {
     /// Rampa de salida al final del corte (o al cerrarse la puerta en el
     /// modo gate), en ms.
     pub release_ms: f32,
+    /// Panorama, de -1 (izquierda) a 1 (derecha); 0, al centro sin tocar
+    /// nada (ley de balance: el lado contrario baja, el propio no sube).
+    pub pan: f32,
+    /// Parte del corte que suena, desde su inicio: de 0,01 a 1 (entero).
+    pub length: f32,
+    pub play: PlayMode,
 }
 
 impl SliceShape {
     pub const DEFAULT: SliceShape = SliceShape {
         attack_ms: 0.0,
         release_ms: 0.0,
+        pan: 0.0,
+        length: 1.0,
+        play: PlayMode::Once,
     };
 
     pub fn validate(&self) -> Result<(), &'static str> {
@@ -124,7 +147,22 @@ impl SliceShape {
         if !(0.0..=MAX_RELEASE_MS).contains(&self.release_ms) {
             return Err("cola fuera de rango (0 a 5000 ms)");
         }
+        if !(-1.0..=1.0).contains(&self.pan) {
+            return Err("pan fuera de rango (-1 a 1)");
+        }
+        if !(0.01..=1.0).contains(&self.length) {
+            return Err("length fuera de rango (0.01 a 1: la parte del corte que suena)");
+        }
         Ok(())
+    }
+
+    /// El rango que suena de un corte (`length`).
+    pub fn range(&self, range: Range<usize>) -> Range<usize> {
+        if self.length >= 1.0 {
+            return range;
+        }
+        let frames = ((range.len() as f64 * self.length as f64).round() as usize).max(1);
+        range.start..(range.start + frames).min(range.end)
     }
 }
 
@@ -165,10 +203,12 @@ impl Voice {
         let rate = sample.sample_rate() as f32;
         let fade = ((FADE_SECONDS * rate) as usize).max(1);
         let ms = |ms: f32| (ms / 1000.0 * rate) as usize;
-        // Último frame de salida: el que lee el último frame del rango.
-        let length = match end - start {
-            0 => 0,
-            frames => ((frames - 1) as f64 / playback.rate).floor() as usize + 1,
+        // Último frame de salida: el que lee el último frame del rango. En
+        // bucle, la voz no acaba sola.
+        let length = match (end - start, playback.shape.play) {
+            (0, _) => 0,
+            (_, PlayMode::Loop | PlayMode::PingPong) => usize::MAX,
+            (frames, PlayMode::Once) => ((frames - 1) as f64 / playback.rate).floor() as usize + 1,
         };
         Voice {
             sample,
@@ -208,8 +248,13 @@ impl Voice {
     /// con pitch o reverse.
     fn envelope(&self) -> f32 {
         let from_start = self.rendered as f32 / self.fade_in as f32;
-        let to_end = (self.length - 1 - self.rendered) as f32 / self.fade_out as f32;
-        let mut gain = from_start.min(to_end).min(1.0);
+        let mut gain = if self.length == usize::MAX {
+            // En bucle no hay final al que llegar.
+            from_start.min(1.0)
+        } else {
+            let to_end = (self.length - 1 - self.rendered) as f32 / self.fade_out as f32;
+            from_start.min(to_end).min(1.0)
+        };
         if let Some((left, total)) = self.release {
             gain *= (left - 1) as f32 / total as f32;
         }
@@ -219,7 +264,22 @@ impl Voice {
     /// Frame del sample para el frame de salida actual, con interpolación
     /// lineal si la posición cae entre dos frames.
     fn read(&self) -> (f32, f32) {
-        let offset = self.rendered as f64 * self.playback.rate;
+        let mut offset = self.rendered as f64 * self.playback.rate;
+        let span = (self.end - self.start) as f64;
+        match self.playback.shape.play {
+            PlayMode::Once => {}
+            PlayMode::Loop => offset = offset.rem_euclid(span),
+            PlayMode::PingPong => {
+                // Ida y vuelta sin repetir los extremos: 0, 1 … n-1, n-2 … 1.
+                let last = span - 1.0;
+                offset = if last > 0.0 {
+                    let t = offset.rem_euclid(2.0 * last);
+                    if t <= last { t } else { 2.0 * last - t }
+                } else {
+                    0.0
+                };
+            }
+        }
         let pos = if self.playback.reverse {
             (self.end - 1) as f64 - offset
         } else {
@@ -247,8 +307,10 @@ impl Voice {
             }
             let gain = self.playback.gain * self.envelope();
             let (l, r) = self.read();
-            frame[0] += gain * l;
-            frame[1] += gain * r;
+            // Ley de balance: al centro, los dos lados por 1 (sin cambios).
+            let pan = self.playback.shape.pan;
+            frame[0] += (1.0 - pan).min(1.0) * (gain * l);
+            frame[1] += (1.0 + pan).min(1.0) * (gain * r);
             self.rendered += 1;
             if let Some((left, _)) = &mut self.release {
                 *left -= 1;
@@ -571,7 +633,7 @@ impl Controller {
             step: index,
             reason,
         })?;
-        self.play_range_shaped(track, sample.clone(), range, shape)
+        self.play_range_shaped(track, sample.clone(), shape.range(range), shape)
     }
 
     /// Reproduce los frames `range` del sample (se recorta a su longitud) en

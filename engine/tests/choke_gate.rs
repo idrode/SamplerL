@@ -83,6 +83,7 @@ fn attack_and_release_shape_the_slice() {
     let attack = SliceShape {
         attack_ms: 20.0,
         release_ms: 0.0,
+        ..SliceShape::DEFAULT
     };
     let out = render(vec![(0, pattern(false, attack, &[0]))], STEP);
     assert!((out[480] - 0.25).abs() < 1e-3, "{}", out[480]);
@@ -91,6 +92,7 @@ fn attack_and_release_shape_the_slice() {
     let release = SliceShape {
         attack_ms: 0.0,
         release_ms: 10.0,
+        ..SliceShape::DEFAULT
     };
     let out = render(vec![(0, pattern(true, release, &[0]))], 6 * STEP);
     assert!((out[STEP + 240] - 0.25).abs() < 2e-3, "{}", out[STEP + 240]);
@@ -157,6 +159,7 @@ fn live_pads_choke_and_keep_their_shape() {
     let attack = SliceShape {
         attack_ms: 20.0,
         release_ms: 0.0,
+        ..SliceShape::DEFAULT
     };
     controller
         .play_slice_shaped(1, &sample, &slices, 0, attack)
@@ -174,10 +177,12 @@ fn shapes_and_groups_are_checked() {
         SliceShape {
             attack_ms: -1.0,
             release_ms: 0.0,
+            ..SliceShape::DEFAULT
         },
         SliceShape {
             attack_ms: 0.0,
             release_ms: 6000.0,
+            ..SliceShape::DEFAULT
         },
     ] {
         assert!(matches!(

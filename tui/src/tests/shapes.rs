@@ -15,8 +15,16 @@ fn the_panel_marks_gate_and_choke_and_set_completes_its_keys() {
     app.editor.move_cursor(ratatui_textarea::CursorMove::End);
     type_text(&mut app, "\namen:set(2, { ");
     app.handle(f(4));
-    assert_eq!(completion_items(&app), ["attack", "release"]);
+    assert_eq!(
+        completion_items(&app),
+        ["attack", "release", "pan", "length", "play"]
+    );
     app.handle(esc());
+    // Los valores de play.
+    type_text(&mut app, "play = \"");
+    assert_eq!(completion_items(&app), ["normal", "loop", "pingpong"]);
+    app.handle(esc());
+    type_text(&mut app, "\" ");
     assert_eq!(
         app.view().help.unwrap().signature,
         "cortes:set([i,] { ... })"

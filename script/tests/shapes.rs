@@ -61,10 +61,12 @@ fn shapes_gate_and_choke_sound_like_the_engine() {
         SliceShape {
             attack_ms: 0.0,
             release_ms: 10.0,
+            ..SliceShape::DEFAULT
         },
         SliceShape {
             attack_ms: 4.0,
             release_ms: 10.0,
+            ..SliceShape::DEFAULT
         },
     ];
     assert_eq!(song.tracks[0].shapes, shapes);
@@ -112,7 +114,7 @@ fn shape_errors_point_at_the_line() {
     );
     assert_eq!(
         error("b:set({ ataque = 5 })"),
-        "song.lua:3: set: parámetro desconocido \"ataque\" (admite: attack, release)"
+        "song.lua:3: set: parámetro desconocido \"ataque\" (admite: attack, release, pan, length, play)"
     );
     assert!(error("b:set({ release = 9000 })").contains("cola fuera de rango"));
     assert!(error("b:set(1)").contains("set(i, { ... })"));
@@ -123,4 +125,46 @@ fn shape_errors_point_at_the_line() {
             .choke
             .is_none()
     );
+}
+
+#[test]
+fn pan_length_and_play_sound_like_the_engine() {
+    let song = song(&format!(
+        "b:set(1, {{ pan = -1, length = 0.25, play = \"loop\" }})\n\
+         b:set(2, {{ pan = 0.5, play = \"pingpong\" }})\n\
+         track(\"d\", b):steps(\"{STEPS}\")"
+    ))
+    .unwrap();
+    let shapes = [
+        SliceShape {
+            pan: -1.0,
+            length: 0.25,
+            play: engine::PlayMode::Loop,
+            ..SliceShape::DEFAULT
+        },
+        SliceShape {
+            pan: 0.5,
+            play: engine::PlayMode::PingPong,
+            ..SliceShape::DEFAULT
+        },
+    ];
+    assert_eq!(song.tracks[0].shapes, shapes);
+    let (sample, slices) = base();
+    let d = Pattern::from_steps(
+        sample,
+        &slices,
+        engine::notation::parse_steps(STEPS).unwrap(),
+    )
+    .unwrap()
+    .with_shapes(&shapes)
+    .unwrap();
+    assert_eq!(song.render(RATE, 2).unwrap(), engine_render(vec![(0, d)]));
+    let error = song_error("b:set({ play = \"atras\" })");
+    assert!(error.contains("play = \"atras\" no existe"), "{error}");
+    assert!(song_error("b:set({ pan = 2 })").contains("pan fuera de rango"));
+    assert!(song_error("b:set({ length = 0 })").contains("length fuera de rango"));
+}
+
+fn song_error(source: &str) -> String {
+    song(source).err().expect("debería fallar")
 }

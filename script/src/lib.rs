@@ -1800,6 +1800,27 @@ fn apply_slice_table(
         match key.as_str() {
             "attack" => shape.attack_ms = number(&value)?,
             "release" => shape.release_ms = number(&value)?,
+            "pan" => shape.pan = number(&value)?,
+            "length" => shape.length = number(&value)?,
+            "play" => {
+                let text = match &value {
+                    Value::String(s) => s.to_str()?.to_string(),
+                    _ => String::new(),
+                };
+                shape.play = match text.as_str() {
+                    "normal" => engine::PlayMode::Once,
+                    "loop" => engine::PlayMode::Loop,
+                    "pingpong" => engine::PlayMode::PingPong,
+                    _ => {
+                        return Err(fail(
+                            lua,
+                            format!(
+                                "{who}: play = \"{text}\" no existe (\"normal\", \"loop\" o \"pingpong\")"
+                            ),
+                        ));
+                    }
+                };
+            }
             _ => {
                 return Err(fail(
                     lua,

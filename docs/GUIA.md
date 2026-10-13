@@ -845,7 +845,7 @@ track("caja", caja):steps(". . . .  x . . .  . . . .  x . . .")
 
 Devuelve: cortes.
 
-Forma de un corte (o de todos, sin i): su ataque y su cola. Vale para todas las pistas que usan esta variable, también las definidas antes (como `:name`). Una clave desconocida da error. Los parámetros están en la tabla de abajo; los que no se dan quedan como estaban.
+Forma de un corte (o de todos, sin i): ataque, cola, pan, parte que suena y bucle. Vale para todas las pistas que usan esta variable, también las definidas antes (como `:name`). Una clave desconocida da error. Los parámetros están en la tabla de abajo; los que no se dan quedan como estaban.
 
 - `i`: el corte (desde 1); sin él, todos
 - `parámetros`: tabla con los de la tabla de abajo
@@ -854,11 +854,16 @@ Forma de un corte (o de todos, sin i): su ataque y su cola. Vale para todas las 
 | --- | --- | --- | --- |
 | `attack` | rampa de entrada, en ms (0: el fundido mínimo de 1,5 ms) | `0` | 0–2000 |
 | `release` | cola al final del corte (o al cerrarse la puerta en el modo gate), en ms | `0` | 0–5000 |
+| `pan` | panorama: -1 izquierda, 0 centro, 1 derecha (el lado contrario baja) | `0` | -1–1 |
+| `length` | parte del corte que suena, desde su inicio (0.5: la primera mitad) | `1` | 0.01–1 |
+| `play` | cómo se lee: una vez, en bucle o de ida y vuelta (los bucles suenan hasta el siguiente golpe, la puerta o el choke) | `"normal"` | `"normal"`, `"loop"` o `"pingpong"` |
 
 ```lua
 local amen = sample("amen.wav"):slice(8)
 -- El charles (corte 3), corto y sin chasquido; todos, con algo de cola.
-amen:set({ release = 20 }):set(3, { attack = 2, release = 5 })
+amen:set({ release = 20 }):set(3, { attack = 2, release = 5, pan = 0.4 })
+-- El corte 8, la mitad y en bucle de ida y vuelta.
+amen:set(8, { length = 0.5, play = "pingpong" })
 track("drums", amen):steps("1 . 3 .  2 . 3 .  1 1 3 .  2 . 3 3"):mode("gate")
 ```
 

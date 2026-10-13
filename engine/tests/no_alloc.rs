@@ -229,7 +229,8 @@ fn the_audio_thread_never_allocates() {
         "reservas con envíos, automatización y cortes por paso"
     );
 
-    // Modo gate, envolvente por corte y choke entre dos pistas.
+    // Modo gate, forma por corte (envolvente, pan, parte, bucle e ida y
+    // vuelta) y choke entre dos pistas.
     let shaped = |steps: [Option<Step>; STEPS]| {
         Pattern::from_steps(sample.clone(), &slices, steps)
             .unwrap()
@@ -237,11 +238,20 @@ fn the_audio_thread_never_allocates() {
             .with_choke(Some(2))
             .unwrap()
             .with_shapes(&[
+                // Con pan, una parte del corte, bucle e ida y vuelta.
                 engine::SliceShape {
                     attack_ms: 5.0,
                     release_ms: 30.0,
+                    pan: -0.5,
+                    length: 1.0,
+                    play: engine::PlayMode::Loop,
                 },
-                engine::SliceShape::DEFAULT,
+                engine::SliceShape {
+                    pan: 0.7,
+                    length: 0.5,
+                    play: engine::PlayMode::PingPong,
+                    ..engine::SliceShape::DEFAULT
+                },
             ])
             .unwrap()
     };

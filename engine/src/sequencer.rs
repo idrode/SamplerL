@@ -232,7 +232,8 @@ impl Pattern {
     }
 
     /// Forma de cada corte (`shapes[i]` es la del corte `i`; los que falten,
-    /// la de siempre). Se aplica a todos los golpes del patrón.
+    /// la de siempre). Se aplica a todos los golpes del patrón (una vez:
+    /// `length` acorta su rango).
     pub fn with_shapes(mut self, shapes: &[SliceShape]) -> Result<Self, SendError> {
         for (i, shape) in shapes.iter().enumerate() {
             shape
@@ -242,6 +243,8 @@ impl Pattern {
         for hit in self.steps.iter_mut().flatten() {
             if let Some(shape) = shapes.get(hit.slice) {
                 hit.playback.shape = *shape;
+                let range = shape.range(hit.start..hit.end);
+                hit.end = range.end;
             }
         }
         Ok(self)

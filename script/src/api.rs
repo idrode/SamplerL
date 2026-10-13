@@ -882,7 +882,7 @@ pub const FUNCTIONS: &[Function] = &[
         receiver: Receiver::Slices,
         signature: "cortes:set([i,] parámetros)",
         returns: Some(Receiver::Slices),
-        summary: "Forma de un corte (o de todos, sin i): su ataque y su cola.",
+        summary: "Forma de un corte (o de todos, sin i): ataque, cola, pan, parte que suena y bucle.",
         doc: "Vale para todas las pistas que usan esta variable, también las \
               definidas antes (como `:name`). Una clave desconocida da error. Los \
               parámetros están en la tabla de abajo; los que no se dan quedan como \
@@ -901,7 +901,9 @@ pub const FUNCTIONS: &[Function] = &[
         example: Some(
             "local amen = sample(\"amen.wav\"):slice(8)\n\
              -- El charles (corte 3), corto y sin chasquido; todos, con algo de cola.\n\
-             amen:set({ release = 20 }):set(3, { attack = 2, release = 5 })\n\
+             amen:set({ release = 20 }):set(3, { attack = 2, release = 5, pan = 0.4 })\n\
+             -- El corte 8, la mitad y en bucle de ida y vuelta.\n\
+             amen:set(8, { length = 0.5, play = \"pingpong\" })\n\
              track(\"drums\", amen):steps(\"1 . 3 .  2 . 3 .  1 1 3 .  2 . 3 3\"):mode(\"gate\")\n",
         ),
     },
@@ -1616,6 +1618,30 @@ pub const SLICE_PARAMS: &[FxParam] = &[
         valid: "0–5000",
         values: &[],
         template: "release = ${40}",
+    },
+    FxParam {
+        name: "pan",
+        description: "panorama: -1 izquierda, 0 centro, 1 derecha (el lado contrario baja)",
+        default: Some("0"),
+        valid: "-1–1",
+        values: &[],
+        template: "pan = ${-0.5}",
+    },
+    FxParam {
+        name: "length",
+        description: "parte del corte que suena, desde su inicio (0.5: la primera mitad)",
+        default: Some("1"),
+        valid: "0.01–1",
+        values: &[],
+        template: "length = ${0.5}",
+    },
+    FxParam {
+        name: "play",
+        description: "cómo se lee: una vez, en bucle o de ida y vuelta (los bucles suenan hasta el siguiente golpe, la puerta o el choke)",
+        default: Some("\"normal\""),
+        valid: "`\"normal\"`, `\"loop\"` o `\"pingpong\"`",
+        values: &["normal", "loop", "pingpong"],
+        template: "play = \"${loop}\"",
     },
 ];
 
