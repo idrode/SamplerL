@@ -1,5 +1,5 @@
-//! Diagnóstico en vivo de la notación de `steps("...")`: mientras se
-//! escribe, sin cargar el script. La longitud que se pide es la de la
+//! Diagnóstico en vivo de la notación de `steps("...")` y de las notas de
+//! `melody("...")`: mientras se escribe, sin cargar el script. La longitud que se pide es la de la
 //! pista ([`track_lengths`]): la de `:length(n)` en la misma cadena de
 //! `track(...)` o en la definición de esa pista, o 16. Usa el mismo lector de la notación que el
 //! motor ([`engine::notation`]) y los mismos rangos (ganancia, pitch y
@@ -20,11 +20,12 @@ pub struct Diagnostic {
     pub message: String,
 }
 
-/// Diagnósticos de todas las cadenas de `steps("...")` del texto (también
-/// las de `c:steps` dentro de `every`). Una cadena sin cerrar se mira
-/// hasta el final de la línea. `labels` son las etiquetas de corte
-/// conocidas (de cualquier pista: si una no es de esa pista, lo dirá la
-/// carga).
+/// Diagnósticos de todas las cadenas de `steps("...")` y `melody("...")`
+/// del texto (también las de `c:steps`/`c:melody` dentro de `every`). Una
+/// cadena sin cerrar se mira hasta el final de la línea. `labels` son las
+/// etiquetas de corte conocidas (de cualquier pista: si una no es de esa
+/// pista, lo dirá la carga). En `melody` no se sabe la raíz, así que lo
+/// lejos que queda cada nota de ella (±36 semitonos) lo dice la carga.
 pub fn steps_diagnostics(lines: &[String], labels: &[String]) -> Vec<Diagnostic> {
     let labels: Vec<Option<String>> = labels.iter().cloned().map(Some).collect();
     let lengths = track_lengths(lines);
@@ -35,49 +36,57 @@ pub fn steps_diagnostics(lines: &[String], labels: &[String]) -> Vec<Diagnostic>
         line_start += line.chars().count() + 1;
         let chars: Vec<char> = line.chars().collect();
         let code_end = comment_start(&chars);
-        let mut i = 0;
-        while let Some(at) = find(&chars[..code_end], "steps", i) {
-            i = at + 5;
-            // Solo como método: `:steps` (no `mysteps`, ni dentro de una cadena).
-            if at == 0 || chars[at - 1] != ':' || in_string(&chars[..at]) {
-                continue;
-            }
-            let mut j = i;
-            while j < chars.len() && chars[j] == ' ' {
+        for method in ["steps", "melody"] {
+            let mut i = 0;
+            while let Some(at) = find(&chars[..code_end], method, i) {
+                i = at + method.len();
+                // Solo como método: `:steps` (no `mysteps`, ni dentro de una cadena).
+                if at == 0 || chars[at - 1] != ':' || in_string(&chars[..at]) {
+                    continue;
+                }
+                let mut j = i;
+                while j < chars.len() && chars[j] == ' ' {
+                    j += 1;
+                }
+                if chars.get(j) != Some(&'(') {
+                    continue;
+                }
                 j += 1;
-            }
-            if chars.get(j) != Some(&'(') {
-                continue;
-            }
-            j += 1;
-            while j < chars.len() && chars[j] == ' ' {
-                j += 1;
-            }
-            let Some(&quote) = chars.get(j).filter(|c| **c == '"' || **c == '\'') else {
-                continue;
-            };
-            let start = j + 1;
-            let end = (start..chars.len())
-                .find(|&k| chars[k] == quote)
-                .unwrap_or(chars.len());
-            let content: String = chars[start..end].iter().collect();
-            let length = lengths.at(offset + at);
-            if let Some((cols, message)) = check(&content, &labels, length) {
-                let cols = if cols.is_empty() {
-                    // Sin pasos: se subrayan las comillas.
-                    start.saturating_sub(1)..(end + 1).min(chars.len())
-                } else {
-                    start + cols.start..start + cols.end
+                while j < chars.len() && chars[j] == ' ' {
+                    j += 1;
+                }
+                let Some(&quote) = chars.get(j).filter(|c| **c == '"' || **c == '\'') else {
+                    continue;
                 };
-                out.push(Diagnostic {
-                    row,
-                    cols,
-                    message: format!("steps: {message}"),
-                });
+                let start = j + 1;
+                let end = (start..chars.len())
+                    .find(|&k| chars[k] == quote)
+                    .unwrap_or(chars.len());
+                let content: String = chars[start..end].iter().collect();
+                let length = lengths.at(offset + at);
+                let problem = if method == "melody" {
+                    check_melody(&content, length)
+                } else {
+                    check(&content, &labels, length)
+                };
+                if let Some((cols, message)) = problem {
+                    let cols = if cols.is_empty() {
+                        // Sin pasos: se subrayan las comillas.
+                        start.saturating_sub(1)..(end + 1).min(chars.len())
+                    } else {
+                        start + cols.start..start + cols.end
+                    };
+                    out.push(Diagnostic {
+                        row,
+                        cols,
+                        message: format!("{method}: {message}"),
+                    });
+                }
+                i = end;
             }
-            i = end;
         }
     }
+    out.sort_by_key(|d| (d.row, d.cols.start));
     out
 }
 
@@ -90,39 +99,98 @@ fn check(
     labels: &[Option<String>],
     length: Option<usize>,
 ) -> Option<(Range<usize>, String)> {
-    let tokens = tokens(content);
-    let text = |i: usize| -> String {
-        content
-            .chars()
-            .skip(tokens[i].start)
-            .take(tokens[i].len())
-            .collect()
-    };
-    for (i, cols) in tokens.iter().enumerate() {
-        let token = text(i);
-        if let Err(message) = parse_step_labeled(&token, labels) {
+    let steps: Vec<Token> = tokens(content)
+        .into_iter()
+        .map(|cols| {
+            let text: String = content.chars().skip(cols.start).take(cols.len()).collect();
+            Token {
+                cols,
+                notation: text.clone(),
+                text,
+            }
+        })
+        .collect();
+    for (i, token) in steps.iter().enumerate() {
+        if let Err(message) = parse_step_labeled(&token.text, labels) {
             return Some((
-                cols.clone(),
-                format!("paso {} (\"{token}\"): {message}", i + 1),
+                token.cols.clone(),
+                format!("paso {} (\"{}\"): {message}", i + 1, token.text),
             ));
         }
     }
-    let length = length.unwrap_or(tokens.len().max(1));
-    let steps = match parse_pattern_labeled(content, length, labels) {
-        Ok(steps) => steps,
+    check_pattern(&steps, labels, length, true)
+}
+
+/// Como [`check`], para las notas de `melody("...")`: cada nota (o
+/// acorde) se lee y se pasa a pasos, y en ellos se comprueba cuántos hay,
+/// los `_` y los rangos (menos el pitch, que depende de la raíz).
+fn check_melody(content: &str, length: Option<usize>) -> Option<(Range<usize>, String)> {
+    let mut steps = Vec::new();
+    for (i, cols) in tokens(content).into_iter().enumerate() {
+        let text: String = content.chars().skip(cols.start).take(cols.len()).collect();
+        match script::patterns::note_step(&text, None) {
+            Ok(notation) => steps.push(Token {
+                cols,
+                text,
+                notation,
+            }),
+            Err(message) => {
+                return Some((cols, format!("paso {} (\"{text}\"): {message}", i + 1)));
+            }
+        }
+    }
+    check_pattern(&steps, &[], length, false)
+}
+
+/// Un paso del patrón: dónde está, cómo se escribió y en mini-notación.
+struct Token {
+    cols: Range<usize>,
+    text: String,
+    notation: String,
+}
+
+/// Cuántos pasos hay (con la longitud de la pista, si se sabe), los `_` y
+/// los rangos (el pitch solo si `pitch`).
+fn check_pattern(
+    steps: &[Token],
+    labels: &[Option<String>],
+    length: Option<usize>,
+    pitch: bool,
+) -> Option<(Range<usize>, String)> {
+    let length = length.unwrap_or(steps.len().max(1));
+    let notation: Vec<&str> = steps.iter().map(|t| t.notation.as_str()).collect();
+    let parsed = match parse_pattern_labeled(&notation.join(" "), length, labels) {
+        Ok(parsed) => parsed,
         Err(e) => {
-            let cols = match (tokens.first(), tokens.last()) {
-                (Some(a), Some(b)) => a.start..b.end,
-                _ => 0..0,
+            // El paso del error (un `_` sin golpe), o todo el patrón.
+            let cols = match e.step.and_then(|n| steps.get(n - 1)) {
+                Some(token) => token.cols.clone(),
+                None => match (steps.first(), steps.last()) {
+                    (Some(a), Some(b)) => a.cols.start..b.cols.end,
+                    _ => 0..0,
+                },
             };
-            return Some((cols, e.to_string()));
+            let message = match e.step.and_then(|n| steps.get(n - 1)) {
+                Some(token) => format!(
+                    "paso {} (\"{}\"): {}",
+                    e.step.unwrap_or(0),
+                    token.text,
+                    e.message
+                ),
+                None => e.to_string(),
+            };
+            return Some((cols, message));
         }
     };
-    steps.iter().enumerate().find_map(|(i, step)| {
+    parsed.iter().enumerate().find_map(|(i, step)| {
         let step = step.as_ref()?;
         let problem = if !(0.0..=MAX_GAIN).contains(&step.gain) {
             "ganancia fuera de rango (0 a 4)"
-        } else if !(-MAX_SEMITONES..=MAX_SEMITONES).contains(&step.semitones) {
+        } else if pitch
+            && step
+                .notes()
+                .any(|st| !(-MAX_SEMITONES..=MAX_SEMITONES).contains(&st))
+        {
             "pitch fuera de rango (-36 a 36 semitonos)"
         } else if !(1..=MAX_RETRIG).contains(&step.retrig) {
             "retrigger fuera de rango (1 a 16)"
@@ -132,8 +200,8 @@ fn check(
             return None;
         };
         Some((
-            tokens[i].clone(),
-            format!("paso {} (\"{}\"): {problem}", i + 1, text(i)),
+            steps[i].cols.clone(),
+            format!("paso {} (\"{}\"): {problem}", i + 1, steps[i].text),
         ))
     })
 }
@@ -479,5 +547,61 @@ mod tests {
         let d = diagnose("bpm(1)\na:steps(\"1\") b:steps(\"2\")");
         assert_eq!(d.len(), 2);
         assert_eq!(d[1].row, 1);
+    }
+
+    fn underlined(line: &str, d: &Diagnostic) -> String {
+        line.chars().skip(d.cols.start).take(d.cols.len()).collect()
+    }
+
+    #[test]
+    fn melody_underlines_the_wrong_note() {
+        let line = r#"track("lead", piano):melody("c e g e  c+e h _  . . . .  . . . .")"#;
+        let d = diagnose(line);
+        assert_eq!(d.len(), 1);
+        assert_eq!(underlined(line, &d[0]), "h");
+        assert_eq!(
+            d[0].message,
+            "melody: paso 6 (\"h\"): debe ser una nota (c, e, g#, bb3...), un acorde (c+e+g), \".\" o \"_\""
+        );
+        // Acorde de más, ^ (el tono lo da la nota), sufijo roto y rango.
+        for (bad, why) in [
+            ("c+e+g+b+d", "como mucho 4 notas"),
+            ("e^7", "sin ^"),
+            ("g@", "falta el número después de @"),
+            ("a@9", "ganancia fuera de rango"),
+            ("cr40", "retrigger fuera de rango"),
+        ] {
+            let line = format!(r#"t:melody("c . {bad} .  . . . .  . . . .  . . . .")"#);
+            let d = diagnose(&line);
+            assert_eq!(d.len(), 1, "{bad}");
+            assert_eq!(underlined(&line, &d[0]), bad);
+            assert!(d[0].message.contains(why), "{bad}: {}", d[0].message);
+        }
+    }
+
+    #[test]
+    fn melody_checks_holds_and_the_number_of_steps() {
+        // `_` sin nota antes: se subraya ese `_`.
+        let line = r#"t:melody("c . _ .  . . . .  . . . .  . . . .")"#;
+        let d = diagnose(line);
+        assert_eq!(underlined(line, &d[0]), "_");
+        assert!(d[0].message.contains("no hay ninguno"), "{}", d[0].message);
+        // Pasos de menos: todo el patrón.
+        let line = r#"t:melody("c e g")"#;
+        let d = diagnose(line);
+        assert_eq!(underlined(line, &d[0]), "c e g");
+        assert!(d[0].message.contains("16 pasos"), "{}", d[0].message);
+        // Con :length(n) en la misma cadena, cuenta esa longitud.
+        assert!(diagnose(r#"track("l", piano):length(4):melody("c+e+g _ eb3 .")"#).is_empty());
+        // Correctas: notas, octavas, acordes, sufijos, dentro de every. La
+        // distancia a la raíz (±36) la dice la carga: aquí no se sabe.
+        assert!(
+            diagnose(
+                r#"t:every(2, function(c) c:melody("c7 _ bb2@0.5 g#r2  c+e+g _ _ _  . . f'~800 .  a-1 . . .") end)"#
+            )
+            .is_empty()
+        );
+        // Una nota que también es una etiqueta no es un problema en steps.
+        assert!(diagnose(r#"t:steps("1 . 2 .  . . . .  . . . .  . . . .")"#).is_empty());
     }
 }

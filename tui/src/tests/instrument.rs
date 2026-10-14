@@ -228,3 +228,22 @@ fn recording_an_instrument_keeps_pitch_and_length() {
         "track(\"lead\"):steps(\"1^0 _ _ _  . . . .  1^7 . . .  . . . .\")"
     );
 }
+
+/// El editor revisa `melody("...")` mientras se escribe: la nota errónea
+/// subrayada y el aviso al pie, sin cargar nada.
+#[test]
+fn melody_is_diagnosed_while_typing() {
+    let (mut app, _engine) = open_at_end("instrument_diagnose");
+    type_text(
+        &mut app,
+        "track(\"lead\", sample(\"break.wav\"):instrument()):melody(\"c e x e  . . . .  . . . .  . . . .\")",
+    );
+    let view = app.view();
+    let d = &view.diagnostics[0];
+    let line = &app.editor.lines()[d.row];
+    let underlined: String = line.chars().skip(d.cols.start).take(d.cols.len()).collect();
+    assert_eq!(underlined, "x");
+    let screen = text(&draw(&mut app, 140, 40));
+    assert!(screen.contains("melody: paso 3 (\"x\")"), "{screen}");
+    assert!(app.view().error.is_none(), "no se ha cargado");
+}

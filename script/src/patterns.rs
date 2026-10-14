@@ -269,66 +269,72 @@ pub fn note_name(midi: i32) -> String {
 pub fn notes(text: &str, root: i32) -> Result<String, String> {
     let who = "melody";
     let tokens = tokens(text, who)?;
-    let root_octave = root.div_euclid(12) - 1;
     let steps: Vec<String> = tokens
         .iter()
         .enumerate()
         .map(|(i, token)| {
-            if token == "." || token == engine::notation::HOLD {
-                return Ok(token.clone());
-            }
-            let bad = |message: String| format!("{who}: paso {} (\"{token}\"): {message}", i + 1);
-            let mut rest = token.as_str();
-            let mut pitches: Vec<i32> = Vec::new();
-            loop {
-                let (class, octave, after) = read_note(rest).ok_or_else(|| {
-                    bad(
-                        "debe ser una nota (c, e, g#, bb3...), un acorde (c+e+g), \".\" o \"_\""
-                            .into(),
-                    )
-                })?;
-                let midi = match (octave, pitches.last()) {
-                    (Some(octave), _) => 12 * (octave + 1) + class,
-                    (None, None) => 12 * (root_octave + 1) + class,
-                    // La primera por encima de la anterior del acorde.
-                    (None, Some(&below)) => below + 1 + (class - below - 1).rem_euclid(12),
-                };
-                pitches.push(midi);
-                match after.strip_prefix('+') {
-                    Some(next) => rest = next,
-                    None => {
-                        rest = after;
-                        break;
-                    }
-                }
-            }
-            if pitches.len() > engine::MAX_CHORD {
-                return Err(bad(format!(
-                    "un acorde tiene como mucho {} notas",
-                    engine::MAX_CHORD
-                )));
-            }
-            if rest.contains('^') {
-                return Err(bad("el tono lo da la nota, sin ^".into()));
-            }
-            engine::notation::parse_step(&format!("1{rest}")).map_err(bad)?;
-            let mut step = String::from("1");
-            for midi in pitches {
-                let semitones = midi - root;
-                if semitones.abs() > engine::MAX_SEMITONES as i32 {
-                    return Err(bad(format!(
-                        "{} está a {semitones} semitonos de la raíz {} (máximo ±36)",
-                        note_name(midi),
-                        note_name(root)
-                    )));
-                }
-                step.push_str(&format!("^{semitones}"));
-            }
-            step.push_str(rest);
-            Ok(step)
+            note_step(token, Some(root))
+                .map_err(|message| format!("{who}: paso {} (\"{token}\"): {message}", i + 1))
         })
         .collect::<Result<_, String>>()?;
     Ok(format(&steps))
+}
+
+/// Un paso de `melody` (una nota, un acorde, `.` o `_`) en mini-notación:
+/// `e@0.5` → `1^4@0.5` con la raíz C4. Con `root`, también comprueba que
+/// cada nota esté a menos de ±36 semitonos de ella; sin ella (el editor no
+/// la sabe), los semitonos son sobre C4 y no se comprueban.
+pub fn note_step(token: &str, root: Option<i32>) -> Result<String, String> {
+    if token == "." || token == engine::notation::HOLD {
+        return Ok(token.to_string());
+    }
+    let base = root.unwrap_or(60);
+    let root_octave = base.div_euclid(12) - 1;
+    let mut rest = token;
+    let mut pitches: Vec<i32> = Vec::new();
+    loop {
+        let (class, octave, after) = read_note(rest).ok_or_else(|| {
+            "debe ser una nota (c, e, g#, bb3...), un acorde (c+e+g), \".\" o \"_\"".to_string()
+        })?;
+        let midi = match (octave, pitches.last()) {
+            (Some(octave), _) => 12 * (octave + 1) + class,
+            (None, None) => 12 * (root_octave + 1) + class,
+            // La primera por encima de la anterior del acorde.
+            (None, Some(&below)) => below + 1 + (class - below - 1).rem_euclid(12),
+        };
+        pitches.push(midi);
+        match after.strip_prefix('+') {
+            Some(next) => rest = next,
+            None => {
+                rest = after;
+                break;
+            }
+        }
+    }
+    if pitches.len() > engine::MAX_CHORD {
+        return Err(format!(
+            "un acorde tiene como mucho {} notas",
+            engine::MAX_CHORD
+        ));
+    }
+    if rest.contains('^') {
+        return Err("el tono lo da la nota, sin ^".into());
+    }
+    engine::notation::parse_step(&format!("1{rest}"))?;
+    let mut step = String::from("1");
+    for midi in pitches {
+        let semitones = midi - base;
+        if root.is_some() && semitones.abs() > engine::MAX_SEMITONES as i32 {
+            return Err(format!(
+                "{} está a {semitones} semitonos de la raíz {} (máximo ±36)",
+                note_name(midi),
+                note_name(base)
+            ));
+        }
+        step.push_str(&format!("^{semitones}"));
+    }
+    step.push_str(rest);
+    Ok(step)
 }
 
 #[cfg(test)]

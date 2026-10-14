@@ -672,6 +672,11 @@ rangos de volumen, pitch y retrigger; los cortes que no existen se ven al
 cargar. Las etiquetas que conoce son las de lo último
 cargado, las del proyecto y las que el texto pone con `:name()`, de
 cualquier pista: si una etiqueta no es de esa pista, lo dice la carga.
+Igual con `melody("...")`: subraya la nota que no se entiende (`h`, un
+acorde de más de 4 notas, un `^`, un sufijo roto), los `_` sin nota antes,
+los pasos de más o de menos y los rangos de volumen y retrigger; lo lejos
+que queda una nota de la raíz (±36 semitonos) depende del instrumento, así
+que lo dice la carga.
 
 Con etiquetas, el tracker muestra el nombre en vez del número (`kick^7`) y
 la vista del sample pone cada etiqueta junto al número de su corte.
