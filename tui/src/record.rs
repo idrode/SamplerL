@@ -1,6 +1,8 @@
 //! Grabar lo tocado, sin terminal: los cortes que se disparan en vivo
 //! (pads o MIDI) se cuantizan al paso más cercano de la rejilla de la
-//! canción durante N compases y salen como un patrón en mini-notación.
+//! canción durante N compases y salen como un patrón en mini-notación. Las
+//! notas de un instrumento salen con su tono (`1^4`) y lo que duran hasta
+//! su note off, con `_`.
 
 use script::patterns;
 
@@ -15,9 +17,21 @@ pub struct Recording {
     pub steps: usize,
     /// Pasos de un compás (para decir por qué compás va).
     bar_steps: usize,
-    /// Lo grabado en cada paso: corte (desde 0) y volumen. Si caen dos
-    /// golpes en el mismo paso, se queda el último.
-    hits: Vec<Option<(usize, f32)>>,
+    /// Lo grabado en cada paso. Si caen dos golpes en el mismo paso, se
+    /// queda el último.
+    hits: Vec<Option<Hit>>,
+}
+
+/// Un golpe grabado.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Hit {
+    /// Corte (desde 0).
+    slice: usize,
+    gain: f32,
+    /// Nota de un instrumento: semitonos sobre la raíz.
+    semitones: Option<f32>,
+    /// Pasos que sigue sonando después del suyo (hasta el note off).
+    hold: usize,
 }
 
 impl Recording {
@@ -45,8 +59,40 @@ impl Recording {
     /// Apunta un golpe del corte `slice` con volumen `gain` tocado en
     /// `position`. Devuelve el paso, si cae dentro.
     pub fn hit(&mut self, position: f64, slice: usize, gain: f32) -> Option<usize> {
+        self.put(position, slice, gain, None)
+    }
+
+    /// Apunta una nota de un instrumento (`semitones` sobre la raíz) tocada
+    /// en `position`. Devuelve el paso, para [`Recording::release`].
+    pub fn note(&mut self, position: f64, semitones: f32, gain: f32) -> Option<usize> {
+        self.put(position, 0, gain, Some(semitones))
+    }
+
+    /// La nota apuntada en el paso `step` se soltó en `position`: dura hasta
+    /// el paso más cercano (al menos el suyo).
+    pub fn release(&mut self, step: usize, position: f64) {
+        let end = (position - self.start as f64).round().max(0.0) as usize;
+        if let Some(Some(hit)) = self.hits.get_mut(step)
+            && hit.semitones.is_some()
+        {
+            hit.hold = end.saturating_sub(step + 1).min(self.steps - step - 1);
+        }
+    }
+
+    fn put(
+        &mut self,
+        position: f64,
+        slice: usize,
+        gain: f32,
+        semitones: Option<f32>,
+    ) -> Option<usize> {
         let step = self.step_at(position)?;
-        self.hits[step] = Some((slice, gain));
+        self.hits[step] = Some(Hit {
+            slice,
+            gain,
+            semitones,
+            hold: 0,
+        });
         Some(step)
     }
 
@@ -70,18 +116,28 @@ impl Recording {
     /// Lo grabado en mini-notación: cada golpe con la etiqueta de su corte
     /// (o su número) y `@volumen` si no es 1; agrupado por tiempos.
     pub fn notation(&self, labels: &[Option<String>]) -> String {
+        // Pasos que alarga la nota de antes (hasta el siguiente golpe).
+        let mut held = 0;
         let tokens: Vec<String> = self
             .hits
             .iter()
             .map(|hit| match hit {
+                None if held > 0 => {
+                    held -= 1;
+                    "_".to_string()
+                }
                 None => ".".to_string(),
-                Some((slice, gain)) => {
-                    let mut token = labels
-                        .get(*slice)
-                        .cloned()
-                        .flatten()
-                        .unwrap_or_else(|| (slice + 1).to_string());
-                    let gain = (gain * 100.0).round() / 100.0;
+                Some(hit) => {
+                    held = hit.hold;
+                    let mut token = match hit.semitones {
+                        Some(st) => format!("1^{}", (st * 100.0).round() / 100.0),
+                        None => labels
+                            .get(hit.slice)
+                            .cloned()
+                            .flatten()
+                            .unwrap_or_else(|| (hit.slice + 1).to_string()),
+                    };
+                    let gain = (hit.gain * 100.0).round() / 100.0;
                     if gain < 1.0 {
                         token.push_str(&format!("@{gain}"));
                     }
@@ -133,5 +189,29 @@ mod tests {
             rec.notation(&[]),
             "1@0.76 . . .  . . . .  . . . .  . . . .  . . 2 .  . . . ."
         );
+    }
+
+    #[test]
+    fn instrument_notes_keep_their_pitch_and_length() {
+        let mut rec = Recording::new("lead", 16, 1, 16);
+        let c = rec.note(16.1, 0.0, 1.0).unwrap();
+        rec.release(c, 19.8);
+        let e = rec.note(20.4, 4.0, 0.5).unwrap();
+        // Soltada antes de su paso siguiente: solo su paso.
+        rec.release(e, 20.9);
+        let g = rec.note(24.0, 7.0, 1.0).unwrap();
+        // Otra nota antes de soltarla corta los `_`.
+        rec.release(g, 31.0);
+        rec.note(26.0, -5.0, 1.0);
+        assert_eq!(
+            rec.notation(&[]),
+            "1^0 _ _ _  1^4@0.5 . . .  1^7 _ 1^-5 .  . . . ."
+        );
+        // Sin soltar: un paso. Soltada después del final: hasta el final.
+        let mut rec = Recording::new("lead", 0, 1, 16);
+        rec.note(0.0, 0.0, 1.0);
+        let last = rec.note(14.0, 2.0, 1.0).unwrap();
+        rec.release(last, 40.0);
+        assert_eq!(rec.notation(&[]), "1^0 . . .  . . . .  . . . .  . . 1^2 _");
     }
 }

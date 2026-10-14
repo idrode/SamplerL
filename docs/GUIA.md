@@ -329,6 +329,18 @@ El corte suena al instante (no espera al compás), con el volumen, los
 efectos, la forma del corte (`cortes:set`) y el grupo de choke de la
 pista, y corta lo que sonaba en ella. El texto no se toca.
 
+**En una pista con instrumento** (`sample:instrument()`), las mismas teclas
+tocan notas: `1` es la raíz y cada tecla, un semitono más (`2` un
+semitono, `8` una quinta, `q` una séptima menor...). La nota arranca su
+envolvente al pulsar y hace el release al soltar, sin cortar las que
+suenan (con el robo de voces de siempre). Saber cuándo se suelta una tecla
+depende de la terminal: si admite el protocolo de teclado de kitty (kitty,
+foot, WezTerm, Ghostty), la nota dura hasta que la sueltas; si no (tmux y
+la mayoría), suena mientras llegan las repeticiones de la tecla
+mantenida y se suelta cuando dejan de llegar (unos 0,7 s tras una
+pulsación corta, 0,15 s tras la última repetición). Volver al editor o
+cambiar de pista suelta las notas de los pads.
+
 La **preescucha** (← →, espacio, o «Preescuchar el corte seleccionado» en
 la paleta) toca el corte en una voz aparte: no corta lo que suena en las
 pistas, no pasa por su volumen, efectos ni mute, suena también con el
@@ -535,7 +547,11 @@ los puertos; `aconnect "Mi teclado" "sampler"`) o desde su programa. Cada
 nota dispara un corte de la pista seleccionada, igual que los pads del
 modo tocar (con su forma, su choke y su volumen), y la velocidad de la
 nota es el volumen del golpe. La nota 36 (el bombo de General MIDI) es el
-corte 1, la 37 el 2... Se puede cambiar en la configuración:
+corte 1, la 37 el 2... Si la pista seleccionada es un instrumento, cada
+nota suena a su altura real respecto a la raíz (`root = "A3"` y la nota 64,
+E4, suenan siete semitonos por encima) y dura hasta su note off, que
+dispara el release; `nota_base` no cuenta. Se puede cambiar en la
+configuración:
 
 ```toml
 [midi]

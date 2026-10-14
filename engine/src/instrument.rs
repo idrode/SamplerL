@@ -135,6 +135,8 @@ pub(crate) struct Note {
     pub born: u64,
     /// Robada o cortada: fundido mínimo en curso (frames que quedan).
     killed: Option<u64>,
+    /// Tecla que la toca en vivo (pad o nota MIDI): su note off la suelta.
+    pub key: Option<u8>,
 }
 
 /// Lo que necesita una nota para empezar.
@@ -145,10 +147,16 @@ pub(crate) struct NoteOn {
     pub reverse: bool,
     pub gain: f32,
     pub pan: f32,
-    /// Frames de salida hasta el release.
+    /// Frames de salida hasta el release ([`HELD`]: hasta su note off).
     pub gate: u64,
     pub born: u64,
+    /// Tecla que la toca en vivo, si es en vivo.
+    pub key: Option<u8>,
 }
+
+/// `gate` de una nota tocada en vivo: suena hasta su note off
+/// ([`Note::release_now`]).
+pub(crate) const HELD: u64 = u64::MAX;
 
 impl Note {
     pub fn new(sample: Arc<Sample>, instrument: &Instrument, on: NoteOn, fade: u64) -> Self {
@@ -183,6 +191,7 @@ impl Note {
             gate: on.gate,
             born: on.born,
             killed: None,
+            key: on.key,
         }
     }
 
@@ -191,7 +200,7 @@ impl Note {
         if self.killed == Some(0) {
             return false;
         }
-        let released = self.rendered >= self.gate + self.release;
+        let released = self.rendered >= self.gate.saturating_add(self.release);
         let ended = self.sustain_loop.is_none() && self.rendered >= self.length;
         !(released || ended)
     }
@@ -199,6 +208,12 @@ impl Note {
     /// Cuenta como voz: activa y no robada ni cortada.
     pub fn is_voice(&self) -> bool {
         self.killed.is_none() && self.is_active()
+    }
+
+    /// Note off: el release empieza ya (desde el nivel en que esté). Si ya
+    /// había empezado, nada.
+    pub fn release_now(&mut self) {
+        self.gate = self.gate.min(self.rendered);
     }
 
     /// Corta la nota con el fundido mínimo.

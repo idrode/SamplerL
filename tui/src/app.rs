@@ -44,6 +44,33 @@ pub const PADS: [char; 18] = [
     '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', 'q', 'w', 'e', 'r', 't', 'y', 'u', 'i',
 ];
 
+/// Teclas de las notas en vivo que vienen de los pads (las de 0 a 127 son
+/// las notas MIDI): la del pad `i` es `PAD_KEY + i`.
+const PAD_KEY: u8 = 128;
+/// Sin eventos de soltar tecla (la mayoría de las terminales, tmux), una
+/// nota de un pad suena mientras llegan sus repeticiones de teclado: se
+/// suelta si no llega ninguna en este tiempo tras pulsarla (la primera
+/// repetición tarda lo que el retardo del teclado)...
+const PAD_FIRST_HOLD: Duration = Duration::from_millis(700);
+/// ...o en este tras la última repetición.
+const PAD_REPEAT_HOLD: Duration = Duration::from_millis(150);
+
+/// Una nota en vivo de un instrumento que todavía suena (de un pad o del
+/// MIDI de entrada).
+#[derive(Debug, Clone)]
+struct HeldNote {
+    /// Tecla en el motor (`PAD_KEY + i` o la nota MIDI).
+    key: u8,
+    /// Pista del motor y nombre de la pista.
+    slot: usize,
+    track: String,
+    /// Último evento de la tecla (la pulsación o su última repetición).
+    last: Instant,
+    repeated: bool,
+    /// Paso en que se grabó, si se está grabando esa pista.
+    recorded: Option<usize>,
+}
+
 /// Modo de la interfaz: escribir en el editor o tocar cortes con el teclado.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Mode {
@@ -209,6 +236,11 @@ pub struct App {
     browser: Option<Browser>,
     /// Grabación de lo tocado en curso.
     recording: Option<crate::record::Recording>,
+    /// Notas en vivo de instrumentos que suenan (pads y MIDI).
+    held: Vec<HeldNote>,
+    /// La terminal avisa al soltar una tecla: los pads sueltan su nota con
+    /// ese evento (si no, por tiempo: ver `PAD_FIRST_HOLD`).
+    key_releases: bool,
     /// Tap tempo en curso (espacio golpea, Enter pone el tempo).
     tapping: Option<crate::tap::TapTempo>,
     /// Ranuras rápidas 1-9 (como los registros de vim).
@@ -275,6 +307,8 @@ impl App {
             browser: None,
             tapping: None,
             recording: None,
+            held: Vec::new(),
+            key_releases: false,
             slots: Default::default(),
             slots_dir: None,
             slot_prompt: None,
@@ -1395,11 +1429,21 @@ impl App {
                 note,
                 velocity,
             } => {
-                if let Some(index) = self.midi.slice_for(channel, note) {
-                    self.play_pad_with_gain(index, velocity as f32 / 127.0);
+                let gain = velocity as f32 / 127.0;
+                if self.midi.channel.is_some_and(|c| c != channel) {
+                } else if let Some(root) = self.selected_instrument().map(|i| i.root) {
+                    // En un instrumento, la nota es la que suena.
+                    let now = Instant::now();
+                    self.live_note_on(note, (note as i32 - root) as f32, gain, now);
+                } else if let Some(index) = self.midi.slice_for(channel, note) {
+                    self.play_pad_with_gain(index, gain);
                 }
             }
-            MidiEvent::NoteOff { .. } => {}
+            MidiEvent::NoteOff { channel, note } => {
+                if !self.midi.channel.is_some_and(|c| c != channel) {
+                    self.live_note_off(note);
+                }
+            }
             _ if !self.midi.clock => {}
             MidiEvent::Clock => {
                 if let Some(bpm) = self.clock.pulse(event.micros)
@@ -1420,9 +1464,159 @@ impl App {
         }
     }
 
-    /// Dispara ya el corte `index` (desde 0) de la pista seleccionada.
+    /// Dispara ya el corte `index` (desde 0) de la pista seleccionada. En
+    /// un instrumento, toca la nota `index` semitonos sobre la raíz, que
+    /// suena hasta que se suelta la tecla.
     pub fn play_pad(&mut self, index: usize) {
-        self.play_pad_with_gain(index, 1.0);
+        self.press_pad_at(index, Instant::now());
+    }
+
+    /// El pad `index` pulsado en `now` (el instante se pasa para probar los
+    /// tiempos sin esperar).
+    pub fn press_pad_at(&mut self, index: usize, now: Instant) {
+        if self.selected_instrument().is_none() {
+            self.play_pad_with_gain(index, 1.0);
+            return;
+        }
+        let key = PAD_KEY + index as u8;
+        // Una tecla que ya suena: es su repetición (mantenerla pulsada).
+        if let Some(held) = self.held.iter_mut().find(|h| h.key == key) {
+            held.last = now;
+            held.repeated = true;
+            return;
+        }
+        self.live_note_on(key, index as f32, 1.0, now);
+    }
+
+    /// Se soltó una tecla (solo llega si la terminal lo dice): el pad suelta
+    /// su nota.
+    pub fn key_release(&mut self, input: Input) {
+        if let Key::Char(c) = input.key
+            && self.mode == Mode::Play
+            && let Some(index) = PADS.iter().position(|&p| p == c.to_ascii_lowercase())
+        {
+            self.live_note_off(PAD_KEY + index as u8);
+        }
+    }
+
+    /// La terminal avisa al soltar las teclas (protocolo de teclado
+    /// mejorado): los pads de un instrumento sueltan su nota con ese aviso,
+    /// no por tiempo.
+    pub fn set_key_releases(&mut self, on: bool) {
+        self.key_releases = on;
+    }
+
+    /// Sin avisos de soltar: suelta las notas de los pads cuyas
+    /// repeticiones de teclado han dejado de llegar en `now`.
+    pub fn release_expired_pads(&mut self, now: Instant) {
+        if self.key_releases {
+            return;
+        }
+        let expired: Vec<u8> = self
+            .held
+            .iter()
+            .filter(|h| h.key >= PAD_KEY)
+            .filter(|h| {
+                let hold = if h.repeated {
+                    PAD_REPEAT_HOLD
+                } else {
+                    PAD_FIRST_HOLD
+                };
+                now.saturating_duration_since(h.last) > hold
+            })
+            .map(|h| h.key)
+            .collect();
+        for key in expired {
+            self.live_note_off(key);
+        }
+    }
+
+    /// Suelta las notas de los pads (al salir del modo tocar o cambiar de
+    /// pista); las del MIDI siguen hasta su note off.
+    fn release_pads(&mut self) {
+        let pads: Vec<u8> = self
+            .held
+            .iter()
+            .filter(|h| h.key >= PAD_KEY)
+            .map(|h| h.key)
+            .collect();
+        for key in pads {
+            self.live_note_off(key);
+        }
+    }
+
+    /// El instrumento de la pista seleccionada, si es un instrumento.
+    fn selected_instrument(&self) -> Option<script::InstrumentDef> {
+        self.host
+            .song()
+            .and_then(|s| s.tracks.get(self.selected))
+            .and_then(|t| t.instrument)
+    }
+
+    /// Una nota en vivo (`semitones` sobre la raíz) en el instrumento de la
+    /// pista seleccionada, con la tecla `key` del motor.
+    fn live_note_on(&mut self, key: u8, semitones: f32, gain: f32, now: Instant) {
+        let Some(track) = self.host.song().and_then(|s| s.tracks.get(self.selected)) else {
+            return;
+        };
+        let (Some(instrument), Some(slot)) = (track.instrument, self.host.track_slot(&track.name))
+        else {
+            return;
+        };
+        let (sample, range, name) = (
+            track.sample.clone(),
+            track.slices.get(0).unwrap_or(0..track.sample.frames()),
+            track.name.clone(),
+        );
+        let note = script::patterns::note_name(instrument.root + semitones as i32);
+        match self.controller.note_on(
+            slot,
+            &sample,
+            range,
+            instrument.engine,
+            semitones,
+            gain,
+            key,
+        ) {
+            Ok(()) => {
+                // La misma tecla otra vez (MIDI sin note off): la sustituye.
+                self.held.retain(|h| h.key != key);
+                let position = self.controller.position();
+                let recorded = match (&mut self.recording, position) {
+                    (Some(rec), Some(position)) if rec.track == name => {
+                        rec.note(position, semitones, gain)
+                    }
+                    _ => None,
+                };
+                self.held.push(HeldNote {
+                    key,
+                    slot,
+                    track: name.clone(),
+                    last: now,
+                    repeated: false,
+                    recorded,
+                });
+                self.message = format!("♪ {name}: {note}");
+            }
+            Err(e) => self.message = format!("{name}: {note}: {e}"),
+        }
+    }
+
+    /// Suelta la nota en vivo de la tecla `key`: empieza su release.
+    fn live_note_off(&mut self, key: u8) {
+        let Some(at) = self.held.iter().position(|h| h.key == key) else {
+            return;
+        };
+        let held = self.held.remove(at);
+        let _ = self.controller.note_off(held.slot, key);
+        if let (Some(rec), Some(step), Some(position)) = (
+            &mut self.recording,
+            held.recorded,
+            self.controller.position(),
+        ) && rec.track == held.track
+        {
+            rec.release(step, position);
+        }
     }
 
     /// Como [`App::play_pad`], con un volumen para el golpe.
@@ -2075,9 +2269,10 @@ impl App {
             Mode::Edit => Mode::Play,
             Mode::Play => Mode::Edit,
         };
+        self.release_pads();
         self.message = match self.mode {
             Mode::Play => {
-                "modo tocar: 1-0 y q-i disparan cortes · ←→ recorren y preescuchan · espacio preescucha · m mute · s solo · Esc vuelve al editor"
+                "modo tocar: 1-0 y q-i disparan cortes (en un instrumento, notas desde la raíz) · ←→ recorren y preescuchan · espacio preescucha · m mute · s solo · Esc vuelve al editor"
             }
             Mode::Edit => "modo editor",
         }
@@ -2087,6 +2282,7 @@ impl App {
     pub fn next_track(&mut self) {
         let count = self.host.song().map_or(0, |s| s.tracks.len());
         if count > 0 {
+            self.release_pads();
             self.selected = (self.selected + 1) % count;
             self.selected_slice = 0;
         }
@@ -2494,6 +2690,7 @@ impl App {
             self.blocks.reload();
         }
         self.flush_midi();
+        self.release_expired_pads(Instant::now());
         self.watch_recording();
         let status = self.controller.status();
         let now = Instant::now();

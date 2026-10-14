@@ -403,3 +403,84 @@ fn rejects_out_of_range_instruments() {
     i.crossfade = 100;
     assert!(check(i).is_none());
 }
+
+/// Notas en vivo (pads, MIDI de entrada): `note_on` arranca la envolvente
+/// y suena hasta `note_off`, que dispara el release desde ese frame. Con
+/// el secuenciador parado, también.
+#[test]
+fn live_notes_hold_until_their_note_off() {
+    let sample = sample_from(&vec![0.5; RATE as usize * 3]);
+    let slices = Slices::grid(&sample, 1);
+    let range = slices.get(0).unwrap();
+    let mut instrument = Instrument::new(4);
+    // 10 ms de ataque (480), sustain 0,5 sin decay largo, 50 ms de release.
+    instrument.adsr = adsr(10.0, 0.0, 0.5, 50.0);
+    let (mut controller, mut engine) = new_engine(RATE);
+    controller
+        .note_on(0, &sample, range.clone(), instrument, 0.0, 1.0, 60)
+        .unwrap();
+    let held = left(&offline::render(&mut engine, 30_000, 2));
+    assert!((held[240] - 0.25).abs() < 1e-5, "{}", held[240]);
+    // Mucho más que cualquier paso: sigue en el sustain.
+    assert!((held[29_999] - 0.25).abs() < 1e-6, "{}", held[29_999]);
+    controller.note_off(0, 60).unwrap();
+    let released = left(&offline::render(&mut engine, 4000, 2));
+    // El release (2400 frames) empieza en el primer frame tras el note off.
+    assert!((released[0] - 0.25).abs() < 1e-5);
+    assert!((released[1200] - 0.125).abs() < 1e-5, "{}", released[1200]);
+    assert!(released[2400..].iter().all(|&s| s == 0.0));
+}
+
+fn left(audio: &[f32]) -> Vec<f32> {
+    audio.iter().step_by(2).copied().collect()
+}
+
+/// Cada tecla, su nota: soltar una no suelta las demás; la misma tecla
+/// otra vez suelta la anterior; las voces en vivo también se roban.
+#[test]
+fn live_keys_are_independent_and_share_the_voices() {
+    let sample = sine(220.0, 3.0, 0.15);
+    let range = Slices::grid(&sample, 1).get(0).unwrap();
+    let mut instrument = Instrument::new(2);
+    instrument.adsr = adsr(2.0, 0.0, 1.0, 20.0);
+    let freq = |st: f32| 220.0 * 2f64.powf(st as f64 / 12.0);
+    let (mut controller, mut engine) = new_engine(RATE);
+    let on = |c: &mut engine::Controller, st: f32, key: u8| {
+        c.note_on(0, &sample, range.clone(), instrument, st, 1.0, key)
+            .unwrap()
+    };
+    on(&mut controller, 0.0, 1);
+    on(&mut controller, 7.0, 2);
+    offline::render(&mut engine, 4800, 2);
+    controller.note_off(0, 1).unwrap();
+    offline::render(&mut engine, 4800, 2);
+    let only_fifth = left(&offline::render(&mut engine, 9600, 2));
+    assert!(level(&only_fifth, freq(0.0)) < 0.002);
+    assert!(level(&only_fifth, freq(7.0)) > 0.13);
+    // La misma tecla otra vez (con otra nota): la anterior se suelta.
+    on(&mut controller, 12.0, 2);
+    offline::render(&mut engine, 4800, 2);
+    let octave = left(&offline::render(&mut engine, 9600, 2));
+    assert!(level(&octave, freq(7.0)) < 0.002);
+    assert!(level(&octave, freq(12.0)) > 0.13);
+    // Dos voces: una tercera tecla roba la más antigua.
+    on(&mut controller, 4.0, 3);
+    on(&mut controller, 5.0, 4);
+    offline::render(&mut engine, 4800, 2);
+    let stolen = left(&offline::render(&mut engine, 9600, 2));
+    assert!(level(&stolen, freq(12.0)) < 0.002);
+    assert!(level(&stolen, freq(4.0)) > 0.13 && level(&stolen, freq(5.0)) > 0.13);
+    assert_eq!(controller.status().tracks[0].voices, 2);
+    // Un note off de una tecla que no suena no hace nada.
+    controller.note_off(0, 99).unwrap();
+    assert!(
+        controller
+            .note_on(9, &sample, range.clone(), instrument, 0.0, 1.0, 1)
+            .is_err()
+    );
+    assert!(
+        controller
+            .note_on(0, &sample, range, instrument, 40.0, 1.0, 1)
+            .is_err()
+    );
+}

@@ -109,6 +109,21 @@ enum Command {
     },
     /// Corta la preescucha (con fundido).
     StopPreview,
+    /// Nota en vivo de un instrumento (pad o MIDI de entrada): suena hasta
+    /// su `NoteOff`. Lleva el sample y el instrumento, como `Play`, así que
+    /// suena también con el secuenciador parado.
+    NoteOn {
+        track: usize,
+        sample: Arc<Sample>,
+        instrument: crate::instrument::Instrument,
+        start: usize,
+        end: usize,
+        rate: f64,
+        gain: f32,
+        key: u8,
+    },
+    /// Suelta la nota en vivo de esa tecla: empieza su release.
+    NoteOff { track: usize, key: u8 },
 }
 
 /// Cómo se reproduce un rango: ganancia, velocidad de lectura (pitch),
@@ -747,6 +762,60 @@ impl Controller {
         self.play_range_shaped(track, sample.clone(), shape.range(range), shape, gain)
     }
 
+    /// Toca ya una nota de un instrumento en la pista `track` (un pad o una
+    /// nota MIDI de entrada): `semitones` sobre la raíz, con su volumen. Sin
+    /// cortar las que suenan (como las del secuenciador); suena hasta
+    /// [`Controller::note_off`] con la misma `key`, que dispara su release.
+    #[allow(clippy::too_many_arguments)]
+    pub fn note_on(
+        &mut self,
+        track: usize,
+        sample: &Arc<Sample>,
+        range: Range<usize>,
+        instrument: crate::instrument::Instrument,
+        semitones: f32,
+        gain: f32,
+        key: u8,
+    ) -> Result<(), SendError> {
+        if track >= MAX_TRACKS {
+            return Err(SendError::NoSuchTrack(track));
+        }
+        let invalid = |reason| SendError::InvalidStep { step: 0, reason };
+        if !(0.0..=crate::sequencer::MAX_GAIN).contains(&gain) {
+            return Err(invalid("ganancia fuera de rango (0 a 4)"));
+        }
+        if !(-crate::sequencer::MAX_SEMITONES..=crate::sequencer::MAX_SEMITONES)
+            .contains(&semitones)
+        {
+            return Err(invalid("nota fuera de rango (-36 a 36 semitonos)"));
+        }
+        instrument
+            .validate(sample.frames())
+            .map_err(SendError::InvalidInstrument)?;
+        let end = range.end.min(sample.frames());
+        let start = range.start.min(end);
+        let cmd = Command::NoteOn {
+            track,
+            sample: sample.clone(),
+            instrument,
+            start,
+            end,
+            rate: 2f64.powf(semitones as f64 / 12.0),
+            gain,
+            key,
+        };
+        self.send(cmd, Some(start < end))
+    }
+
+    /// Suelta la nota en vivo de la tecla `key` en la pista `track`: empieza
+    /// su release. Una tecla sin nota no hace nada.
+    pub fn note_off(&mut self, track: usize, key: u8) -> Result<(), SendError> {
+        if track >= MAX_TRACKS {
+            return Err(SendError::NoSuchTrack(track));
+        }
+        self.send(Command::NoteOff { track, key }, None)
+    }
+
     /// Reproduce los frames `range` del sample (se recorta a su longitud) en
     /// la pista 0.
     pub fn play_range(
@@ -1167,6 +1236,38 @@ impl Engine {
                     self.midi_note_off(t, now);
                 }
             }
+            Command::NoteOn {
+                track,
+                sample,
+                instrument,
+                start,
+                end,
+                rate,
+                gain,
+                key,
+            } => {
+                // La misma tecla otra vez: la nota anterior se suelta.
+                self.note_off(track, key);
+                if !self.tracks[track].sounding() {
+                    self.tracks[track].fresh = true;
+                }
+                self.status.set_hit(track, start);
+                let on = NoteOn {
+                    start,
+                    end,
+                    rate,
+                    reverse: false,
+                    gain,
+                    pan: 0.0,
+                    gate: crate::instrument::HELD,
+                    born: 0,
+                    key: Some(key),
+                };
+                self.open_note(track, &sample, &instrument, on);
+                self.choke(track);
+                self.discard(sample);
+            }
+            Command::NoteOff { track, key } => self.note_off(track, key),
             Command::SetMute { track, on } => self.tracks[track].live_mute = on,
             Command::SetSolo { track, on } => self.tracks[track].live_solo = on,
             Command::Preview { sample, start, end } => {
@@ -1321,30 +1422,11 @@ impl Engine {
         gate: usize,
         instrument: crate::instrument::Instrument,
     ) {
-        let fade = ((FADE_SECONDS * self.sample_rate as f32) as u64).max(1);
         if !self.tracks[t].sounding() {
             self.tracks[t].fresh = true;
         }
-        let voices = instrument.voices as usize;
         let rates = std::iter::once(hit.playback.rate).chain(hit.chord.iter().flatten().copied());
         for rate in rates {
-            let is_voice = |n: &Option<Note>| n.as_ref().is_some_and(Note::is_voice);
-            // Roba las más antiguas hasta que quede una voz libre.
-            loop {
-                let track = &mut self.tracks[t];
-                if track.notes.iter().filter(|n| is_voice(n)).count() < voices {
-                    break;
-                }
-                let oldest = (0..MAX_VOICES)
-                    .filter(|&v| is_voice(&track.notes[v]))
-                    .min_by_key(|&v| track.notes[v].as_ref().map_or(u64::MAX, |n| n.born))
-                    .expect("hay voces sonando");
-                let mut stolen = track.notes[oldest].take().expect("es una voz");
-                stolen.kill();
-                self.park_tail(t, stolen);
-            }
-            let track = &mut self.tracks[t];
-            track.born += 1;
             let on = NoteOn {
                 start: hit.start,
                 end: hit.end,
@@ -1353,22 +1435,55 @@ impl Engine {
                 gain: hit.playback.gain,
                 pan: hit.playback.shape.pan,
                 gate: gate.max(1) as u64,
-                born: track.born,
+                born: 0,
+                key: None,
             };
-            let note = Note::new(sample.clone(), &instrument, on, fade);
-            let free = (0..MAX_VOICES)
-                .find(|&v| !is_voice(&track.notes[v]))
-                .expect("se acaba de liberar una voz");
-            if let Some(old) = track.notes[free].replace(note) {
-                // Una nota cortada (choke, paro) que aún hacía su fundido.
-                if old.is_active() {
-                    self.park_tail(t, old);
-                } else {
-                    self.discard(old.sample);
-                }
-            }
+            self.open_note(t, &sample, &instrument, on);
         }
         self.discard(sample);
+    }
+
+    /// Abre una nota en una voz de la pista. Si no queda ninguna libre,
+    /// roba las más antiguas (hacen el fundido mínimo aparte y dejan de
+    /// contar).
+    fn open_note(
+        &mut self,
+        t: usize,
+        sample: &Arc<Sample>,
+        instrument: &crate::instrument::Instrument,
+        mut on: NoteOn,
+    ) {
+        let fade = ((FADE_SECONDS * self.sample_rate as f32) as u64).max(1);
+        let voices = instrument.voices as usize;
+        let is_voice = |n: &Option<Note>| n.as_ref().is_some_and(Note::is_voice);
+        loop {
+            let track = &mut self.tracks[t];
+            if track.notes.iter().filter(|n| is_voice(n)).count() < voices {
+                break;
+            }
+            let oldest = (0..MAX_VOICES)
+                .filter(|&v| is_voice(&track.notes[v]))
+                .min_by_key(|&v| track.notes[v].as_ref().map_or(u64::MAX, |n| n.born))
+                .expect("hay voces sonando");
+            let mut stolen = track.notes[oldest].take().expect("es una voz");
+            stolen.kill();
+            self.park_tail(t, stolen);
+        }
+        let track = &mut self.tracks[t];
+        track.born += 1;
+        on.born = track.born;
+        let note = Note::new(sample.clone(), instrument, on, fade);
+        let free = (0..MAX_VOICES)
+            .find(|&v| !is_voice(&track.notes[v]))
+            .expect("se acaba de liberar una voz");
+        if let Some(old) = track.notes[free].replace(note) {
+            // Una nota cortada (choke, paro) que aún hacía su fundido.
+            if old.is_active() {
+                self.park_tail(t, old);
+            } else {
+                self.discard(old.sample);
+            }
+        }
     }
 
     /// Guarda una nota cortada en las colas de la pista (si están llenas,
@@ -1384,6 +1499,15 @@ impl Engine {
             });
         if let Some(old) = track.tails[tail].replace(note) {
             self.discard(old.sample);
+        }
+    }
+
+    /// Suelta las notas en vivo de la tecla `key`: empiezan su release.
+    fn note_off(&mut self, t: usize, key: u8) {
+        for note in self.tracks[t].notes.iter_mut().flatten() {
+            if note.key == Some(key) {
+                note.release_now();
+            }
         }
     }
 

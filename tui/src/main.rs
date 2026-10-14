@@ -478,6 +478,20 @@ fn run_editor(path: &std::path::Path, allow_audio: bool, allow_midi: bool) -> Re
     };
 
     let mut terminal = ratatui::init();
+    // Si la terminal sabe decir cuándo se suelta una tecla (protocolo de
+    // teclado de kitty: kitty, foot, WezTerm, Ghostty...), se le pide: los
+    // pads de un instrumento sueltan su nota al soltar la tecla. Si no
+    // (tmux, la mayoría), la sueltan cuando dejan de llegar repeticiones.
+    use ratatui::crossterm::event::{
+        KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    };
+    let releases = ratatui::crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false)
+        && ratatui::crossterm::execute!(
+            std::io::stdout(),
+            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::REPORT_EVENT_TYPES)
+        )
+        .is_ok();
+    app.set_key_releases(releases);
     let result = (|| -> Result<(), BoxError> {
         loop {
             app.poll_midi();
@@ -485,7 +499,10 @@ fn run_editor(path: &std::path::Path, allow_audio: bool, allow_midi: bool) -> Re
             terminal.draw(|frame| ui::draw(frame, &mut app))?;
             if event::poll(poll)? {
                 match event::read()? {
-                    Event::Key(key) if key.kind != KeyEventKind::Release => {
+                    Event::Key(key) if key.kind == KeyEventKind::Release => {
+                        app.key_release(key.into());
+                    }
+                    Event::Key(key) => {
                         if app.handle(key.into()) == app::Flow::Quit {
                             return Ok(());
                         }
@@ -498,6 +515,9 @@ fn run_editor(path: &std::path::Path, allow_audio: bool, allow_midi: bool) -> Re
             }
         }
     })();
+    if releases {
+        let _ = ratatui::crossterm::execute!(std::io::stdout(), PopKeyboardEnhancementFlags);
+    }
     ratatui::restore();
     result
 }

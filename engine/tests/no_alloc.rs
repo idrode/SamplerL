@@ -332,6 +332,28 @@ fn the_audio_thread_never_allocates() {
         }
     });
     assert_eq!(n, 0, "reservas con un instrumento");
+    // Notas en vivo en el instrumento: más que voces (roba), la misma tecla
+    // dos veces y sus note off.
+    for key in 0..6u8 {
+        controller
+            .note_on(6, &tone, 0..24_000, instrument, key as f32, 0.8, key % 4)
+            .unwrap();
+    }
+    let n = counted(|| {
+        for _ in 0..50 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas con notas en vivo");
+    for key in 0..4u8 {
+        controller.note_off(6, key).unwrap();
+    }
+    let n = counted(|| {
+        for _ in 0..100 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas al soltar notas en vivo");
 
     // Rampa de tempo y cambio de compás.
     controller
