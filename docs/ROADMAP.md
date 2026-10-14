@@ -1,8 +1,9 @@
 # Hoja de ruta
 
-Fases de trabajo después de los pasos 1-7 de `CLAUDE.md`. Se hacen en
-orden, una fase cada vez; el estado detallado de lo hecho está en el
-Estado de `CLAUDE.md` y el uso en `docs/GUIA.md`.
+Fases de trabajo después de los pasos 1-7 de `CLAUDE.md`: qué falta y en
+qué orden. Se hacen en orden, una fase cada vez. Lo hecho, con su detalle
+y las decisiones de diseño de cada fase, está en
+[docs/ESTADO.md](ESTADO.md); el uso, en [docs/GUIA.md](GUIA.md).
 
 ## Reglas comunes
 
@@ -20,7 +21,7 @@ Estado de `CLAUDE.md` y el uso en `docs/GUIA.md`.
 
 ## Fase A: editor ✅
 
-Hecha: ver «Fase A» en el Estado de `CLAUDE.md` y las secciones de atajos,
+Hecha: ver «Fase A» en [docs/ESTADO.md](ESTADO.md) y las secciones de atajos,
 paleta, autocompletado y ayuda de `docs/GUIA.md`.
 
 - Deshacer y rehacer.
@@ -36,7 +37,7 @@ paleta, autocompletado y ayuda de `docs/GUIA.md`.
 
 ## Fase B: etiquetas de corte ✅
 
-Hecha: ver «Fase B» en el Estado de `CLAUDE.md` y la mini-notación,
+Hecha: ver «Fase B» en [docs/ESTADO.md](ESTADO.md) y la mini-notación,
 `cortes:name` y los proyectos en `docs/GUIA.md`.
 
 - Etiquetas para los cortes (`kick`, `snare`, `hat`...), guardadas en el
@@ -48,7 +49,7 @@ Hecha: ver «Fase B» en el Estado de `CLAUDE.md` y la mini-notación,
 Hecha: `euclid`, `rotate`, `reverse_pattern`, `mutate`, `shuffle`,
 `scale` (con `:pitch` y `:melody`), `pista:swing`, `pista:humanize` y
 `pista:fill`, en el registro de la API y en la sección 4 de
-`docs/GUIA.md`. Ver «Fase C» en el Estado de `CLAUDE.md`.
+`docs/GUIA.md`. Ver «Fase C» en [docs/ESTADO.md](ESTADO.md).
 
 - `euclid(k, n)`, `rotate`, `mutate(p)`, `shuffle` (con semilla).
 - `scale("minor", "C")` para tocar melodías con cortes.
@@ -63,7 +64,7 @@ medidor del master con avisos de limitador y saturación, metrónomo
 detección de BPM (`--detect-bpm`, `sample:detect_bpm()`, paleta),
 preescucha de cortes por una voz aparte (←/→ en el modo tocar) y ajuste
 manual de cortes en ms (`,` `.` `<` `>`, `cortes:move()`, guardado en el
-proyecto). Ver «Fase D» en el Estado de `CLAUDE.md`.
+proyecto). Ver «Fase D» en [docs/ESTADO.md](ESTADO.md).
 
 - Mute y solo por pista.
 - Medidores y aviso de saturación.
@@ -75,13 +76,9 @@ proyecto). Ver «Fase D» en el Estado de `CLAUDE.md`.
 ## Fase E: estructura y versiones
 
 En curso: hecha la grabación de lo tocado («Grabar lo tocado» en la
-paleta, orden `grabar [N]`; ver el Estado de `CLAUDE.md`). Decisiones: la
-grabación empieza en el compás siguiente y cuantiza cada golpe al paso
-más cercano de la rejilla de la canción (con la posición en pasos que
-publica el motor); graba la pista seleccionada al empezar, por la misma
-ruta que los pads (así también las notas MIDI); escribe texto en el
-cursor, sin cargar nada. Faltan las secciones con línea de tiempo, el
-historial de versiones y el A/B de variantes.
+paleta, orden `grabar [N]`; detalle y decisiones en
+[docs/ESTADO.md](ESTADO.md)). Faltan las secciones con línea de tiempo,
+el historial de versiones y el A/B de variantes.
 
 - Secciones con nombre y línea de tiempo.
 - Historial de versiones del script con marca de tiempo.
@@ -93,7 +90,7 @@ historial de versiones y el A/B de variantes.
 Hecha (antes que la E): `script::blocks`, paleta («Guardar la selección
 como bloque», «Insertar un bloque», «Actualizar un bloque con la
 selección», «Borrar un bloque», ranuras 1-9) y autocompletado. Ver
-«Fase F» en el Estado de `CLAUDE.md` y «Biblioteca de bloques» en
+«Fase F» en [docs/ESTADO.md](ESTADO.md) y «Biblioteca de bloques» en
 `docs/GUIA.md`.
 
 Bloques de código reutilizables: trozos de script guardados en archivos
@@ -118,56 +115,15 @@ entre archivos: el script sigue siendo uno solo).
 
 Hecha: `pista:length(n)`, `sample:stretch()`, `bus()` y `pista:send()`,
 `:fx("compressor")` y `:fx("distortion")`, `ramp()`, `lfo()` y `~` en la
-notación. Ver «Fase G» en el Estado de `CLAUDE.md` y las secciones 3 y 4
-de `docs/GUIA.md`. Decisiones:
-
-- **Longitud**: los pasos siguen siendo semicorcheas y el reloj, los
-  compases de 16 (los cambios entran al empezar un compás). Una pista de
-  `n` pasos toca la semicorchea global `g` como su paso `g % n`, alineada
-  con la canción desde que arranca (no desde que entra el patrón): recargar
-  no la desfasa. En esas pistas `every`, `fill`, `chance` y `humanize`
-  cuentan vueltas del patrón; el swing sigue los contratiempos de la
-  canción. `:length()` va antes de `:steps()`. Con 16 pasos, idéntico bit
-  a bit (huellas en `script/tests/golden.rs`).
-- **Time-stretch**: WSOLA en Rust puro, sin dependencias, al cargar, por
-  tramos de golpe a golpe (los transitorios y los inicios de los cortes):
-  cada golpe empieza exactamente en su sitio escalado y dentro de cada
-  tramo se copian ventanas de 32 ms desplazadas hasta ±8 ms para que
-  encajen, así que el tono no cambia. Para breaks (×0,7-×1,4) suena limpio
-  y no añade dependencias de C ni problemas en ARM64; Rubber Band
-  (vocoder de fase con preservación de transitorios) daría más calidad
-  con proporciones grandes o material tonal, pero obligaría a una
-  dependencia de C++: queda como idea, tras una feature opcional.
-- **Envíos**: dos buses globales (delay y reverb Freeverb), post-fader, con
-  buffers reservados al crear el motor; los parámetros entran en el lote
-  al compás. Un bus sin entrada y con la cola apagada se duerme (no suma
-  nada: sin envíos, la salida es idéntica bit a bit) y se vacía.
-- **Compresor y distorsión**: efectos de la cadena de cada pista
-  (compresor por picos, estéreo enlazado; distorsión `tanh`).
-- **Automatización**: curvas en el patrón (entran al compás) que dependen
-  solo de la posición de la canción (deterministas, alineadas al
-  recargar); `ramp` es un diente de sierra que se repite. Los parameter
-  locks (`~`) son del corte del primer filtro y duran hasta el siguiente
-  golpe. Todo se suaviza ~5 ms y el filtro recalcula sus coeficientes cada
-  32 frames.
-
-Sitios que asumían 16 pasos: todos adaptados salvo estos, que quedan así a
-propósito o con un límite. El diagnóstico en vivo solo conoce la longitud
-si `:length(n)` lleva un número escrito tal cual y está en la misma cadena
-de `track(...)` (o en la que define esa pista): con una variable no cuenta
-los pasos (los revisa uno a uno) y un `local t = track(...)` seguido de
-`t:steps(...)` después de otro `track(` se mide con la longitud de ese
-otro. El tracker tiene 16 filas a la vista y se desplaza con las pistas
-más largas. Exportar la canción entera tiene un tope de 256 compases (con
-longitudes que no encajan, como 61 y 63 pasos, el ciclo común sería
-enorme).
+notación. Detalle y decisiones en «Fase G» de [docs/ESTADO.md](ESTADO.md);
+uso en las secciones 3 y 4 de `docs/GUIA.md`.
 
 Reglas de siempre, con especial cuidado en el motor: nada de reservas ni
 mutex en el hilo de audio (cada cosa nueva entra en `no_alloc.rs`),
 cambios en lotes atómicos al compás, código portable (x86_64 y ARM64, sin
 intrínsecos ni `target-cpu=native`; dependencias de C/C++ solo tras una
 feature opcional), tests de render offline con semilla fija, y la guía y
-el Estado de `CLAUDE.md` al día si cambia la notación o el motor.
+`docs/ESTADO.md` al día si cambia la notación o el motor.
 
 1. **Longitud variable de patrón por pista** (`pista:length(n)`: 12, 24,
    32 pasos...), con polirritmia entre pistas. Toca el motor, la
@@ -191,34 +147,8 @@ Hecha: `pista:mode()`, `pista:choke()`, `cortes:set()` (ataque, cola,
 pan, parte que suena, bucle e ida y vuelta), `sample:slice_grid()`,
 `cortes:add()`/`remove()` y partir/unir desde la paleta, remuestreo
 (`remuestrear`, `--track`) y `sample(ruta, { trim, normalize, fade_in,
-fade_out })`. Ver «Fase H» en el Estado de `CLAUDE.md`. Decisiones:
-
-- **Por pista o por corte**: el modo (gate/one-shot) y el grupo de choke
-  son de la pista, como en un pad de una caja de ritmos; la forma
-  (envolvente, pan, parte, bucle) es de cada corte y se comparte entre la
-  variable y sus pistas, como las etiquetas. Con los valores por defecto,
-  todo suena igual que antes bit a bit (huellas).
-- **Gate**: la voz se cierra al acabar su paso (o su parte del
-  retrigger) y hace la cola del corte. **Choke**: el corte callado hace el
-  fundido mínimo; vale también para los pads.
-- **Bucles**: suenan hasta el siguiente golpe de la pista, la puerta o el
-  choke; el salto no lleva fundido (se oye si el corte no acaba como
-  empieza). `length` es una fracción del corte, no ms.
-- **Cortes a mano**: en el proyecto, `partir` va por posición (ms) y
-  `unir` por número, y se aplican en orden justo después de detectar; los
-  ajustes y las etiquetas van con la numeración que queda, y la interfaz
-  los corre al partir o unir. Las claves del proyecto distinguen
-  `slice(8)` de `slice_grid(8)` (`rejilla8`). En Lua, `add`/`remove`
-  cambian la variable como `move`, y esos cortes no se pueden etiquetar ni
-  mover desde la interfaz.
-- **Remuestreo**: render offline de la pista en solo (con sus efectos,
-  envíos y cola de los buses) o del master, a WAV de 16 bits en la
-  carpeta de samples; no sobrescribe sin `!`. Dura, por defecto, lo que
-  la pista tarda en repetirse; la cola que pase del final se corta (para
-  que vuelva a encajar como loop).
-- **Importar**: se prepara al cargar (recorte, normalizado y fundidos, en
-  ese orden) sin tocar el archivo; los ms de los ajustes son del sample
-  preparado.
+fade_out })`. Detalle y decisiones en «Fase H» de
+[docs/ESTADO.md](ESTADO.md).
 
 - Grupos de choke y modos one-shot/gate, con envolvente por corte (ataque
   y cola).
@@ -233,37 +163,8 @@ fade_out })`. Ver «Fase H» en el Estado de `CLAUDE.md`. Decisiones:
 
 Hecha: explorador de samples, tap tempo, `bpm_ramp()` y `meter()`,
 `config.toml` (teclas, colores y `[midi]`), entrada MIDI (notas y reloj),
-`pista:midi()` hacia un synth y ranuras que persisten. Ver «Fase I» en el
-Estado de `CLAUDE.md`. Decisiones:
-
-- **Explorador**: un popup como el de los bloques; preescucha por la voz
-  aparte (la de los cortes), así nunca toca las pistas; Enter escribe
-  `sample("ruta")` en el cursor.
-- **Tempo**: el tap tempo propone y escribe `bpm(N)` (no cambia el tempo a
-  escondidas). La rampa da a cada compás su tempo (cuantizado al compás,
-  los pasos siguen al frame); recargar el mismo script no la reinicia. El
-  compás (`meter`) cambia los pasos por compás; el transporte cuenta
-  semicorcheas acumuladas para que las pistas sigan alineadas. Para que
-  el delay no haga clic, su retardo se desliza ~50 ms cuando cambia el
-  tempo.
-- **Configuración**: TOML (crate `toml`, Rust puro, solo lectura). F1 abre
-  siempre la paleta y no se puede dar a otra cosa: la paleta nunca queda
-  fuera de alcance. Las teclas sin Ctrl/Alt (salvo F y Esc) no valen
-  (escribirían texto). Colores con degradación a 256 sin truecolor. Si
-  falta o está roto, por defecto y un aviso.
-- **MIDI**: `midir` (ALSA, la misma biblioteca que ya usa cpal) tras la
-  feature `midi`, activada por defecto (`--no-default-features` compila sin
-  ella); nada se abre sin `--allow-midi`. Puertos virtuales («sampler
-  entrada», «sampler salida») en vez de buscar dispositivos: se conectan
-  con `aconnect`. La entrada pasa por una cola sin bloqueos a la
-  aplicación, que la atiende cada 2 ms con la misma ruta que los pads (así
-  usa la pista seleccionada, su forma y su choke). El reloj se estima por
-  mínimos cuadrados sobre cuatro negras, con histéresis de 0,5 BPM, y
-  entra al compás. La salida la genera el motor con el frame exacto de
-  cada golpe (cola sin bloqueos) y la interfaz la manda; el jitter es el
-  del bloque de audio y del bucle (unos ms). Nada de esto se ha probado
-  con dispositivos reales: la lógica, con mensajes y destinos simulados.
-- **Ranuras**: texto tal cual en `~/.config/sampler/ranuras/N.txt`.
+`pista:midi()` hacia un synth y ranuras que persisten. Detalle y decisiones en
+«Fase I» de [docs/ESTADO.md](ESTADO.md).
 
 - Explorador de samples en la interfaz, con preescucha.
 - Entrada MIDI (notas que disparan cortes) y reloj MIDI; salida MIDI hacia
@@ -276,63 +177,8 @@ Estado de `CLAUDE.md`. Decisiones:
 
 En curso: hechos la interpolación del pitch (punto 1) y el instrumento
 (`sample:instrument()`, `pista:melody()`, `_` y acordes en la notación;
-punto 2). Pendientes los puntos 3 y 4. Ver «Fase K» en el Estado de
-`CLAUDE.md`. Decisiones:
-
-- **Interpolación**: sinc con ventana de Kaiser (8 cruces por cero a cada
-  lado, β = 8) en tabla, con el corte escalado a `0,9 / r` al subir el
-  pitch. Se eligió midiendo un seno agudo (`engine/tests/interpolation.rs`):
-  a +12 y +24 semitonos la proporción es exactamente 2 y 4, las posiciones
-  de lectura son enteras y la lineal, la cúbica (Hermite) y una sinc de
-  corte fijo dan las mismas muestras; el aliasing que se oye ahí es el
-  plegado de lo que pasa del Nyquist (15 kHz +12 → 18 kHz a 0 dB), y solo
-  lo quita un filtro que baje con la proporción (-82 dB). Con proporciones
-  no enteras (una quinta) la lineal deja imágenes a -36 dB, Hermite a
-  -49 dB y la sinc a -102 dB. Lo que cae entre 0,9 y 1 del Nyquist nuevo
-  se atenúa solo en parte (banda de transición). Con pitch 0 se lee la
-  muestra tal cual (bit a bit); bajando, la sinc pasa por las muestras.
-  Cuesta unos `18 · max(1, r)` vecinos por frame y canal: ocho pistas a
-  +24 gastan ~14 % de un núcleo. Las huellas de `golden.rs` con pitch son
-  nuevas; las mismas canciones sin pitch conservan las de antes.
-- **Instrumento como pista**: `track(nombre, sample(...):instrument{...})`
-  hace una pista de un solo corte (el sample entero) cuyos golpes son
-  notas, así que todo lo de las pistas sirve (`every`, `chance`, `fill`,
-  `length`, swing, efectos, envíos, choke). El pitch de cada paso son
-  semitonos sobre la raíz; `melody("c e g e")` es azúcar que escribe esos
-  pasos (`1^0 1^4 1^7 1^4`). En una pista de cortes `melody` también vale
-  (C4 es el corte 1 tal cual, como en `scale`).
-- **Duración de las notas**: el paso más sus `_`, un token nuevo de la
-  notación que alarga el golpe anterior (en el modo gate también; en
-  one-shot no cambia nada). Después, el release. Se eligió `_` (como en
-  Tidal) en vez de un sufijo de duración porque se lee en el tracker
-  (`│` en las filas alargadas). Dos notas de la misma pista solo se
-  solapan por su release o con acordes.
-- **Acordes**: varios `^` en un paso (`1^0^4^7`, hasta 4 notas), guardados
-  como intervalos sobre la primera, así `c:pitch()`, `fill("pitch")` y
-  `chance("pitch")` transponen el acorde entero. En `melody`, `c+e+g`; las
-  notas sin octava van justo por encima de la anterior. En una pista de
-  cortes un acorde es un error con línea (no hay polifonía).
-- **Voces y robo**: por pista, hasta 16, en arrays fijos del motor. Una
-  nota nueva sin voz libre roba la más antigua (por orden de llegada), que
-  pasa a una cola aparte con el fundido mínimo (1,5 ms) y deja de contar:
-  el número de voces que suenan nunca pasa del límite. `Status` publica,
-  por pista, el máximo de voces a la vez desde la lectura anterior.
-- **ADSR**: rectas calculadas desde el número de frames de la nota (sin
-  acumular: exactas y deterministas); cada tramo dura al menos el
-  fundido mínimo, y el release empieza desde el nivel en que esté.
-- **Bucle sostenido**: `loop = {inicio, fin}` en ms. La nota sigue en
-  bucle mientras dure, también en el release; los últimos `crossfade` ms
-  antes del fin se funden (linealmente) con los de antes del inicio, así
-  el bucle conserva sus puntos exactos. El fundido lineal va bien con
-  material tonal (dos trozos parecidos no bajan de nivel); si no cabe
-  antes del inicio, se acorta y se avisa. Al revés (`'`) no hay bucle.
-- **Raíz**: nota (`"C3"`) o número MIDI; C4 = 60. Sin octava en `melody`,
-  la de la raíz.
-- **Quedan fuera** (para después): tocar el instrumento desde los pads y
-  la entrada MIDI con note off (ahora un pad dispara el sample entero sin
-  envolvente), la salida MIDI de las notas (`pista:midi()` en un
-  instrumento da error) y el diagnóstico en vivo de `melody("...")` (sus
-  errores salen al cargar).
+punto 2). Pendientes los puntos 3 y 4. Detalle y decisiones en «Fase K»
+de [docs/ESTADO.md](ESTADO.md).
 
 Reglas de siempre: registro de la API (autocompletado, ayuda y guía), nada
 de reservas en el hilo de audio (cada cosa nueva en `no_alloc.rs`), las
