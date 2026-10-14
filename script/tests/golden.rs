@@ -1,7 +1,10 @@
 //! Huellas del audio: canciones que usan casi toda la API, renderizadas
 //! offline con semilla fija. Las huellas se tomaron antes de la fase G
 //! (longitud variable, envíos, automatización): sin usar lo nuevo, la
-//! salida tiene que seguir siendo idéntica bit a bit. Las funciones de
+//! salida tiene que seguir siendo idéntica bit a bit. La fase K cambió la
+//! interpolación del pitch (sinc en vez de lineal): las canciones con pasos
+//! con pitch tienen huellas nuevas, y sus versiones sin pitch conservan las
+//! de antes (lo único que cambia es el pitch). Las funciones de
 //! `libm` (sin, exp, powf...) pueden diferir en el último bit entre
 //! arquitecturas, así que las huellas solo se comprueban en x86_64; en las
 //! demás, solo que el render es finito y determinista.
@@ -46,7 +49,9 @@ fn render(source: &str, bars: u64) -> Vec<f32> {
     song.render(RATE, bars).unwrap()
 }
 
-/// Canciones y sus huellas (tomadas con el código anterior a la fase G).
+/// Canciones y sus huellas (tomadas con el código anterior a la fase G;
+/// las de «pasos» y «transformaciones», que usan pitch, con la
+/// interpolación sinc de la fase K).
 pub const SONGS: &[(&str, &str, u64)] = &[
     (
         "pasos",
@@ -55,7 +60,7 @@ local amen = sample("amen.wav"):slice(8)
 track("drums", amen):steps("1 . 3' .  1^7 . 5@0.5 .  . 3'^-12@0.8 . x  2r4 . 6r2 8")
 track("kick", amen:slice_at(1)):steps("x . . .  x . . .  x . . .  x . . ."):gain(0.9)
 "#,
-        0xdc4a_c52d_6d92_6159,
+        0x25c2_e62a_8333_85f9,
     ),
     (
         "efectos",
@@ -91,7 +96,39 @@ track("melodia", amen:slice_at(4))
   :gain(0.5)
 track("euclid", amen):steps(euclid(5, 16, "2@0.6")):mute()
 "#,
-        0x4246_9dfa_0c66_db21,
+        0x60b1_05f0_5d98_5c71,
+    ),
+    // Las dos canciones con pitch, sin él: huellas tomadas con la
+    // interpolación lineal de antes de la fase K.
+    (
+        "pasos sin pitch",
+        r#"bpm(170)
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen):steps("1 . 3' .  1 . 5@0.5 .  . 3'@0.8 . x  2r4 . 6r2 8")
+track("kick", amen:slice_at(1)):steps("x . . .  x . . .  x . . .  x . . ."):gain(0.9)
+"#,
+        0x4484_3a52_5f51_1679,
+    ),
+    (
+        "transformaciones sin pitch",
+        r#"bpm(160)
+local amen = sample("amen.wav"):slice(8)
+amen:name(1, "kick"):name(2, "snare")
+track("drums", amen)
+  :steps("kick . snare .  3 . kick .  5 6 snare .  7 . 8 .")
+  :every(4, function(c) c:reverse() end)
+  :every(3, function(c) c:steps(rotate("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .", 2)) end)
+  :chance(0.3, "retrig", 4)
+  :fill("roll", 4)
+  :swing(62)
+  :humanize(8, 0.2)
+local escala = scale("minor", "D")
+track("melodia", amen:slice_at(4))
+  :steps("x . x .  x . x .  x . x .  x . x .")
+  :gain(0.5)
+track("euclid", amen):steps(euclid(5, 16, "2@0.6")):mute()
+"#,
+        0x994c_ee47_2e81_06e1,
     ),
 ];
 

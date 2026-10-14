@@ -5,6 +5,7 @@ pub mod bpm;
 pub mod bus;
 mod engine;
 mod fx;
+mod interp;
 mod limiter;
 pub mod metronome;
 pub mod notation;

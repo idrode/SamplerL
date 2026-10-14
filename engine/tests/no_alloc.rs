@@ -1,6 +1,6 @@
 //! El callback de audio no reserva memoria (regla 1 de CLAUDE.md): un
 //! asignador global cuenta las reservas que hace este hilo mientras corre
-//! `Engine::process`, con retrasos (swing, humanize), retrigger, cambios de
+//! `Engine::process`, con retrasos (swing, humanize), retrigger, pitch, cambios de
 //! patrón al compás y un patrón que se suelta a la cola de basura.
 
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -70,10 +70,14 @@ fn the_audio_thread_never_allocates() {
         let mut steps = [None; STEPS];
         for (k, slot) in steps.iter_mut().enumerate() {
             let delay = if k % 2 == 1 { 0.32 } else { 0.0 } + (seed * k as f32) % 0.3;
+            // Pitch arriba y abajo: la interpolación sinc (su tabla se
+            // calcula al crear el motor).
+            let pitch = [0.0, 7.0, 24.0, -12.0, 0.0, 12.5][k % 6];
             *slot = Some(
                 Step::new(k % 2)
                     .with_retrig(if k % 4 == 3 { 3 } else { 1 })
-                    .with_delay(delay.min(0.9)),
+                    .with_delay(delay.min(0.9))
+                    .with_pitch(pitch),
             );
         }
         steps

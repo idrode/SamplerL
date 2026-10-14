@@ -173,11 +173,14 @@ fn each_step_uses_its_own_effects_in_the_sequence() {
     assert_eq!(s1[2600], 0.25);
     assert_eq!(sounding_length(s1), 3000 - 1);
 
-    // Paso 2: corte 0 una octava arriba: el bloque de 800 dura 400.
+    // Paso 2: corte 0 una octava arriba: el bloque de 800 dura 400. El
+    // filtro de la interpolación (que quita lo que pasaría del Nyquist)
+    // suaviza el borde del bloque unos frames: se mide a media altura.
     let s2 = step(2);
-    let sounding = 1 + s2[1..].iter().take_while(|&&s| s != 0.0).count();
-    assert_eq!(sounding, 400);
-    assert_eq!(s2[200], 0.5);
+    let half = s2.iter().rposition(|&s| s > 0.25).unwrap() + 1;
+    assert_eq!(half, 400);
+    assert!((s2[200] - 0.5).abs() < 1e-6, "{}", s2[200]);
+    assert!(s2[420..].iter().all(|&s| s.abs() < 1e-3));
 }
 
 #[test]

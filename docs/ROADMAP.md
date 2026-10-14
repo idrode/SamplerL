@@ -271,3 +271,45 @@ Estado de `CLAUDE.md`. Decisiones:
 - Tap tempo, rampas de BPM y cambios de compás.
 - Teclas y colores configurables en un archivo.
 - Ranuras 1-9 que se guardan entre sesiones.
+
+## Fase K: melodías con samples
+
+En curso: hecha la interpolación del pitch (punto 1). Ver «Fase K» en el
+Estado de `CLAUDE.md`. Decisiones:
+
+- **Interpolación**: sinc con ventana de Kaiser (8 cruces por cero a cada
+  lado, β = 8) en tabla, con el corte escalado a `0,9 / r` al subir el
+  pitch. Se eligió midiendo un seno agudo (`engine/tests/interpolation.rs`):
+  a +12 y +24 semitonos la proporción es exactamente 2 y 4, las posiciones
+  de lectura son enteras y la lineal, la cúbica (Hermite) y una sinc de
+  corte fijo dan las mismas muestras; el aliasing que se oye ahí es el
+  plegado de lo que pasa del Nyquist (15 kHz +12 → 18 kHz a 0 dB), y solo
+  lo quita un filtro que baje con la proporción (-82 dB). Con proporciones
+  no enteras (una quinta) la lineal deja imágenes a -36 dB, Hermite a
+  -49 dB y la sinc a -102 dB. Lo que cae entre 0,9 y 1 del Nyquist nuevo
+  se atenúa solo en parte (banda de transición). Con pitch 0 se lee la
+  muestra tal cual (bit a bit); bajando, la sinc pasa por las muestras.
+  Cuesta unos `18 · max(1, r)` vecinos por frame y canal: ocho pistas a
+  +24 gastan ~14 % de un núcleo. Las huellas de `golden.rs` con pitch son
+  nuevas; las mismas canciones sin pitch conservan las de antes.
+
+Reglas de siempre: registro de la API (autocompletado, ayuda y guía), nada
+de reservas en el hilo de audio (cada cosa nueva en `no_alloc.rs`), las
+huellas de `golden.rs` idénticas si no se usa nada nuevo, código portable
+(x86_64 y ARM64), tests de render offline y nunca la salida de audio real.
+
+1. ✅ **Mejor interpolación para el pitch**: cúbica o sinc corta, elegida
+   midiendo el aliasing de un seno agudo subido +12 y +24 semitonos. Con
+   pitch 0, idéntico bit a bit.
+2. **Instrumento**: `sample("x.wav"):instrument({ root = "C3", loop =
+   {inicio, fin}, voices = 4, adsr = {a, d, s, r} })`. Polifonía por pista
+   con las voces limitadas y robo de la más antigua, envolvente ADSR por
+   voz, bucle sostenido con fundido cruzado en el salto (sin clic) y nota
+   raíz para que `:melody("c e g e")` toque cromáticamente respecto a ella.
+3. **Pitch sin cambiar la duración**: transponer un corte o una nota
+   manteniendo su duración (con el WSOLA de `stretch`, o algo mejor para
+   material tonal).
+4. **Granular y congelar, y formantes**: leer el sample en granos
+   (posición, tamaño, densidad, dispersión) para texturas y para congelar
+   un instante; desplazar los formantes al transponer (que una voz subida
+   no suene a ardilla).

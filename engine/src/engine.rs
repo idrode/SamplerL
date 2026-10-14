@@ -293,8 +293,8 @@ impl Voice {
         gain
     }
 
-    /// Frame del sample para el frame de salida actual, con interpolación
-    /// lineal si la posición cae entre dos frames.
+    /// Frame del sample para el frame de salida actual, interpolado si la
+    /// posición cae entre dos frames o el pitch sube (ver [`crate::interp`]).
     fn read(&self) -> (f32, f32) {
         let mut offset = self.rendered as f64 * self.playback.rate;
         let span = (self.end - self.start) as f64;
@@ -317,14 +317,7 @@ impl Voice {
         } else {
             self.start as f64 + offset
         };
-        let i0 = pos.floor() as usize;
-        let frac = (pos - i0 as f64) as f32;
-        let (l0, r0) = self.sample.frame(i0);
-        if frac == 0.0 {
-            return (l0, r0);
-        }
-        let (l1, r1) = self.sample.frame((i0 + 1).min(self.end - 1));
-        (l0 + frac * (l1 - l0), r0 + frac * (r1 - r0))
+        crate::interp::read(&self.sample, pos, self.start, self.end, self.playback.rate)
     }
 
     /// Suma la voz en `out` (estéreo entrelazado).
@@ -605,6 +598,8 @@ pub struct Engine {
 /// Crea el par controlador/motor. `sample_rate` es la frecuencia a la que
 /// renderiza el motor (la de los samples cargados para él).
 pub fn new_engine(sample_rate: u32) -> (Controller, Engine) {
+    // La tabla de la interpolación se calcula aquí, no en el hilo de audio.
+    crate::interp::prepare();
     let (cmd_tx, cmd_rx) = RingBuffer::new(COMMAND_CAPACITY);
     let (garbage_tx, garbage_rx) = RingBuffer::new(GARBAGE_CAPACITY);
     let (midi_tx, midi_rx) = RingBuffer::new(MIDI_CAPACITY);
