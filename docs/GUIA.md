@@ -262,7 +262,7 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Guardar en una ranura (1-9) | Guarda la selección (o la línea del cursor) en la ranura del número que se pulse, como los registros de vim | — |
 | Pegar una ranura (1-9) | Pega la ranura del número que se pulse; las líneas enteras van encima de la del cursor | — |
 | Salir | Sale (pide confirmación si hay cambios sin guardar) | Ctrl-Q |
-| Snippet: `amen`, `fill`, `ghost`, `intro`, `euclid`, `melodia`, `polirritmo`, `barrido`, `groove` | Inserta el snippet en el cursor (ver «Snippets» en la sección 4) | — |
+| Snippet: `amen`, `fill`, `ghost`, `intro`, `euclid`, `melodia`, `polirritmo`, `barrido`, `groove`, `instrumento` | Inserta el snippet en el cursor (ver «Snippets» en la sección 4) | — |
 
 <!-- paleta:fin -->
 
@@ -615,16 +615,18 @@ compases).
 | --- | --- | --- |
 | `3` | Corte 3 (se cuenta desde 1) | `3` |
 | `.` | Silencio: no dispara nada; lo que sonaba sigue sonando | `.` |
+| `_` | Alarga un paso más el golpe de antes: en el modo gate y en los instrumentos, la nota sigue sonando; en one-shot no cambia nada | `1 _ _ _` |
 | `x` | Igual que `1` (cómodo con `slice_at`) | `x` |
 | `kick` | El corte con esa etiqueta (ver `cortes:name` en la sección 4) | `kick`, `snare` |
 | `'` | Reverse: el corte suena del final al principio | `3'` |
 | `^n` | Pitch en semitonos (signo y decimales, de -36 a 36). Cambia también la duración | `3^7`, `3^-5`, `3^0.5` |
+| `^a^b^c` | Acorde: varios `^` en un paso suenan a la vez (hasta 4 notas; solo en pistas con instrumento) | `1^0^4^7` |
 | `@g` | Volumen del paso (lineal, de 0 a 4) | `3@0.5` |
 | `rN` | Retrigger / stutter: el paso se divide en N partes y el corte vuelve a empezar en cada una (de 1 a 16) | `3r4` |
 | `~Hz` | Corte del primer filtro de la pista desde este golpe hasta el siguiente (parameter lock, de 20 a 20000 Hz); un golpe sin `~` vuelve al corte de `:fx` | `3~800` |
 
-Los sufijos se combinan en cualquier orden, cada uno una vez:
-`3'^7@0.5r2` es el corte 3, al revés, una quinta arriba, a media
+Los sufijos se combinan en cualquier orden, cada uno una vez (salvo `^`,
+que repetido hace un acorde): `3'^7@0.5r2` es el corte 3, al revés, una quinta arriba, a media
 intensidad y repetido dos veces. `~` necesita un filtro en la pista
 (`:fx("lowpass", { cutoff = 3000 })`): `"1~300 . 2 .  1 . 2~8000 ."` cierra
 el filtro en el primer golpe y lo abre del todo en la segunda caja.
@@ -1010,6 +1012,31 @@ local amen = sample("amen.wav"):slice_grid(16)
 track("drums", amen):steps("1 2 3 4  5 6 7 8  9 10 11 12  13 14 15 16")
 ```
 
+### `sample:instrument([opciones])`
+
+Devuelve: instrumento.
+
+Toca el sample como un instrumento: notas con polifonía, ADSR y bucle sostenido. Una pista con un instrumento (`track(nombre, instrumento)`) toca notas en vez de cortes: cada golpe abre una voz sin cortar las que suenan (si no queda ninguna libre, se roba la más antigua), sube y baja con su envolvente ADSR y dura su paso más sus `_`, y luego el release. El sample suena tal cual en la nota `root`: `pista:melody("c e g e")` toca cromáticamente desde ahí, y en `steps` el pitch (`^`) son semitonos sobre la raíz (varios `^` hacen un acorde: `1^0^4^7`). Con `loop`, la nota sigue en bucle mientras dure (también en su release), con un fundido cruzado en el salto para que no haga clic: los últimos ms antes del fin del bucle se funden con los de antes de su inicio (si no hay tanto audio antes del inicio, el fundido se acorta y se avisa). Sin `loop`, la nota acaba con el sample. Al bajar mucho el tono el sample dura más (y al subir, menos): el pitch cambia la velocidad.
+
+- `opciones`: tabla con `root`, `loop`, `voices`, `adsr` y `crossfade` (ver abajo)
+
+| Parámetro | Qué es | Por defecto | Valores |
+| --- | --- | --- | --- |
+| `root` | la nota en la que suena el sample tal cual (`melody` toca desde ahí); C4 es el do central | `"C4"` | una nota (`"C3"`, `"F#2"`, `"Bb4"`) o un número MIDI (0–127) |
+| `loop` | bucle sostenido `{inicio, fin}` en ms: la nota sigue en bucle mientras dure (sin él, acaba con el sample) | `nil` | dentro del sample, con el fin después del inicio |
+| `voices` | notas que pueden sonar a la vez; con todas ocupadas, una nota nueva roba la más antigua | `4` | 1–16 |
+| `adsr` | envolvente de cada nota `{ataque, decay, sustain, release}`: ms, ms, nivel (0–1) y ms (0 ms: el fundido mínimo de 1,5 ms) | `{ 0, 0, 1, 100 }` | ms de 0 a 10000; sustain de 0 a 1 |
+| `crossfade` | fundido cruzado del salto del bucle, en ms (usa el audio de antes del inicio del bucle; si no cabe, se acorta y se avisa) | `10` | 0–1000 |
+
+```lua
+bpm(100)
+-- El sample suena tal cual en C3; el bucle va de 200 a 600 ms.
+local piano = sample("amen.wav"):instrument({
+  root = "C3", loop = { 200, 600 }, voices = 4, adsr = { 5, 80, 0.7, 300 },
+})
+track("lead", piano):melody("c _ e _  g _ e _  c+e+g _ _ _  . . b2 .")
+```
+
 ### `sample:slice(n)`
 
 Devuelve: cortes.
@@ -1135,6 +1162,21 @@ Patrón de la pista en mini-notación (16 pasos, o los de :length). La notación
 ```lua
 local amen = sample("amen.wav"):slice(8)
 track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+```
+
+### `pista:melody(notas)`
+
+Devuelve: pista.
+
+Patrón de notas por su nombre ("c e g e"), cromático respecto a la raíz del instrumento. Como `steps`, con notas en vez de cortes: `c`, `e`, `f#`, `bb3`... (la octava es opcional; sin ella, la de la raíz; C4 es el do central), acordes con `+` (`c+e+g`: las notas sin octava van justo por encima de la anterior), `.` silencio y `_` para alargar la nota de antes un paso. Cada nota admite los sufijos de los pasos salvo `^` (`e@0.5`, `gr2`). En una pista con instrumento la raíz es su `root`; en una de cortes, la nota C4 es el corte 1 tal cual (como en `scale`), y los acordes no valen (no hay polifonía).
+
+- `notas`: notas, acordes (`c+e+g`), `.` o `_`: tantas como pasos tiene la pista
+
+```lua
+local piano = sample("amen.wav"):instrument({ root = "C3", adsr = { 5, 0, 1, 200 } })
+track("bajo", piano)
+  :melody("c2 _ . c2  eb2 _ . f2  g2 _ _ _  bb1 _ c2 .")
+  :gain(0.8)
 ```
 
 ### `pista:length(n)`
@@ -1371,6 +1413,7 @@ En los compases 0, n, 2n... llama a función(compás). Como en Tidal, cuenta los
 | Método | Qué hace |
 | --- | --- |
 | `c:steps(texto)` | Sustituye los pasos del compás. |
+| `c:melody(notas)` | Sustituye los pasos del compás por notas, como pista:melody. |
 | `c:reverse()` | Invierte el sentido de cada golpe (lo que iba al revés vuelve al derecho). |
 | `c:pitch(st)` | Pone el pitch de cada golpe (-36 a 36). |
 | `c:retrig(n)` | Pone el retrigger de cada golpe (1 a 16). |
@@ -1426,6 +1469,7 @@ Trozos de script con campos para rellenar. Se insertan desde el autocompletado (
 | `polirritmo` | Pista de otra longitud (12 pasos contra el compás de 16): polirritmia. |
 | `barrido` | Filtro que se abre poco a poco (ramp) y un envío a la reverb en una pista existente. |
 | `groove` | Swing y humanize en una pista existente, para que no suene a máquina. |
+| `instrumento` | Un sample tocado como instrumento (raíz, bucle, voces y ADSR) con una melodía. |
 
 `amen`:
 
@@ -1511,6 +1555,16 @@ track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
 track("drums")
   :swing(58)
   :humanize(6, 0.15)
+```
+
+`instrumento`:
+
+```lua
+local piano = sample("amen.wav"):instrument({
+  root = "C3", loop = { 200, 600 }, voices = 4, adsr = { 5, 80, 0.7, 300 },
+})
+track("lead", piano)
+  :melody("c _ e _  g _ e _  c+e+g _ _ _  . . . .")
 ```
 
 <!-- api:fin -->
@@ -1641,6 +1695,29 @@ track("drums", amen)
 track("melodia", amen:slice_at(3))
   :steps("x . x^3 .  x^7 . x^5 .  x^12 . x^10 .  x^7 . x^3 x^-5")
   :gain(0.5)
+```
+
+### Melodías con un instrumento
+
+Con `sample:instrument()` el sample se toca como notas: cada golpe abre una
+voz sin cortar las demás, con su envolvente ADSR, y dura su paso más sus
+`_` (y luego el release). `melody` escribe las notas por su nombre desde
+la raíz (`root`, la nota en la que suena el sample tal cual) y `+` hace
+acordes. Con `loop`, una nota larga sigue en bucle sin clic. El tracker
+enseña las notas (`C3+E3+G3`, y `│` en las filas que alargan una nota) y
+el panel de efectos, las voces que suenan (`♪ C3 3/4`).
+
+```lua
+bpm(96)
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+
+local pad = sample("amen.wav"):instrument({
+  root = "C3", loop = { 300, 700 }, voices = 6, adsr = { 40, 200, 0.6, 600 },
+})
+track("pad", pad)
+  :melody("c+eb+g _ _ _  _ _ _ _  ab2+c+eb _ _ _  bb2+d+f _ _ _")
+  :gain(0.4)
 ```
 
 ### Reverse en el último paso del compás

@@ -548,13 +548,15 @@ impl Scan {
         else {
             return None;
         };
-        // La tabla de `fx("efecto", { ... })`, de `bus("delay", { ... })` o
-        // de `cortes:set([i,] { ... })`.
+        // La tabla de `fx("efecto", { ... })`, de `bus("delay", { ... })`, de
+        // `cortes:set([i,] { ... })`, de `sample(ruta, { ... })` o de
+        // `sample:instrument({ ... })`.
         match (name.as_str(), *arg) {
             ("fx", 1) => api::effect(strings.first()?.as_deref()?),
             ("bus", 1) => api::bus(strings.first()?.as_deref()?),
             ("set", 0 | 1) => Some(&api::SLICE_TABLE),
             ("sample", 1) => Some(&api::SAMPLE_TABLE),
+            ("instrument", 0) => Some(&api::INSTRUMENT_TABLE),
             _ => None,
         }
     }
@@ -644,6 +646,8 @@ pub fn help_at(lines: &[String], row: usize, col: usize) -> Option<Help> {
             "cortes:set([i,] { ... })".to_string()
         } else if std::ptr::eq(effect, &api::SAMPLE_TABLE) {
             "sample(ruta, { ... })".to_string()
+        } else if std::ptr::eq(effect, &api::INSTRUMENT_TABLE) {
+            "sample:instrument({ ... })".to_string()
         } else if api::bus(effect.name).is_some_and(|b| std::ptr::eq(b, effect)) {
             format!("bus(\"{}\", {{ ... }})", effect.name)
         } else {
@@ -975,10 +979,18 @@ mod tests {
             track,
             "métodos de pista, en el orden del registro"
         );
-        assert!(track.starts_with(&["steps".into(), "length".into(), "gain".into()]));
+        assert!(track.starts_with(&[
+            "steps".into(),
+            "melody".into(),
+            "length".into(),
+            "gain".into()
+        ]));
         assert_eq!(c.matches()[0].kind, "método de pista");
         let c = at("local s = sample(\"amen.wav\")\ns:|").unwrap();
-        assert_eq!(labels(&c), ["detect_bpm", "stretch", "slice_grid", "slice"]);
+        assert_eq!(
+            labels(&c),
+            ["detect_bpm", "stretch", "slice_grid", "instrument", "slice"]
+        );
         let c = at(&format!("{SONG}amen:s|")).unwrap();
         assert_eq!(labels(&c), ["slice_at", "set"], "cortes");
         let c = at("sample(\"amen.wav\"):slice(8):|").unwrap();
@@ -998,7 +1010,10 @@ mod tests {
         assert_eq!(labels(&c), ["fill", "fx"]);
         let text = format!("{SONG}track(\"drums\", amen):every(4, function(c) c:|) end)");
         let c = at(&text).unwrap();
-        assert_eq!(labels(&c), ["steps", "reverse", "pitch", "retrig", "gain"]);
+        assert_eq!(
+            labels(&c),
+            ["steps", "melody", "reverse", "pitch", "retrig", "gain"]
+        );
         assert_eq!(c.matches()[0].kind, "método de compás");
     }
 

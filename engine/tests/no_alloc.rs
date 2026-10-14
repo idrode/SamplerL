@@ -1,6 +1,7 @@
 //! El callback de audio no reserva memoria (regla 1 de CLAUDE.md): un
 //! asignador global cuenta las reservas que hace este hilo mientras corre
-//! `Engine::process`, con retrasos (swing, humanize), retrigger, pitch, cambios de
+//! `Engine::process`, con retrasos (swing, humanize), retrigger, pitch,
+//! instrumentos (polifonía, ADSR, bucles), cambios de
 //! patrón al compás y un patrón que se suelta a la cola de basura.
 
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -291,6 +292,46 @@ fn the_audio_thread_never_allocates() {
         }
     });
     assert_eq!(n, 0, "reservas con un pad que hace choke");
+
+    // Instrumento: polifonía con robo de voces (más notas que voces, un
+    // acorde), ADSR, bucle sostenido con fundido y notas alargadas con `_`.
+    let tone: Vec<f32> = (0..24_000).map(|i| (i as f32 * 0.05).sin() * 0.3).collect();
+    let tone = Arc::new(Sample::from_interleaved(&tone, 1, RATE, RATE).unwrap());
+    let whole = Slices::grid(&tone, 1);
+    let melody: Vec<Option<Step>> = (0..STEPS)
+        .map(|k| {
+            let step = Step::new(0)
+                .with_pitch(k as f32 - 5.0)
+                .with_hold((k % 3) as u8);
+            Some(if k % 4 == 0 {
+                step.with_chord(&[k as f32 - 1.0, k as f32 + 2.0])
+            } else {
+                step.with_retrig(if k % 5 == 0 { 2 } else { 1 })
+            })
+        })
+        .collect();
+    let mut instrument = engine::Instrument::new(3);
+    instrument.adsr = engine::Adsr {
+        attack_ms: 4.0,
+        decay_ms: 30.0,
+        sustain: 0.6,
+        release_ms: 400.0,
+    };
+    instrument.sustain_loop = Some((4000, 9000));
+    instrument.crossfade = 480;
+    let synth = Pattern::from_steps(tone.clone(), &whole, melody)
+        .unwrap()
+        .with_instrument(Some(instrument))
+        .unwrap()
+        .with_choke(Some(2))
+        .unwrap();
+    controller.set_track_pattern(6, Some(synth)).unwrap();
+    let n = counted(|| {
+        for _ in 0..400 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas con un instrumento");
 
     // Rampa de tempo y cambio de compás.
     controller

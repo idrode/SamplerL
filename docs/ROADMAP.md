@@ -274,8 +274,10 @@ Estado de `CLAUDE.md`. Decisiones:
 
 ## Fase K: melodías con samples
 
-En curso: hecha la interpolación del pitch (punto 1). Ver «Fase K» en el
-Estado de `CLAUDE.md`. Decisiones:
+En curso: hechos la interpolación del pitch (punto 1) y el instrumento
+(`sample:instrument()`, `pista:melody()`, `_` y acordes en la notación;
+punto 2). Pendientes los puntos 3 y 4. Ver «Fase K» en el Estado de
+`CLAUDE.md`. Decisiones:
 
 - **Interpolación**: sinc con ventana de Kaiser (8 cruces por cero a cada
   lado, β = 8) en tabla, con el corte escalado a `0,9 / r` al subir el
@@ -292,6 +294,45 @@ Estado de `CLAUDE.md`. Decisiones:
   Cuesta unos `18 · max(1, r)` vecinos por frame y canal: ocho pistas a
   +24 gastan ~14 % de un núcleo. Las huellas de `golden.rs` con pitch son
   nuevas; las mismas canciones sin pitch conservan las de antes.
+- **Instrumento como pista**: `track(nombre, sample(...):instrument{...})`
+  hace una pista de un solo corte (el sample entero) cuyos golpes son
+  notas, así que todo lo de las pistas sirve (`every`, `chance`, `fill`,
+  `length`, swing, efectos, envíos, choke). El pitch de cada paso son
+  semitonos sobre la raíz; `melody("c e g e")` es azúcar que escribe esos
+  pasos (`1^0 1^4 1^7 1^4`). En una pista de cortes `melody` también vale
+  (C4 es el corte 1 tal cual, como en `scale`).
+- **Duración de las notas**: el paso más sus `_`, un token nuevo de la
+  notación que alarga el golpe anterior (en el modo gate también; en
+  one-shot no cambia nada). Después, el release. Se eligió `_` (como en
+  Tidal) en vez de un sufijo de duración porque se lee en el tracker
+  (`│` en las filas alargadas). Dos notas de la misma pista solo se
+  solapan por su release o con acordes.
+- **Acordes**: varios `^` en un paso (`1^0^4^7`, hasta 4 notas), guardados
+  como intervalos sobre la primera, así `c:pitch()`, `fill("pitch")` y
+  `chance("pitch")` transponen el acorde entero. En `melody`, `c+e+g`; las
+  notas sin octava van justo por encima de la anterior. En una pista de
+  cortes un acorde es un error con línea (no hay polifonía).
+- **Voces y robo**: por pista, hasta 16, en arrays fijos del motor. Una
+  nota nueva sin voz libre roba la más antigua (por orden de llegada), que
+  pasa a una cola aparte con el fundido mínimo (1,5 ms) y deja de contar:
+  el número de voces que suenan nunca pasa del límite. `Status` publica,
+  por pista, el máximo de voces a la vez desde la lectura anterior.
+- **ADSR**: rectas calculadas desde el número de frames de la nota (sin
+  acumular: exactas y deterministas); cada tramo dura al menos el
+  fundido mínimo, y el release empieza desde el nivel en que esté.
+- **Bucle sostenido**: `loop = {inicio, fin}` en ms. La nota sigue en
+  bucle mientras dure, también en el release; los últimos `crossfade` ms
+  antes del fin se funden (linealmente) con los de antes del inicio, así
+  el bucle conserva sus puntos exactos. El fundido lineal va bien con
+  material tonal (dos trozos parecidos no bajan de nivel); si no cabe
+  antes del inicio, se acorta y se avisa. Al revés (`'`) no hay bucle.
+- **Raíz**: nota (`"C3"`) o número MIDI; C4 = 60. Sin octava en `melody`,
+  la de la raíz.
+- **Quedan fuera** (para después): tocar el instrumento desde los pads y
+  la entrada MIDI con note off (ahora un pad dispara el sample entero sin
+  envolvente), la salida MIDI de las notas (`pista:midi()` en un
+  instrumento da error) y el diagnóstico en vivo de `melody("...")` (sus
+  errores salen al cargar).
 
 Reglas de siempre: registro de la API (autocompletado, ayuda y guía), nada
 de reservas en el hilo de audio (cada cosa nueva en `no_alloc.rs`), las
@@ -301,7 +342,7 @@ huellas de `golden.rs` idénticas si no se usa nada nuevo, código portable
 1. ✅ **Mejor interpolación para el pitch**: cúbica o sinc corta, elegida
    midiendo el aliasing de un seno agudo subido +12 y +24 semitonos. Con
    pitch 0, idéntico bit a bit.
-2. **Instrumento**: `sample("x.wav"):instrument({ root = "C3", loop =
+2. ✅ **Instrumento**: `sample("x.wav"):instrument({ root = "C3", loop =
    {inicio, fin}, voices = 4, adsr = {a, d, s, r} })`. Polifonía por pista
    con las voces limitadas y robo de la más antigua, envolvente ADSR por
    voz, bucle sostenido con fundido cruzado en el salto (sin clic) y nota

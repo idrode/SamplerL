@@ -48,7 +48,7 @@ pub use project::{Cut, EditKind, Project, SliceEdit, SliceLabel, SlicePosition};
 pub use watch::{ScriptWatcher, WatchEvent};
 
 use mlua::{
-    Function, HookTriggers, Lua, LuaOptions, StdLib, Table, UserData, UserDataMethods, UserDataRef,
+    AnyUserData, Function, HookTriggers, Lua, LuaOptions, StdLib, Table, UserData, UserDataMethods,
     Value, VmState,
 };
 
@@ -152,6 +152,21 @@ pub struct TrackDef {
     /// Time-stretch al tempo de la canción (`sample:stretch()`), si lo hay.
     /// Entonces `sample` y `slices` ya están estirados.
     pub stretch: Option<Stretch>,
+    /// Instrumento (`sample:instrument()`): sus golpes son notas, con
+    /// polifonía, ADSR y bucle sostenido. Tiene un solo corte (el sample).
+    pub instrument: Option<InstrumentDef>,
+}
+
+/// `sample:instrument({ ... })`: el sample se toca como notas.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct InstrumentDef {
+    /// Nota MIDI (C4 = 60) en la que suena el sample tal cual: la raíz de
+    /// `melody`.
+    pub root: i32,
+    /// Bucle sostenido en ms del sample, si lo hay.
+    pub loop_ms: Option<(f64, f64)>,
+    /// Lo que recibe el motor (voces, ADSR, bucle en frames y fundido).
+    pub engine: engine::Instrument,
 }
 
 /// `sample:stretch(bpm_origen)`: el sample se estira del tempo de origen al
@@ -1143,70 +1158,36 @@ impl ScriptHost {
         let st = state.clone();
         globals.set(
             "track",
-            lua.create_function(
-                move |lua, (name, source): (String, Option<UserDataRef<SlicedHandle>>)| {
-                    guard(lua, "track")?;
-                    let mut builder = st.borrow_mut();
-                    match source {
-                        Some(source) => {
-                            let def = TrackBuild {
-                                def: TrackDef {
-                                    name: name.clone(),
-                                    sample: source.sample.clone(),
-                                    path: source.path.clone(),
-                                    slices: source.slices.clone(),
-                                    length: STEPS,
-                                    steps: vec![None; STEPS],
-                                    bars: Vec::new(),
-                                    gain: 1.0,
-                                    fx: Vec::new(),
-                                    labels: Vec::new(),
-                                    adjusted: source.adjusted.clone(),
-                                    swing: STRAIGHT_SWING,
-                                    humanize: None,
-                                    sends: [0.0; engine::bus::BUSES],
-                                    automation: Vec::new(),
-                                    shapes: Vec::new(),
-                                    gate: false,
-                                    choke: None,
-                                    midi: None,
-                                    mute: false,
-                                    solo: false,
-                                    origin: source.origin.clone(),
-                                    stretch: source.stretch.map(|source_bpm| Stretch {
-                                        source_bpm,
-                                        ratio: 1.0,
-                                    }),
-                                },
-                                labels: source.labels.clone(),
-                                stale: source.stale.clone(),
-                                shapes: source.shapes.clone(),
-                                transforms: Vec::new(),
-                                steps_set: false,
-                            };
-                            // Redefinir una pista en el mismo script la reemplaza.
-                            match builder.tracks.iter_mut().find(|t| t.def.name == name) {
-                                Some(existing) => *existing = def,
-                                None => builder.tracks.push(def),
-                            }
-                        }
-                        None if builder.tracks.iter().any(|t| t.def.name == name) => {}
-                        None => {
-                            return Err(fail(
-                                lua,
-                                format!(
-                                    "la pista \"{name}\" no existe; defínela con \
-                                     track(\"{name}\", sample(...):slice(n))"
-                                ),
-                            ));
+            lua.create_function(move |lua, (name, source): (String, Option<AnyUserData>)| {
+                guard(lua, "track")?;
+                let def = source
+                    .map(|source| track_source(lua, &name, &source))
+                    .transpose()?;
+                let mut builder = st.borrow_mut();
+                match def {
+                    Some(def) => {
+                        // Redefinir una pista en el mismo script la reemplaza.
+                        match builder.tracks.iter_mut().find(|t| t.def.name == name) {
+                            Some(existing) => *existing = def,
+                            None => builder.tracks.push(def),
                         }
                     }
-                    Ok(TrackHandle {
-                        name,
-                        state: st.clone(),
-                    })
-                },
-            )?,
+                    None if builder.tracks.iter().any(|t| t.def.name == name) => {}
+                    None => {
+                        return Err(fail(
+                            lua,
+                            format!(
+                                "la pista \"{name}\" no existe; defínela con \
+                                     track(\"{name}\", sample(...):slice(n))"
+                            ),
+                        ));
+                    }
+                }
+                Ok(TrackHandle {
+                    name,
+                    state: st.clone(),
+                })
+            })?,
         )?;
         Ok(())
     }
@@ -1259,6 +1240,7 @@ fn song_batch(song: &Song, slots: &[Option<String>; MAX_TRACKS]) -> Result<Batch
                     .and_then(|p| p.with_shapes(&track.shapes))
                     .and_then(|p| p.with_choke(track.choke))
                     .and_then(|p| p.with_midi(track.midi))
+                    .and_then(|p| p.with_instrument(track.instrument.map(|i| i.engine)))
                     .map(|p| p.with_gate(track.gate))
                     .map(|p| p.with_mute(track.mute).with_solo(track.solo))
                     .map_err(|e| ScriptError::new(format!("pista \"{name}\": {e}")))?;
@@ -1421,6 +1403,85 @@ fn fail(lua: &Lua, message: impl fmt::Display) -> mlua::Error {
     mlua::Error::runtime(format!("{}{message}", location.unwrap_or_default()))
 }
 
+/// La pista que define `track(nombre, origen)`: unos cortes
+/// (`sample(...):slice(n)`) o un instrumento (`sample(...):instrument()`).
+fn track_source(lua: &Lua, name: &str, source: &AnyUserData) -> mlua::Result<TrackBuild> {
+    let def = |sample: &Arc<Sample>, path: &Path, slices: Slices, origin: SliceOrigin| TrackDef {
+        name: name.to_string(),
+        sample: sample.clone(),
+        path: path.to_path_buf(),
+        adjusted: vec![false; slices.len()],
+        slices,
+        length: STEPS,
+        steps: vec![None; STEPS],
+        bars: Vec::new(),
+        gain: 1.0,
+        fx: Vec::new(),
+        labels: Vec::new(),
+        swing: STRAIGHT_SWING,
+        humanize: None,
+        sends: [0.0; engine::bus::BUSES],
+        automation: Vec::new(),
+        shapes: Vec::new(),
+        gate: false,
+        choke: None,
+        midi: None,
+        mute: false,
+        solo: false,
+        origin,
+        stretch: None,
+        instrument: None,
+    };
+    if let Ok(source) = source.borrow::<SlicedHandle>() {
+        let mut def = def(
+            &source.sample,
+            &source.path,
+            source.slices.clone(),
+            source.origin.clone(),
+        );
+        def.adjusted = source.adjusted.clone();
+        def.stretch = source.stretch.map(|source_bpm| Stretch {
+            source_bpm,
+            ratio: 1.0,
+        });
+        return Ok(TrackBuild {
+            def,
+            labels: source.labels.clone(),
+            stale: source.stale.clone(),
+            shapes: source.shapes.clone(),
+            transforms: Vec::new(),
+            steps_set: false,
+        });
+    }
+    if let Ok(source) = source.borrow::<InstrumentHandle>() {
+        // Un solo corte: el sample entero, que no se etiqueta ni se mueve.
+        let origin = SliceOrigin {
+            sample: source.name.clone(),
+            count: 1,
+            grid: true,
+            indices: vec![None],
+        };
+        let slices = Slices::grid(&source.sample, 1);
+        let mut def = def(&source.sample, &source.path, slices, origin);
+        def.instrument = Some(source.def);
+        return Ok(TrackBuild {
+            def,
+            labels: Rc::new(RefCell::new(vec![None])),
+            stale: Rc::new(Vec::new()),
+            shapes: Rc::new(RefCell::new(vec![SliceShape::DEFAULT])),
+            transforms: Vec::new(),
+            steps_set: false,
+        });
+    }
+    Err(fail(
+        lua,
+        format!(
+            "track(\"{name}\", ...): el segundo argumento son cortes \
+             (sample(...):slice(n)) o un instrumento (sample(...):instrument{{...}})"
+        ),
+    ))
+}
+
 struct Builder {
     bpm: Option<f64>,
     metronome: Option<bool>,
@@ -1572,6 +1633,8 @@ fn expand(track: TrackBuild, rng: &mut Rng, timing: Timing) -> Result<TrackDef, 
                         stale: stale.clone(),
                         count: def.origin.cut(),
                         track: def.name.clone(),
+                        root: def.instrument.map_or(60, |i| i.root),
+                        instrument: def.instrument.is_some(),
                     };
                     let shared = bar.steps.clone();
                     func.call::<()>(bar)
@@ -1772,6 +1835,27 @@ impl UserData for SampleHandle {
             })
         });
 
+        // `:instrument({ root, loop, voices, adsr, crossfade })`: el sample se
+        // toca como notas (ver `engine::instrument`).
+        methods.add_method("instrument", |lua, this, table: Option<Table>| {
+            if this.stretch.is_some() {
+                return Err(fail(
+                    lua,
+                    format!(
+                        "instrument: {} está estirado (stretch); un instrumento toca el sample tal cual",
+                        this.name
+                    ),
+                ));
+            }
+            let def = instrument_options(lua, this, table.as_ref())?;
+            Ok(InstrumentHandle {
+                name: this.name.clone(),
+                path: this.path.clone(),
+                sample: this.sample.clone(),
+                def,
+            })
+        });
+
         // `:detect_bpm()`: tempo y compases del loop (o nil si no se ve).
         methods.add_method("detect_bpm", |_, this, ()| {
             Ok(engine::detect_bpm(&this.sample)
@@ -1812,6 +1896,194 @@ impl UserData for SampleHandle {
             cut_sample(lua, this, slices, Cut::grid(n as usize))
         });
     }
+}
+
+/// `sample(...):instrument({ ... })` en Lua.
+struct InstrumentHandle {
+    name: String,
+    path: PathBuf,
+    sample: Arc<Sample>,
+    def: InstrumentDef,
+}
+
+impl UserData for InstrumentHandle {}
+
+/// Fundido cruzado del bucle si no se dice otro, en ms.
+const DEFAULT_CROSSFADE_MS: f64 = 10.0;
+
+/// Lee la tabla de `sample:instrument()` (claves del registro
+/// `api::INSTRUMENT_PARAMS`). El fundido del bucle se acorta si no cabe
+/// (antes del inicio o dentro del bucle), con un aviso.
+fn instrument_options(
+    lua: &Lua,
+    this: &SampleHandle,
+    table: Option<&Table>,
+) -> mlua::Result<InstrumentDef> {
+    let who = format!("instrument({})", this.name);
+    let mut def = InstrumentDef {
+        root: 60,
+        loop_ms: None,
+        engine: engine::Instrument::new(4),
+    };
+    let Some(table) = table else {
+        return Ok(def);
+    };
+    let known: Vec<&str> = api::INSTRUMENT_PARAMS.iter().map(|p| p.name).collect();
+    let mut crossfade = None;
+    for pair in table.pairs::<Value, Value>() {
+        let (key, value) = pair?;
+        let key = match &key {
+            Value::String(k) => k.to_str()?.to_string(),
+            other => {
+                return Err(fail(
+                    lua,
+                    format!("{who}: clave no válida ({})", other.type_name()),
+                ));
+            }
+        };
+        let number = |value: &Value| match value {
+            Value::Integer(n) => Some(*n as f64),
+            Value::Number(n) => Some(*n),
+            _ => None,
+        };
+        let numbers = |value: &Value, n: usize| -> Option<Vec<f64>> {
+            let Value::Table(t) = value else { return None };
+            let list: Vec<f64> = t
+                .sequence_values::<Value>()
+                .filter_map(|v| v.ok())
+                .filter_map(|v| number(&v))
+                .collect();
+            (list.len() == n && t.raw_len() == n).then_some(list)
+        };
+        match key.as_str() {
+            "root" => {
+                def.root = match &value {
+                    Value::String(name) => {
+                        let name = name.to_str()?.to_string();
+                        patterns::note_number(&name).ok_or_else(|| {
+                            fail(
+                                lua,
+                                format!(
+                                    "{who}: root = \"{name}\" no es una nota (C3, F#4, Bb2...)"
+                                ),
+                            )
+                        })?
+                    }
+                    Value::Integer(n) if (0..=127).contains(n) => *n as i32,
+                    _ => {
+                        return Err(fail(
+                            lua,
+                            format!("{who}: root es una nota (\"C3\") o un número MIDI (0 a 127)"),
+                        ));
+                    }
+                }
+            }
+            "voices" => {
+                def.engine.voices = match value {
+                    Value::Integer(n) if (1..=engine::MAX_VOICES as i64).contains(&n) => n as u8,
+                    _ => {
+                        return Err(fail(
+                            lua,
+                            format!("{who}: voices va de 1 a {}", engine::MAX_VOICES),
+                        ));
+                    }
+                }
+            }
+            "loop" => {
+                let Some(range) = numbers(&value, 2) else {
+                    return Err(fail(lua, format!("{who}: loop es {{inicio, fin}} en ms")));
+                };
+                let length = frame_to_ms(this.sample.frames(), &this.sample);
+                let (from, to) = (range[0], range[1]);
+                if !(0.0 <= from && from < to && to <= length) {
+                    return Err(fail(
+                        lua,
+                        format!(
+                            "{who}: loop = {{{from}, {to}}}: tiene que ir dentro del sample (0 a {length:.1} ms) y con el fin después del inicio"
+                        ),
+                    ));
+                }
+                def.loop_ms = Some((from, to));
+            }
+            "adsr" => {
+                let Some(adsr) = numbers(&value, 4) else {
+                    return Err(fail(
+                        lua,
+                        format!(
+                            "{who}: adsr es {{ataque, decay, sustain, release}} (ms, ms, 0 a 1, ms)"
+                        ),
+                    ));
+                };
+                let max = engine::instrument::MAX_ENVELOPE_MS as f64;
+                let ms = |v: f64| (0.0..=max).contains(&v);
+                if !(ms(adsr[0]) && ms(adsr[1]) && ms(adsr[3])) {
+                    return Err(fail(
+                        lua,
+                        format!("{who}: ataque, decay y release de adsr van de 0 a {max} ms"),
+                    ));
+                }
+                if !(0.0..=1.0).contains(&adsr[2]) {
+                    return Err(fail(lua, format!("{who}: el sustain de adsr va de 0 a 1")));
+                }
+                def.engine.adsr = engine::Adsr {
+                    attack_ms: adsr[0] as f32,
+                    decay_ms: adsr[1] as f32,
+                    sustain: adsr[2] as f32,
+                    release_ms: adsr[3] as f32,
+                };
+            }
+            "crossfade" => match number(&value) {
+                Some(ms) if (0.0..=1000.0).contains(&ms) => crossfade = Some(ms),
+                _ => {
+                    return Err(fail(lua, format!("{who}: crossfade va de 0 a 1000 ms")));
+                }
+            },
+            other => {
+                return Err(fail(
+                    lua,
+                    format!(
+                        "{who}: clave desconocida \"{other}\" (hay: {})",
+                        known.join(", ")
+                    ),
+                ));
+            }
+        }
+    }
+    if let Some((from, to)) = def.loop_ms {
+        let (start, end) = (
+            ms_to_frame(from, &this.sample),
+            ms_to_frame(to, &this.sample),
+        );
+        let end = end.min(this.sample.frames()).max(start + 1);
+        let wanted = crossfade.unwrap_or(DEFAULT_CROSSFADE_MS);
+        let frames = ms_to_frame(wanted, &this.sample)
+            .min(start)
+            .min(end - start);
+        if frames < ms_to_frame(wanted, &this.sample) {
+            let warning = format!(
+                "{who}: el fundido del bucle se queda en {:.1} ms (pedía {wanted} ms): \
+                 necesita audio antes del inicio del bucle y caber dentro{}",
+                frame_to_ms(frames, &this.sample),
+                if frames == 0 {
+                    "; el salto puede hacer clic"
+                } else {
+                    ""
+                }
+            );
+            let mut warnings = this.warnings.borrow_mut();
+            if !warnings.contains(&warning) {
+                warnings.push(warning);
+            }
+        }
+        def.engine.sustain_loop = Some((start, end));
+        def.engine.crossfade = frames;
+    } else if crossfade.is_some() {
+        return Err(fail(
+            lua,
+            format!("{who}: crossfade es del bucle: falta loop = {{inicio, fin}}"),
+        ));
+    }
+    Ok(def)
 }
 
 /// Termina de cortar un sample: aplica las ediciones del proyecto
@@ -2311,6 +2583,29 @@ struct TrackHandle {
 }
 
 impl TrackHandle {
+    /// `:steps(texto)` (y `:melody()`, que lo traduce a pasos).
+    fn set_steps(&self, lua: &Lua, text: &str) -> mlua::Result<()> {
+        let (labels, stale, count, length, instrument) = self.with_track(|t| {
+            (
+                t.labels.borrow().clone(),
+                t.stale.clone(),
+                t.def.origin.cut(),
+                t.def.length,
+                t.def.instrument.is_some(),
+            )
+        });
+        let stale = StaleLabels {
+            labels: &stale,
+            count,
+        };
+        let steps = checked_steps(lua, &self.name, &labels, &stale, text, length, instrument)?;
+        self.with_track(|t| {
+            t.def.steps = steps;
+            t.steps_set = true;
+        });
+        Ok(())
+    }
+
     fn with_track<R>(&self, f: impl FnOnce(&mut TrackBuild) -> R) -> R {
         let mut builder = self.state.borrow_mut();
         let track = builder
@@ -2338,6 +2633,7 @@ fn checked_steps(
     stale: &StaleLabels,
     text: &str,
     length: usize,
+    instrument: bool,
 ) -> mlua::Result<Bar> {
     let slices = labels.len();
     let steps = parse_pattern_labeled(text, length, labels).map_err(|e| {
@@ -2364,6 +2660,16 @@ fn checked_steps(
             ));
         }
         check_step(lua, step)?;
+        if !instrument && step.chord.iter().any(Option::is_some) {
+            return Err(fail(
+                lua,
+                format!(
+                    "steps: un acorde (varios ^) necesita una pista con instrumento \
+                     (\"{track}\" es de cortes: suena una nota cada vez); \
+                     usa sample(...):instrument{{...}}"
+                ),
+            ));
+        }
     }
     Ok(steps)
 }
@@ -2373,7 +2679,10 @@ fn check_step(lua: &Lua, step: &Step) -> mlua::Result<()> {
     if !(0.0..=MAX_GAIN).contains(&step.gain) {
         return Err(fail(lua, "steps: ganancia fuera de rango (0 a 4)"));
     }
-    if !(-MAX_SEMITONES..=MAX_SEMITONES).contains(&step.semitones) {
+    if step
+        .notes()
+        .any(|st| !(-MAX_SEMITONES..=MAX_SEMITONES).contains(&st))
+    {
         return Err(fail(
             lua,
             "steps: pitch fuera de rango (-36 a 36 semitonos)",
@@ -2577,23 +2886,16 @@ impl UserData for TrackHandle {
 
         // `:steps("1 . 3' ...")`: patrón base en mini-notación.
         methods.add_method("steps", |lua, this, text: String| {
-            let (labels, stale, count, length) = this.with_track(|t| {
-                (
-                    t.labels.borrow().clone(),
-                    t.stale.clone(),
-                    t.def.origin.cut(),
-                    t.def.length,
-                )
-            });
-            let stale = StaleLabels {
-                labels: &stale,
-                count,
-            };
-            let steps = checked_steps(lua, &this.name, &labels, &stale, &text, length)?;
-            this.with_track(|t| {
-                t.def.steps = steps;
-                t.steps_set = true;
-            });
+            this.set_steps(lua, &text)?;
+            Ok(this.clone())
+        });
+
+        // `:melody("c e g e")`: notas por su nombre, desde la raíz del
+        // instrumento (en una pista de cortes, C4 es el corte 1 tal cual).
+        methods.add_method("melody", |lua, this, text: String| {
+            let root = this.with_track(|t| t.def.instrument.map_or(60, |i| i.root));
+            let steps = patterns::notes(&text, root).map_err(|e| fail(lua, e))?;
+            this.set_steps(lua, &steps)?;
             Ok(this.clone())
         });
 
@@ -2696,6 +2998,15 @@ impl UserData for TrackHandle {
                 return Err(fail(
                     lua,
                     format!("midi({channel}, {base}): el canal va de 1 a 16 y la nota de 0 a 127"),
+                ));
+            }
+            if this.with_track(|t| t.def.instrument.is_some()) {
+                return Err(fail(
+                    lua,
+                    format!(
+                        "midi({channel}): \"{}\" es un instrumento; la salida MIDI de las notas aún no está hecha",
+                        this.name
+                    ),
                 ));
             }
             this.with_track(|t| t.def.midi = Some((channel as u8, base as u8)));
@@ -2904,6 +3215,10 @@ struct BarHandle {
     stale: Rc<Vec<(String, Cut)>>,
     count: Cut,
     track: String,
+    /// Raíz de `melody` (la del instrumento, o C4) y si la pista es un
+    /// instrumento (acordes).
+    root: i32,
+    instrument: bool,
 }
 
 impl BarHandle {
@@ -2921,7 +3236,27 @@ impl BarHandle {
             stale: self.stale.clone(),
             count: self.count,
             track: self.track.clone(),
+            root: self.root,
+            instrument: self.instrument,
         }
+    }
+
+    fn set_steps(&self, lua: &Lua, text: &str) -> mlua::Result<()> {
+        let stale = StaleLabels {
+            labels: &self.stale,
+            count: self.count,
+        };
+        let steps = checked_steps(
+            lua,
+            &self.track,
+            &self.labels,
+            &stale,
+            text,
+            self.length,
+            self.instrument,
+        )?;
+        *self.steps.borrow_mut() = steps;
+        Ok(())
     }
 }
 
@@ -2929,12 +3264,13 @@ impl UserData for BarHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         // Sustituye los pasos de este compás.
         methods.add_method("steps", |lua, this, text: String| {
-            let stale = StaleLabels {
-                labels: &this.stale,
-                count: this.count,
-            };
-            let steps = checked_steps(lua, &this.track, &this.labels, &stale, &text, this.length)?;
-            *this.steps.borrow_mut() = steps;
+            this.set_steps(lua, &text)?;
+            Ok(this.handle())
+        });
+        // Sustituye los pasos por notas (como `pista:melody`).
+        methods.add_method("melody", |lua, this, text: String| {
+            let steps = patterns::notes(&text, this.root).map_err(|e| fail(lua, e))?;
+            this.set_steps(lua, &steps)?;
             Ok(this.handle())
         });
         // Invierte el sentido de cada golpe del compás.

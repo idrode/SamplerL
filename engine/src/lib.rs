@@ -5,6 +5,7 @@ pub mod bpm;
 pub mod bus;
 mod engine;
 mod fx;
+pub mod instrument;
 mod interp;
 mod limiter;
 pub mod metronome;
@@ -25,13 +26,14 @@ pub use engine::{
     PlayMode, SendError, SliceShape, new_engine,
 };
 pub use fx::{DEFAULT_Q, FilterKind, Fx, MAX_FX};
+pub use instrument::{Adsr, Instrument, MAX_VOICES};
 pub use limiter::{LIMIT_THRESHOLD, soft_limit};
 pub use output::{NullOutput, Output, open_null_output, open_output};
 pub use sample::{ImportOptions, LoadError, Sample};
 pub use sequencer::{
-    DEFAULT_BPM, MAX_BPM, MAX_CYCLE_BARS, MAX_DELAY, MAX_GAIN, MAX_RETRIG, MAX_SEMITONES,
-    MAX_STEPS, MIN_BPM, Meter, Pattern, STEPS, Step, TempoRamp, bar_frames, bar_frames_steps,
-    valid_bpm,
+    DEFAULT_BPM, MAX_BPM, MAX_CHORD, MAX_CYCLE_BARS, MAX_DELAY, MAX_GAIN, MAX_RETRIG,
+    MAX_SEMITONES, MAX_STEPS, MIN_BPM, Meter, Pattern, STEPS, Step, TempoRamp, bar_frames,
+    bar_frames_steps, valid_bpm,
 };
 pub use slice::{DEFAULT_MIN_GAP_SECONDS, DetectOptions, Detector, Slices};
 pub use status::{MasterStatus, Status, TrackStatus};

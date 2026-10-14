@@ -26,6 +26,8 @@ pub enum Receiver {
     Bar,
     /// Escala: `scale("minor", "C")`.
     Scale,
+    /// Instrumento: `sample("..."):instrument({ ... })`.
+    Instrument,
 }
 
 impl Receiver {
@@ -38,6 +40,7 @@ impl Receiver {
             Receiver::Track => "pista",
             Receiver::Bar => "compás",
             Receiver::Scale => "escala",
+            Receiver::Instrument => "instrumento",
         }
     }
 }
@@ -905,6 +908,39 @@ pub const FUNCTIONS: &[Function] = &[
         ),
     },
     Function {
+        name: "instrument",
+        receiver: Receiver::Sample,
+        signature: "sample:instrument([opciones])",
+        returns: Some(Receiver::Instrument),
+        summary: "Toca el sample como un instrumento: notas con polifonía, ADSR y bucle sostenido.",
+        doc: "Una pista con un instrumento (`track(nombre, instrumento)`) toca notas en \
+              vez de cortes: cada golpe abre una voz sin cortar las que suenan (si no \
+              queda ninguna libre, se roba la más antigua), sube y baja con su \
+              envolvente ADSR y dura su paso más sus `_`, y luego el release. El sample \
+              suena tal cual en la nota `root`: `pista:melody(\"c e g e\")` toca \
+              cromáticamente desde ahí, y en `steps` el pitch (`^`) son semitonos \
+              sobre la raíz (varios `^` hacen un acorde: `1^0^4^7`). Con `loop`, la \
+              nota sigue en bucle mientras dure (también en su release), con un \
+              fundido cruzado en el salto para que no haga clic: los últimos ms antes \
+              del fin del bucle se funden con los de antes de su inicio (si no hay \
+              tanto audio antes del inicio, el fundido se acorta y se avisa). Sin \
+              `loop`, la nota acaba con el sample. Al bajar mucho el tono el sample \
+              dura más (y al subir, menos): el pitch cambia la velocidad.",
+        params: &[Param {
+            name: "opciones",
+            description: "tabla con `root`, `loop`, `voices`, `adsr` y `crossfade` (ver abajo)",
+        }],
+        template: "instrument({ root = \"${C3}\", voices = ${4} })",
+        example: Some(
+            "bpm(100)\n\
+             -- El sample suena tal cual en C3; el bucle va de 200 a 600 ms.\n\
+             local piano = sample(\"amen.wav\"):instrument({\n  \
+             root = \"C3\", loop = { 200, 600 }, voices = 4, adsr = { 5, 80, 0.7, 300 },\n\
+             })\n\
+             track(\"lead\", piano):melody(\"c _ e _  g _ e _  c+e+g _ _ _  . . b2 .\")\n",
+        ),
+    },
+    Function {
         name: "slice",
         receiver: Receiver::Sample,
         signature: "sample:slice(n)",
@@ -1102,6 +1138,32 @@ pub const FUNCTIONS: &[Function] = &[
         example: Some(
             "local amen = sample(\"amen.wav\"):slice(8)\n\
              track(\"drums\", amen):steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\")\n",
+        ),
+    },
+    Function {
+        name: "melody",
+        receiver: Receiver::Track,
+        signature: "pista:melody(notas)",
+        returns: Some(Receiver::Track),
+        summary: "Patrón de notas por su nombre (\"c e g e\"), cromático respecto a la raíz del instrumento.",
+        doc: "Como `steps`, con notas en vez de cortes: `c`, `e`, `f#`, `bb3`... (la \
+              octava es opcional; sin ella, la de la raíz; C4 es el do central), \
+              acordes con `+` (`c+e+g`: las notas sin octava van justo por encima de \
+              la anterior), `.` silencio y `_` para alargar la nota de antes un paso. \
+              Cada nota admite los sufijos de los pasos salvo `^` (`e@0.5`, `gr2`). \
+              En una pista con instrumento la raíz es su `root`; en una de cortes, la \
+              nota C4 es el corte 1 tal cual (como en `scale`), y los acordes no valen \
+              (no hay polifonía).",
+        params: &[Param {
+            name: "notas",
+            description: "notas, acordes (`c+e+g`), `.` o `_`: tantas como pasos tiene la pista",
+        }],
+        template: "melody(\"${c . e .  g . e .  c . e .  g . c4 .}\")",
+        example: Some(
+            "local piano = sample(\"amen.wav\"):instrument({ root = \"C3\", adsr = { 5, 0, 1, 200 } })\n\
+             track(\"bajo\", piano)\n  \
+             :melody(\"c2 _ . c2  eb2 _ . f2  g2 _ _ _  bb1 _ c2 .\")\n  \
+             :gain(0.8)\n",
         ),
     },
     Function {
@@ -1506,6 +1568,20 @@ pub const FUNCTIONS: &[Function] = &[
         example: None,
     },
     Function {
+        name: "melody",
+        receiver: Receiver::Bar,
+        signature: "c:melody(notas)",
+        returns: Some(Receiver::Bar),
+        summary: "Sustituye los pasos del compás por notas, como pista:melody.",
+        doc: "",
+        params: &[Param {
+            name: "notas",
+            description: "notas, acordes (`c+e+g`), `.` o `_` (tantas como la longitud de la pista)",
+        }],
+        template: "melody(\"${c . e .  g . e .  c . e .  g . c4 .}\")",
+        example: None,
+    },
+    Function {
         name: "reverse",
         receiver: Receiver::Bar,
         signature: "c:reverse()",
@@ -1792,6 +1868,60 @@ pub const SAMPLE_PARAMS: &[FxParam] = &[
     },
 ];
 
+/// Opciones de `sample:instrument({ ... })`.
+pub const INSTRUMENT_PARAMS: &[FxParam] = &[
+    FxParam {
+        name: "root",
+        description: "la nota en la que suena el sample tal cual (`melody` toca desde ahí); C4 es el do central",
+        default: Some("\"C4\""),
+        valid: "una nota (`\"C3\"`, `\"F#2\"`, `\"Bb4\"`) o un número MIDI (0–127)",
+        values: &[],
+        template: "root = \"${C3}\"",
+    },
+    FxParam {
+        name: "loop",
+        description: "bucle sostenido `{inicio, fin}` en ms: la nota sigue en bucle mientras dure (sin él, acaba con el sample)",
+        default: Some("nil"),
+        valid: "dentro del sample, con el fin después del inicio",
+        values: &[],
+        template: "loop = { ${200}, ${600} }",
+    },
+    FxParam {
+        name: "voices",
+        description: "notas que pueden sonar a la vez; con todas ocupadas, una nota nueva roba la más antigua",
+        default: Some("4"),
+        valid: "1–16",
+        values: &[],
+        template: "voices = ${4}",
+    },
+    FxParam {
+        name: "adsr",
+        description: "envolvente de cada nota `{ataque, decay, sustain, release}`: ms, ms, nivel (0–1) y ms (0 ms: el fundido mínimo de 1,5 ms)",
+        default: Some("{ 0, 0, 1, 100 }"),
+        valid: "ms de 0 a 10000; sustain de 0 a 1",
+        values: &[],
+        template: "adsr = { ${5}, ${80}, ${0.7}, ${300} }",
+    },
+    FxParam {
+        name: "crossfade",
+        description: "fundido cruzado del salto del bucle, en ms (usa el audio de antes del inicio del bucle; si no cabe, se acorta y se avisa)",
+        default: Some("10"),
+        valid: "0–1000",
+        values: &[],
+        template: "crossfade = ${20}",
+    },
+];
+
+/// La tabla de `sample:instrument()`, como un efecto (para el
+/// autocompletado y la ayuda de sus claves).
+pub const INSTRUMENT_TABLE: Effect = Effect {
+    name: "instrument",
+    aliases: &[],
+    summary: "Cómo se toca el sample como instrumento.",
+    params: INSTRUMENT_PARAMS,
+    template: "{ root = \"${C3}\", voices = ${4} }",
+};
+
 /// La tabla de opciones de `sample()`, como un efecto (para el
 /// autocompletado y la ayuda de sus claves).
 pub const SAMPLE_TABLE: Effect = Effect {
@@ -2000,6 +2130,16 @@ pub const SNIPPETS: &[Snippet] = &[
         requires: "local amen = sample(\"amen.wav\"):slice(8)\n\
                    track(\"drums\", amen):steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\")\n",
     },
+    Snippet {
+        name: "instrumento",
+        summary: "Un sample tocado como instrumento (raíz, bucle, voces y ADSR) con una melodía.",
+        template: "local piano = sample(\"${amen.wav}\"):instrument({\n  \
+                   root = \"${C3}\", loop = { ${200}, ${600} }, voices = ${4}, adsr = { ${5}, ${80}, ${0.7}, ${300} },\n\
+                   })\n\
+                   track(\"${lead}\", piano)\n  \
+                   :melody(\"${c _ e _  g _ e _  c+e+g _ _ _  . . . .}\")\n",
+        requires: "",
+    },
 ];
 
 /// Snippet por nombre.
@@ -2136,14 +2276,16 @@ pub fn guide_markdown() -> String {
         match (f.receiver, f.name) {
             (Receiver::Track, "fx") => out.push_str(&params_table("Efecto", EFFECTS)),
             (Receiver::Global, "bus") => out.push_str(&params_table("Bus", BUSES)),
-            (Receiver::Slices, "set") | (Receiver::Global, "sample") => {
+            (Receiver::Slices, "set")
+            | (Receiver::Global, "sample")
+            | (Receiver::Sample, "instrument") => {
                 out.push_str(
                     "| Parámetro | Qué es | Por defecto | Valores |\n| --- | --- | --- | --- |\n",
                 );
-                let params = if f.name == "set" {
-                    SLICE_PARAMS
-                } else {
-                    SAMPLE_PARAMS
+                let params = match f.name {
+                    "set" => SLICE_PARAMS,
+                    "instrument" => INSTRUMENT_PARAMS,
+                    _ => SAMPLE_PARAMS,
                 };
                 for p in params {
                     let default = p.default.map_or("obligatorio".into(), code);

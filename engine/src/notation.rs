@@ -2,11 +2,15 @@
 //! defecto; tantos como la longitud de la pista, ver [`parse_pattern_labeled`]).
 //!
 //! - `.` silencio (lo que sonaba sigue sonando).
+//! - `_` alarga un paso más el golpe de antes (en el modo gate y en los
+//!   instrumentos, la nota sigue sonando; en one-shot no cambia nada):
+//!   `"1 _ _ _"` es una nota de cuatro pasos.
 //! - `3` corte número 3 (desde 1). `x` equivale a `1`.
 //! - `kick` el corte con esa etiqueta (ver [`parse_steps_labeled`] y
 //!   [`check_label`]). Lleva los mismos sufijos: `kick^7@0.5`, `kick'r2`.
-//! - Sufijos combinables, en cualquier orden y cada uno una vez:
-//!   `'` reverse, `^7` / `^-5` / `^0.5` pitch en semitonos, `@0.5` volumen,
+//! - Sufijos combinables, en cualquier orden y cada uno una vez (salvo `^`):
+//!   `'` reverse, `^7` / `^-5` / `^0.5` pitch en semitonos (varios `^` son
+//!   un acorde, hasta 4 notas: `1^0^4^7`; solo en instrumentos), `@0.5` volumen,
 //!   `r4` retrigger/stutter (el paso se repite 4 veces, de 1 a 16) y `~800`
 //!   corte del primer filtro de la pista en Hz desde ese golpe (parameter
 //!   lock).
@@ -15,7 +19,7 @@
 
 use std::fmt;
 
-use crate::sequencer::{MAX_STEPS, STEPS, Step};
+use crate::sequencer::{MAX_CHORD, MAX_STEPS, STEPS, Step};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct NotationError {
@@ -75,20 +79,39 @@ pub fn parse_pattern_labeled(
             tokens.len()
         )));
     }
-    tokens
-        .iter()
-        .enumerate()
-        .map(|(i, token)| {
-            parse_step_labeled(token, labels).map_err(|message| NotationError {
-                step: Some(i + 1),
-                token: token.to_string(),
-                message,
-            })
-        })
-        .collect()
+    let mut steps: Vec<Option<Step>> = Vec::with_capacity(length);
+    // Último golpe que un `_` puede alargar.
+    let mut held: Option<usize> = None;
+    for (i, token) in tokens.iter().enumerate() {
+        let step = parse_step_labeled(token, labels).map_err(|message| NotationError {
+            step: Some(i + 1),
+            token: token.to_string(),
+            message,
+        })?;
+        if *token == HOLD {
+            let Some(j) = held else {
+                return Err(NotationError {
+                    step: Some(i + 1),
+                    token: token.to_string(),
+                    message: "_ alarga el golpe de antes y aquí no hay ninguno".into(),
+                });
+            };
+            if let Some(hit) = &mut steps[j] {
+                hit.hold += 1;
+            }
+        } else {
+            held = step.is_some().then_some(i);
+        }
+        steps.push(step);
+    }
+    Ok(steps)
 }
 
-/// Lee un paso: `.`, o corte con sufijos opcionales.
+/// Paso que alarga el golpe anterior.
+pub const HOLD: &str = "_";
+
+/// Lee un paso: `.`, `_` (los dos sin golpe: `_` lo cuenta el patrón), o
+/// corte con sufijos opcionales.
 pub fn parse_step(token: &str) -> Result<Option<Step>, String> {
     parse_step_labeled(token, &[])
 }
@@ -141,6 +164,9 @@ pub fn check_label(name: &str) -> Result<(), String> {
     if name == "x" {
         return Err("\"x\" ya es el corte 1 en la notación".into());
     }
+    if name == HOLD {
+        return Err("\"_\" ya es «alargar el golpe» en la notación".into());
+    }
     let retrig_like =
         name.len() > 1 && name.starts_with('r') && name[1..].chars().all(|c| c.is_ascii_digit());
     if retrig_like || split_label(name).is_some_and(|(base, _)| base != name) {
@@ -154,7 +180,7 @@ pub fn check_label(name: &str) -> Result<(), String> {
 /// Como [`parse_step`], pero el corte también puede ser una etiqueta de
 /// `labels` (`labels[i]` es la del corte `i`, desde 0).
 pub fn parse_step_labeled(token: &str, labels: &[Option<String>]) -> Result<Option<Step>, String> {
-    if token == "." {
+    if token == "." || token == HOLD {
         return Ok(None);
     }
     let mut rest = token;
@@ -197,7 +223,8 @@ pub fn parse_step_labeled(token: &str, labels: &[Option<String>]) -> Result<Opti
     };
 
     let mut step = Step::new(slice - 1);
-    let (mut seen_reverse, mut seen_pitch, mut seen_gain) = (false, false, false);
+    let mut pitches = 0;
+    let (mut seen_reverse, mut seen_gain) = (false, false);
     let (mut seen_retrig, mut seen_lock) = (false, false);
     while let Some(c) = rest.chars().next() {
         rest = &rest[c.len_utf8()..];
@@ -207,9 +234,14 @@ pub fn parse_step_labeled(token: &str, labels: &[Option<String>]) -> Result<Opti
                 step.reverse = true;
             }
             '^' => {
-                once(&mut seen_pitch, "pitch (^)")?;
                 let (value, after) = number(rest, true).ok_or("falta el número después de ^")?;
-                step.semitones = value;
+                // El primero es el pitch; los siguientes, notas del acorde.
+                match pitches {
+                    0 => step.semitones = value,
+                    n if n < MAX_CHORD => step.chord[n - 1] = Some(value - step.semitones),
+                    _ => return Err(format!("un acorde tiene como mucho {MAX_CHORD} notas (^)")),
+                }
+                pitches += 1;
                 rest = after;
             }
             '@' => {

@@ -12,6 +12,7 @@ use std::sync::Arc;
 use crate::automation::{Automation, MAX_AUTOMATIONS};
 use crate::engine::{MAX_CHOKE, Playback, SendError, SliceShape};
 use crate::fx::{Fx, MAX_FX};
+use crate::instrument::Instrument;
 use crate::sample::Sample;
 use crate::slice::Slices;
 
@@ -37,6 +38,8 @@ pub const MAX_DELAY: f32 = 0.9;
 /// Vueltas máximas del ciclo de variantes de un patrón (compases, con 16
 /// pasos).
 pub const MAX_CYCLE_BARS: usize = 64;
+/// Notas de un acorde (la del paso y las de `Step::chord`).
+pub const MAX_CHORD: usize = 4;
 
 /// Un paso del patrón: qué corte suena y cómo.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -60,6 +63,12 @@ pub struct Step {
     /// siguiente (parameter lock, `3~800`); `None`, el de la automatización
     /// o el fijo.
     pub lock: Option<f32>,
+    /// Pasos que se alarga el golpe (`_` en la notación): en el modo gate y
+    /// en los instrumentos, la nota dura `1 + hold` pasos.
+    pub hold: u8,
+    /// Otras notas del acorde (varios `^`: `1^0^4^7`), en semitonos sobre
+    /// `semitones`. Solo suenan en una pista con instrumento.
+    pub chord: [Option<f32>; MAX_CHORD - 1],
 }
 
 impl Step {
@@ -72,7 +81,31 @@ impl Step {
             retrig: 1,
             delay: 0.0,
             lock: None,
+            hold: 0,
+            chord: [None; MAX_CHORD - 1],
         }
+    }
+
+    /// Alarga el golpe `hold` pasos más.
+    pub fn with_hold(self, hold: u8) -> Self {
+        Step { hold, ..self }
+    }
+
+    /// Acorde: las notas de `notes` (semitonos absolutos, como `semitones`)
+    /// suenan con la del paso. Como mucho `MAX_CHORD - 1`; las demás se
+    /// ignoran.
+    pub fn with_chord(self, notes: &[f32]) -> Self {
+        let mut chord = [None; MAX_CHORD - 1];
+        for (slot, note) in chord.iter_mut().zip(notes) {
+            *slot = Some(note - self.semitones);
+        }
+        Step { chord, ..self }
+    }
+
+    /// Semitonos de cada nota del paso: la suya y las del acorde.
+    pub fn notes(&self) -> impl Iterator<Item = f32> + '_ {
+        std::iter::once(self.semitones)
+            .chain(self.chord.iter().flatten().map(|i| self.semitones + i))
     }
 
     pub fn with_lock(self, cutoff_hz: f32) -> Self {
@@ -119,6 +152,10 @@ pub(crate) struct Trigger {
     pub delay: f32,
     /// Corte del primer filtro desde este golpe (Hz).
     pub lock: Option<f32>,
+    /// Pasos que se alarga el golpe (`_`).
+    pub hold: u8,
+    /// Velocidad de lectura de las otras notas del acorde.
+    pub chord: [Option<f64>; MAX_CHORD - 1],
 }
 
 /// Patrón de una pista. Los pasos se resuelven a rangos de frames y
@@ -151,6 +188,8 @@ pub struct Pattern {
     pub(crate) choke: Option<u8>,
     /// Notas MIDI de sus golpes: (canal 1-16, nota del corte 1).
     pub(crate) midi: Option<(u8, u8)>,
+    /// Toca el sample como instrumento (polifonía, ADSR, bucle sostenido).
+    pub(crate) instrument: Option<Instrument>,
 }
 
 impl Pattern {
@@ -212,7 +251,19 @@ impl Pattern {
             gate: false,
             choke: None,
             midi: None,
+            instrument: None,
         })
+    }
+
+    /// Toca los golpes como notas de un instrumento (ver
+    /// [`crate::instrument`]): cada uno abre una voz sin cortar las demás y
+    /// dura su paso (más sus `_`) y su release.
+    pub fn with_instrument(self, instrument: Option<Instrument>) -> Result<Self, SendError> {
+        if let Some(i) = &instrument {
+            i.validate(self.sample.frames())
+                .map_err(SendError::InvalidInstrument)?;
+        }
+        Ok(Pattern { instrument, ..self })
     }
 
     /// Manda cada golpe como una nota MIDI por `canal` (1 a 16): el corte 1
@@ -390,19 +441,33 @@ fn resolve_bar(
         if step.lock.is_some_and(|hz| !(20.0..=20_000.0).contains(&hz)) {
             return Err(invalid("corte por paso (~) fuera de rango (20 a 20000 Hz)"));
         }
+        if step
+            .notes()
+            .any(|st| !(-MAX_SEMITONES..=MAX_SEMITONES).contains(&st))
+        {
+            return Err(invalid(
+                "nota del acorde fuera de rango (-36 a 36 semitonos)",
+            ));
+        }
+        if step.hold as usize >= MAX_STEPS {
+            return Err(invalid("golpe alargado (_) más que el patrón más largo"));
+        }
+        let rate = |st: f32| 2f64.powf(st as f64 / 12.0);
         out.push(Some(Trigger {
             slice: step.slice,
             start: range.start,
             end: range.end.min(sample.frames()),
             playback: Playback {
                 gain: step.gain,
-                rate: 2f64.powf(step.semitones as f64 / 12.0),
+                rate: rate(step.semitones),
                 reverse: step.reverse,
                 shape: SliceShape::DEFAULT,
             },
             retrig: step.retrig,
             delay: step.delay,
             lock: step.lock,
+            hold: step.hold,
+            chord: step.chord.map(|i| i.map(|i| rate(step.semitones + i))),
         }));
     }
     Ok(())

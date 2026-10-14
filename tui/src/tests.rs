@@ -2341,6 +2341,7 @@ mod browser;
 mod config;
 mod grid;
 mod import;
+mod instrument;
 mod length;
 mod midi_in;
 mod midi_out;

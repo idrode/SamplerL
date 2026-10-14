@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use engine::notation::{parse_step, parse_steps};
+use engine::notation::{check_label, parse_step, parse_steps};
 use engine::{Pattern, STEPS, Sample, Slices, Step, new_engine, offline};
 
 fn one(token: &str) -> Option<Step> {
@@ -46,8 +46,22 @@ fn effects_combine_in_any_order() {
 #[test]
 fn rejects_malformed_steps_with_a_message() {
     for bad in [
-        "0", "3''", "3^", "3^-", "3@", "3@-1", "3^7^2", "3@1@2", "3x", "^7", "'", "a", "3^1.2.3",
-        "-3", "3!",
+        "0",
+        "3''",
+        "3^",
+        "3^-",
+        "3@",
+        "3@-1",
+        "3^0^4^7^9^11",
+        "3@1@2",
+        "3^7^",
+        "3x",
+        "^7",
+        "'",
+        "a",
+        "3^1.2.3",
+        "-3",
+        "3!",
     ] {
         assert!(parse_step(bad).is_err(), "\"{bad}\" debería fallar");
     }
@@ -191,4 +205,53 @@ fn label_names_cannot_clash_with_the_notation() {
         let err = check_label(bad).unwrap_err();
         assert!(err.contains(why), "{bad}: {err}");
     }
+}
+
+#[test]
+fn several_pitches_are_a_chord() {
+    let chord = one("1^0^4^7@0.5").unwrap();
+    assert_eq!(chord.semitones, 0.0);
+    assert_eq!(chord.chord, [Some(4.0), Some(7.0), None]);
+    assert_eq!(chord.notes().collect::<Vec<_>>(), vec![0.0, 4.0, 7.0]);
+    assert_eq!(chord.gain, 0.5);
+    // Las notas del acorde se guardan sobre la primera: transponer el paso
+    // las mueve todas.
+    let up = Step {
+        semitones: 12.0,
+        ..one("1^-3^0^4^7").unwrap()
+    };
+    assert_eq!(up.notes().collect::<Vec<_>>(), vec![12.0, 15.0, 19.0, 22.0]);
+    assert_eq!(
+        Step::new(0).with_chord(&[4.0, 7.0]),
+        one("1^4^7")
+            .map(|s| Step {
+                semitones: 0.0,
+                chord: [Some(4.0), Some(7.0), None],
+                ..s
+            })
+            .unwrap()
+    );
+    let err = parse_step("1^0^1^2^3^4").unwrap_err();
+    assert!(err.contains("4 notas"), "{err}");
+}
+
+#[test]
+fn hold_lengthens_the_previous_hit() {
+    let steps = parse_steps("1 _ _ .  2 _ 3 _  _ _ _ _  . . . 4").unwrap();
+    assert_eq!(steps[0].map(|s| s.hold), Some(2));
+    assert_eq!(steps[1], None);
+    assert_eq!(steps[4].map(|s| s.hold), Some(1));
+    assert_eq!(steps[6].map(|s| s.hold), Some(5));
+    assert_eq!(steps[15].map(|s| s.hold), Some(0));
+    // `_` sin golpe antes (al principio, o tras un silencio).
+    for bad in [
+        "_ 1 . .  . . . .  . . . .  . . . .",
+        "1 . _ .  . . . .  . . . .  . . . .",
+    ] {
+        let err = parse_steps(bad).unwrap_err();
+        assert!(err.message.contains("no hay ninguno"), "{err}");
+    }
+    // `_` no puede ser una etiqueta.
+    assert!(check_label("_").is_err());
+    assert!(check_label("_kick").is_ok());
 }

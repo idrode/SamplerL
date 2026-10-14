@@ -49,6 +49,7 @@ fn variable(receiver: Receiver) -> &'static str {
         Receiver::Track => "t",
         Receiver::Bar => "c",
         Receiver::Scale => "escala",
+        Receiver::Instrument => "inst",
     }
 }
 
@@ -57,6 +58,7 @@ local s = sample("amen.wav")
 local amen = s:slice(8)
 local t = track("t", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
 local escala = scale("minor", "C")
+local inst = s:instrument({ root = "C3" })
 "#;
 
 #[test]
@@ -267,7 +269,8 @@ fn every_snippet_runs_after_what_it_requires() {
             "melodia",
             "polirritmo",
             "barrido",
-            "groove"
+            "groove",
+            "instrumento"
         ]
     );
 }
@@ -279,5 +282,21 @@ fn every_fill_effect_exists() {
         let value = if e.value.is_some() { ", 2" } else { "" };
         source.push_str(&format!("t:fill(\"{}\", 2, 4{value})\n", e.name));
     }
+    eval(&source);
+}
+
+#[test]
+fn every_instrument_parameter_is_accepted() {
+    let mut source = String::from(PRELUDE);
+    let (table, _) = expand_template(api::INSTRUMENT_TABLE.template);
+    let all: Vec<String> = api::INSTRUMENT_PARAMS
+        .iter()
+        .map(|p| expand_template(p.template).0)
+        .collect();
+    source.push_str(&format!(
+        "track(\"a\", s:instrument({table})):melody(\"c . e .  g . c+e+g .  . . . .  . . . .\")\n\
+         track(\"b\", s:instrument({{ {} }})):steps(\"1^0^4 _ . .  . . . .  . . . .  . . . .\")\n",
+        all.join(", ")
+    ));
     eval(&source);
 }

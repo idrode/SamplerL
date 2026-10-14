@@ -15,8 +15,8 @@ use crate::config::{Bound, Config, Keymap};
 use crate::diagnose;
 use crate::editing;
 use crate::model::{
-    BlockPickerView, BrowserView, CompletionView, ErrorView, MasterView, PaletteView, SlotsView,
-    TrackView, TransportView, ViewModel, Waveform, error_line,
+    BlockPickerView, BrowserView, CompletionView, ErrorView, InstrumentView, MasterView,
+    PaletteView, SlotsView, TrackView, TransportView, ViewModel, Waveform, error_line,
 };
 use crate::palette::{self, Action, Item};
 
@@ -2588,6 +2588,11 @@ impl App {
                             }),
                             mute: t.mute || self.muted.contains(&t.name),
                             solo: t.solo || self.soloed.contains(&t.name),
+                            instrument: t.instrument.map(|i| InstrumentView {
+                                root: i.root,
+                                voices: i.engine.voices,
+                                sounding: track_status.map_or(0, |ts| ts.voices),
+                            }),
                         }
                     })
                     .collect()

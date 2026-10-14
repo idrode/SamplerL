@@ -8,6 +8,7 @@ use rtrb::{Consumer, Producer, RingBuffer};
 use crate::automation::mix;
 use crate::bus::{BUSES, Buses, Rack};
 use crate::fx::{Fx, FxState, MAX_FX};
+use crate::instrument::{MAX_VOICES, Note, NoteOn};
 use crate::limiter::{LIMIT_THRESHOLD, soft_limit};
 use crate::metronome::Metronome;
 use crate::sample::Sample;
@@ -366,6 +367,8 @@ pub enum SendError {
     InvalidLength(usize),
     /// Envío o parámetro de un bus fuera de rango.
     InvalidBus(&'static str),
+    /// Instrumento con parámetros fuera de rango.
+    InvalidInstrument(&'static str),
 }
 
 impl fmt::Display for SendError {
@@ -377,6 +380,7 @@ impl fmt::Display for SendError {
             }
             SendError::InvalidFx(reason) => write!(f, "efecto: {reason}"),
             SendError::InvalidBus(reason) => write!(f, "envío: {reason}"),
+            SendError::InvalidInstrument(reason) => write!(f, "instrumento: {reason}"),
             SendError::InvalidCycle(bars) => write!(
                 f,
                 "ciclo de {bars} compases fuera de rango (1 a {})",
@@ -507,6 +511,12 @@ struct Track {
     /// Valor (suavizado) de cada parámetro automatizable de cada efecto
     /// mientras se mueve; `None`: el fijo del efecto.
     mods: [[Option<f32>; 2]; MAX_FX],
+    /// Instrumento: las notas que suenan (una por voz) y las robadas o
+    /// cortadas que hacen su fundido.
+    notes: [Option<Note>; MAX_VOICES],
+    tails: [Option<Note>; MAX_VOICES],
+    /// Notas abiertas en la pista (orden de llegada, para robar).
+    born: u64,
 }
 
 /// Disparos pendientes de una pista: el golpe empieza en `start` (el
@@ -523,6 +533,18 @@ struct Retrig {
 }
 
 impl Retrig {
+    /// Lo que dura el subdisparo `done` (desde 1): su parte del paso; el
+    /// último, además, los pasos que se alarga el golpe (`_`).
+    fn gate(&self) -> usize {
+        let part = self.length / self.count as u64;
+        let hold = if self.done >= self.count {
+            self.hit.hold as u64 * self.length
+        } else {
+            0
+        };
+        (part + hold) as usize
+    }
+
     /// Frame del siguiente subdisparo: round(done · length / count).
     fn next_frame(&self) -> u64 {
         let count = self.count as u64;
@@ -549,6 +571,9 @@ impl Default for Track {
             midi_off: None,
             lock: None,
             mods: [[None; 2]; MAX_FX],
+            notes: std::array::from_fn(|_| None),
+            tails: std::array::from_fn(|_| None),
+            born: 0,
         }
     }
 }
@@ -560,6 +585,18 @@ impl Track {
 
     fn soloed(&self) -> bool {
         self.live_solo || self.pattern.as_ref().is_some_and(|p| p.solo)
+    }
+
+    /// Alguna nota del instrumento suena (o hace su fundido).
+    fn has_notes(&self) -> bool {
+        self.notes.iter().chain(&self.tails).any(Option::is_some)
+    }
+
+    /// Algo suena en la pista: su voz, su fundido o notas.
+    fn sounding(&self) -> bool {
+        self.voice.as_ref().is_some_and(Voice::is_active)
+            || self.fading.is_some()
+            || self.has_notes()
     }
 }
 
@@ -1020,10 +1057,11 @@ impl Engine {
         // Las voces terminadas se quedan en su pista hasta que otro comando o
         // paso las reemplace.
         let playing = self.transport.running
-            || self
-                .tracks
-                .iter()
-                .any(|t| t.voice.as_ref().is_some_and(Voice::is_active) || t.fading.is_some())
+            || self.tracks.iter().any(|t| {
+                t.voice.as_ref().is_some_and(Voice::is_active)
+                    || t.fading.is_some()
+                    || t.has_notes()
+            })
             || self.preview.as_ref().is_some_and(Voice::is_active)
             || self.preview_fading.is_some();
         self.playing.store(playing, Ordering::Relaxed);
@@ -1125,6 +1163,7 @@ impl Engine {
                 for t in 0..MAX_TRACKS {
                     self.tracks[t].retrig = None;
                     self.trigger(t, None);
+                    self.kill_notes(t);
                     self.midi_note_off(t, now);
                 }
             }
@@ -1187,7 +1226,7 @@ impl Engine {
                 track.retrig = None;
                 // Si la pista está callada, el volumen nuevo entra ya, sin
                 // suavizado: el primer golpe suena con él desde el principio.
-                if !track.voice.as_ref().is_some_and(Voice::is_active) && track.fading.is_none() {
+                if !track.sounding() {
                     track.gain = track.pattern.as_ref().map_or(1.0, |p| p.gain);
                     track.sends = track.pattern.as_ref().map_or([0.0; BUSES], |p| p.sends);
                 }
@@ -1209,14 +1248,15 @@ impl Engine {
             let delay = (hit.delay as f64 * length as f64).round() as u64;
             if delay == 0 {
                 // Los subdisparos de un retrigger caben dentro de su paso.
-                self.tracks[t].retrig = (hit.retrig > 1).then_some(Retrig {
+                let retrig = Retrig {
                     hit,
                     count: hit.retrig,
                     done: 1,
                     start: now,
                     length,
-                });
-                self.play_hit(t, hit, (length / hit.retrig as u64) as usize);
+                };
+                self.tracks[t].retrig = (hit.retrig > 1).then_some(retrig);
+                self.play_hit(t, hit, retrig.gate());
             } else {
                 // Retrasado: se dispara (con sus subdisparos) al llegar a su frame.
                 self.tracks[t].retrig = Some(Retrig {
@@ -1237,8 +1277,7 @@ impl Engine {
         };
         retrig.done += 1;
         self.tracks[t].retrig = (retrig.done < retrig.count).then_some(retrig);
-        let gate = retrig.length / retrig.count as u64;
-        self.play_hit(t, retrig.hit, gate as usize);
+        self.play_hit(t, retrig.hit, retrig.gate());
     }
 
     /// Dispara `hit` con el sample del patrón actual de la pista. En el
@@ -1249,6 +1288,14 @@ impl Engine {
         let Some(pattern) = &self.tracks[t].pattern else {
             return;
         };
+        if let Some(instrument) = pattern.instrument {
+            let sample = pattern.sample.clone();
+            self.status.set_hit(t, hit.start);
+            self.tracks[t].lock = hit.lock;
+            self.play_notes(t, sample, hit, gate, instrument);
+            self.choke(t);
+            return;
+        }
         let mut voice = Voice::new(pattern.sample.clone(), hit.start, hit.end, hit.playback);
         if pattern.gate {
             voice = voice.with_gate(gate);
@@ -1260,6 +1307,90 @@ impl Engine {
         self.choke(t);
         if let Some((channel, base)) = midi {
             self.midi_note_on(t, channel, base, hit, gate);
+        }
+    }
+
+    /// Un golpe de una pista con instrumento: una nota por cada nota del
+    /// acorde, cada una en una voz. Si no quedan voces, se roban las más
+    /// antiguas (hacen el fundido mínimo aparte y dejan de contar).
+    fn play_notes(
+        &mut self,
+        t: usize,
+        sample: Arc<Sample>,
+        hit: Trigger,
+        gate: usize,
+        instrument: crate::instrument::Instrument,
+    ) {
+        let fade = ((FADE_SECONDS * self.sample_rate as f32) as u64).max(1);
+        if !self.tracks[t].sounding() {
+            self.tracks[t].fresh = true;
+        }
+        let voices = instrument.voices as usize;
+        let rates = std::iter::once(hit.playback.rate).chain(hit.chord.iter().flatten().copied());
+        for rate in rates {
+            let is_voice = |n: &Option<Note>| n.as_ref().is_some_and(Note::is_voice);
+            // Roba las más antiguas hasta que quede una voz libre.
+            loop {
+                let track = &mut self.tracks[t];
+                if track.notes.iter().filter(|n| is_voice(n)).count() < voices {
+                    break;
+                }
+                let oldest = (0..MAX_VOICES)
+                    .filter(|&v| is_voice(&track.notes[v]))
+                    .min_by_key(|&v| track.notes[v].as_ref().map_or(u64::MAX, |n| n.born))
+                    .expect("hay voces sonando");
+                let mut stolen = track.notes[oldest].take().expect("es una voz");
+                stolen.kill();
+                self.park_tail(t, stolen);
+            }
+            let track = &mut self.tracks[t];
+            track.born += 1;
+            let on = NoteOn {
+                start: hit.start,
+                end: hit.end,
+                rate,
+                reverse: hit.playback.reverse,
+                gain: hit.playback.gain,
+                pan: hit.playback.shape.pan,
+                gate: gate.max(1) as u64,
+                born: track.born,
+            };
+            let note = Note::new(sample.clone(), &instrument, on, fade);
+            let free = (0..MAX_VOICES)
+                .find(|&v| !is_voice(&track.notes[v]))
+                .expect("se acaba de liberar una voz");
+            if let Some(old) = track.notes[free].replace(note) {
+                // Una nota cortada (choke, paro) que aún hacía su fundido.
+                if old.is_active() {
+                    self.park_tail(t, old);
+                } else {
+                    self.discard(old.sample);
+                }
+            }
+        }
+        self.discard(sample);
+    }
+
+    /// Guarda una nota cortada en las colas de la pista (si están llenas,
+    /// sale la más antigua).
+    fn park_tail(&mut self, t: usize, note: Note) {
+        let track = &mut self.tracks[t];
+        let tail = (0..MAX_VOICES)
+            .find(|&v| track.tails[v].is_none())
+            .unwrap_or_else(|| {
+                (0..MAX_VOICES)
+                    .min_by_key(|&v| track.tails[v].as_ref().map_or(0, |n| n.born))
+                    .expect("MAX_VOICES > 0")
+            });
+        if let Some(old) = track.tails[tail].replace(note) {
+            self.discard(old.sample);
+        }
+    }
+
+    /// Corta (con el fundido mínimo) las notas de una pista.
+    fn kill_notes(&mut self, t: usize) {
+        for note in self.tracks[t].notes.iter_mut().flatten() {
+            note.kill();
         }
     }
 
@@ -1323,8 +1454,11 @@ impl Engine {
             return;
         };
         for u in 0..MAX_TRACKS {
-            if u != t && group(&self.tracks[u]) == Some(g) && self.tracks[u].voice.is_some() {
-                self.trigger(u, None);
+            if u != t && group(&self.tracks[u]) == Some(g) {
+                if self.tracks[u].voice.is_some() {
+                    self.trigger(u, None);
+                }
+                self.kill_notes(u);
             }
         }
     }
@@ -1370,7 +1504,7 @@ impl Engine {
             } else {
                 1.0
             };
-            if track.voice.is_none() && track.fading.is_none() {
+            if track.voice.is_none() && track.fading.is_none() && !track.has_notes() {
                 track.audible = audible;
                 // En silencio no hay nada que suavizar: el siguiente golpe
                 // empieza ya con el volumen nuevo y los efectos sin memoria.
@@ -1407,6 +1541,15 @@ impl Engine {
             }
             if let Some(fading) = &mut track.fading {
                 fading.mix_into(buf);
+            }
+            let voices = track
+                .notes
+                .iter()
+                .flatten()
+                .filter(|n| n.is_voice())
+                .count();
+            for note in track.notes.iter_mut().chain(&mut track.tails).flatten() {
+                note.mix_into(buf);
             }
             let moving = track.lock.is_some()
                 || track.mods.iter().flatten().any(Option::is_some)
@@ -1455,11 +1598,21 @@ impl Engine {
                 }
             }
             self.status.add_peak(t, peak);
+            self.status.add_voices(t, voices);
 
             if track.fading.as_ref().is_some_and(|v| !v.is_active())
                 && let Some(done) = track.fading.take()
             {
                 self.discard(done.sample);
+            }
+            // Las notas que han acabado sueltan su sample.
+            for v in 0..MAX_VOICES {
+                if let Some(done) = self.tracks[t].notes[v].take_if(|n| !n.is_active()) {
+                    self.discard(done.sample);
+                }
+                if let Some(done) = self.tracks[t].tails[v].take_if(|n| !n.is_active()) {
+                    self.discard(done.sample);
+                }
             }
         }
         // Lo que devuelven los buses (los dormidos no tocan nada).
@@ -1553,6 +1706,11 @@ impl Engine {
         self.tracks.iter().any(|t| {
             t.voice.as_ref().is_some_and(|v| same(&v.sample))
                 || t.fading.as_ref().is_some_and(|v| same(&v.sample))
+                || t.notes
+                    .iter()
+                    .chain(&t.tails)
+                    .flatten()
+                    .any(|n| same(&n.sample))
                 || same_pattern(&t.pattern)
                 || t.pending.as_ref().is_some_and(same_pattern)
                 || t.staged.as_ref().is_some_and(same_pattern)

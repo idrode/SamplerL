@@ -213,6 +213,20 @@ pub struct TrackView {
     pub mute: bool,
     /// En solo (por el script o en vivo).
     pub solo: bool,
+    /// Toca su sample como instrumento (`sample:instrument()`).
+    pub instrument: Option<InstrumentView>,
+}
+
+/// Una pista con instrumento: su raíz y sus voces.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct InstrumentView {
+    /// Nota MIDI en la que suena el sample tal cual (C4 = 60).
+    pub root: i32,
+    /// Voces del instrumento.
+    pub voices: u8,
+    /// Notas que sonaban a la vez (como mucho) en la última lectura del
+    /// motor.
+    pub sounding: usize,
 }
 
 impl ViewModel {
@@ -226,6 +240,26 @@ impl ViewModel {
 }
 
 impl TrackView {
+    /// Texto de la celda del tracker de un paso: notas en un instrumento
+    /// (`C4+E4+G4`), cortes en las demás (ver [`step_text`]).
+    pub fn cell_text(&self, step: &Option<Step>) -> String {
+        match self.instrument {
+            Some(i) => note_text(step, i.root),
+            None => step_text(step, &self.labels),
+        }
+    }
+
+    /// Si la fila `row` alarga (con `_`) el golpe de una anterior.
+    pub fn held(&self, row: usize) -> bool {
+        let Some(before) = self.steps.get(..row) else {
+            return false;
+        };
+        match before.iter().rposition(Option::is_some) {
+            Some(j) => before[j].is_some_and(|s| s.hold as usize >= row - j),
+            None => false,
+        }
+    }
+
     /// Etiqueta del corte `i` (desde 0), si la tiene.
     pub fn label(&self, i: usize) -> Option<&str> {
         self.labels.get(i).and_then(|l| l.as_deref())
@@ -300,9 +334,37 @@ pub fn step_text(step: &Option<Step>, labels: &[Option<String>]) -> String {
     if step.reverse {
         text.push('\'');
     }
-    if step.semitones != 0.0 {
-        text.push_str(&format!("^{}", step.semitones));
+    let chord = step.chord.iter().any(Option::is_some);
+    if step.semitones != 0.0 || chord {
+        for st in step.notes() {
+            text.push_str(&format!("^{st}"));
+        }
     }
+    text.push_str(&suffixes(step));
+    text
+}
+
+/// Texto de un paso de un instrumento con raíz `root`: sus notas por su
+/// nombre (`C4`, `C4+E4+G4`) y los demás sufijos, o `---`.
+pub fn note_text(step: &Option<Step>, root: i32) -> String {
+    let Some(step) = step else {
+        return "---".into();
+    };
+    let notes: Vec<String> = step
+        .notes()
+        .map(|st| script::patterns::note_name(root + st.round() as i32))
+        .collect();
+    let mut text = notes.join("+");
+    if step.reverse {
+        text.push('\'');
+    }
+    text.push_str(&suffixes(step));
+    text
+}
+
+/// Volumen, retrigger y corte de un paso (`@0.5r4~800`).
+fn suffixes(step: &Step) -> String {
+    let mut text = String::new();
     if step.gain != 1.0 {
         text.push_str(&format!("@{}", step.gain));
     }
@@ -367,6 +429,19 @@ mod tests {
         assert_eq!(w.range(0.21, 0.29), (0.5, 0.5));
         assert_eq!(w.range(0.6, 0.8), (-0.8, 0.0));
         assert_eq!(w.range(0.0, 1.0), (-0.8, 0.5));
+    }
+
+    #[test]
+    fn writes_chords_and_notes() {
+        let chord = Step::new(0).with_chord(&[4.0, 7.0]).with_gain(0.5);
+        assert_eq!(step_text(&Some(chord), &[]), "01^0^4^7@0.5");
+        let parsed = engine::notation::parse_step("1^0^4^7@0.5").unwrap();
+        assert_eq!(parsed, Some(chord));
+        // En un instrumento, por su nombre desde la raíz (C3 = 48).
+        assert_eq!(note_text(&Some(chord), 48), "C3+E3+G3@0.5");
+        let low = Step::new(0).with_pitch(-13.0).with_retrig(2);
+        assert_eq!(note_text(&Some(low), 48), "B1r2");
+        assert_eq!(note_text(&None, 48), "---");
     }
 
     #[test]

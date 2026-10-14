@@ -171,8 +171,8 @@ pub fn melody(intervals: &[i32], root: i32, degrees: &str, hit: &str) -> Result<
         .iter()
         .enumerate()
         .map(|(i, token)| {
-            if token == "." {
-                return Ok(".".to_string());
+            if token == "." || token == engine::notation::HOLD {
+                return Ok(token.clone());
             }
             let sign = usize::from(token.starts_with('-'));
             let digits = token[sign..].chars().take_while(char::is_ascii_digit).count();
@@ -192,6 +192,140 @@ pub fn melody(intervals: &[i32], root: i32, degrees: &str, hit: &str) -> Result<
                 ));
             }
             Ok(format!("{hit}^{semitones}{suffixes}"))
+        })
+        .collect::<Result<_, String>>()?;
+    Ok(format(&steps))
+}
+
+/// Lee una nota al principio de `text`: letra de `a` a `g` (mayúscula o
+/// minúscula), `#` o `b` opcional y octava opcional (`-1` a `9`; C4 = 60
+/// es el do central). Devuelve la clase (semitonos sobre do, con la
+/// alteración), la octava si la lleva y lo que sigue.
+fn read_note(text: &str) -> Option<(i32, Option<i32>, &str)> {
+    let mut chars = text.char_indices();
+    let (_, letter) = chars.next()?;
+    let class = match letter.to_ascii_lowercase() {
+        'c' => 0,
+        'd' => 2,
+        'e' => 4,
+        'f' => 5,
+        'g' => 7,
+        'a' => 9,
+        'b' => 11,
+        _ => return None,
+    };
+    let mut rest = &text[1..];
+    let class = if let Some(after) = rest.strip_prefix('#') {
+        rest = after;
+        class + 1
+    } else if let Some(after) = rest.strip_prefix('b') {
+        rest = after;
+        class - 1
+    } else {
+        class
+    };
+    let sign = usize::from(rest.starts_with('-'));
+    let digits = rest[sign..]
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .count();
+    if digits == 0 {
+        return Some((class, None, rest));
+    }
+    let octave: i32 = rest[..sign + digits].parse().ok()?;
+    if !(-1..=9).contains(&octave) {
+        return None;
+    }
+    Some((class, Some(octave), &rest[sign + digits..]))
+}
+
+/// Nota MIDI de un nombre como `"C3"`, `"F#4"` o `"bb2"` (sin octava, la
+/// 4: `"A"` es 69). C4 = 60.
+pub fn note_number(name: &str) -> Option<i32> {
+    match read_note(name)? {
+        (class, octave, "") => Some(12 * (octave.unwrap_or(4) + 1) + class),
+        _ => None,
+    }
+}
+
+/// Nombre de una nota MIDI: `60` → `"C4"`, `61` → `"C#4"`.
+pub fn note_name(midi: i32) -> String {
+    const NAMES: [&str; 12] = [
+        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+    ];
+    format!(
+        "{}{}",
+        NAMES[midi.rem_euclid(12) as usize],
+        midi.div_euclid(12) - 1
+    )
+}
+
+/// Patrón de notas (`"c e g e"`, `"c+e+g _ . a3@0.5"`) a pasos con pitch
+/// respecto a la raíz `root` (nota MIDI): `"1^0 1^4 1^7 1^4"`. Una nota
+/// sin octava va en la de la raíz; en un acorde (`+`), las siguientes sin
+/// octava van justo por encima de la anterior (`g+b+d` es sol mayor). `.`
+/// y `_` pasan tal cual, y cada nota admite los sufijos de los pasos menos
+/// `^` (el tono lo da la nota).
+pub fn notes(text: &str, root: i32) -> Result<String, String> {
+    let who = "melody";
+    let tokens = tokens(text, who)?;
+    let root_octave = root.div_euclid(12) - 1;
+    let steps: Vec<String> = tokens
+        .iter()
+        .enumerate()
+        .map(|(i, token)| {
+            if token == "." || token == engine::notation::HOLD {
+                return Ok(token.clone());
+            }
+            let bad = |message: String| format!("{who}: paso {} (\"{token}\"): {message}", i + 1);
+            let mut rest = token.as_str();
+            let mut pitches: Vec<i32> = Vec::new();
+            loop {
+                let (class, octave, after) = read_note(rest).ok_or_else(|| {
+                    bad(
+                        "debe ser una nota (c, e, g#, bb3...), un acorde (c+e+g), \".\" o \"_\""
+                            .into(),
+                    )
+                })?;
+                let midi = match (octave, pitches.last()) {
+                    (Some(octave), _) => 12 * (octave + 1) + class,
+                    (None, None) => 12 * (root_octave + 1) + class,
+                    // La primera por encima de la anterior del acorde.
+                    (None, Some(&below)) => below + 1 + (class - below - 1).rem_euclid(12),
+                };
+                pitches.push(midi);
+                match after.strip_prefix('+') {
+                    Some(next) => rest = next,
+                    None => {
+                        rest = after;
+                        break;
+                    }
+                }
+            }
+            if pitches.len() > engine::MAX_CHORD {
+                return Err(bad(format!(
+                    "un acorde tiene como mucho {} notas",
+                    engine::MAX_CHORD
+                )));
+            }
+            if rest.contains('^') {
+                return Err(bad("el tono lo da la nota, sin ^".into()));
+            }
+            engine::notation::parse_step(&format!("1{rest}")).map_err(bad)?;
+            let mut step = String::from("1");
+            for midi in pitches {
+                let semitones = midi - root;
+                if semitones.abs() > engine::MAX_SEMITONES as i32 {
+                    return Err(bad(format!(
+                        "{} está a {semitones} semitonos de la raíz {} (máximo ±36)",
+                        note_name(midi),
+                        note_name(root)
+                    )));
+                }
+                step.push_str(&format!("^{semitones}"));
+            }
+            step.push_str(rest);
+            Ok(step)
         })
         .collect::<Result<_, String>>()?;
     Ok(format(&steps))
@@ -402,5 +536,51 @@ mod tests {
             tokens(&". ".repeat(65), "rotate").unwrap_err(),
             "rotate: el patrón necesita de 1 a 64 pasos, tiene 65"
         );
+    }
+
+    #[test]
+    fn note_names_and_numbers() {
+        assert_eq!(note_number("C4"), Some(60));
+        assert_eq!(note_number("c3"), Some(48));
+        assert_eq!(note_number("A"), Some(69));
+        assert_eq!(note_number("F#2"), Some(42));
+        assert_eq!(note_number("bb2"), Some(46));
+        assert_eq!(note_number("Cb4"), Some(59));
+        assert_eq!(note_number("C-1"), Some(0));
+        for bad in ["", "h", "C10", "C#x", "4"] {
+            assert_eq!(note_number(bad), None, "{bad}");
+        }
+        assert_eq!(note_name(60), "C4");
+        assert_eq!(note_name(61), "C#4");
+        assert_eq!(note_name(47), "B2");
+        assert_eq!(note_name(0), "C-1");
+    }
+
+    #[test]
+    fn notes_become_steps_relative_to_the_root() {
+        // Raíz C3: sin octava, la de la raíz.
+        assert_eq!(
+            notes("c e g e  . _ c4 b2  . . . .  . . . .", 48).unwrap(),
+            "1^0 1^4 1^7 1^4  . _ 1^12 1^-1  . . . .  . . . ."
+        );
+        // Raíz A2 (45): "c" es C2, por debajo.
+        assert_eq!(notes("c a", 45).unwrap(), "1^-9 1^0");
+        // Acordes: las notas sin octava, por encima de la anterior.
+        assert_eq!(
+            notes("c+e+g g+b+d a3+c", 48).unwrap(),
+            "1^0^4^7 1^7^11^14 1^9^12"
+        );
+        // Sufijos (menos ^) tal cual.
+        assert_eq!(notes("c@0.5r2 e'~800", 60).unwrap(), "1^0@0.5r2 1^4'~800");
+        for (bad, why) in [
+            ("h", "debe ser una nota"),
+            ("c^7", "sin ^"),
+            ("c+e+g+b+d", "como mucho 4"),
+            ("c7", "48 semitonos"),
+            ("c!", "inesperado"),
+        ] {
+            let err = notes(bad, 48).unwrap_err();
+            assert!(err.contains(why) && err.contains("paso 1"), "{bad}: {err}");
+        }
     }
 }

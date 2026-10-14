@@ -13,7 +13,6 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
 use crate::app::App;
 use crate::model::{
     BlockPickerView, BrowserView, CompletionView, PaletteView, SlotsView, ViewModel, fx_text,
-    step_text,
 };
 use crate::theme;
 
@@ -966,14 +965,22 @@ impl Widget for TrackerPanel<'_> {
             }];
             for (i, track) in view.tracks.iter().enumerate() {
                 let cell = track.steps.get(step);
+                // Una fila que alarga (`_`) la nota de antes: `│`.
+                let held = cell.is_some_and(Option::is_none) && track.held(step);
                 let cell_text: String = cell
-                    .map_or(String::new(), |c| step_text(c, &track.labels))
+                    .map_or(String::new(), |c| {
+                        if held {
+                            " │".into()
+                        } else {
+                            track.cell_text(c)
+                        }
+                    })
                     .chars()
                     .take(TRACKER_COLUMN - 1)
                     .collect();
                 let text = format!("{cell_text:<TRACKER_COLUMN$}");
                 // Las pistas que no se oyen (mute, o solo de otra), atenuadas.
-                let span = if cell.is_some_and(Option::is_some) && view.audible(i) {
+                let span = if (held || cell.is_some_and(Option::is_some)) && view.audible(i) {
                     Span::raw(text)
                 } else {
                     Span::from(text).fg(dim())
@@ -1065,6 +1072,17 @@ impl Widget for FxPanel<'_> {
             }
             if let Some((channel, base)) = track.midi {
                 title.push(Span::from(format!(" · MIDI {channel}/{base}")).fg(dim()));
+            }
+            if let Some(i) = track.instrument {
+                title.push(
+                    Span::from(format!(
+                        " · ♪ {} {}/{}",
+                        script::patterns::note_name(i.root),
+                        i.sounding,
+                        i.voices
+                    ))
+                    .fg(dim()),
+                );
             }
             if let Some(group) = track.choke {
                 title.push(Span::from(format!(" · choke {group}")).fg(dim()));
