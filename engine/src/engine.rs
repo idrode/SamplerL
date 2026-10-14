@@ -532,6 +532,24 @@ struct Track {
     tails: [Option<Note>; MAX_VOICES],
     /// Notas abiertas en la pista (orden de llegada, para robar).
     born: u64,
+    /// Notas MIDI de un instrumento que siguen encendidas: su note off
+    /// sale al acabar su paso, o antes si se roba o se corta la nota.
+    midi_notes: [Option<MidiHeld>; MIDI_HELD],
+}
+
+/// Notas MIDI encendidas a la vez por pista de instrumento (si se llenan,
+/// se apaga la más antigua).
+const MIDI_HELD: usize = 2 * MAX_VOICES;
+
+/// Una nota MIDI de un instrumento encendida.
+#[derive(Clone, Copy)]
+struct MidiHeld {
+    channel: u8,
+    note: u8,
+    /// Frame del note off (el final de su paso y sus `_`).
+    at: u64,
+    /// La nota del motor que la toca (`Note::born`).
+    born: u64,
 }
 
 /// Disparos pendientes de una pista: el golpe empieza en `start` (el
@@ -589,6 +607,7 @@ impl Default for Track {
             notes: std::array::from_fn(|_| None),
             tails: std::array::from_fn(|_| None),
             born: 0,
+            midi_notes: [None; MIDI_HELD],
         }
     }
 }
@@ -1391,9 +1410,10 @@ impl Engine {
         };
         if let Some(instrument) = pattern.instrument {
             let sample = pattern.sample.clone();
+            let midi = pattern.midi;
             self.status.set_hit(t, hit.start);
             self.tracks[t].lock = hit.lock;
-            self.play_notes(t, sample, hit, gate, instrument);
+            self.play_notes(t, sample, hit, gate, instrument, midi);
             self.choke(t);
             return;
         }
@@ -1421,6 +1441,7 @@ impl Engine {
         hit: Trigger,
         gate: usize,
         instrument: crate::instrument::Instrument,
+        midi: Option<(u8, u8)>,
     ) {
         if !self.tracks[t].sounding() {
             self.tracks[t].fresh = true;
@@ -1439,8 +1460,95 @@ impl Engine {
                 key: None,
             };
             self.open_note(t, &sample, &instrument, on);
+            if let Some((channel, root)) = midi {
+                // La nota real: la raíz más los semitonos de esta nota.
+                let semitones = (12.0 * rate.log2()).round() as i32;
+                let born = self.tracks[t].born;
+                let gain = hit.playback.gain;
+                self.instrument_midi_on(t, channel, root as i32 + semitones, gain, gate, born);
+            }
         }
         self.discard(sample);
+    }
+
+    /// Note on de una nota de un instrumento (en el frame del golpe) y su
+    /// note off para dentro de `gate` frames. Si la pista no se oye, nada.
+    fn instrument_midi_on(
+        &mut self,
+        t: usize,
+        channel: u8,
+        note: i32,
+        gain: f32,
+        gate: usize,
+        born: u64,
+    ) {
+        let now = self.transport.frame;
+        let any_solo = self.tracks.iter().any(Track::soloed);
+        let track = &self.tracks[t];
+        if track.muted() || (any_solo && !track.soloed()) {
+            return;
+        }
+        let Ok(note) = u8::try_from(note) else {
+            return;
+        };
+        if note > 127 {
+            return;
+        }
+        // La misma nota aún encendida (o sin sitio): se apaga antes.
+        let same = |m: &Option<MidiHeld>| m.is_some_and(|m| m.channel == channel && m.note == note);
+        if let Some(i) = self.tracks[t].midi_notes.iter().position(same) {
+            self.instrument_midi_off(t, i, now);
+        }
+        let track = &self.tracks[t];
+        let slot = track
+            .midi_notes
+            .iter()
+            .position(Option::is_none)
+            .unwrap_or_else(|| {
+                (0..MIDI_HELD)
+                    .min_by_key(|&i| track.midi_notes[i].map_or(0, |m| m.at))
+                    .expect("MIDI_HELD > 0")
+            });
+        if self.tracks[t].midi_notes[slot].is_some() {
+            self.instrument_midi_off(t, slot, now);
+        }
+        let velocity = (gain * 100.0).round().clamp(1.0, 127.0) as u8;
+        let _ = self.midi.push(MidiNote {
+            frame: now,
+            channel,
+            note,
+            velocity,
+        });
+        self.tracks[t].midi_notes[slot] = Some(MidiHeld {
+            channel,
+            note,
+            at: now + gate.max(1) as u64,
+            born,
+        });
+    }
+
+    /// Note off de la nota MIDI de instrumento `i` de la pista, en `frame`.
+    fn instrument_midi_off(&mut self, t: usize, i: usize, frame: u64) {
+        if let Some(m) = self.tracks[t].midi_notes[i].take() {
+            let _ = self.midi.push(MidiNote {
+                frame,
+                channel: m.channel,
+                note: m.note,
+                velocity: 0,
+            });
+        }
+    }
+
+    /// Apaga ya la nota MIDI de la nota del motor `born` (robada o cortada).
+    fn midi_off_born(&mut self, t: usize, born: u64) {
+        let now = self.transport.frame;
+        if let Some(i) = self.tracks[t]
+            .midi_notes
+            .iter()
+            .position(|m| m.is_some_and(|m| m.born == born))
+        {
+            self.instrument_midi_off(t, i, now);
+        }
     }
 
     /// Abre una nota en una voz de la pista. Si no queda ninguna libre,
@@ -1467,7 +1575,9 @@ impl Engine {
                 .expect("hay voces sonando");
             let mut stolen = track.notes[oldest].take().expect("es una voz");
             stolen.kill();
+            let born = stolen.born;
             self.park_tail(t, stolen);
+            self.midi_off_born(t, born);
         }
         let track = &mut self.tracks[t];
         track.born += 1;
@@ -1515,6 +1625,11 @@ impl Engine {
     fn kill_notes(&mut self, t: usize) {
         for note in self.tracks[t].notes.iter_mut().flatten() {
             note.kill();
+        }
+        // Sus notas MIDI se apagan ya.
+        let now = self.transport.frame;
+        for i in 0..MIDI_HELD {
+            self.instrument_midi_off(t, i, now);
         }
     }
 
@@ -1565,6 +1680,17 @@ impl Engine {
                 && at <= upto
             {
                 self.midi_note_off(t, at);
+            }
+            // Las de los instrumentos, en orden de su frame.
+            while let Some((i, at)) = self.tracks[t]
+                .midi_notes
+                .iter()
+                .enumerate()
+                .filter_map(|(i, m)| m.map(|m| (i, m.at)))
+                .filter(|&(_, at)| at <= upto)
+                .min_by_key(|&(_, at)| at)
+            {
+                self.instrument_midi_off(t, i, at);
             }
         }
     }

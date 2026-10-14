@@ -348,8 +348,12 @@ fn errors_say_the_line() {
             "el corte 2 no existe",
         ),
         (
-            "track(\"t\", sample(\"c4.wav\"):instrument()):midi(1)",
-            "aún no está hecha",
+            "track(\"t\", sample(\"c4.wav\"):instrument()):midi(1, 36)",
+            "quita nota_base",
+        ),
+        (
+            "track(\"t\", sample(\"c4.wav\"):instrument()):midi(17)",
+            "canal va de 1 a 16",
         ),
         (
             "track(\"t\", scale(\"minor\"))",
@@ -363,4 +367,42 @@ fn errors_say_the_line() {
         assert!(err.contains("song.lua:3:"), "{line}: {err}");
         assert!(err.contains(expected), "{line}: {err}");
     }
+}
+
+/// `midi(canal)` en un instrumento: cada nota sale a su altura (la raíz más
+/// sus semitonos) y dura su paso y sus `_`.
+#[test]
+fn instrument_notes_go_out_by_midi_at_their_pitch() {
+    let (mut controller, mut engine) = new_engine(RATE);
+    let mut host = ScriptHost::new(RATE);
+    let song = host
+        .load(
+            &mut controller,
+            "bpm(120)\n\
+             local i = sample(\"c4.wav\"):instrument({ root = \"C3\" })\n\
+             track(\"lead\", i):melody(\"c _ e+g .  . . . .  . . . .  . . . .\"):midi(2)",
+            "song.lua",
+            &dir(),
+        )
+        .unwrap()
+        .clone();
+    assert_eq!(song.tracks[0].midi, Some((2, 48)));
+    controller.start().unwrap();
+    offline::render(&mut engine, 4 * STEP, 2);
+    let got: Vec<(u64, u8, u8, u8)> = controller
+        .midi_events()
+        .map(|n| (n.frame, n.channel, n.note, n.velocity))
+        .collect();
+    let step = STEP as u64;
+    assert_eq!(
+        got,
+        [
+            (0, 2, 48, 100),
+            (2 * step, 2, 48, 0),
+            (2 * step, 2, 52, 100),
+            (2 * step, 2, 55, 100),
+            (3 * step, 2, 52, 0),
+            (3 * step, 2, 55, 0),
+        ]
+    );
 }

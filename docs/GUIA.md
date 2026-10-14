@@ -569,8 +569,10 @@ secuenciador y Stop lo para. Sin `--allow-midi` no se abre nada.
 **Salida hacia un synth (Surge XT).** Con `--allow-midi` también se abre
 **sampler salida**. Una pista con `:midi(canal, nota_base)` manda cada
 golpe como una nota: el corte 1 es `nota_base`, el 2 la siguiente... La
-velocidad sale del volumen del paso y cada nota dura lo que su paso. El
-sample sigue sonando; para oír solo el synth, `:gain(0)`. Para tocar con
+velocidad sale del volumen del paso y cada nota dura lo que su paso. En
+un instrumento va sin `nota_base` (`:midi(2)`): cada nota, también las de
+un acorde, sale a su altura (la raíz más sus semitonos) y dura su paso y
+sus `_`. El sample sigue sonando; para oír solo el synth, `:gain(0)`. Para tocar con
 Surge XT:
 
 1. Abre Surge XT (la versión independiente, o en tu DAW) y, en sus
@@ -1385,10 +1387,10 @@ track("cerrado", amen:slice_at(5)):steps(". . x .  . . . x  . . x .  . . . x"):c
 
 Devuelve: pista.
 
-Cada golpe sale también como una nota MIDI (corte 1 = nota_base, 36 por defecto). Con `--allow-midi`, las notas salen por el puerto virtual «sampler salida» (ALSA): conéctalo a Surge XT u otro synth (ver «MIDI» en la sección 2). La nota es `nota_base` más el número de corte menos 1, la velocidad sale del volumen del paso (`@`) y cada nota dura lo que su paso (o su parte, con retrigger). Una pista en mute, o fuera del solo, no manda nada. El sample sigue sonando: para oír solo el synth, `:gain(0)`. Los pads del modo tocar no mandan notas.
+Cada golpe sale también como una nota MIDI (corte 1 = nota_base, 36 por defecto). Con `--allow-midi`, las notas salen por el puerto virtual «sampler salida» (ALSA): conéctalo a Surge XT u otro synth (ver «MIDI» en la sección 2). La nota es `nota_base` más el número de corte menos 1, la velocidad sale del volumen del paso (`@`) y cada nota dura lo que su paso (o su parte, con retrigger). Una pista en mute, o fuera del solo, no manda nada. El sample sigue sonando: para oír solo el synth, `:gain(0)`. Los pads del modo tocar no mandan notas. En una pista con instrumento va sin `nota_base`: cada nota (también las de un acorde) sale a su altura, la raíz (`root`) más sus semitonos, y dura su paso y sus `_` (el release es solo del sample); una nota robada por falta de voces se apaga en ese momento.
 
 - `canal`: canal MIDI, de 1 a 16
-- `nota_base`: la nota del corte 1 (0 a 127; 36 por defecto)
+- `nota_base`: la nota del corte 1 (0 a 127; 36 por defecto); en un instrumento, no va
 
 ```lua
 local amen = sample("amen.wav"):slice(8)

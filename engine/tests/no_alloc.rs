@@ -294,7 +294,8 @@ fn the_audio_thread_never_allocates() {
     assert_eq!(n, 0, "reservas con un pad que hace choke");
 
     // Instrumento: polifonía con robo de voces (más notas que voces, un
-    // acorde), ADSR, bucle sostenido con fundido y notas alargadas con `_`.
+    // acorde), ADSR, bucle sostenido con fundido, notas alargadas con `_` y
+    // salida MIDI de sus notas.
     let tone: Vec<f32> = (0..24_000).map(|i| (i as f32 * 0.05).sin() * 0.3).collect();
     let tone = Arc::new(Sample::from_interleaved(&tone, 1, RATE, RATE).unwrap());
     let whole = Slices::grid(&tone, 1);
@@ -324,6 +325,9 @@ fn the_audio_thread_never_allocates() {
         .with_instrument(Some(instrument))
         .unwrap()
         .with_choke(Some(2))
+        .unwrap()
+        // Sus notas, también por MIDI (con robos y acordes).
+        .with_midi(Some((2, 48)))
         .unwrap();
     controller.set_track_pattern(6, Some(synth)).unwrap();
     let n = counted(|| {

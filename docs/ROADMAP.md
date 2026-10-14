@@ -177,7 +177,8 @@ Hecha: explorador de samples, tap tempo, `bpm_ramp()` y `meter()`,
 
 En curso: hechos la interpolación del pitch (punto 1) y el instrumento
 (`sample:instrument()`, `pista:melody()`, `_` y acordes en la notación;
-punto 2) y tocarlo en vivo (punto 5). Pendientes los puntos 3, 4, 6 y 7. Detalle y decisiones en «Fase K»
+punto 2), tocarlo en vivo (punto 5) y la salida MIDI de sus notas (punto
+6). Pendientes los puntos 3, 4 y 7. Detalle y decisiones en «Fase K»
 de [docs/ESTADO.md](ESTADO.md).
 
 Reglas de siempre: registro de la API (autocompletado, ayuda y guía), nada
@@ -204,7 +205,7 @@ huellas de `golden.rs` idénticas si no se usa nada nuevo, código portable
    de entrada, con note on y note off: la nota arranca la envolvente y el
    note off dispara el release. Decide la pista seleccionada; en las
    pistas de cortes, todo igual.
-6. **Salida MIDI de las notas de un instrumento** con `pista:midi(canal)`,
+6. ✅ **Salida MIDI de las notas de un instrumento** con `pista:midi(canal)`,
    con note on y note off al frame exacto.
 7. **Diagnóstico en vivo de `melody("...")`** en el editor, subrayando la
    nota errónea.

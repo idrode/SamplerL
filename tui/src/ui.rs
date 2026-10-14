@@ -1071,7 +1071,12 @@ impl Widget for FxPanel<'_> {
                 title.push(Span::from(" · gate").fg(dim()));
             }
             if let Some((channel, base)) = track.midi {
-                title.push(Span::from(format!(" · MIDI {channel}/{base}")).fg(dim()));
+                // En un instrumento, cada nota sale a su altura: sin base.
+                let text = match track.instrument {
+                    Some(_) => format!(" · MIDI {channel}"),
+                    None => format!(" · MIDI {channel}/{base}"),
+                };
+                title.push(Span::from(text).fg(dim()));
             }
             if let Some(i) = track.instrument {
                 title.push(

@@ -2993,20 +2993,31 @@ impl UserData for TrackHandle {
         // `:midi(canal, nota_base)`: cada golpe sale también como una nota
         // MIDI (con `--allow-midi`, por «sampler salida»).
         methods.add_method("midi", |lua, this, (channel, base): (i64, Option<i64>)| {
+            // En un instrumento la nota es la que suena: raíz + semitonos.
+            if let Some(root) = this.with_track(|t| t.def.instrument.map(|i| i.root)) {
+                if !(1..=16).contains(&channel) {
+                    return Err(fail(
+                        lua,
+                        format!("midi({channel}): el canal va de 1 a 16"),
+                    ));
+                }
+                if let Some(base) = base {
+                    return Err(fail(
+                        lua,
+                        format!(
+                            "midi({channel}, {base}): \"{}\" es un instrumento: cada nota sale a su altura (la raíz es root); quita nota_base",
+                            this.name
+                        ),
+                    ));
+                }
+                this.with_track(|t| t.def.midi = Some((channel as u8, root as u8)));
+                return Ok(this.clone());
+            }
             let base = base.unwrap_or(36);
             if !(1..=16).contains(&channel) || !(0..=127).contains(&base) {
                 return Err(fail(
                     lua,
                     format!("midi({channel}, {base}): el canal va de 1 a 16 y la nota de 0 a 127"),
-                ));
-            }
-            if this.with_track(|t| t.def.instrument.is_some()) {
-                return Err(fail(
-                    lua,
-                    format!(
-                        "midi({channel}): \"{}\" es un instrumento; la salida MIDI de las notas aún no está hecha",
-                        this.name
-                    ),
                 ));
             }
             this.with_track(|t| t.def.midi = Some((channel as u8, base as u8)));

@@ -267,7 +267,10 @@ impl Pattern {
     }
 
     /// Manda cada golpe como una nota MIDI por `canal` (1 a 16): el corte 1
-    /// es `base`, el 2 `base + 1`... (ver `Controller::midi_events`).
+    /// es `base`, el 2 `base + 1`... (ver `Controller::midi_events`). En
+    /// un instrumento (`with_instrument`), `base` es la raíz y cada nota
+    /// (también las de un acorde) sale como `base` más sus semitonos, y
+    /// dura su paso y sus `_` (o hasta que se roba o se corta).
     pub fn with_midi(self, midi: Option<(u8, u8)>) -> Result<Self, SendError> {
         if midi.is_some_and(|(c, b)| !(1..=16).contains(&c) || b > 127) {
             return Err(SendError::InvalidStep {

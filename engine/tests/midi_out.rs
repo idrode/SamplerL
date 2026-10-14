@@ -83,3 +83,90 @@ fn muted_tracks_send_nothing_and_stop_turns_notes_off() {
             .is_err()
     );
 }
+
+fn instrument_pattern(steps: Vec<Option<Step>>, voices: u8, midi: Option<(u8, u8)>) -> Pattern {
+    let sample = Arc::new(Sample::from_interleaved(&vec![0.3; 48_000], 1, RATE, RATE).unwrap());
+    let slices = Slices::grid(&sample, 1);
+    let mut instrument = engine::Instrument::new(voices);
+    instrument.adsr.release_ms = 500.0;
+    Pattern::from_steps(sample, &slices, steps)
+        .unwrap()
+        .with_instrument(Some(instrument))
+        .unwrap()
+        .with_midi(midi)
+        .unwrap()
+}
+
+/// Las notas de un instrumento salen a su altura (raíz + semitonos), una
+/// por nota del acorde, con su note off al acabar su paso y sus `_` (no
+/// el release, que es del sample), al frame exacto.
+#[test]
+fn instrument_notes_go_out_with_their_pitch_and_length() {
+    let mut steps = vec![None; STEPS];
+    steps[0] = Some(Step::new(0).with_hold(3));
+    steps[4] = Some(Step::new(0).with_chord(&[4.0, 7.0]).with_gain(0.5));
+    steps[6] = Some(Step::new(0).with_pitch(-12.0).with_retrig(2));
+    let got = notes(instrument_pattern(steps, 8, Some((10, 48))), 16 * STEP);
+    assert_eq!(
+        got,
+        [
+            on(0, 48, 100),
+            on(4 * STEP, 48, 0),
+            on(4 * STEP, 48, 50),
+            on(4 * STEP, 52, 50),
+            on(4 * STEP, 55, 50),
+            on(5 * STEP, 48, 0),
+            on(5 * STEP, 52, 0),
+            on(5 * STEP, 55, 0),
+            on(6 * STEP, 36, 100),
+            on(6 * STEP + STEP / 2, 36, 0),
+            on(6 * STEP + STEP / 2, 36, 100),
+            on(7 * STEP, 36, 0),
+        ]
+    );
+}
+
+/// Una nota robada (sin voces libres) apaga su nota MIDI en ese frame; en
+/// mute no sale nada, y parar apaga lo que quede.
+#[test]
+fn stolen_muted_and_stopped_instrument_notes() {
+    let mut steps = vec![None; STEPS];
+    steps[0] = Some(Step::new(0).with_hold(7));
+    steps[2] = Some(Step::new(0).with_pitch(2.0).with_hold(7));
+    let got = notes(
+        instrument_pattern(steps.clone(), 1, Some((10, 60))),
+        12 * STEP,
+    );
+    assert_eq!(
+        got,
+        [
+            on(0, 60, 100),
+            on(2 * STEP, 60, 0),
+            on(2 * STEP, 62, 100),
+            on(10 * STEP, 62, 0),
+        ]
+    );
+    let muted = instrument_pattern(steps.clone(), 4, Some((10, 60))).with_mute(true);
+    assert!(notes(muted, 12 * STEP).is_empty());
+    // Sin MIDI, nada (como siempre).
+    assert!(notes(instrument_pattern(steps.clone(), 4, None), 12 * STEP).is_empty());
+
+    let (mut controller, mut engine) = new_engine(RATE);
+    controller
+        .set_pattern(instrument_pattern(steps, 4, Some((10, 60))))
+        .unwrap();
+    controller.start().unwrap();
+    offline::render(&mut engine, 3 * STEP as usize, 2);
+    controller.stop().unwrap();
+    offline::render(&mut engine, 100, 2);
+    let got: Vec<MidiNote> = controller.midi_events().collect();
+    assert_eq!(
+        got,
+        [
+            on(0, 60, 100),
+            on(2 * STEP, 62, 100),
+            on(3 * STEP, 60, 0),
+            on(3 * STEP, 62, 0),
+        ]
+    );
+}

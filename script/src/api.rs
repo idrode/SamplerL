@@ -1439,7 +1439,11 @@ pub const FUNCTIONS: &[Function] = &[
               velocidad sale del volumen del paso (`@`) y cada nota dura lo que su \
               paso (o su parte, con retrigger). Una pista en mute, o fuera del \
               solo, no manda nada. El sample sigue sonando: para oír solo el synth, \
-              `:gain(0)`. Los pads del modo tocar no mandan notas.",
+              `:gain(0)`. Los pads del modo tocar no mandan notas. En una pista con \
+              instrumento va sin `nota_base`: cada nota (también las de un acorde) \
+              sale a su altura, la raíz (`root`) más sus semitonos, y dura su paso y \
+              sus `_` (el release es solo del sample); una nota robada por falta de \
+              voces se apaga en ese momento.",
         params: &[
             Param {
                 name: "canal",
@@ -1447,7 +1451,7 @@ pub const FUNCTIONS: &[Function] = &[
             },
             Param {
                 name: "nota_base",
-                description: "la nota del corte 1 (0 a 127; 36 por defecto)",
+                description: "la nota del corte 1 (0 a 127; 36 por defecto); en un instrumento, no va",
             },
         ],
         template: "midi(${1}, ${48})",
