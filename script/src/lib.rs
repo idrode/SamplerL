@@ -79,6 +79,7 @@ const GLOBAL_ONLY: &[&str] = &[
     "bus",
     "section",
     "arrange",
+    "variant",
 ];
 
 /// Compases que se tiran los dados de `chance` antes de repetirse.
@@ -118,6 +119,12 @@ pub struct Song {
     /// Línea de tiempo (`arrange()`): (sección, compases); vacía sin
     /// `arrange`. Con ella, el motor lleva la canción entera.
     pub timeline: Vec<(usize, u32)>,
+    /// Con `variant()`: qué variante es esta (`'A'` o `'B'`); `None` sin
+    /// variantes.
+    pub variant: Option<char>,
+    /// La otra variante (la B, en la A que devuelve la evaluación; el
+    /// anfitrión guarda las dos y alterna).
+    pub alternate: Option<Box<Song>>,
 }
 
 /// Una sección: su nombre y sus pistas (las de fuera de las secciones con
@@ -380,8 +387,10 @@ pub struct ScriptHost {
     samples: HashMap<PathBuf, (Option<SystemTime>, Arc<Sample>)>,
     /// Pista del motor asignada a cada nombre. Se mantiene entre recargas.
     slots: [Option<String>; MAX_TRACKS],
-    /// Último modelo aplicado con éxito.
+    /// Último modelo aplicado con éxito (la variante que suena, si las
+    /// hay) y la otra variante.
     song: Option<Song>,
+    other: Option<Song>,
     /// Semilla de `chance`; `None` usa una distinta en cada evaluación.
     seed: Option<u64>,
     /// Carpeta de los samples (del proyecto); `None`: la del script.
@@ -410,6 +419,7 @@ impl ScriptHost {
             samples: HashMap::new(),
             slots: Default::default(),
             song: None,
+            other: None,
             seed: None,
             sample_dir: None,
             default_bpm: None,
@@ -622,6 +632,14 @@ impl ScriptHost {
         base_dir: &Path,
     ) -> Result<&Song, ScriptError> {
         let mut song = self.eval(source, name, base_dir)?;
+        // Con variantes, sigue sonando la que sonaba (la A al principio).
+        let mut other = song.alternate.take().map(|b| *b);
+        let wanted = self.song.as_ref().and_then(|s| s.variant).unwrap_or('A');
+        if wanted == 'B'
+            && let Some(b) = other.take()
+        {
+            other = Some(std::mem::replace(&mut song, b));
+        }
         // Recargar a mitad de canción: el arreglo nuevo entra en el compás
         // siguiente; si la sección que tocaba entonces ya no está, el motor
         // vuelve al principio de la línea de tiempo. Se avisa.
@@ -634,7 +652,15 @@ impl ScriptHost {
                 "la sección \"{current}\" ya no existe: la canción vuelve al principio de la línea de tiempo"
             ));
         }
-        let slots = self.assign_slots(&song);
+        // Las pistas de las dos variantes tienen su ranura: alternar no
+        // mueve ninguna.
+        let mut names = song.track_names();
+        for n in other.iter().flat_map(Song::track_names) {
+            if !names.contains(&n) {
+                names.push(n);
+            }
+        }
+        let slots = self.assign_slots(&names);
         let batch = song_batch(&song, &slots)?;
         controller
             .apply(batch)
@@ -642,7 +668,56 @@ impl ScriptHost {
 
         self.slots = slots;
         self.song = Some(song);
+        self.other = other;
         Ok(self.song.as_ref().unwrap())
+    }
+
+    /// La variante que suena (`'A'` o `'B'`); `None` sin variantes.
+    pub fn variant(&self) -> Option<char> {
+        self.song.as_ref().and_then(|s| s.variant)
+    }
+
+    /// Pasa a la variante `letter`: manda esa versión de la canción como un
+    /// lote (entra entera al empezar el compás siguiente; con secciones,
+    /// sigue por la misma sección y el mismo compás). Sin variantes, error.
+    pub fn set_variant(
+        &mut self,
+        controller: &mut Controller,
+        letter: char,
+    ) -> Result<&Song, ScriptError> {
+        if self.variant().is_none() {
+            return Err(ScriptError::new(
+                "no hay variantes: defínelas con variant(\"sección o pista\", \"B\", function() ... end)",
+            ));
+        }
+        if self.variant() != Some(letter) {
+            let Some(other) = self.other.take().filter(|o| o.variant == Some(letter)) else {
+                return Err(ScriptError::new(format!("no hay variante {letter}")));
+            };
+            let batch = match song_batch(&other, &self.slots) {
+                Ok(batch) => batch,
+                Err(e) => {
+                    self.other = Some(other);
+                    return Err(e);
+                }
+            };
+            if let Err(e) = controller.apply(batch) {
+                self.other = Some(other);
+                return Err(ScriptError::new(format!("no se pudo enviar al motor: {e}")));
+            }
+            self.other = self.song.replace(other);
+        }
+        Ok(self.song.as_ref().unwrap())
+    }
+
+    /// Alterna entre A y B (ver [`ScriptHost::set_variant`]).
+    pub fn toggle_variant(&mut self, controller: &mut Controller) -> Result<&Song, ScriptError> {
+        let next = if self.variant() == Some('A') {
+            'B'
+        } else {
+            'A'
+        };
+        self.set_variant(controller, next)
     }
 
     /// Evalúa el script y devuelve el modelo, sin tocar el motor.
@@ -693,6 +768,7 @@ impl ScriptHost {
             arrange: None,
             in_section: Rc::new(Cell::new(false)),
             names: Vec::new(),
+            variants: Vec::new(),
         }));
         // La caché pasa al estado de Lua durante la evaluación y vuelve después.
         let cache = Rc::new(RefCell::new(std::mem::take(&mut self.samples)));
@@ -710,10 +786,10 @@ impl ScriptHost {
                 base_dir,
             )
             .and_then(|()| lua.load(source).set_name(format!("={name}")).exec())
-            .and_then(|()| run_sections(&state));
+            .and_then(|()| run_bodies(&state));
         self.samples = std::mem::take(&mut *cache.borrow_mut());
         self.imported = std::mem::take(&mut imports.borrow_mut().used);
-        let sections = result.map_err(|e| ScriptError::from_lua(&e))?;
+        let versions = result.map_err(|e| ScriptError::from_lua(&e))?;
 
         let (bpm, metronome, buses, tempo_ramp, meter, tracks, expanding, arrange) = {
             let mut builder = state.borrow_mut();
@@ -738,109 +814,140 @@ impl ScriptHost {
                 tracks.len()
             )));
         }
+        if versions.iter().all(|v| v.sections.is_none())
+            && let Some((_, location)) = &arrange
+        {
+            return Err(ScriptError::new(format!(
+                "{location}arrange: no hay secciones; defínelas con section(\"nombre\", function() ... end)"
+            )));
+        }
 
         // Expandir `every` y `chance` a un ciclo de compases. Las funciones de
-        // `every` se llaman ahora, con el estado de Lua todavía vivo.
-        let mut rng = Rng::new(seed);
+        // `every` se llaman ahora, con el estado de Lua todavía vivo. Cada
+        // versión (A y B) con el azar desde la misma semilla: lo que no
+        // cambia entre ellas sale igual.
         let tempo = bpm.unwrap_or(engine::DEFAULT_BPM);
         let timing = Timing { bpm: tempo, seed };
         let mut used = Vec::new();
-        let mut finish = |mut tracks: Vec<TrackBuild>| -> Result<Vec<TrackDef>, ScriptError> {
-            self.apply_stretch(&mut tracks, tempo, name, &mut used)?;
-            expanding.set(true);
-            let expanded = tracks
-                .into_iter()
-                .map(|track| expand(track, &mut rng, timing))
-                .collect::<Result<Vec<_>, _>>();
-            expanding.set(false);
-            expanded
-        };
-        let mut warnings = warnings.borrow().clone();
-        let (tracks, sections, timeline) = match sections {
-            None => {
-                if arrange.is_some() {
-                    let (_, location) = arrange.unwrap_or_default();
-                    return Err(ScriptError::new(format!(
-                        "{location}arrange: no hay secciones; defínelas con section(\"nombre\", function() ... end)"
-                    )));
-                }
-                (finish(tracks)?, Vec::new(), Vec::new())
-            }
-            Some(built) => {
-                let sections = built
+        let base_warnings = warnings.borrow().clone();
+        let mut songs = Vec::with_capacity(versions.len());
+        for version in versions {
+            let mut rng = Rng::new(seed);
+            let mut finish = |mut tracks: Vec<TrackBuild>| -> Result<Vec<TrackDef>, ScriptError> {
+                self.apply_stretch(&mut tracks, tempo, name, &mut used)?;
+                expanding.set(true);
+                let expanded = tracks
                     .into_iter()
-                    .map(|(name, tracks)| {
-                        Ok(SectionDef {
-                            name,
-                            tracks: finish(tracks)?,
-                        })
-                    })
-                    .collect::<Result<Vec<_>, ScriptError>>()?;
-                let timeline = match arrange {
-                    Some((entries, location)) => {
-                        let timeline = entries
-                            .iter()
-                            .map(|(section, bars)| {
-                                let index = sections.iter().position(|s| &s.name == section);
-                                index.map(|i| (i, *bars)).ok_or_else(|| {
-                                    let known: Vec<&str> =
-                                        sections.iter().map(|s| s.name.as_str()).collect();
-                                    ScriptError::new(format!(
-                                        "{location}arrange: la sección \"{section}\" no existe (hay: {})",
-                                        known.join(", ")
-                                    ))
-                                })
+                    .map(|track| expand(track, &mut rng, timing))
+                    .collect::<Result<Vec<_>, _>>();
+                expanding.set(false);
+                expanded
+            };
+            let mut warnings = base_warnings.clone();
+            let (tracks, sections, timeline) = match version.sections {
+                None => (finish(version.base)?, Vec::new(), Vec::new()),
+                Some(built) => {
+                    let sections = built
+                        .into_iter()
+                        .map(|(name, tracks)| {
+                            Ok(SectionDef {
+                                name,
+                                tracks: finish(tracks)?,
                             })
-                            .collect::<Result<Vec<_>, _>>()?;
-                        let total: u64 = timeline.iter().map(|&(_, b)| b as u64).sum();
-                        if total > MAX_SONG_BARS {
-                            warnings.push(format!(
-                                "la línea de tiempo dura {total} compases: exportar se queda en los primeros {MAX_SONG_BARS}"
-                            ));
+                        })
+                        .collect::<Result<Vec<_>, ScriptError>>()?;
+                    let timeline = match &arrange {
+                        Some((entries, location)) => {
+                            let timeline = entries
+                                .iter()
+                                .map(|(section, bars)| {
+                                    let index = sections.iter().position(|s| &s.name == section);
+                                    index.map(|i| (i, *bars)).ok_or_else(|| {
+                                        let known: Vec<&str> =
+                                            sections.iter().map(|s| s.name.as_str()).collect();
+                                        ScriptError::new(format!(
+                                            "{location}arrange: la sección \"{section}\" no existe (hay: {})",
+                                            known.join(", ")
+                                        ))
+                                    })
+                                })
+                                .collect::<Result<Vec<_>, _>>()?;
+                            let total: u64 = timeline.iter().map(|&(_, b)| b as u64).sum();
+                            if total > MAX_SONG_BARS {
+                                warnings.push(format!(
+                                    "la línea de tiempo dura {total} compases: exportar se queda en los primeros {MAX_SONG_BARS}"
+                                ));
+                            }
+                            timeline
                         }
-                        timeline
-                    }
-                    None => {
-                        if sections.len() > 1 {
-                            warnings.push(format!(
-                                "hay {} secciones y ningún arrange(): suena solo \"{}\"",
-                                sections.len(),
-                                sections[0].name
-                            ));
+                        None => {
+                            if sections.len() > 1 {
+                                warnings.push(format!(
+                                    "hay {} secciones y ningún arrange(): suena solo \"{}\"",
+                                    sections.len(),
+                                    sections[0].name
+                                ));
+                            }
+                            Vec::new()
                         }
-                        Vec::new()
-                    }
-                };
-                let first = timeline.first().map_or(0, |&(s, _)| s);
-                (sections[first].tracks.clone(), sections, timeline)
+                    };
+                    let first = timeline.first().map_or(0, |&(s, _)| s);
+                    (sections[first].tracks.clone(), sections, timeline)
+                }
+            };
+            let all = || {
+                sections
+                    .iter()
+                    .flat_map(|s| s.tracks.iter())
+                    .chain(sections.is_empty().then_some(&tracks).into_iter().flatten())
+            };
+            for warning in all()
+                .filter_map(far_kept_pitch)
+                .chain(all().filter_map(idle_formant))
+            {
+                if !warnings.contains(&warning) {
+                    warnings.push(warning);
+                }
             }
-        };
-        self.stretched = used;
-        let all = || {
-            sections
-                .iter()
-                .flat_map(|s| s.tracks.iter())
-                .chain(sections.is_empty().then_some(&tracks).into_iter().flatten())
-        };
-        for warning in all()
-            .filter_map(far_kept_pitch)
-            .chain(all().filter_map(idle_formant))
-        {
-            if !warnings.contains(&warning) {
-                warnings.push(warning);
-            }
+            songs.push(Song {
+                bpm,
+                tracks,
+                metronome,
+                buses,
+                tempo_ramp,
+                meter,
+                warnings,
+                sections,
+                timeline,
+                variant: version.letter,
+                alternate: None,
+            });
         }
-        Ok(Song {
-            bpm,
-            tracks,
-            metronome,
-            buses,
-            tempo_ramp,
-            meter,
-            warnings,
-            sections,
-            timeline,
-        })
+        self.stretched = used;
+        // Con variantes, la A lleva a la B.
+        let mut songs = songs.into_iter();
+        let mut song = songs.next().expect("al menos una versión");
+        if let Some(b) = songs.next() {
+            for warning in &b.warnings {
+                if !song.warnings.contains(warning) {
+                    song.warnings.push(warning.clone());
+                }
+            }
+            let mut names = song.track_names();
+            for n in b.track_names() {
+                if !names.contains(&n) {
+                    names.push(n);
+                }
+            }
+            if names.len() > MAX_TRACKS {
+                return Err(ScriptError::new(format!(
+                    "{name}: entre las variantes A y B hay {} pistas y el máximo es {MAX_TRACKS}",
+                    names.len()
+                )));
+            }
+            song.alternate = Some(Box::new(b));
+        }
+        Ok(song)
     }
 
     /// Estira los samples de las pistas con `:stretch()` al tempo de la
@@ -1028,6 +1135,45 @@ impl ScriptHost {
                 st.borrow_mut().arrange = Some((entries, location(lua)));
                 Ok(())
             })?,
+        )?;
+
+        let st = state.clone();
+        let g = guard.clone();
+        globals.set(
+            "variant",
+            lua.create_function(
+                move |lua, (target, letter, func): (String, String, Function)| {
+                    g(lua, "variant")?;
+                    let letter = match letter.as_str() {
+                        "A" => 'A',
+                        "B" => 'B',
+                        other => {
+                            return Err(fail(
+                                lua,
+                                format!("variant(\"{target}\", \"{other}\"): la variante es \"A\" o \"B\""),
+                            ));
+                        }
+                    };
+                    let mut builder = st.borrow_mut();
+                    if builder
+                        .variants
+                        .iter()
+                        .any(|v| v.target == target && v.letter == letter)
+                    {
+                        return Err(fail(
+                            lua,
+                            format!("variant(\"{target}\", \"{letter}\"): ya está definida"),
+                        ));
+                    }
+                    builder.variants.push(VariantBuild {
+                        target,
+                        letter,
+                        func,
+                        location: location(lua),
+                    });
+                    Ok(())
+                },
+            )?,
         )?;
 
         let st = state.clone();
@@ -1423,10 +1569,10 @@ impl ScriptHost {
 
     /// Asigna una pista del motor a cada nombre: los que siguen conservan la
     /// suya; los nuevos ocupan las libres.
-    fn assign_slots(&self, song: &Song) -> [Option<String>; MAX_TRACKS] {
+    fn assign_slots(&self, names: &[&str]) -> [Option<String>; MAX_TRACKS] {
         let mut slots: [Option<String>; MAX_TRACKS] = Default::default();
         let mut new_names = Vec::new();
-        for name in song.track_names() {
+        for &name in names {
             match self.track_slot(name) {
                 Some(slot) => slots[slot] = Some(name.to_string()),
                 None => new_names.push(name.to_string()),
@@ -1740,30 +1886,82 @@ fn location(lua: &Lua) -> String {
 /// Una sección evaluada: su nombre y sus pistas sin expandir.
 type BuiltSection = (String, Vec<TrackBuild>);
 
-/// Evalúa las secciones (al acabar el script): cada una sobre una copia de
-/// las pistas de fuera de las secciones, que su función cambia o amplía.
-/// `None` sin secciones.
-fn run_sections(state: &Rc<RefCell<Builder>>) -> mlua::Result<Option<Vec<BuiltSection>>> {
-    let sections = std::mem::take(&mut state.borrow_mut().sections);
-    if sections.is_empty() {
-        return Ok(None);
-    }
-    let (base, in_section) = {
+/// Evalúa las secciones y las variantes (al acabar el script). Sin
+/// variantes, una versión; con ellas, la A y la B. En cada una: las
+/// variantes de pista cambian las pistas de fuera (su función recibe la
+/// pista), y cada sección es una copia de ellas que cambian su función y
+/// la de su variante.
+fn run_bodies(state: &Rc<RefCell<Builder>>) -> mlua::Result<Vec<BuiltVersion>> {
+    let (sections, variants, main, in_section) = {
         let mut builder = state.borrow_mut();
         builder.names = builder.tracks.iter().map(|t| t.def.name.clone()).collect();
-        (builder.tracks.clone(), builder.in_section.clone())
+        (
+            std::mem::take(&mut builder.sections),
+            std::mem::take(&mut builder.variants),
+            builder.tracks.clone(),
+            builder.in_section.clone(),
+        )
     };
-    let mut built = Vec::with_capacity(sections.len());
-    for section in sections {
-        state.borrow_mut().tracks = base.clone();
-        in_section.set(true);
-        let result = section.func.call::<()>(());
-        in_section.set(false);
-        result?;
-        built.push((section.name, std::mem::take(&mut state.borrow_mut().tracks)));
+    // De qué es cada variante: una sección (si se llama así) o una pista.
+    for v in &variants {
+        let section = sections.iter().any(|s| s.name == v.target);
+        let track = main.iter().any(|t| t.def.name == v.target);
+        if !(section || track) {
+            return Err(mlua::Error::runtime(format!(
+                "{}variant: no hay ninguna sección ni pista \"{}\" (fuera de las secciones)",
+                v.location, v.target
+            )));
+        }
     }
-    state.borrow_mut().tracks = base;
-    Ok(Some(built))
+    let is_section = |v: &VariantBuild| sections.iter().any(|s| s.name == v.target);
+    let letters: &[Option<char>] = if variants.is_empty() {
+        &[None]
+    } else {
+        &[Some('A'), Some('B')]
+    };
+    let call = |tracks: Vec<TrackBuild>, run: &dyn Fn() -> mlua::Result<()>| {
+        state.borrow_mut().tracks = tracks;
+        in_section.set(true);
+        let result = run();
+        in_section.set(false);
+        result.map(|()| std::mem::take(&mut state.borrow_mut().tracks))
+    };
+    let mut versions = Vec::with_capacity(letters.len());
+    for &letter in letters {
+        let mine = |v: &&VariantBuild| Some(v.letter) == letter;
+        let mut base = main.clone();
+        for v in variants.iter().filter(mine).filter(|v| !is_section(v)) {
+            let handle = TrackHandle {
+                name: v.target.clone(),
+                state: state.clone(),
+            };
+            base = call(base, &|| v.func.call::<()>(handle.clone()))?;
+        }
+        let built = if sections.is_empty() {
+            None
+        } else {
+            let mut built = Vec::with_capacity(sections.len());
+            for section in &sections {
+                let mut tracks = call(base.clone(), &|| section.func.call::<()>(()))?;
+                for v in variants
+                    .iter()
+                    .filter(mine)
+                    .filter(|v| v.target == section.name)
+                {
+                    tracks = call(tracks, &|| v.func.call::<()>(()))?;
+                }
+                built.push((section.name.clone(), tracks));
+            }
+            Some(built)
+        };
+        versions.push(BuiltVersion {
+            letter,
+            base,
+            sections: built,
+        });
+    }
+    state.borrow_mut().tracks = main;
+    Ok(versions)
 }
 
 /// La pista que define `track(nombre, origen)`: unos cortes
@@ -1865,6 +2063,27 @@ struct Builder {
     /// Nombres de pista de todas las secciones (no pueden pasar de
     /// `MAX_TRACKS`: cada uno ocupa una pista del motor).
     names: Vec<String>,
+    /// Variantes por evaluar (`variant()`).
+    variants: Vec<VariantBuild>,
+}
+
+/// `variant(nombre, letra, función)`: lo que cambia una sección o una
+/// pista en la variante A o B.
+struct VariantBuild {
+    target: String,
+    letter: char,
+    func: Function,
+    /// Dónde se llamó (para los errores que salen después).
+    location: String,
+}
+
+/// Una versión de la canción ya evaluada, sin expandir: sin variantes hay
+/// una (`letter` = `None`); con ellas, la A y la B.
+struct BuiltVersion {
+    letter: Option<char>,
+    /// Las pistas de fuera de las secciones.
+    base: Vec<TrackBuild>,
+    sections: Option<Vec<BuiltSection>>,
 }
 
 /// `section(nombre, función)`: se evalúa al acabar el script, sobre una

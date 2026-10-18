@@ -54,6 +54,8 @@ pub struct ViewModel {
     /// Grabación en curso: «REC drums 1/2» o, hasta que empieza el
     /// compás, «REC drums: al compás».
     pub recording: Option<String>,
+    /// Con `variant()`: la variante que suena (`'A'` o `'B'`).
+    pub variant: Option<char>,
     /// Con `arrange()`: la línea de tiempo y por dónde va.
     pub timeline: Option<TimelineView>,
     /// Pistas en el orden del script.

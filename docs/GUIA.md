@@ -266,6 +266,7 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Saltar a una sección | Abre «seccion » para escribir su nombre: su primera entrada en la línea de tiempo empieza en el compás siguiente | — |
 | Repetir la sección | La sección que suena se repite en vez de pasar a la siguiente; otra vez, vuelve a la línea de tiempo | l (modo tocar) |
 | Volver a la línea de tiempo | Deja de repetir la sección: al acabar, sigue la siguiente | — |
+| Alternar variante A/B | Con variant(): pasa a la otra variante; entra entera al empezar el compás siguiente (con secciones, por la misma sección y compás) | v (modo tocar) |
 | Versiones | El historial del script (una versión por carga buena): lista con fecha y vista previa; Enter la restaura en el editor sin guardar (Ctrl-Z lo deshace) | — |
 | Salir | Sale (pide confirmación si hay cambios sin guardar) | Ctrl-Q |
 | Snippet: `amen`, `fill`, `ghost`, `intro`, `euclid`, `melodia`, `polirritmo`, `barrido`, `groove`, `instrumento` | Inserta el snippet en el cursor (ver «Snippets» en la sección 4) | — |
@@ -332,6 +333,7 @@ de esta guía.
 | s | solo de la pista seleccionada (en vivo) |
 | [ ] | con `arrange()`: salta a la sección anterior o siguiente de la línea de tiempo (en el compás siguiente) |
 | l | con `arrange()`: repite la sección que suena; otra vez, vuelve a la línea de tiempo |
+| v | con `variant()`: pasa a la otra variante, A o B (en el compás siguiente) |
 
 El corte suena al instante (no espera al compás), con el volumen, los
 efectos, la forma del corte (`cortes:set`) y el grupo de choke de la
@@ -550,6 +552,7 @@ paleta de 256.
 | `seccion_siguiente` | Saltar a la sección siguiente | — |
 | `seccion_anterior` | Saltar a la sección anterior | — |
 | `repetir_seccion` | Repetir la sección | — |
+| `variante` | Alternar variante A/B | — |
 
 | En `[colores]` | Para |
 | --- | --- |
@@ -894,6 +897,23 @@ section("intro", function() track("drums"):steps("1 . . .  . . . .  1 . . .  . .
 section("drop", function() end)
 section("break", function() track("drums"):mute() end)
 arrange({ {"intro", 4}, {"drop", 8}, {"break", 2}, {"drop", 8} })
+```
+
+### `variant(nombre, letra, función)`
+
+Variante A o B de una sección o de una pista, para alternarlas en vivo. Con `nombre` de una sección, la función cambia sus pistas como dentro de `section()` (sin argumentos: `track("drums"):mute()`); con el de una pista de fuera de las secciones, la recibe (`function(t) t:steps("...") end`) y el cambio vale en todas las secciones donde suene. La letra es `"A"` o `"B"`; la que no se define es lo que está escrito. Al cargar se preparan las dos versiones de la canción y suena la A (al recargar, la que sonaba). «Alternar variante A/B» en la paleta o `v` en el modo tocar pasa a la otra: entra entera al empezar el compás siguiente y, con secciones, sigue por la misma sección y el mismo compás. Exportar graba la que suena.
+
+- `nombre`: una sección o una pista de fuera de las secciones
+- `letra`: `"A"` o `"B"`
+- `función`: lo que cambia (con una pista, la recibe)
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+-- B: otro patrón para la misma pista; v en el modo tocar alterna.
+variant("drums", "B", function(t)
+  t:steps("1 . . 1  . . 3 .  1 . 5 .  . 3 . 6")
+end)
 ```
 
 ### `bus(nombre, parámetros)`
@@ -2046,6 +2066,36 @@ vuelve al principio y lo avisa. `exportar` (y `--render` sin `--bars`)
 graba la línea de tiempo entera, hasta 256 compases. Sin `arrange()` suena
 solo la primera sección, como una canción de siempre.
 
+### Variantes A/B
+
+Dos versiones de una parte para compararlas en vivo: `variant()` dice qué
+cambia en la B (de una sección o de una pista suelta) y la A es lo
+escrito. `v` en el modo tocar (o «Alternar variante A/B» en la paleta)
+pasa de una a otra al empezar el compás siguiente; el panel del motor dice
+`variante A` o `variante B`. Con secciones, la canción sigue por la misma
+sección y el mismo compás. Recargar conserva la que suena, y exportar
+graba esa.
+
+```lua
+bpm(170)
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+
+-- Una pista suelta: la B con otro patrón.
+variant("drums", "B", function(t)
+  t:steps("1 . . 1  . . 3 .  1 . 5 .  . 3 . 6")
+end)
+
+section("intro", function() track("drums"):mute() end)
+section("drop", function() end)
+-- Una sección: la B del drop añade un bombo.
+variant("drop", "B", function()
+  track("kick", amen:slice_at(1)):steps("x . . .  x . . .  x . . .  x . . .")
+end)
+
+arrange({ {"intro", 4}, {"drop", 8} })
+```
+
 ## 7. Solución de problemas
 
 ### Cortes mal detectados
@@ -2179,6 +2229,14 @@ pista "d": every/chance dan un ciclo de 77 compases (máximo 64)
 
 `every(7)` y `every(11)` necesitan 77 compases para repetirse. Usa números
 que se lleven bien (2, 4, 8, 16...).
+
+```text
+song.lua:1: ')' expected near <eof>
+```
+
+Error de sintaxis de Lua: falta cerrar un paréntesis, unas comillas o un
+`end`.
+).
 
 ```text
 song.lua:1: ')' expected near <eof>

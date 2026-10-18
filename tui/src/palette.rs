@@ -56,6 +56,7 @@ pub enum Action {
     LoopSection,
     FollowTimeline,
     Versions,
+    ToggleVariant,
     Quit,
 }
 
@@ -346,6 +347,12 @@ pub const ACTIONS: &[ActionDef] = &[
         name: "Volver a la línea de tiempo",
         description: "Deja de repetir la sección: al acabar, sigue la siguiente",
         keys: "",
+    },
+    ActionDef {
+        action: Action::ToggleVariant,
+        name: "Alternar variante A/B",
+        description: "Con variant(): pasa a la otra variante; entra entera al empezar el compás siguiente (con secciones, por la misma sección y compás)",
+        keys: "v (modo tocar)",
     },
     ActionDef {
         action: Action::Versions,

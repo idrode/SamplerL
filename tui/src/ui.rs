@@ -735,6 +735,12 @@ impl Widget for EnginePanel<'_> {
                     Some(rec) => Span::from(format!("   ● {rec}")).fg(error_color()).bold(),
                     None => Span::raw(""),
                 },
+                match view.variant {
+                    Some(letter) => Span::from(format!("   variante {letter}"))
+                        .fg(Color::Black)
+                        .bg(accent()),
+                    None => Span::raw(""),
+                },
             ]),
             master_line(&view.master),
         ];

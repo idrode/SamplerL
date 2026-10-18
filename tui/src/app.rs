@@ -1660,6 +1660,23 @@ impl App {
         };
     }
 
+    /// Pasa a la otra variante (A/B): entra al empezar el compás siguiente.
+    pub fn toggle_variant(&mut self) {
+        match self.host.toggle_variant(&mut self.controller) {
+            Ok(song) => {
+                let letter = song.variant.unwrap_or('A');
+                self.message = format!("variante {letter}: entra en el compás siguiente");
+                let count = self.tracks().len();
+                if self.selected >= count {
+                    self.selected = 0;
+                }
+                self.update_waveforms();
+                self.sync_mix();
+            }
+            Err(e) => self.message = e.to_string(),
+        }
+    }
+
     /// Repite la sección que suena, o vuelve a la línea de tiempo.
     pub fn toggle_section_loop(&mut self) {
         let looping = self
@@ -2468,6 +2485,7 @@ impl App {
             Action::LoopSection => self.toggle_section_loop(),
             Action::FollowTimeline => self.set_section_loop(false),
             Action::Versions => self.open_versions(),
+            Action::ToggleVariant => self.toggle_variant(),
             Action::PreviousSlice => self.select_slice(false),
             Action::Quit => {
                 let armed = std::mem::replace(&mut self.quit_armed, false);
@@ -2538,7 +2556,7 @@ impl App {
         self.release_pads();
         self.message = match self.mode {
             Mode::Play => {
-                "modo tocar: 1-0 y q-i disparan cortes (en un instrumento, notas desde la raíz) · ←→ recorren y preescuchan · espacio preescucha · m mute · s solo · [ ] sección · l repetir sección · Esc vuelve al editor"
+                "modo tocar: 1-0 y q-i disparan cortes (en un instrumento, notas desde la raíz) · ←→ recorren y preescuchan · espacio preescucha · m mute · s solo · [ ] sección · l repetir sección · v variante A/B · Esc vuelve al editor"
             }
             Mode::Edit => "modo editor",
         }
@@ -2923,6 +2941,8 @@ impl App {
                     self.step_section(false);
                 } else if c == 'l' {
                     self.toggle_section_loop();
+                } else if c == 'v' {
+                    self.toggle_variant();
                 }
             }
             (Key::Left, _) if self.mode == Mode::Play => self.browse_slice(false),
@@ -3135,6 +3155,7 @@ impl App {
             });
         ViewModel {
             timeline,
+            variant: self.host.variant(),
             error: self.error.as_ref().map(|e| ErrorView {
                 line: error_line(&e.message, &name),
                 message: e.message.clone(),

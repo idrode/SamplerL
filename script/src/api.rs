@@ -572,6 +572,46 @@ pub const FUNCTIONS: &[Function] = &[
         ),
     },
     Function {
+        name: "variant",
+        receiver: Receiver::Global,
+        signature: "variant(nombre, letra, función)",
+        returns: None,
+        summary: "Variante A o B de una sección o de una pista, para alternarlas en vivo.",
+        doc: "Con `nombre` de una sección, la función cambia sus pistas como dentro \
+              de `section()` (sin argumentos: `track(\"drums\"):mute()`); con el de \
+              una pista de fuera de las secciones, la recibe (`function(t) \
+              t:steps(\"...\") end`) y el cambio vale en todas las secciones donde \
+              suene. La letra es `\"A\"` o `\"B\"`; la que no se define es lo que está \
+              escrito. Al cargar se preparan las dos versiones de la canción y suena \
+              la A (al recargar, la que sonaba). «Alternar variante A/B» en la paleta \
+              o `v` en el modo tocar pasa a la otra: entra entera al empezar el \
+              compás siguiente y, con secciones, sigue por la misma sección y el \
+              mismo compás. Exportar graba la que suena.",
+        params: &[
+            Param {
+                name: "nombre",
+                description: "una sección o una pista de fuera de las secciones",
+            },
+            Param {
+                name: "letra",
+                description: "`\"A\"` o `\"B\"`",
+            },
+            Param {
+                name: "función",
+                description: "lo que cambia (con una pista, la recibe)",
+            },
+        ],
+        template: "variant(\"${t}\", \"${B}\", function(t)\n  ${t:gain(0.5)}\nend)",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             track(\"drums\", amen):steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\")\n\
+             -- B: otro patrón para la misma pista; v en el modo tocar alterna.\n\
+             variant(\"drums\", \"B\", function(t)\n  \
+             t:steps(\"1 . . 1  . . 3 .  1 . 5 .  . 3 . 6\")\n\
+             end)\n",
+        ),
+    },
+    Function {
         name: "bus",
         receiver: Receiver::Global,
         signature: "bus(nombre, parámetros)",

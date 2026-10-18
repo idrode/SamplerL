@@ -2355,6 +2355,7 @@ mod sends;
 mod shapes;
 mod stretch;
 mod tempo;
+mod variants;
 
 const PASTED: &str = "track(\"hats\", amen)\r\n  :steps(\"x . x .\") -- abiertos\r\n  :gain(0.5)";
 

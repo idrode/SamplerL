@@ -73,18 +73,19 @@ proyecto). Ver «Fase D» en [docs/ESTADO.md](ESTADO.md).
 - Preescucha de cortes con las flechas.
 - Ajuste manual de los cortes en ms, guardado en el proyecto.
 
-## Fase E: estructura y versiones
+## Fase E: estructura y versiones ✅
 
-En curso: hechas la grabación de lo tocado («Grabar lo tocado» en la
-paleta, orden `grabar [N]`) y las secciones con línea de tiempo
-(`section()`, `arrange()`) y el historial de versiones; detalle y
-decisiones en [docs/ESTADO.md](ESTADO.md). Falta el A/B de variantes.
+Hechas la grabación de lo tocado, las secciones con línea de tiempo
+(`section()`, `arrange()`), el historial de versiones y el A/B de
+variantes (`variant()`); detalle y decisiones en
+[docs/ESTADO.md](ESTADO.md).
 
 - Secciones con nombre y línea de tiempo: `section(nombre, función)` y
   `arrange({ {sección, compases}, ... })`, con el arreglo en el motor. ✅
 - Historial de versiones del script con marca de tiempo: una por carga
   buena, sin duplicar, fuera del repositorio, «Versiones» en la paleta. ✅
-- A/B de variantes.
+- A/B de variantes: `variant(sección o pista, "B", función)`, alternar
+  con `v` o la paleta al compás siguiente. ✅
 - Grabar lo tocado en el modo tocar como un patrón de `steps`. ✅
 
 ## Fase F: biblioteca de bloques ✅
