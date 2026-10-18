@@ -28,6 +28,22 @@ pub struct Status {
     pub bar_steps: usize,
     pub tracks: [TrackStatus; MAX_TRACKS],
     pub master: MasterStatus,
+    /// Con un arreglo: dónde va la canción en la línea de tiempo.
+    pub section: Option<SectionStatus>,
+    /// Al entrar el último arreglo, la sección que sonaba ya no estaba y
+    /// se volvió al principio (se pone a `false` al leerlo).
+    pub section_lost: bool,
+}
+
+/// Posición en la línea de tiempo de un arreglo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SectionStatus {
+    /// Entrada de la línea de tiempo (desde 0).
+    pub entry: usize,
+    /// Compás dentro de la entrada (desde 0).
+    pub bar: u32,
+    /// Se repite la entrada en vez de seguir.
+    pub looping: bool,
 }
 
 /// Nivel del master desde la lectura anterior.
@@ -73,6 +89,10 @@ pub(crate) struct SharedStatus {
     grains: [AtomicU32; MAX_TRACKS],
     master_peak: AtomicU32,
     limited: AtomicU64,
+    section_entry: AtomicU64,
+    section_bar: AtomicU64,
+    section_looping: AtomicBool,
+    section_lost: AtomicBool,
 }
 
 impl SharedStatus {
@@ -91,6 +111,10 @@ impl SharedStatus {
             grains: std::array::from_fn(|_| AtomicU32::new(0)),
             master_peak: AtomicU32::new(0),
             limited: AtomicU64::new(0),
+            section_entry: AtomicU64::new(NONE),
+            section_bar: AtomicU64::new(0),
+            section_looping: AtomicBool::new(false),
+            section_lost: AtomicBool::new(false),
         }
     }
 
@@ -142,6 +166,32 @@ impl SharedStatus {
         }
     }
 
+    /// Posición en la línea de tiempo: (entrada, compás, repitiendo);
+    /// `None` sin arreglo.
+    pub fn set_section(&self, place: Option<(usize, u32, bool)>) {
+        let (entry, bar, looping) = place.map_or((NONE, 0, false), |(e, b, l)| (e as u64, b, l));
+        self.section_bar.store(bar as u64, Relaxed);
+        self.section_looping.store(looping, Relaxed);
+        self.section_entry.store(entry, Relaxed);
+    }
+
+    /// La posición en la línea de tiempo, sin tocar nada más.
+    pub fn section(&self) -> Option<SectionStatus> {
+        let entry = self.section_entry.load(Relaxed);
+        (entry != NONE).then(|| SectionStatus {
+            entry: entry as usize,
+            bar: self.section_bar.load(Relaxed) as u32,
+            looping: self.section_looping.load(Relaxed),
+        })
+    }
+
+    /// La sección que sonaba ya no está en el arreglo nuevo.
+    pub fn set_lost(&self, lost: bool) {
+        if lost {
+            self.section_lost.store(true, Relaxed);
+        }
+    }
+
     /// Granos que han nacido en la pista.
     pub fn add_grains(&self, track: usize, grains: u32) {
         if grains > 0 {
@@ -181,6 +231,12 @@ impl SharedStatus {
                 peak: f32::from_bits(self.master_peak.swap(0, Relaxed)),
                 limited_frames: self.limited.swap(0, Relaxed),
             },
+            section: opt(self.section_entry.load(Relaxed)).map(|entry| SectionStatus {
+                entry: entry as usize,
+                bar: self.section_bar.load(Relaxed) as u32,
+                looping: self.section_looping.load(Relaxed),
+            }),
+            section_lost: self.section_lost.swap(false, Relaxed),
         }
     }
 }

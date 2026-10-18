@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use rtrb::{Consumer, Producer, RingBuffer};
 
+use crate::arrangement::{Arrangement, Place, Playlist, resume};
 use crate::automation::mix;
 use crate::bus::{BUSES, Buses, Rack};
 use crate::fx::{Fx, FxState, MAX_FX};
@@ -76,6 +77,14 @@ enum Command {
         end: usize,
         playback: Playback,
     },
+    /// Arreglo (secciones y línea de tiempo) para el siguiente compás;
+    /// `None` lo quita (vuelven los patrones sueltos).
+    SetArrangement(Option<Arrangement>),
+    /// Saltar a esa entrada de la línea de tiempo al empezar el compás
+    /// siguiente.
+    JumpTo(usize),
+    /// Repetir la entrada que suena (o volver a seguir la línea de tiempo).
+    LoopSection(bool),
     /// Patrón de una pista para el siguiente compás (`None` la silencia).
     SetPattern {
         track: usize,
@@ -436,6 +445,8 @@ pub enum SendError {
     InvalidInstrument(&'static str),
     /// Granos con parámetros fuera de rango.
     InvalidGranular(&'static str),
+    /// Arreglo (secciones y línea de tiempo) no válido.
+    InvalidArrangement(&'static str),
 }
 
 impl fmt::Display for SendError {
@@ -449,6 +460,7 @@ impl fmt::Display for SendError {
             SendError::InvalidBus(reason) => write!(f, "envío: {reason}"),
             SendError::InvalidInstrument(reason) => write!(f, "instrumento: {reason}"),
             SendError::InvalidGranular(reason) => write!(f, "granos: {reason}"),
+            SendError::InvalidArrangement(reason) => write!(f, "arreglo: {reason}"),
             SendError::InvalidCycle(bars) => write!(
                 f,
                 "ciclo de {bars} compases fuera de rango (1 a {})",
@@ -489,6 +501,7 @@ pub struct Batch {
     meter: Option<Meter>,
     buses: Option<Buses>,
     patterns: Vec<(usize, Option<Pattern>)>,
+    arrangement: Option<Option<Arrangement>>,
 }
 
 impl Batch {
@@ -524,6 +537,14 @@ impl Batch {
         self.patterns.push((track, pattern));
         self
     }
+
+    /// Arreglo: secciones y línea de tiempo (ver [`crate::arrangement`]);
+    /// con él, los patrones de las pistas son los de sus secciones. `None`
+    /// quita el que haya (y mandan los de `set_pattern`).
+    pub fn set_arrangement(&mut self, arrangement: Option<Arrangement>) -> &mut Self {
+        self.arrangement = Some(arrangement);
+        self
+    }
 }
 
 /// Lo que el hilo de audio devuelve al de control para que lo libere allí.
@@ -535,6 +556,8 @@ enum Garbage {
     Sample(Arc<Sample>),
     /// Un patrón entero: lleva memoria propia (sus compases).
     Pattern(Pattern),
+    /// Un arreglo entero (sus secciones y sus patrones).
+    Arrangement(Arrangement),
 }
 
 /// Lado de control (UI/script). Envía comandos al hilo de audio sin bloquear.
@@ -719,6 +742,11 @@ pub struct Engine {
     /// Cola de las notas MIDI que salen de las pistas.
     midi: Producer<MidiNote>,
     pending_buses: Option<Buses>,
+    /// Arreglo que suena (con su posición), el que entra en el siguiente
+    /// compás y el de un lote todavía abierto (`Some(None)`: quitarlo).
+    playlist: Option<Playlist>,
+    pending_arrangement: Option<Option<Arrangement>>,
+    staged_arrangement: Option<Option<Arrangement>>,
     staged_buses: Option<Buses>,
     staged_ramp: Option<TempoRamp>,
     staged_meter: Option<Meter>,
@@ -766,6 +794,9 @@ pub fn new_engine(sample_rate: u32) -> (Controller, Engine) {
             rack: Rack::new(sample_rate),
             midi: midi_tx,
             pending_buses: None,
+            playlist: None,
+            pending_arrangement: None,
+            staged_arrangement: None,
             staged_buses: None,
             staged_ramp: None,
             staged_meter: None,
@@ -989,6 +1020,9 @@ impl Controller {
         if let Some(buses) = &batch.buses {
             buses.validate().map_err(SendError::InvalidBus)?;
         }
+        if let Some(Some(arrangement)) = &batch.arrangement {
+            arrangement.validate()?;
+        }
         if let Some(ramp) = &batch.ramp
             && !(valid_bpm(ramp.from) && valid_bpm(ramp.to))
         {
@@ -1000,7 +1034,8 @@ impl Controller {
             + usize::from(batch.bpm.is_some())
             + usize::from(batch.ramp.is_some())
             + usize::from(batch.meter.is_some())
-            + usize::from(batch.buses.is_some());
+            + usize::from(batch.buses.is_some())
+            + usize::from(batch.arrangement.is_some());
         if self.commands.slots() < needed {
             return Err(SendError::QueueFull);
         }
@@ -1021,6 +1056,9 @@ impl Controller {
         if let Some(buses) = batch.buses {
             push(Command::SetBuses(buses));
         }
+        if let Some(arrangement) = batch.arrangement {
+            push(Command::SetArrangement(arrangement));
+        }
         for (track, pattern) in batch.patterns {
             push(Command::SetPattern { track, pattern });
         }
@@ -1033,6 +1071,18 @@ impl Controller {
     pub fn set_buses(&mut self, buses: Buses) -> Result<(), SendError> {
         buses.validate().map_err(SendError::InvalidBus)?;
         self.send(Command::SetBuses(buses), None)
+    }
+
+    /// Con un arreglo: salta a la entrada `entry` de la línea de tiempo al
+    /// empezar el compás siguiente (y sigue desde ahí).
+    pub fn jump_to(&mut self, entry: usize) -> Result<(), SendError> {
+        self.send(Command::JumpTo(entry), None)
+    }
+
+    /// Con un arreglo: repite la entrada que suena (`true`) o vuelve a
+    /// seguir la línea de tiempo (`false`).
+    pub fn loop_section(&mut self, on: bool) -> Result<(), SendError> {
+        self.send(Command::LoopSection(on), None)
     }
 
     /// Rampa de tempo: entra al empezar el siguiente compás.
@@ -1126,6 +1176,12 @@ impl Controller {
     /// lo que se toca en vivo (grabar). No vacía los picos de `status`.
     pub fn position(&self) -> Option<f64> {
         self.status.position()
+    }
+
+    /// Con un arreglo, dónde va la canción en la línea de tiempo (sin
+    /// vaciar nada de `status`).
+    pub fn section(&self) -> Option<crate::SectionStatus> {
+        self.status.section()
     }
 
     /// Las notas MIDI que han salido de las pistas desde la última vez (en
@@ -1278,6 +1334,30 @@ impl Engine {
                     self.pending_buses = Some(buses);
                 }
             }
+            Command::SetArrangement(arrangement) => {
+                let slot = if self.batch_open {
+                    &mut self.staged_arrangement
+                } else {
+                    &mut self.pending_arrangement
+                };
+                if let Some(Some(old)) = slot.replace(arrangement) {
+                    self.discard_arrangement(old);
+                }
+            }
+            Command::JumpTo(entry) => {
+                if let Some(playlist) = &mut self.playlist
+                    && entry < playlist.arrangement.len()
+                {
+                    playlist.jump = Some(entry);
+                }
+            }
+            Command::LoopSection(on) => {
+                if let Some(playlist) = &mut self.playlist {
+                    playlist.looping = on;
+                    let place = playlist.place;
+                    self.status.set_section(Some((place.entry, place.bar, on)));
+                }
+            }
             Command::BeginBatch => self.batch_open = true,
             Command::CommitBatch => {
                 self.batch_open = false;
@@ -1293,6 +1373,11 @@ impl Engine {
                 if let Some(meter) = self.staged_meter.take() {
                     self.transport.pending_meter = Some(meter);
                 }
+                if let Some(change) = self.staged_arrangement.take()
+                    && let Some(Some(old)) = self.pending_arrangement.replace(change)
+                {
+                    self.discard_arrangement(old);
+                }
                 for t in 0..MAX_TRACKS {
                     if let Some(change) = self.tracks[t].staged.take()
                         && let Some(Some(old)) = self.tracks[t].pending.replace(change)
@@ -1303,6 +1388,9 @@ impl Engine {
             }
             Command::Start => {
                 self.transport.start();
+                if let Some(playlist) = &mut self.playlist {
+                    playlist.restart = true;
+                }
                 self.status.clear_step();
                 for track in self.tracks.iter_mut() {
                     track.retrig = None;
@@ -1389,42 +1477,24 @@ impl Engine {
         {
             self.rack.params = buses;
         }
+        if step == 0 {
+            self.advance_playlist(global, now);
+        }
+        // Las vueltas de los patrones cuentan desde el inicio de la sección.
+        let origin = self.playlist.as_ref().map_or(0, |p| p.origin_step);
         for t in 0..MAX_TRACKS {
             if step == 0
                 && let Some(change) = self.tracks[t].pending.take()
             {
-                let track = &mut self.tracks[t];
-                let old = std::mem::replace(&mut track.pattern, change);
-                // Un efecto de otro tipo en la ranura: su parámetro suavizado
-                // ya no vale.
-                for (i, mods) in track.mods.iter_mut().enumerate() {
-                    let kind = |p: &Option<Pattern>| {
-                        p.as_ref()
-                            .and_then(|p| p.fx[i])
-                            .map(|fx| std::mem::discriminant(&fx))
-                    };
-                    if kind(&old) != kind(&track.pattern) {
-                        *mods = [None; 2];
-                    }
-                }
-                // Los disparos pendientes eran del patrón anterior (quizá de
-                // otro sample): no se mezclan con el nuevo.
-                track.retrig = None;
-                // Si la pista está callada, el volumen nuevo entra ya, sin
-                // suavizado: el primer golpe suena con él desde el principio.
-                if !track.sounding() {
-                    track.gain = track.pattern.as_ref().map_or(1.0, |p| p.gain);
-                    track.sends = track.pattern.as_ref().map_or([0.0; BUSES], |p| p.sends);
-                }
-                for (i, state) in track.fx.iter_mut().enumerate() {
-                    let fx = track.pattern.as_ref().and_then(|p| p.fx[i]);
-                    *state = state.update(fx, self.sample_rate);
-                }
+                let old = put_pattern(&mut self.tracks[t], change, self.sample_rate);
                 if let Some(old) = old {
                     self.discard_pattern(old);
                 }
             }
-            let hit = self.tracks[t].pattern.as_ref().and_then(|p| p.hit(global));
+            let hit = self.tracks[t]
+                .pattern
+                .as_ref()
+                .and_then(|p| p.hit(global - origin));
             let Some(hit) = hit else {
                 // Un paso vacío no corta los subdisparos pendientes de un
                 // golpe retrasado del paso anterior.
@@ -1844,9 +1914,15 @@ impl Engine {
         let mut fed = [false; BUSES];
         // Posición de la canción al empezar el trozo (para las curvas).
         let rate = self.sample_rate;
+        // Las curvas cuentan desde el inicio de la sección (sin arreglo,
+        // desde el arranque).
+        let (origin_step, origin_frame) = self
+            .playlist
+            .as_ref()
+            .map_or((0, 0), |p| (p.origin_step, p.origin_frame));
         let clock = Clock {
-            steps: self.transport.position_steps(rate),
-            seconds: self.transport.frame as f64 / rate as f64,
+            steps: self.transport.position_steps(rate) - origin_step as f64,
+            seconds: (self.transport.frame - origin_frame) as f64 / rate as f64,
             frames_per_step: crate::sequencer::frames_per_step(self.transport.bpm(), rate),
             sample_rate: rate,
         };
@@ -2097,6 +2173,123 @@ impl Engine {
         }
     }
 
+    /// Devuelve un arreglo entero al hilo de control.
+    fn discard_arrangement(&mut self, arrangement: Arrangement) {
+        if let Err(rtrb::PushError::Full(garbage)) =
+            self.garbage.push(Garbage::Arrangement(arrangement))
+        {
+            std::mem::forget(garbage);
+        }
+    }
+
+    /// Al empezar un compás: entra el arreglo pendiente (seguir por la
+    /// misma sección si sigue estando) o se avanza por la línea de tiempo;
+    /// si cambia la sección, sus patrones pasan a las pistas y los de la
+    /// anterior vuelven a su sitio en el arreglo. Publica la posición.
+    fn advance_playlist(&mut self, global: u64, now: u64) {
+        let bar_steps = self.transport.meter().steps as u64;
+        let bar_frames = crate::sequencer::bar_frames_steps(
+            bar_steps as usize,
+            self.transport.bpm(),
+            self.sample_rate,
+        );
+        if let Some(change) = self.pending_arrangement.take() {
+            let old = self.playlist.take();
+            let Some(new) = change else {
+                // Sin arreglo: los patrones de las pistas son los del lote
+                // (llegan como `pending`); los de la sección que sonaba, a la
+                // basura con su arreglo.
+                if let Some(old) = old {
+                    self.discard_arrangement(old.arrangement);
+                }
+                self.status.set_section(None);
+                return;
+            };
+            // Dónde seguir: lo que iba a sonar ahora en el arreglo anterior,
+            // en el nuevo.
+            let (place, kept, lost) = match &old {
+                Some(old) if !old.restart => {
+                    let next = old.next();
+                    match resume(&old.arrangement, next, &new) {
+                        Some(place) => {
+                            let same = place == next && next.bar > 0;
+                            (
+                                place,
+                                same.then_some((old.origin_step, old.origin_frame)),
+                                false,
+                            )
+                        }
+                        None => (Place { entry: 0, bar: 0 }, None, true),
+                    }
+                }
+                _ => (Place { entry: 0, bar: 0 }, None, false),
+            };
+            let (looping, origin) = match &old {
+                Some(old) => (old.looping, kept),
+                None => (false, None),
+            };
+            let back = place.bar as u64;
+            let (origin_step, origin_frame) = origin.unwrap_or((
+                global.saturating_sub(back * bar_steps),
+                now.saturating_sub(back * bar_frames),
+            ));
+            let mut playlist = Playlist {
+                current: new.timeline[place.entry].0,
+                arrangement: new,
+                place,
+                origin_step,
+                origin_frame,
+                looping,
+                jump: None,
+                restart: false,
+            };
+            // Los patrones de la sección nueva, a las pistas; los que había
+            // (del arreglo anterior), a la basura.
+            for t in 0..MAX_TRACKS {
+                let incoming = playlist.arrangement.sections[playlist.current].patterns[t].take();
+                let outgoing = put_pattern(&mut self.tracks[t], incoming, self.sample_rate);
+                if let Some(outgoing) = outgoing {
+                    self.discard_pattern(outgoing);
+                }
+            }
+            if let Some(old) = old {
+                self.discard_arrangement(old.arrangement);
+            }
+            self.playlist = Some(playlist);
+            self.status.set_lost(lost);
+        } else if let Some(playlist) = &mut self.playlist {
+            let place = if playlist.restart {
+                Place { entry: 0, bar: 0 }
+            } else {
+                playlist.next()
+            };
+            playlist.restart = false;
+            playlist.jump = None;
+            if place.bar == 0 {
+                playlist.origin_step = global;
+                playlist.origin_frame = now;
+            }
+            playlist.place = place;
+            let section = playlist.arrangement.timeline[place.entry].0;
+            if section != playlist.current {
+                let from = playlist.current;
+                for t in 0..MAX_TRACKS {
+                    let incoming = playlist.arrangement.sections[section].patterns[t].take();
+                    let outgoing = put_pattern(&mut self.tracks[t], incoming, self.sample_rate);
+                    playlist.arrangement.sections[from].patterns[t] = outgoing;
+                }
+                playlist.current = section;
+            }
+        }
+        if let Some(playlist) = &self.playlist {
+            self.status.set_section(Some((
+                playlist.place.entry,
+                playlist.place.bar,
+                playlist.looping,
+            )));
+        }
+    }
+
     fn holds(&self, sample: &Arc<Sample>) -> bool {
         let same = |other: &Arc<Sample>| Arc::ptr_eq(sample, other);
         let same_pattern = |p: &Option<Pattern>| p.as_ref().is_some_and(|p| same(&p.sample));
@@ -2113,12 +2306,57 @@ impl Engine {
                 || same_pattern(&t.pattern)
                 || t.pending.as_ref().is_some_and(same_pattern)
                 || t.staged.as_ref().is_some_and(same_pattern)
-        }) || self.preview.as_ref().is_some_and(|v| same(&v.sample))
+        }) || [
+            self.playlist.as_ref().map(|p| &p.arrangement),
+            self.pending_arrangement.as_ref().and_then(Option::as_ref),
+            self.staged_arrangement.as_ref().and_then(Option::as_ref),
+        ]
+        .into_iter()
+        .flatten()
+        .flat_map(|a| a.sections.iter())
+        .flat_map(|s| s.patterns.iter().flatten())
+        .any(|p| same(&p.sample))
+            || self.preview.as_ref().is_some_and(|v| same(&v.sample))
             || self
                 .preview_fading
                 .as_ref()
                 .is_some_and(|v| same(&v.sample))
     }
+}
+
+/// Pone `new` como patrón de la pista (al empezar un compás) y devuelve
+/// el que tenía. Lo que dependía del patrón anterior se ajusta: los
+/// parámetros suavizados de un efecto de otro tipo, los subdisparos
+/// pendientes, el volumen y los envíos si la pista está callada, y el
+/// estado de los efectos.
+fn put_pattern(track: &mut Track, new: Option<Pattern>, sample_rate: u32) -> Option<Pattern> {
+    let old = std::mem::replace(&mut track.pattern, new);
+    // Un efecto de otro tipo en la ranura: su parámetro suavizado ya no
+    // vale.
+    for (i, mods) in track.mods.iter_mut().enumerate() {
+        let kind = |p: &Option<Pattern>| {
+            p.as_ref()
+                .and_then(|p| p.fx[i])
+                .map(|fx| std::mem::discriminant(&fx))
+        };
+        if kind(&old) != kind(&track.pattern) {
+            *mods = [None; 2];
+        }
+    }
+    // Los disparos pendientes eran del patrón anterior (quizá de otro
+    // sample): no se mezclan con el nuevo.
+    track.retrig = None;
+    // Si la pista está callada, el volumen nuevo entra ya, sin suavizado:
+    // el primer golpe suena con él desde el principio.
+    if !track.sounding() {
+        track.gain = track.pattern.as_ref().map_or(1.0, |p| p.gain);
+        track.sends = track.pattern.as_ref().map_or([0.0; BUSES], |p| p.sends);
+    }
+    for (i, state) in track.fx.iter_mut().enumerate() {
+        let fx = track.pattern.as_ref().and_then(|p| p.fx[i]);
+        *state = state.update(fx, sample_rate);
+    }
+    old
 }
 
 /// Dónde está la canción al empezar un trozo de mezcla.

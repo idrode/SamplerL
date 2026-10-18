@@ -559,7 +559,7 @@ impl App {
             self.message = usage.into();
             return;
         }
-        let Some(track) = self.host.song().and_then(|s| s.tracks.get(self.selected)) else {
+        let Some(track) = self.tracks().get(self.selected) else {
             self.message = "no hay pistas".into();
             return;
         };
@@ -593,9 +593,9 @@ impl App {
         let mut message = format!("corte {slice} de {track_name}: {what}{saved}");
         // Si el script nombra ese corte con :name(), manda el script.
         let now = self
-            .host
-            .song()
-            .and_then(|s| s.tracks.iter().find(|t| t.name == track_name))
+            .tracks()
+            .iter()
+            .find(|t| t.name == track_name)
             .and_then(|t| t.labels.get(slice - 1).cloned().flatten());
         if self.error.is_none() && now.as_deref() != name {
             message.push_str(&format!(
@@ -626,7 +626,7 @@ impl App {
     /// absoluta, manda sobre el detector, se recarga y se preescucha. No
     /// puede pasar de sus vecinos.
     pub fn adjust_slice(&mut self, delta_ms: Option<f64>) {
-        let Some(track) = self.host.song().and_then(|s| s.tracks.get(self.selected)) else {
+        let Some(track) = self.tracks().get(self.selected) else {
             self.message = "no hay pistas".into();
             return;
         };
@@ -698,13 +698,13 @@ impl App {
             return;
         };
         let mut args = args.iter().copied().peekable();
-        let selected = song.tracks.get(self.selected).map(|t| t.name.clone());
+        let selected = self.tracks().get(self.selected).map(|t| t.name.clone());
         let target = match args.peek() {
             Some(&"master") => {
                 args.next();
                 None
             }
-            Some(name) if song.tracks.iter().any(|t| t.name == *name) => {
+            Some(name) if song.track_names().contains(name) => {
                 let name = name.to_string();
                 args.next();
                 Some(name)
@@ -877,7 +877,7 @@ impl App {
     /// `grabar [N]`: graba N compases (1 por defecto) de lo que se toca en
     /// la pista seleccionada, desde el compás siguiente.
     fn start_recording(&mut self, bars: Option<&str>) {
-        let Some(track) = self.host.song().and_then(|s| s.tracks.get(self.selected)) else {
+        let Some(track) = self.tracks().get(self.selected) else {
             self.message = "no hay pistas".into();
             return;
         };
@@ -931,9 +931,9 @@ impl App {
             return;
         };
         let labels = self
-            .host
-            .song()
-            .and_then(|s| s.tracks.iter().find(|t| t.name == rec.track))
+            .tracks()
+            .iter()
+            .find(|t| t.name == rec.track)
             .map(|t| t.labels.clone())
             .unwrap_or_default();
         let steps = format!("steps(\"{}\")", rec.notation(&labels));
@@ -995,9 +995,8 @@ impl App {
     /// Abre la línea de órdenes para remuestrear la pista seleccionada.
     pub fn start_resample(&mut self) {
         let name = self
-            .host
-            .song()
-            .and_then(|s| s.tracks.get(self.selected))
+            .tracks()
+            .get(self.selected)
             .map_or_else(|| "master".to_string(), |t| t.name.clone());
         self.prompt = Some(format!("remuestrear {name} "));
         self.message =
@@ -1019,7 +1018,7 @@ impl App {
     }
 
     fn edit_slices(&mut self, split: bool) {
-        let Some(track) = self.host.song().and_then(|s| s.tracks.get(self.selected)) else {
+        let Some(track) = self.tracks().get(self.selected) else {
             self.message = "no hay pistas".into();
             return;
         };
@@ -1067,9 +1066,9 @@ impl App {
         }
         self.load();
         let after = self
-            .host
-            .song()
-            .and_then(|s| s.tracks.iter().find(|t| t.name == name))
+            .tracks()
+            .iter()
+            .find(|t| t.name == name)
             .map_or(0, |t| t.slices.len());
         let warning = self.host.song().and_then(|s| {
             s.warnings
@@ -1327,7 +1326,7 @@ impl App {
                 if !self.started && self.controller.start().is_ok() {
                     self.started = true;
                 }
-                let count = self.host.song().map_or(0, |s| s.tracks.len());
+                let count = self.tracks().len();
                 if self.selected >= count {
                     self.selected = 0;
                 }
@@ -1349,7 +1348,11 @@ impl App {
     fn update_waveforms(&mut self) {
         let Some(song) = self.host.song() else { return };
         let mut next = HashMap::new();
-        for track in &song.tracks {
+        let all = song
+            .tracks
+            .iter()
+            .chain(song.sections.iter().flat_map(|s| s.tracks.iter()));
+        for track in all {
             let key = Arc::as_ptr(&track.sample) as usize;
             let entry = self
                 .waveforms
@@ -1545,18 +1548,28 @@ impl App {
         }
     }
 
+    /// Las pistas que suenan: las de la sección en curso (sin secciones o
+    /// sin línea de tiempo, las de la canción). Vacío sin nada cargado.
+    pub fn tracks(&self) -> &[script::TrackDef] {
+        let Some(song) = self.host.song() else {
+            return &[];
+        };
+        let section = self
+            .status
+            .and_then(|s| s.section)
+            .and_then(|place| song.section_at(place.entry));
+        song.section_tracks(section)
+    }
+
     /// El instrumento de la pista seleccionada, si es un instrumento.
     fn selected_instrument(&self) -> Option<script::InstrumentDef> {
-        self.host
-            .song()
-            .and_then(|s| s.tracks.get(self.selected))
-            .and_then(|t| t.instrument)
+        self.tracks().get(self.selected).and_then(|t| t.instrument)
     }
 
     /// Una nota en vivo (`semitones` sobre la raíz) en el instrumento de la
     /// pista seleccionada, con la tecla `key` del motor.
     fn live_note_on(&mut self, key: u8, semitones: f32, gain: f32, now: Instant) {
-        let Some(track) = self.host.song().and_then(|s| s.tracks.get(self.selected)) else {
+        let Some(track) = self.tracks().get(self.selected) else {
             return;
         };
         let (Some(instrument), Some(slot)) = (track.instrument, self.host.track_slot(&track.name))
@@ -1621,7 +1634,7 @@ impl App {
 
     /// Como [`App::play_pad`], con un volumen para el golpe.
     fn play_pad_with_gain(&mut self, index: usize, gain: f32) {
-        let Some(track) = self.host.song().and_then(|s| s.tracks.get(self.selected)) else {
+        let Some(track) = self.tracks().get(self.selected) else {
             self.message = "no hay pistas".into();
             return;
         };
@@ -1681,7 +1694,11 @@ impl App {
             }
         };
         if let Some(song) = self.host.song() {
-            for name in song.tracks.iter().flat_map(|t| t.labels.iter().flatten()) {
+            let all = song
+                .tracks
+                .iter()
+                .chain(song.sections.iter().flat_map(|s| s.tracks.iter()));
+            for name in all.flat_map(|t| t.labels.iter().flatten()) {
                 add(name);
             }
         }
@@ -2280,7 +2297,7 @@ impl App {
     }
 
     pub fn next_track(&mut self) {
-        let count = self.host.song().map_or(0, |s| s.tracks.len());
+        let count = self.tracks().len();
         if count > 0 {
             self.release_pads();
             self.selected = (self.selected + 1) % count;
@@ -2293,12 +2310,10 @@ impl App {
     fn sync_mix(&mut self) {
         let mut want = [(false, false); MAX_TRACKS];
         if let Some(song) = self.host.song() {
-            for track in &song.tracks {
-                if let Some(slot) = self.host.track_slot(&track.name) {
-                    want[slot] = (
-                        self.muted.contains(&track.name),
-                        self.soloed.contains(&track.name),
-                    );
+            for name in song.track_names() {
+                if let Some(slot) = self.host.track_slot(name) {
+                    let name = name.to_string();
+                    want[slot] = (self.muted.contains(&name), self.soloed.contains(&name));
                 }
             }
         }
@@ -2315,12 +2330,7 @@ impl App {
     /// Mute (o, con `solo`, solo) en vivo de la pista seleccionada: entra ya,
     /// sin esperar al compás.
     pub fn toggle_live(&mut self, solo: bool) {
-        let Some(name) = self
-            .host
-            .song()
-            .and_then(|s| s.tracks.get(self.selected))
-            .map(|t| t.name.clone())
-        else {
+        let Some(name) = self.tracks().get(self.selected).map(|t| t.name.clone()) else {
             self.message = "no hay pistas".into();
             return;
         };
@@ -2365,7 +2375,7 @@ impl App {
     /// «Detectar el BPM del sample»: propone el tempo del sample de la
     /// pista seleccionada y deja escrita la orden `bpm N` para ponerlo.
     pub fn detect_bpm(&mut self) {
-        let Some(track) = self.host.song().and_then(|s| s.tracks.get(self.selected)) else {
+        let Some(track) = self.tracks().get(self.selected) else {
             self.message = "no hay pistas".into();
             return;
         };
@@ -2449,7 +2459,7 @@ impl App {
     /// Selecciona el corte siguiente (o el anterior) de la pista
     /// seleccionada, sin tocarlo.
     pub fn select_slice(&mut self, forward: bool) {
-        let Some(track) = self.host.song().and_then(|s| s.tracks.get(self.selected)) else {
+        let Some(track) = self.tracks().get(self.selected).cloned() else {
             self.message = "no hay pistas".into();
             return;
         };
@@ -2476,7 +2486,7 @@ impl App {
     /// Preescucha el corte seleccionado en la voz aparte (no toca las
     /// pistas ni el script).
     pub fn preview_selected(&mut self) {
-        let Some(track) = self.host.song().and_then(|s| s.tracks.get(self.selected)) else {
+        let Some(track) = self.tracks().get(self.selected) else {
             self.message = "no hay pistas".into();
             return;
         };
@@ -2509,7 +2519,7 @@ impl App {
 
     /// Abre la línea de órdenes para etiquetar el corte seleccionado.
     pub fn start_labeling(&mut self) {
-        let Some(track) = self.host.song().and_then(|s| s.tracks.get(self.selected)) else {
+        let Some(track) = self.tracks().get(self.selected).cloned() else {
             self.message = "no hay pistas".into();
             return;
         };
@@ -2769,11 +2779,9 @@ impl App {
             bar: s.bar,
             step: s.step,
         });
-        let tracks: Vec<TrackView> = self
-            .host
-            .song()
-            .map(|song| {
-                song.tracks
+        let tracks: Vec<TrackView> = Some(self.tracks())
+            .map(|tracks| {
+                tracks
                     .iter()
                     .map(|t| {
                         let slot = self.host.track_slot(&t.name);
@@ -2783,7 +2791,7 @@ impl App {
                             .and_then(|start| t.slices.iter().position(|r| r.start == start));
                         // Vuelta y paso de esta pista (con su longitud) en el
                         // último paso que sonó.
-                        let global = status.map_or(0, |s| s.global);
+                        let global = status.map_or(0, section_global);
                         let (lap, position) = t.lap(global);
                         let waveform = self
                             .waveforms
@@ -3011,4 +3019,14 @@ fn read_script(path: &Path) -> std::io::Result<(String, String)> {
         }
         Err(e) => Err(e),
     }
+}
+
+/// Semicorchea del último paso contada desde el inicio de la sección que
+/// suena (sin línea de tiempo, desde el arranque): la que leen sus pistas.
+fn section_global(status: engine::Status) -> u64 {
+    let Some(place) = status.section else {
+        return status.global;
+    };
+    let back = place.bar as u64 * status.bar_steps as u64 + status.step.unwrap_or(0) as u64;
+    status.global.saturating_sub(back)
 }

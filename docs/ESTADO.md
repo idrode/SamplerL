@@ -142,18 +142,52 @@ En el orden en que se hizo, de abajo arriba:
 
 ## Fase E: estructura y versiones
 
-En curso. Hecha solo la grabación; faltan las secciones con nombre y línea de tiempo, el historial de versiones del script y el A/B de variantes (no empezados).
+En curso. Hechas la grabación y las secciones con línea de tiempo; faltan el historial de versiones del script y el A/B de variantes (no empezados).
+
+- **Secciones y línea de tiempo** (`engine/src/arrangement.rs`): `Arrangement { sections: Vec<Section { id, patterns: [Option<Pattern>; 8] }>, timeline: Vec<(sección, compases)> }` (`add_section`, `push`; hasta `MAX_SECTIONS` = 64 secciones y `MAX_ENTRIES` = 256 entradas; `SendError::InvalidArrangement`) y `Batch::set_arrangement(Some | None)` (`Command::SetArrangement`, con su lote: `staged_arrangement` → `pending_arrangement`). El motor guarda el que suena en `Playlist { arrangement, place: Place { entry, bar }, current, origin_step, origin_frame, looping, jump, restart }`. Al empezar cada compás (`Engine::advance_playlist`, antes de las pistas): si hay arreglo pendiente, entra entero: dónde seguir es `arrangement::resume` (lo que el anterior iba a tocar en este compás, en el nuevo: la misma entrada si es la misma sección por su `id`, si no la primera entrada de esa sección, con el mismo compás; si no cabe, la entrada siguiente; si la sección no está, el principio y `SharedStatus::set_lost`), los patrones de su sección pasan a las pistas (`put_pattern`, lo que antes hacía el cambio de patrón: parámetros suavizados, subdisparos, volumen y envíos si está callada, estado de los efectos) y los que había van a la basura con el arreglo anterior (`Garbage::Arrangement`). Si no, `Playlist::next` (el compás siguiente de la entrada, la entrada siguiente, la misma si se repite, la del salto, o la primera al acabar) y, si cambia la sección, sus patrones se intercambian con los que hay en las pistas (movimientos: sin reservas ni liberaciones). Al empezar una entrada, `origin_step` y `origin_frame` son ese compás: las pistas leen `hit(global − origin_step)` y las curvas de los efectos y de los granos (`Clock`) cuentan desde ahí, así que `every`, `fill`, `chance`, `humanize`, `:length()`, `ramp` y `lfo` cuentan desde el inicio de la sección. Sin arreglo, el origen es 0: lo de siempre bit a bit. `Command::Start` vuelve al principio (`restart`). `holds` mira también los patrones de los arreglos. `Status::section` (`SectionStatus { entry, bar, looping }`, de `set_section` en cada compás), `Status::section_lost` (se vacía al leerlo) y `Controller::section()` (sin vaciar nada). En Lua (`script/src/lib.rs`): `section(nombre, función)` guarda la función (`SectionBuild`); al acabar el script, `run_sections` la llama sobre una copia de las pistas de fuera (`TrackBuild: Clone`; `track()` dentro busca y crea en esa copia, y una pista nueva cuenta en `Builder::names`, como mucho 8 entre todas las secciones); `arrange({ {sección, compases}, ... })` guarda la lista y dónde se llamó (`location`, la mitad de `fail`). `bpm`, `bpm_ramp`, `meter`, `metronome`, `bus`, `section` y `arrange` dentro de una sección dan error con la línea (`GLOBAL_ONLY`). `eval` estira (`apply_stretch`, ahora con la lista de lo estirado compartida entre secciones) y expande cada sección; `Song::sections` (`SectionDef { name, tracks }`) y `Song::timeline`; `Song::tracks` son las de la primera sección de la línea de tiempo (sin `arrange`, las de la primera sección, con aviso si hay más; sin secciones, las de siempre). `song_batch`: con línea de tiempo, un `Arrangement` con el patrón de cada pista de cada sección en su ranura (`track_pattern`) y el id de cada sección (`section_id`, FNV-1a del nombre); sin ella, los patrones sueltos y `set_arrangement(None)`. Las ranuras salen de `Song::track_names` (todas las secciones). `length_bars` con línea de tiempo es su total hasta `MAX_SONG_BARS` (aviso si se pasa); `section_at`, `section_after`, `section_tracks`, `timeline_bars`. `ScriptHost::load` avisa si la sección del compás siguiente ya no está en la versión nueva. `--render` sin `--bars` graba la línea de tiempo entera (y ahora calcula los frames con `Song::frames`: con la rampa de tempo y el compás) y la imprime. La interfaz enseña las pistas de la sección que suena (`App::tracks`) y el tracker cuenta sus vueltas desde el inicio de la sección (`section_global`). Tests en `engine/tests/arrangement.rs` (cada sección en su compás y al frame, vueltas desde el inicio de la sección, sin arreglo bit a bit, recargar conserva el compás, sección que desaparece, saltos y repetición al compás siguiente, arrancar de nuevo, validación), `no_alloc.rs` (cambios de sección, salto, repetir, recargar y quitar el arreglo) y `script/tests/sections.rs` (secciones en su compás, una sola sección igual que sin ella, `every` desde el inicio de la sección, el render offline igual muestra a muestra que lo que suena en vivo, recargar a mitad de canción conserva la posición, volver al principio con aviso, avisos, errores con archivo y línea).
 
 - **Grabar lo tocado.** El motor publica en un atómico, al acabar cada bloque, la posición de la canción en pasos con decimales (`SharedStatus::set_position`, `Controller::position()`; `None` parado; no vacía los picos como `status()`). `tui/src/record.rs` (sin terminal): `Recording::new(pista, semicorchea de inicio, compases, pasos por compás)`, `hit(posición, corte, volumen)` (el paso más cercano: `round(posición − inicio)`; hasta medio paso antes del inicio cuenta como el primero; dos en el mismo paso, el último), `done`/`waiting`/`bar` y `notation(etiquetas)` (etiqueta o número del corte, `@volumen` a dos decimales si es menor que 1, agrupado por tiempos con `patterns::format`). La orden `grabar [N]` (de 1 a 64/pasos del compás; necesita el secuenciador en marcha) empieza al principio del compás siguiente (`Status::global − Status::step + bar_steps`) con la pista seleccionada; «Grabar lo tocado» (paleta) deja escrito `grabar 1` y, si ya se graba, para antes. `play_pad_with_gain` apunta cada golpe de esa pista con `Controller::position()` (la ruta de los pads y de las notas MIDI, con la velocidad como volumen). `App::tick` (`watch_recording`) acaba la grabación al pasar su último paso (o la cancela si se para el secuenciador) y `finish_recording` escribe en el cursor `steps("...")` (o `length(N):steps("...")` si no son 16 pasos) en un paso de deshacer. `● REC drums 1/2` (o `: al compás`) en el panel del motor (`ViewModel::recording`). Tests en `engine/tests/status.rs` (posición), `no_alloc.rs`, `record.rs` y `tui/src/tests/record.rs` (pads y notas MIDI simuladas en sus pasos con su volumen, un golpe antes del compás, dos compases con `length(32)`, parar antes, cancelar al parar, sin marcha).
 
 ### Decisiones
 
-La
-grabación empieza en el compás siguiente y cuantiza cada golpe al paso
-más cercano de la rejilla de la canción (con la posición en pasos que
-publica el motor); graba la pista seleccionada al empezar, por la misma
-ruta que los pads (así también las notas MIDI); escribe texto en el
-cursor, sin cargar nada.
+- **El motor lleva la lista de reproducción** (y no el anfitrión mandando
+  un lote en cada cambio). Se midió lo que tarda el anfitrión en cargar y
+  preparar un lote: 1-5 ms el ejemplo de varias pistas, 38 ms la primera
+  vez con un `stretch` (más con WAV largos o en debug), con el bucle de la
+  interfaz despertando cada 30 ms; un compás dura 1,4 s a 170 BPM. Casi
+  siempre llegaría a tiempo, pero un tirón retrasaría una sección un
+  compás, y el render offline tendría que imitar ese bucle. Con el arreglo
+  en el motor, cada cambio es al frame del compás, en vivo y offline igual
+  (el mismo motor con el mismo lote), y el motor sabe dónde empezó cada
+  sección. Guardarlo cuesta unos KB por pista y sección (los patrones ya
+  resueltos).
+- **Todo cuenta desde el inicio de la sección**: las vueltas de los
+  patrones (`every`, `fill`, `chance`, `humanize`, `:length()`) y las
+  curvas de `ramp` y `lfo` (también en los granos). Así un `fill` cada 4
+  cae al final de cada 4 compases del drop aunque la intro dure 3, y una
+  sección que se repite suena igual cada vez. El tempo, su rampa y el
+  compás son de la canción (`bpm_ramp` cuenta desde que entra, como
+  siempre): una sección no puede cambiarlos (error con la línea).
+- **Sintaxis**: la propuesta. `section(nombre, función)` trabaja sobre una
+  copia de las pistas de fuera, porque casi siempre una sección es «lo
+  mismo con algo cambiado» (un mute, un filtro, otro patrón); las pistas
+  nuevas de una sección solo suenan en ella. La función se llama al acabar
+  el script, así puede usar pistas definidas después. `arrange()` con
+  `{nombre, compases}`. Sin `arrange`, la primera sección (una sola
+  sección es lo de siempre, bit a bit).
+- **Recargar**: el motor sigue, en el arreglo nuevo, lo que iba a tocar el
+  compás siguiente en el anterior, por el nombre de la sección (su id): la
+  misma entrada si sigue siendo esa sección, si no la primera entrada con
+  ella, con el mismo compás y el mismo origen (las vueltas siguen por donde
+  iban). Si la sección no está, el principio; el anfitrión lo avisa al
+  cargar (prevé el compás siguiente) y el estado lo confirma.
+- **Al acabar la línea de tiempo vuelve a empezar** (para tocar en vivo);
+  exportar graba la línea de tiempo una vez.
+- **Grabar lo tocado**: la grabación empieza en el compás siguiente y
+  cuantiza cada golpe al paso más cercano de la rejilla de la canción
+  (con la posición en pasos que publica el motor); graba la pista
+  seleccionada al empezar, por la misma ruta que los pads (así también
+  las notas MIDI); escribe texto en el cursor, sin cargar nada.
 
 ## Fase F: biblioteca de bloques ✅
 

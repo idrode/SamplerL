@@ -1,5 +1,6 @@
 //! Motor de audio del sampler. Independiente de la interfaz.
 
+pub mod arrangement;
 pub mod automation;
 pub mod bpm;
 pub mod bus;
@@ -20,6 +21,7 @@ mod slice;
 mod status;
 pub mod stretch;
 
+pub use arrangement::{Arrangement, MAX_ENTRIES, MAX_SECTIONS};
 pub use automation::{Automation, Curve, LfoRate, MAX_AUTOMATIONS};
 pub use bpm::{BpmGuess, detect_bpm};
 pub use bus::{Buses, DelayParams, Division, ReverbParams};
@@ -40,5 +42,5 @@ pub use sequencer::{
 };
 pub use shift::MAX_FORMANT;
 pub use slice::{DEFAULT_MIN_GAP_SECONDS, DetectOptions, Detector, Slices};
-pub use status::{MasterStatus, Status, TrackStatus};
+pub use status::{MasterStatus, SectionStatus, Status, TrackStatus};
 pub use stretch::{MAX_STRETCH, MIN_STRETCH};

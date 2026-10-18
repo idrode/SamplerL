@@ -507,6 +507,71 @@ pub const FUNCTIONS: &[Function] = &[
         example: Some("bpm(170)\nmetronome(true)\n"),
     },
     Function {
+        name: "section",
+        receiver: Receiver::Global,
+        signature: "section(nombre, función)",
+        returns: None,
+        summary: "Una sección con nombre (intro, drop, break...): lo que cambian las pistas mientras suena.",
+        doc: "La función se llama al acabar el script, sobre una copia de las pistas \
+              definidas fuera de las secciones: dentro, `track(\"drums\")` cambia esa \
+              pista solo en esta sección (patrón, efectos, `mute`, `solo`, `every`...) \
+              y `track(\"nueva\", cortes)` añade una que solo suena aquí. Entre todas \
+              las secciones caben 8 pistas. Lo que es de toda la canción (`bpm`, \
+              `bpm_ramp`, `meter`, `bus`, `metronome`) va fuera. Dentro de una \
+              sección todo cuenta desde su primer compás: las vueltas de `every`, \
+              `fill`, `chance`, `humanize` y `:length()`, y las curvas de `ramp` y \
+              `lfo`. Las secciones se encadenan con `arrange()`; sin él suena solo la \
+              primera, como una canción sin secciones.",
+        params: &[
+            Param {
+                name: "nombre",
+                description: "el de la sección (único)",
+            },
+            Param {
+                name: "función",
+                description: "`function() ... end` con lo que cambia",
+            },
+        ],
+        template: "section(\"${drop}\", function()\n  ${-- lo que cambia en la sección}\nend)",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             track(\"drums\", amen):steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\")\n\
+             section(\"intro\", function()\n  \
+             track(\"drums\"):fx(\"lowpass\", { cutoff = ramp(300, 8000, \"4 compases\") })\n\
+             end)\n\
+             section(\"drop\", function() end)\n\
+             arrange({ {\"intro\", 4}, {\"drop\", 8} })\n",
+        ),
+    },
+    Function {
+        name: "arrange",
+        receiver: Receiver::Global,
+        signature: "arrange({ {sección, compases}, ... })",
+        returns: None,
+        summary: "La línea de tiempo: las secciones en orden, cada una con sus compases.",
+        doc: "El motor toca la canción entera: al empezar cada compás mira en qué \
+              sección está y, si cambia, pone sus patrones (siempre al empezar el \
+              compás y todo junto). Al acabar vuelve a empezar. Recargar el script \
+              conserva la sección y el compás por los que iba; si esa sección ya no \
+              está, vuelve al principio con un aviso. Desde el modo tocar y la paleta \
+              se puede saltar a una sección, repetir la actual y volver a la línea de \
+              tiempo. Exportar sigue la línea de tiempo entera (hasta 256 compases). \
+              Una misma sección puede salir varias veces.",
+        params: &[Param {
+            name: "línea",
+            description: "lista de `{\"sección\", compases}` (de 1 a 256 compases cada una)",
+        }],
+        template: "arrange({ {\"${drop}\", ${8}} })",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             track(\"drums\", amen):steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\")\n\
+             section(\"intro\", function() track(\"drums\"):steps(\"1 . . .  . . . .  1 . . .  . . . .\") end)\n\
+             section(\"drop\", function() end)\n\
+             section(\"break\", function() track(\"drums\"):mute() end)\n\
+             arrange({ {\"intro\", 4}, {\"drop\", 8}, {\"break\", 2}, {\"drop\", 8} })\n",
+        ),
+    },
+    Function {
         name: "bus",
         receiver: Receiver::Global,
         signature: "bus(nombre, parámetros)",

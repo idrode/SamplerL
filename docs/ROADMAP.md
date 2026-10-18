@@ -75,12 +75,14 @@ proyecto). Ver «Fase D» en [docs/ESTADO.md](ESTADO.md).
 
 ## Fase E: estructura y versiones
 
-En curso: hecha la grabación de lo tocado («Grabar lo tocado» en la
-paleta, orden `grabar [N]`; detalle y decisiones en
-[docs/ESTADO.md](ESTADO.md)). Faltan las secciones con línea de tiempo,
-el historial de versiones y el A/B de variantes.
+En curso: hechas la grabación de lo tocado («Grabar lo tocado» en la
+paleta, orden `grabar [N]`) y las secciones con línea de tiempo
+(`section()`, `arrange()`; detalle y decisiones en
+[docs/ESTADO.md](ESTADO.md)). Faltan el historial de versiones y el A/B
+de variantes.
 
-- Secciones con nombre y línea de tiempo.
+- Secciones con nombre y línea de tiempo: `section(nombre, función)` y
+  `arrange({ {sección, compases}, ... })`, con el arreglo en el motor. ✅
 - Historial de versiones del script con marca de tiempo.
 - A/B de variantes.
 - Grabar lo tocado en el modo tocar como un patrón de `steps`. ✅

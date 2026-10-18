@@ -836,6 +836,38 @@ bpm(170)
 metronome(true)
 ```
 
+### `section(nombre, función)`
+
+Una sección con nombre (intro, drop, break...): lo que cambian las pistas mientras suena. La función se llama al acabar el script, sobre una copia de las pistas definidas fuera de las secciones: dentro, `track("drums")` cambia esa pista solo en esta sección (patrón, efectos, `mute`, `solo`, `every`...) y `track("nueva", cortes)` añade una que solo suena aquí. Entre todas las secciones caben 8 pistas. Lo que es de toda la canción (`bpm`, `bpm_ramp`, `meter`, `bus`, `metronome`) va fuera. Dentro de una sección todo cuenta desde su primer compás: las vueltas de `every`, `fill`, `chance`, `humanize` y `:length()`, y las curvas de `ramp` y `lfo`. Las secciones se encadenan con `arrange()`; sin él suena solo la primera, como una canción sin secciones.
+
+- `nombre`: el de la sección (único)
+- `función`: `function() ... end` con lo que cambia
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+section("intro", function()
+  track("drums"):fx("lowpass", { cutoff = ramp(300, 8000, "4 compases") })
+end)
+section("drop", function() end)
+arrange({ {"intro", 4}, {"drop", 8} })
+```
+
+### `arrange({ {sección, compases}, ... })`
+
+La línea de tiempo: las secciones en orden, cada una con sus compases. El motor toca la canción entera: al empezar cada compás mira en qué sección está y, si cambia, pone sus patrones (siempre al empezar el compás y todo junto). Al acabar vuelve a empezar. Recargar el script conserva la sección y el compás por los que iba; si esa sección ya no está, vuelve al principio con un aviso. Desde el modo tocar y la paleta se puede saltar a una sección, repetir la actual y volver a la línea de tiempo. Exportar sigue la línea de tiempo entera (hasta 256 compases). Una misma sección puede salir varias veces.
+
+- `línea`: lista de `{"sección", compases}` (de 1 a 256 compases cada una)
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+section("intro", function() track("drums"):steps("1 . . .  . . . .  1 . . .  . . . .") end)
+section("drop", function() end)
+section("break", function() track("drums"):mute() end)
+arrange({ {"intro", 4}, {"drop", 8}, {"break", 2}, {"drop", 8} })
+```
+
 ### `bus(nombre, parámetros)`
 
 Parámetros de un bus de envío (delay o reverb), para toda la canción. Hay dos buses que comparten todas las pistas: un delay sincronizado al tempo y una reverb. Cada pista les manda una parte de su salida con `pista:send(nombre, nivel)` (después de su volumen, mute y solo) y lo que devuelven se suma al master antes del limitador. Sin `bus()`, los valores por defecto. Los cambios entran al empezar el compás, como el tempo; la cola del delay y de la reverb sigue sonando aunque se pare el secuenciador. Una clave desconocida da error.
@@ -1938,6 +1970,46 @@ track("hats", amen:slice_at(2))
   :fx("bitcrush", { bits = 6, downsample = 2 })
   :gain(0.3)
 ```
+
+### Una canción entera con secciones
+
+En vez de un loop plano, secciones con nombre encadenadas en una línea de
+tiempo. Las pistas se definen fuera; cada `section()` cambia, solo para
+ella, lo que haga falta (patrón, efectos, `mute`, `solo`) o añade pistas
+suyas. `arrange()` dice el orden y los compases de cada una. Dentro de
+una sección todo cuenta desde su primer compás: el `fill` cada 4 de abajo
+cae al final de cada 4 compases del drop, empiece donde empiece.
+
+```lua
+bpm(170)
+local amen = sample("amen.wav"):slice(8)
+
+track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+track("kick", amen:slice_at(1)):steps("x . . .  x . . .  x . . .  x . . .")
+
+section("intro", function()
+  track("drums"):mute()
+  track("kick"):fx("lowpass", { cutoff = ramp(300, 6000, "4 compases") })
+end)
+
+section("drop", function()
+  track("drums"):fill("stutter", 4)
+end)
+
+section("break", function()
+  track("kick"):mute()
+  track("drums"):steps("1 . . .  . . 3 .  . . . .  5 . . .")
+end)
+
+arrange({ {"intro", 4}, {"drop", 8}, {"break", 2}, {"drop", 8} })
+```
+
+Cada cambio de sección entra al empezar un compás y entero. Al acabar, la
+línea de tiempo vuelve a empezar. Recargar el script a mitad de canción
+sigue por la misma sección y el mismo compás; si esa sección ya no está,
+vuelve al principio y lo avisa. `exportar` (y `--render` sin `--bars`)
+graba la línea de tiempo entera, hasta 256 compases. Sin `arrange()` suena
+solo la primera sección, como una canción de siempre.
 
 ## 7. Solución de problemas
 

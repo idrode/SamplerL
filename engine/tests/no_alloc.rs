@@ -484,6 +484,72 @@ fn the_audio_thread_never_allocates() {
     });
     assert_eq!(n, 0, "reservas al quitar los granos");
 
+    // Secciones: un arreglo de tres secciones (con pistas distintas en
+    // cada una) que cambia de sección cada compás, un salto, repetir y
+    // volver, otro arreglo encima (recargar) y quitarlo.
+    let arranged = |seed: u64| {
+        let mut arrangement = engine::Arrangement::new();
+        for s in 0..3u64 {
+            let patterns: Vec<(usize, Pattern)> = (0..3)
+                .filter(|t| !(*t as u64 + s).is_multiple_of(3))
+                .map(|t| {
+                    let steps: Vec<Option<Step>> = (0..STEPS)
+                        .map(|k| (k % (t + 2) == 0).then(|| Step::new(k % 2)))
+                        .collect();
+                    (
+                        t,
+                        Pattern::from_steps(sample.clone(), &slices, steps).unwrap(),
+                    )
+                })
+                .collect();
+            arrangement.add_section(seed + s, patterns).unwrap();
+        }
+        for (s, bars) in [(0, 1), (1, 2), (2, 1), (1, 1)] {
+            arrangement.push(s, bars).unwrap();
+        }
+        arrangement
+    };
+    let mut batch = engine::Batch::new();
+    batch.set_arrangement(Some(arranged(10)));
+    controller.apply(batch).unwrap();
+    let n = counted(|| {
+        for _ in 0..400 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas con secciones");
+    controller.jump_to(2).unwrap();
+    controller.loop_section(true).unwrap();
+    let n = counted(|| {
+        for _ in 0..300 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas al saltar y repetir una sección");
+    controller.loop_section(false).unwrap();
+    let mut batch = engine::Batch::new();
+    batch.set_arrangement(Some(arranged(11)));
+    controller.apply(batch).unwrap();
+    let n = counted(|| {
+        for _ in 0..300 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas al recargar el arreglo");
+    let mut batch = engine::Batch::new();
+    batch.set_arrangement(None);
+    for t in 0..3 {
+        batch.set_pattern(t, None);
+    }
+    controller.apply(batch).unwrap();
+    let n = counted(|| {
+        for _ in 0..200 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas al quitar el arreglo");
+    controller.collect_garbage();
+
     // Rampa de tempo y cambio de compás.
     controller
         .set_tempo_ramp(engine::TempoRamp {

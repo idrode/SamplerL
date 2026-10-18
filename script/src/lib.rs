@@ -70,6 +70,17 @@ const STRAIGHT_SWING: f32 = 50.0;
 /// Swing máximo: el contratiempo, a medio paso.
 const MAX_SWING: f32 = 75.0;
 
+/// Funciones que son de toda la canción: no van dentro de `section()`.
+const GLOBAL_ONLY: &[&str] = &[
+    "bpm",
+    "bpm_ramp",
+    "meter",
+    "metronome",
+    "bus",
+    "section",
+    "arrange",
+];
+
 /// Compases que se tiran los dados de `chance` antes de repetirse.
 pub const CHANCE_CYCLE_BARS: u64 = 16;
 
@@ -101,6 +112,20 @@ pub struct Song {
     /// proyecto que no se aplican porque el script corta el sample en otro
     /// número de cortes).
     pub warnings: Vec<String>,
+    /// Secciones (`section()`), en el orden en que se definieron; vacío
+    /// sin secciones.
+    pub sections: Vec<SectionDef>,
+    /// Línea de tiempo (`arrange()`): (sección, compases); vacía sin
+    /// `arrange`. Con ella, el motor lleva la canción entera.
+    pub timeline: Vec<(usize, u32)>,
+}
+
+/// Una sección: su nombre y sus pistas (las de fuera de las secciones con
+/// lo que la sección les cambia, y las suyas).
+#[derive(Clone)]
+pub struct SectionDef {
+    pub name: String,
+    pub tracks: Vec<TrackDef>,
 }
 
 #[derive(Clone)]
@@ -596,7 +621,19 @@ impl ScriptHost {
         name: &str,
         base_dir: &Path,
     ) -> Result<&Song, ScriptError> {
-        let song = self.eval(source, name, base_dir)?;
+        let mut song = self.eval(source, name, base_dir)?;
+        // Recargar a mitad de canción: el arreglo nuevo entra en el compás
+        // siguiente; si la sección que tocaba entonces ya no está, el motor
+        // vuelve al principio de la línea de tiempo. Se avisa.
+        if let (Some(old), Some(place)) = (&self.song, controller.section())
+            && let Some(current) = old.section_after(place)
+            && !song.timeline.is_empty()
+            && !song.sections.iter().any(|s| s.name == current)
+        {
+            song.warnings.push(format!(
+                "la sección \"{current}\" ya no existe: la canción vuelve al principio de la línea de tiempo"
+            ));
+        }
         let slots = self.assign_slots(&song);
         let batch = song_batch(&song, &slots)?;
         controller
@@ -652,6 +689,10 @@ impl ScriptHost {
             meter: None,
             tracks: Vec::new(),
             expanding: Rc::new(Cell::new(false)),
+            sections: Vec::new(),
+            arrange: None,
+            in_section: Rc::new(Cell::new(false)),
+            names: Vec::new(),
         }));
         // La caché pasa al estado de Lua durante la evaluación y vuelve después.
         let cache = Rc::new(RefCell::new(std::mem::take(&mut self.samples)));
@@ -668,12 +709,13 @@ impl ScriptHost {
                 &pattern_rng,
                 base_dir,
             )
-            .and_then(|()| lua.load(source).set_name(format!("={name}")).exec());
+            .and_then(|()| lua.load(source).set_name(format!("={name}")).exec())
+            .and_then(|()| run_sections(&state));
         self.samples = std::mem::take(&mut *cache.borrow_mut());
         self.imported = std::mem::take(&mut imports.borrow_mut().used);
-        result.map_err(|e| ScriptError::from_lua(&e))?;
+        let sections = result.map_err(|e| ScriptError::from_lua(&e))?;
 
-        let (bpm, metronome, buses, tempo_ramp, meter, tracks, expanding) = {
+        let (bpm, metronome, buses, tempo_ramp, meter, tracks, expanding, arrange) = {
             let mut builder = state.borrow_mut();
             (
                 builder
@@ -687,6 +729,7 @@ impl ScriptHost {
                 builder.meter,
                 std::mem::take(&mut builder.tracks),
                 builder.expanding.clone(),
+                builder.arrange.take(),
             )
         };
         if tracks.len() > MAX_TRACKS {
@@ -696,35 +739,107 @@ impl ScriptHost {
             )));
         }
 
-        let mut tracks = tracks;
-        self.apply_stretch(&mut tracks, bpm.unwrap_or(engine::DEFAULT_BPM), name)?;
-
         // Expandir `every` y `chance` a un ciclo de compases. Las funciones de
         // `every` se llaman ahora, con el estado de Lua todavía vivo.
         let mut rng = Rng::new(seed);
-        let timing = Timing {
-            bpm: bpm.unwrap_or(engine::DEFAULT_BPM),
-            seed,
+        let tempo = bpm.unwrap_or(engine::DEFAULT_BPM);
+        let timing = Timing { bpm: tempo, seed };
+        let mut used = Vec::new();
+        let mut finish = |mut tracks: Vec<TrackBuild>| -> Result<Vec<TrackDef>, ScriptError> {
+            self.apply_stretch(&mut tracks, tempo, name, &mut used)?;
+            expanding.set(true);
+            let expanded = tracks
+                .into_iter()
+                .map(|track| expand(track, &mut rng, timing))
+                .collect::<Result<Vec<_>, _>>();
+            expanding.set(false);
+            expanded
         };
-        expanding.set(true);
-        let expanded = tracks
-            .into_iter()
-            .map(|track| expand(track, &mut rng, timing))
-            .collect::<Result<Vec<_>, _>>();
-        expanding.set(false);
         let mut warnings = warnings.borrow().clone();
-        if let Ok(tracks) = &expanded {
-            warnings.extend(tracks.iter().filter_map(far_kept_pitch));
-            warnings.extend(tracks.iter().filter_map(idle_formant));
+        let (tracks, sections, timeline) = match sections {
+            None => {
+                if arrange.is_some() {
+                    let (_, location) = arrange.unwrap_or_default();
+                    return Err(ScriptError::new(format!(
+                        "{location}arrange: no hay secciones; defínelas con section(\"nombre\", function() ... end)"
+                    )));
+                }
+                (finish(tracks)?, Vec::new(), Vec::new())
+            }
+            Some(built) => {
+                let sections = built
+                    .into_iter()
+                    .map(|(name, tracks)| {
+                        Ok(SectionDef {
+                            name,
+                            tracks: finish(tracks)?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, ScriptError>>()?;
+                let timeline = match arrange {
+                    Some((entries, location)) => {
+                        let timeline = entries
+                            .iter()
+                            .map(|(section, bars)| {
+                                let index = sections.iter().position(|s| &s.name == section);
+                                index.map(|i| (i, *bars)).ok_or_else(|| {
+                                    let known: Vec<&str> =
+                                        sections.iter().map(|s| s.name.as_str()).collect();
+                                    ScriptError::new(format!(
+                                        "{location}arrange: la sección \"{section}\" no existe (hay: {})",
+                                        known.join(", ")
+                                    ))
+                                })
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                        let total: u64 = timeline.iter().map(|&(_, b)| b as u64).sum();
+                        if total > MAX_SONG_BARS {
+                            warnings.push(format!(
+                                "la línea de tiempo dura {total} compases: exportar se queda en los primeros {MAX_SONG_BARS}"
+                            ));
+                        }
+                        timeline
+                    }
+                    None => {
+                        if sections.len() > 1 {
+                            warnings.push(format!(
+                                "hay {} secciones y ningún arrange(): suena solo \"{}\"",
+                                sections.len(),
+                                sections[0].name
+                            ));
+                        }
+                        Vec::new()
+                    }
+                };
+                let first = timeline.first().map_or(0, |&(s, _)| s);
+                (sections[first].tracks.clone(), sections, timeline)
+            }
+        };
+        self.stretched = used;
+        let all = || {
+            sections
+                .iter()
+                .flat_map(|s| s.tracks.iter())
+                .chain(sections.is_empty().then_some(&tracks).into_iter().flatten())
+        };
+        for warning in all()
+            .filter_map(far_kept_pitch)
+            .chain(all().filter_map(idle_formant))
+        {
+            if !warnings.contains(&warning) {
+                warnings.push(warning);
+            }
         }
         Ok(Song {
             bpm,
-            tracks: expanded?,
+            tracks,
             metronome,
             buses,
             tempo_ramp,
             meter,
             warnings,
+            sections,
+            timeline,
         })
     }
 
@@ -733,12 +848,12 @@ impl ScriptHost {
     /// el resultado (los inicios de todos sus cortes son límites de tramo),
     /// que se guarda para la carga siguiente.
     fn apply_stretch(
-        &mut self,
+        &self,
         tracks: &mut [TrackBuild],
         bpm: f64,
         name: &str,
+        used: &mut Vec<Stretched>,
     ) -> Result<(), ScriptError> {
-        let mut used: Vec<Stretched> = Vec::new();
         // Samples y cortes originales de las pistas con stretch (antes de
         // sustituirlos).
         let originals: Vec<Option<(Arc<Sample>, Vec<usize>)>> = tracks
@@ -797,7 +912,6 @@ impl ScriptHost {
                 ratio,
             });
         }
-        self.stretched = used;
         Ok(())
     }
 
@@ -824,6 +938,97 @@ impl ScriptHost {
                 Ok(())
             }
         };
+
+        // Lo que es de toda la canción no va dentro de una sección.
+        let in_section = state.borrow().in_section.clone();
+        let guard = move |lua: &Lua, what: &str| {
+            guard(lua, what)?;
+            if in_section.get() && GLOBAL_ONLY.contains(&what) {
+                return Err(fail(
+                    lua,
+                    format!("{what}() es de toda la canción: va fuera de section()"),
+                ));
+            }
+            Ok(())
+        };
+
+        let st = state.clone();
+        let g = guard.clone();
+        globals.set(
+            "section",
+            lua.create_function(move |lua, (name, func): (String, Function)| {
+                g(lua, "section")?;
+                let mut builder = st.borrow_mut();
+                if name.trim().is_empty() {
+                    return Err(fail(lua, "section: el nombre está vacío"));
+                }
+                if builder.sections.iter().any(|s| s.name == name) {
+                    return Err(fail(
+                        lua,
+                        format!("section(\"{name}\"): ya hay una sección con ese nombre"),
+                    ));
+                }
+                builder.sections.push(SectionBuild { name, func });
+                Ok(())
+            })?,
+        )?;
+
+        let st = state.clone();
+        let g = guard.clone();
+        globals.set(
+            "arrange",
+            lua.create_function(move |lua, list: Table| {
+                g(lua, "arrange")?;
+                let mut entries = Vec::new();
+                for (i, entry) in list.sequence_values::<Value>().enumerate() {
+                    let n = i + 1;
+                    let bad = || {
+                        fail(
+                            lua,
+                            format!("arrange: la entrada {n} es {{\"sección\", compases}}"),
+                        )
+                    };
+                    let Value::Table(entry) = entry? else {
+                        return Err(bad());
+                    };
+                    let (Ok(Value::String(section)), Ok(bars)) =
+                        (entry.raw_get::<Value>(1), entry.raw_get::<Value>(2))
+                    else {
+                        return Err(bad());
+                    };
+                    let section = section.to_str()?.to_string();
+                    let bars = match bars {
+                        Value::Integer(b) if (1..=MAX_SONG_BARS as i64).contains(&b) => b as u32,
+                        Value::Number(b) if b.fract() == 0.0 && (1.0..=MAX_SONG_BARS as f64).contains(&b) => b as u32,
+                        other => {
+                            let shown = match other {
+                                Value::Integer(b) => b.to_string(),
+                                Value::Number(b) => b.to_string(),
+                                other => other.type_name().to_string(),
+                            };
+                            return Err(fail(
+                                lua,
+                                format!(
+                                    "arrange: \"{section}\" con {shown} compases: van de 1 a {MAX_SONG_BARS}"
+                                ),
+                            ));
+                        }
+                    };
+                    entries.push((section, bars));
+                }
+                if entries.is_empty() {
+                    return Err(fail(lua, "arrange: la línea de tiempo está vacía"));
+                }
+                if entries.len() > engine::MAX_ENTRIES {
+                    return Err(fail(
+                        lua,
+                        format!("arrange: como mucho {} entradas", engine::MAX_ENTRIES),
+                    ));
+                }
+                st.borrow_mut().arrange = Some((entries, location(lua)));
+                Ok(())
+            })?,
+        )?;
 
         let st = state.clone();
         let g = guard.clone();
@@ -1176,6 +1381,20 @@ impl ScriptHost {
                 let mut builder = st.borrow_mut();
                 match def {
                     Some(def) => {
+                        // Una pista nueva en una sección: entre todas las
+                        // secciones, como mucho MAX_TRACKS nombres.
+                        let in_section = builder.in_section.get();
+                        if in_section && !builder.names.contains(&name) {
+                            if builder.names.len() >= MAX_TRACKS {
+                                return Err(fail(
+                                    lua,
+                                    format!(
+                                        "track(\"{name}\"): entre todas las secciones hay más de {MAX_TRACKS} pistas (el máximo)"
+                                    ),
+                                ));
+                            }
+                            builder.names.push(name.clone());
+                        }
                         // Redefinir una pista en el mismo script la reemplaza.
                         match builder.tracks.iter_mut().find(|t| t.def.name == name) {
                             Some(existing) => *existing = def,
@@ -1207,10 +1426,10 @@ impl ScriptHost {
     fn assign_slots(&self, song: &Song) -> [Option<String>; MAX_TRACKS] {
         let mut slots: [Option<String>; MAX_TRACKS] = Default::default();
         let mut new_names = Vec::new();
-        for track in &song.tracks {
-            match self.track_slot(&track.name) {
-                Some(slot) => slots[slot] = Some(track.name.clone()),
-                None => new_names.push(track.name.clone()),
+        for name in song.track_names() {
+            match self.track_slot(name) {
+                Some(slot) => slots[slot] = Some(name.to_string()),
+                None => new_names.push(name.to_string()),
             }
         }
         for name in new_names {
@@ -1238,31 +1457,74 @@ fn song_batch(song: &Song, slots: &[Option<String>; MAX_TRACKS]) -> Result<Batch
     // Sin `meter()`, 4/4 (así quitarlo vuelve al compás de siempre).
     batch.set_meter(song.meter.unwrap_or(engine::Meter::COMMON));
     batch.set_buses(song.buses);
+    if !song.timeline.is_empty() {
+        // Con línea de tiempo, el motor lleva todas las secciones.
+        let mut arrangement = engine::Arrangement::new();
+        for section in &song.sections {
+            let mut patterns = Vec::new();
+            for track in &section.tracks {
+                let slot = slots
+                    .iter()
+                    .position(|s| s.as_deref() == Some(&track.name))
+                    .expect("cada pista tiene su ranura");
+                patterns.push((
+                    slot,
+                    track_pattern(track).map_err(|e| {
+                        ScriptError::new(format!("sección \"{}\": {}", section.name, e.message))
+                    })?,
+                ));
+            }
+            arrangement
+                .add_section(section_id(&section.name), patterns)
+                .map_err(|e| ScriptError::new(format!("motor: {e}")))?;
+        }
+        for &(section, bars) in &song.timeline {
+            arrangement
+                .push(section, bars)
+                .map_err(|e| ScriptError::new(format!("motor: {e}")))?;
+        }
+        batch.set_arrangement(Some(arrangement));
+        return Ok(batch);
+    }
+    // Sin línea de tiempo, los patrones sueltos (y fuera el arreglo que
+    // hubiera).
+    batch.set_arrangement(None);
     for (slot, assigned) in slots.iter().enumerate() {
         let pattern = match assigned {
             Some(name) => {
                 let track = song.tracks.iter().find(|t| &t.name == name).unwrap();
-                let pattern = Pattern::from_bars(track.sample.clone(), &track.slices, &track.bars)
-                    .and_then(|p| p.with_gain(track.gain))
-                    .and_then(|p| p.with_fx(&track.fx))
-                    .and_then(|p| p.with_automation(&track.automation))
-                    .and_then(|p| p.with_sends(track.sends))
-                    .and_then(|p| p.with_shapes(&track.shapes))
-                    .and_then(|p| p.with_choke(track.choke))
-                    .and_then(|p| p.with_midi(track.midi))
-                    .and_then(|p| p.with_instrument(track.instrument.map(|i| i.engine)))
-                    .and_then(|p| p.with_granular(track.granular))
-                    .and_then(|p| p.with_formant(track.formant))
-                    .map(|p| p.with_gate(track.gate))
-                    .map(|p| p.with_mute(track.mute).with_solo(track.solo))
-                    .map_err(|e| ScriptError::new(format!("pista \"{name}\": {e}")))?;
-                Some(pattern)
+                Some(track_pattern(track)?)
             }
             None => None,
         };
         batch.set_pattern(slot, pattern);
     }
     Ok(batch)
+}
+
+/// El patrón que manda al motor una pista.
+fn track_pattern(track: &TrackDef) -> Result<Pattern, ScriptError> {
+    Pattern::from_bars(track.sample.clone(), &track.slices, &track.bars)
+        .and_then(|p| p.with_gain(track.gain))
+        .and_then(|p| p.with_fx(&track.fx))
+        .and_then(|p| p.with_automation(&track.automation))
+        .and_then(|p| p.with_sends(track.sends))
+        .and_then(|p| p.with_shapes(&track.shapes))
+        .and_then(|p| p.with_choke(track.choke))
+        .and_then(|p| p.with_midi(track.midi))
+        .and_then(|p| p.with_instrument(track.instrument.map(|i| i.engine)))
+        .and_then(|p| p.with_granular(track.granular))
+        .and_then(|p| p.with_formant(track.formant))
+        .map(|p| p.with_gate(track.gate))
+        .map(|p| p.with_mute(track.mute).with_solo(track.solo))
+        .map_err(|e| ScriptError::new(format!("pista \"{}\": {e}", track.name)))
+}
+
+/// Identificador de una sección entre recargas (FNV-1a de su nombre).
+fn section_id(name: &str) -> u64 {
+    name.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
+        (h ^ b as u64).wrapping_mul(0x100_0000_01b3)
+    })
 }
 
 impl Song {
@@ -1272,6 +1534,10 @@ impl Song {
     /// `min_bars` (redondeado a ciclos completos). Como mucho
     /// [`MAX_SONG_BARS`].
     pub fn length_bars(&self, min_bars: u64) -> u64 {
+        // Con línea de tiempo, la canción entera (hasta el tope).
+        if !self.timeline.is_empty() {
+            return self.timeline_bars().min(MAX_SONG_BARS);
+        }
         let bar = self.bar_steps() as u64;
         let steps = self.tracks.iter().fold(bar, |acc, t| {
             lcm(acc, (t.bars.len().max(1) * t.length.max(1)) as u64).min(MAX_SONG_BARS * bar + 1)
@@ -1281,6 +1547,52 @@ impl Song {
             return MAX_SONG_BARS;
         }
         (cycle * min_bars.div_ceil(cycle).max(1)).min(MAX_SONG_BARS)
+    }
+
+    /// Compases de la línea de tiempo entera (0 sin `arrange`).
+    pub fn timeline_bars(&self) -> u64 {
+        self.timeline.iter().map(|&(_, b)| b as u64).sum()
+    }
+
+    /// Nombre de la sección que suena en el compás siguiente al de `place`
+    /// (siguiendo la línea de tiempo, o repitiendo la entrada).
+    pub fn section_after(&self, place: engine::SectionStatus) -> Option<&str> {
+        let &(_, bars) = self.timeline.get(place.entry)?;
+        let entry = if place.bar + 1 < bars || place.looping {
+            place.entry
+        } else {
+            (place.entry + 1) % self.timeline.len()
+        };
+        self.section_at(entry)
+    }
+
+    /// Nombre de la sección de la entrada `entry` de la línea de tiempo.
+    pub fn section_at(&self, entry: usize) -> Option<&str> {
+        let &(section, _) = self.timeline.get(entry)?;
+        Some(&self.sections[section].name)
+    }
+
+    /// Pistas de la sección `name` (sin secciones, las de la canción).
+    pub fn section_tracks(&self, name: Option<&str>) -> &[TrackDef] {
+        name.and_then(|n| self.sections.iter().find(|s| s.name == n))
+            .map_or(&self.tracks, |s| &s.tracks)
+    }
+
+    /// Nombres de todas las pistas, de todas las secciones, sin repetir
+    /// (cada uno ocupa una pista del motor).
+    pub fn track_names(&self) -> Vec<&str> {
+        let mut names: Vec<&str> = Vec::new();
+        let all = self
+            .sections
+            .iter()
+            .flat_map(|s| s.tracks.iter())
+            .chain(&self.tracks);
+        for track in all {
+            if !names.contains(&track.name.as_str()) {
+                names.push(&track.name);
+            }
+        }
+        names
     }
 
     /// Pasos de un compás (16 en 4/4; `meter()` lo cambia).
@@ -1333,11 +1645,15 @@ impl Song {
         bars: u64,
         name: &str,
     ) -> Option<Result<Vec<f32>, ScriptError>> {
-        if !self.tracks.iter().any(|t| t.name == name) {
+        if !self.track_names().contains(&name) {
             return None;
         }
         let mut song = self.clone();
-        for track in &mut song.tracks {
+        let all = song
+            .tracks
+            .iter_mut()
+            .chain(song.sections.iter_mut().flat_map(|s| s.tracks.iter_mut()));
+        for track in all {
             track.solo = track.name == name;
             if track.solo {
                 track.mute = false;
@@ -1363,8 +1679,8 @@ impl Song {
         metronome: bool,
     ) -> Result<Vec<f32>, ScriptError> {
         let mut slots: [Option<String>; MAX_TRACKS] = Default::default();
-        for (slot, track) in slots.iter_mut().zip(&self.tracks) {
-            *slot = Some(track.name.clone());
+        for (slot, name) in slots.iter_mut().zip(self.track_names()) {
+            *slot = Some(name.to_string());
         }
         let (mut controller, mut engine) = engine::new_engine(sample_rate);
         let send = |e: SendError| ScriptError::new(format!("motor: {e}"));
@@ -1400,6 +1716,12 @@ fn load_cached(
 
 /// Error de una función de la API con la posición del script que la llamó.
 fn fail(lua: &Lua, message: impl fmt::Display) -> mlua::Error {
+    mlua::Error::runtime(format!("{}{message}", location(lua)))
+}
+
+/// Dónde está el script que llamó a la función de la API (`archivo:línea:
+/// `), o nada.
+fn location(lua: &Lua) -> String {
     let location = (1..8).find_map(|level| {
         lua.inspect_stack(level, |debug| {
             let source = debug.source();
@@ -1412,7 +1734,36 @@ fn fail(lua: &Lua, message: impl fmt::Display) -> mlua::Error {
         })
         .flatten()
     });
-    mlua::Error::runtime(format!("{}{message}", location.unwrap_or_default()))
+    location.unwrap_or_default()
+}
+
+/// Una sección evaluada: su nombre y sus pistas sin expandir.
+type BuiltSection = (String, Vec<TrackBuild>);
+
+/// Evalúa las secciones (al acabar el script): cada una sobre una copia de
+/// las pistas de fuera de las secciones, que su función cambia o amplía.
+/// `None` sin secciones.
+fn run_sections(state: &Rc<RefCell<Builder>>) -> mlua::Result<Option<Vec<BuiltSection>>> {
+    let sections = std::mem::take(&mut state.borrow_mut().sections);
+    if sections.is_empty() {
+        return Ok(None);
+    }
+    let (base, in_section) = {
+        let mut builder = state.borrow_mut();
+        builder.names = builder.tracks.iter().map(|t| t.def.name.clone()).collect();
+        (builder.tracks.clone(), builder.in_section.clone())
+    };
+    let mut built = Vec::with_capacity(sections.len());
+    for section in sections {
+        state.borrow_mut().tracks = base.clone();
+        in_section.set(true);
+        let result = section.func.call::<()>(());
+        in_section.set(false);
+        result?;
+        built.push((section.name, std::mem::take(&mut state.borrow_mut().tracks)));
+    }
+    state.borrow_mut().tracks = base;
+    Ok(Some(built))
 }
 
 /// La pista que define `track(nombre, origen)`: unos cortes
@@ -1505,9 +1856,26 @@ struct Builder {
     tracks: Vec<TrackBuild>,
     /// Activo mientras se llaman las funciones de `every`.
     expanding: Rc<Cell<bool>>,
+    /// Secciones por evaluar (`section()`), con dónde se definieron.
+    sections: Vec<SectionBuild>,
+    /// `arrange()`: (sección, compases) y dónde se llamó.
+    arrange: Option<(Vec<(String, u32)>, String)>,
+    /// Activo mientras se evalúa una sección.
+    in_section: Rc<Cell<bool>>,
+    /// Nombres de pista de todas las secciones (no pueden pasar de
+    /// `MAX_TRACKS`: cada uno ocupa una pista del motor).
+    names: Vec<String>,
+}
+
+/// `section(nombre, función)`: se evalúa al acabar el script, sobre una
+/// copia de las pistas de fuera de las secciones.
+struct SectionBuild {
+    name: String,
+    func: Function,
 }
 
 /// Pista en construcción: su definición y las transformaciones pendientes.
+#[derive(Clone)]
 struct TrackBuild {
     def: TrackDef,
     /// Etiquetas de los cortes, compartidas con la variable de Lua: un
@@ -1523,6 +1891,7 @@ struct TrackBuild {
     steps_set: bool,
 }
 
+#[derive(Clone)]
 enum Transform {
     /// `:every(n, fn)`: en los compases 0, n, 2n... se llama `fn(compás)`.
     Every { n: u64, func: Function },

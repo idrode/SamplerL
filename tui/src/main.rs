@@ -161,7 +161,7 @@ fn run() -> Result<(), BoxError> {
         return match render_to {
             Some(out) => match track {
                 Some(track) => render_track(&script, &out, &track, bars),
-                None => render_script(&script, &out, bars.unwrap_or(DEFAULT_BARS), metronome),
+                None => render_script(&script, &out, bars, metronome),
             },
             None if allow_audio => play_script(&script),
             None => Err(format!(
@@ -350,11 +350,23 @@ fn render_track(path: &str, out: &str, track: &str, bars: Option<u64>) -> Result
     Ok(())
 }
 
-fn render_script(path: &str, out: &str, bars: u64, metronome: bool) -> Result<(), BoxError> {
+fn render_script(
+    path: &str,
+    out: &str,
+    bars: Option<u64>,
+    metronome: bool,
+) -> Result<(), BoxError> {
     let mut host = script::ScriptHost::new(RENDER_RATE);
     let (mut controller, mut engine) = engine::new_engine(RENDER_RATE);
     let song = host.load_file(&mut controller, std::path::Path::new(path))?;
     let bpm = song.bpm.unwrap_or(engine::DEFAULT_BPM);
+    // Sin --bars: con línea de tiempo, la canción entera (hasta 256
+    // compases); si no, 4.
+    let bars = bars.unwrap_or(if song.timeline.is_empty() {
+        DEFAULT_BARS
+    } else {
+        song.length_bars(1)
+    });
     for warning in &song.warnings {
         eprintln!("aviso: {warning}");
     }
@@ -366,13 +378,22 @@ fn render_script(path: &str, out: &str, bars: u64, metronome: bool) -> Result<()
             track.slices.len()
         );
     }
+    if !song.timeline.is_empty() {
+        let line: Vec<String> = song
+            .timeline
+            .iter()
+            .map(|&(s, bars)| format!("{} {bars}", song.sections[s].name))
+            .collect();
+        println!("línea de tiempo: {}", line.join(" · "));
+    }
     // El metrónomo del script no entra en el render: solo con --metronome.
     if metronome {
         controller.set_metronome(true)?;
     }
     controller.start()?;
 
-    let frames = bars * engine::bar_frames(bpm, RENDER_RATE);
+    // Con la rampa de tempo y el compás de la canción, como suena.
+    let frames = song.frames(RENDER_RATE, bars);
     if frames > (MAX_RENDER_SECONDS as u64) * RENDER_RATE as u64 {
         return Err(format!("render demasiado largo (máximo {MAX_RENDER_SECONDS} s)").into());
     }
