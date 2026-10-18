@@ -16,7 +16,8 @@ use crate::diagnose;
 use crate::editing;
 use crate::model::{
     BlockPickerView, BrowserView, CompletionView, ErrorView, InstrumentView, MasterView,
-    PaletteView, SlotsView, TrackView, TransportView, ViewModel, Waveform, error_line,
+    PaletteView, SlotsView, TimelineView, TrackView, TransportView, ViewModel, Waveform,
+    error_line,
 };
 use crate::palette::{self, Action, Item};
 
@@ -419,6 +420,7 @@ impl App {
             "etiquetar" | "label" => self.label_slice(&args),
             "bpm" => self.set_bpm_line(args.first().copied()),
             "grabar" | "record" => self.start_recording(args.first().copied()),
+            "seccion" | "sección" | "section" => self.jump_to_section(rest),
             "remuestrear" | "remuestrear!" | "resample" => {
                 self.resample(&args, command.ends_with('!'))
             }
@@ -428,7 +430,7 @@ impl App {
             other => {
                 self.message = format!(
                     "orden desconocida «{other}» (exportar, guardar, abrir, muestras, etiquetar, \
-                     bpm, bloque, remuestrear)"
+                     bpm, bloque, remuestrear, seccion)"
                 );
             }
         }
@@ -1561,6 +1563,110 @@ impl App {
         song.section_tracks(section)
     }
 
+    /// Los nombres de las secciones de la línea de tiempo, para un mensaje;
+    /// sin `arrange()`, `None` (y lo dice).
+    fn section_names(&mut self) -> Option<String> {
+        let names = self
+            .host
+            .song()
+            .filter(|s| !s.timeline.is_empty())
+            .map(|song| {
+                let mut names: Vec<&str> = Vec::new();
+                for &(s, _) in &song.timeline {
+                    let name = song.sections[s].name.as_str();
+                    if !names.contains(&name) {
+                        names.push(name);
+                    }
+                }
+                names.join(", ")
+            });
+        if names.is_none() {
+            self.message =
+                "no hay línea de tiempo: defínela con arrange({ {\"sección\", compases}, ... })"
+                    .into();
+        }
+        names
+    }
+
+    /// Salta a la entrada siguiente (o anterior) de la línea de tiempo: entra
+    /// en el compás siguiente.
+    pub fn step_section(&mut self, forward: bool) {
+        if self.section_names().is_none() {
+            return;
+        }
+        let len = self.host.song().map_or(1, |s| s.timeline.len());
+        let current = self.status.and_then(|s| s.section).map_or(0, |p| p.entry);
+        let entry = if forward {
+            (current + 1) % len
+        } else {
+            (current + len - 1) % len
+        };
+        self.jump_to_entry(entry);
+    }
+
+    /// `seccion NOMBRE`: salta a la primera entrada de esa sección.
+    pub fn jump_to_section(&mut self, name: &str) {
+        let Some(names) = self.section_names() else {
+            return;
+        };
+        let entry = self.host.song().and_then(|song| {
+            song.timeline
+                .iter()
+                .position(|&(s, _)| song.sections[s].name == name)
+        });
+        match entry {
+            Some(entry) => self.jump_to_entry(entry),
+            None if name.is_empty() => self.message = format!("seccion NOMBRE (hay: {names})"),
+            None => {
+                self.message =
+                    format!("la sección «{name}» no está en la línea de tiempo (hay: {names})")
+            }
+        }
+    }
+
+    fn jump_to_entry(&mut self, entry: usize) {
+        let name = self
+            .host
+            .song()
+            .and_then(|s| s.section_at(entry))
+            .unwrap_or_default()
+            .to_string();
+        self.message = match self.controller.jump_to(entry) {
+            Ok(()) => format!("salta a «{name}» en el compás siguiente"),
+            Err(e) => format!("no se pudo saltar: {e}"),
+        };
+    }
+
+    /// Repite la sección que suena, o vuelve a la línea de tiempo.
+    pub fn toggle_section_loop(&mut self) {
+        let looping = self
+            .status
+            .and_then(|s| s.section)
+            .is_some_and(|p| p.looping);
+        self.set_section_loop(!looping);
+    }
+
+    fn set_section_loop(&mut self, on: bool) {
+        if self.section_names().is_none() {
+            return;
+        }
+        let name = self
+            .status
+            .and_then(|s| s.section)
+            .and_then(|p| self.host.song().and_then(|s| s.section_at(p.entry)))
+            .unwrap_or_default()
+            .to_string();
+        self.message = match self.controller.loop_section(on) {
+            Ok(()) if on => format!("repite «{name}» hasta que vuelvas a la línea de tiempo (l)"),
+            Ok(()) => "sigue la línea de tiempo".into(),
+            Err(e) => format!("no se pudo: {e}"),
+        };
+        // El estado lo dice ya, sin esperar al motor.
+        if let Some(place) = self.status.as_mut().and_then(|s| s.section.as_mut()) {
+            place.looping = on;
+        }
+    }
+
     /// El instrumento de la pista seleccionada, si es un instrumento.
     fn selected_instrument(&self) -> Option<script::InstrumentDef> {
         self.tracks().get(self.selected).and_then(|t| t.instrument)
@@ -2219,6 +2325,16 @@ impl App {
                 }
             }
             Action::JoinSlice => self.join_selected(),
+            Action::NextSection => self.step_section(true),
+            Action::PreviousSection => self.step_section(false),
+            Action::JumpSection => {
+                if let Some(names) = self.section_names() {
+                    self.prompt = Some("seccion ".into());
+                    self.message = format!("seccion NOMBRE: salta al compás siguiente ({names})");
+                }
+            }
+            Action::LoopSection => self.toggle_section_loop(),
+            Action::FollowTimeline => self.set_section_loop(false),
             Action::PreviousSlice => self.select_slice(false),
             Action::Quit => {
                 let armed = std::mem::replace(&mut self.quit_armed, false);
@@ -2289,7 +2405,7 @@ impl App {
         self.release_pads();
         self.message = match self.mode {
             Mode::Play => {
-                "modo tocar: 1-0 y q-i disparan cortes (en un instrumento, notas desde la raíz) · ←→ recorren y preescuchan · espacio preescucha · m mute · s solo · Esc vuelve al editor"
+                "modo tocar: 1-0 y q-i disparan cortes (en un instrumento, notas desde la raíz) · ←→ recorren y preescuchan · espacio preescucha · m mute · s solo · [ ] sección · l repetir sección · Esc vuelve al editor"
             }
             Mode::Edit => "modo editor",
         }
@@ -2665,6 +2781,12 @@ impl App {
                     self.toggle_live(false);
                 } else if c == 's' {
                     self.toggle_live(true);
+                } else if c == ']' {
+                    self.step_section(true);
+                } else if c == '[' {
+                    self.step_section(false);
+                } else if c == 'l' {
+                    self.toggle_section_loop();
                 }
             }
             (Key::Left, _) if self.mode == Mode::Play => self.browse_slice(false),
@@ -2856,7 +2978,27 @@ impl App {
         let selected_slice = selected
             .and_then(|t| tracks[t].slices.len().checked_sub(1))
             .map(|last| self.selected_slice.min(last));
+        let timeline = self
+            .host
+            .song()
+            .filter(|s| !s.timeline.is_empty())
+            .map(|song| {
+                let place = status.and_then(|s| s.section);
+                TimelineView {
+                    entries: song
+                        .timeline
+                        .iter()
+                        .map(|&(s, bars)| (song.sections[s].name.clone(), bars))
+                        .collect(),
+                    // (Hasta que entre el arreglo nuevo, la entrada puede
+                    // ser de la versión anterior.)
+                    current: place.map_or(0, |p| p.entry).min(song.timeline.len() - 1),
+                    bar: place.map_or(0, |p| p.bar),
+                    looping: place.is_some_and(|p| p.looping),
+                }
+            });
         ViewModel {
+            timeline,
             error: self.error.as_ref().map(|e| ErrorView {
                 line: error_line(&e.message, &name),
                 message: e.message.clone(),

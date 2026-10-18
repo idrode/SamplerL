@@ -66,6 +66,13 @@ pub const BINDABLE: &[(&str, Bound, &[&str])] = &[
     ("tap_tempo", Bound::Action(Action::TapTempo), &[]),
     ("metronomo", Bound::Action(Action::Metronome), &[]),
     ("exportar", Bound::Action(Action::Export), &[]),
+    ("seccion_siguiente", Bound::Action(Action::NextSection), &[]),
+    (
+        "seccion_anterior",
+        Bound::Action(Action::PreviousSection),
+        &[],
+    ),
+    ("repetir_seccion", Bound::Action(Action::LoopSection), &[]),
 ];
 
 /// Una combinación de teclas: `ctrl-s`, `alt-x`, `f5`, `esc`.
@@ -572,7 +579,7 @@ brillo = "red"
             [
                 "[teclas] cargar: F1 es siempre la paleta de comandos",
                 "[teclas] explorador: Alt-S ya es de guardar; no se usa",
-                "[teclas] «inventada» no existe (hay: paleta, guardar, cargar, marcha, ir_al_error, siguiente_pista, recargar, ordenes, completar, salir, modo_tocar, deshacer, rehacer, explorador, tap_tempo, metronomo, exportar)",
+                "[teclas] «inventada» no existe (hay: paleta, guardar, cargar, marcha, ir_al_error, siguiente_pista, recargar, ordenes, completar, salir, modo_tocar, deshacer, rehacer, explorador, tap_tempo, metronomo, exportar, seccion_siguiente, seccion_anterior, repetir_seccion)",
                 "[teclas] salir: «q»: una letra sin ctrl- ni alt- escribiría texto",
                 "[teclas] Ctrl-G era de ir_al_error; ahora es de marcha",
                 "[colores] tenue: color no válido",

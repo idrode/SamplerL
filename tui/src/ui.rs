@@ -12,7 +12,8 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
 
 use crate::app::App;
 use crate::model::{
-    BlockPickerView, BrowserView, CompletionView, PaletteView, SlotsView, ViewModel, fx_text,
+    BlockPickerView, BrowserView, CompletionView, PaletteView, SlotsView, TimelineView, ViewModel,
+    fx_text,
 };
 use crate::theme;
 
@@ -73,6 +74,17 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Constraint::Length(engine::STEPS as u16 + 3),
     ])
     .areas(right);
+    // Con línea de tiempo, una fila con las secciones bajo el motor (se la
+    // quita al sample).
+    let sample_area = match &view.timeline {
+        Some(timeline) if sample_area.height > 1 => {
+            let [row, rest] =
+                Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(sample_area);
+            frame.render_widget(TimelineBar(timeline), row);
+            rest
+        }
+        _ => sample_area,
+    };
     frame.render_widget(EnginePanel(&view), engine_area);
     frame.render_widget(SamplePanel(&view), sample_area);
     frame.render_widget(TrackerPanel(&view), tracker_area);
@@ -630,6 +642,68 @@ fn master_line(master: &crate::model::MasterView) -> Line<'static> {
 }
 
 /// Estado del motor: transporte y pistas.
+/// La línea de tiempo en una fila: cada entrada con su nombre y sus
+/// compases (la que suena, resaltada y con el compás por el que va: `drop
+/// 3/8`; `⟳` si se repite). Si no cabe, empieza más adelante para que se
+/// vea la que suena.
+pub struct TimelineBar<'a>(pub &'a TimelineView);
+
+impl TimelineBar<'_> {
+    /// El texto de cada entrada.
+    pub fn labels(view: &TimelineView) -> Vec<String> {
+        view.entries
+            .iter()
+            .enumerate()
+            .map(|(i, (name, bars))| {
+                if i == view.current {
+                    let mark = if view.looping { " ⟳" } else { "" };
+                    format!("▶ {name} {}/{bars}{mark}", view.bar + 1)
+                } else {
+                    format!("{name} {bars}")
+                }
+            })
+            .collect()
+    }
+}
+
+impl Widget for TimelineBar<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let view = self.0;
+        let labels = Self::labels(view);
+        // Desde dónde: la primera entrada que deja ver entera la que suena
+        // (cada separador ocupa 3; el «… » del principio, 2).
+        let upto = |from: usize| -> usize {
+            let prefix = if from > 0 { 2 } else { 0 };
+            prefix
+                + labels[from..=view.current.min(labels.len() - 1)]
+                    .iter()
+                    .map(|l| l.chars().count() + 3)
+                    .sum::<usize>()
+        };
+        let room = area.width as usize;
+        let mut first = 0;
+        while first < view.current && upto(first) > room {
+            first += 1;
+        }
+        let mut spans = Vec::new();
+        if first > 0 {
+            spans.push(Span::from("… ").fg(dim()));
+        }
+        for (i, label) in labels.iter().enumerate().skip(first) {
+            if i > first {
+                spans.push(Span::from(" │ ").fg(dim()));
+            }
+            let span = Span::from(label.clone());
+            spans.push(if i == view.current {
+                span.fg(Color::Black).bg(accent())
+            } else {
+                span
+            });
+        }
+        Line::from(spans).render(area, buf);
+    }
+}
+
 pub struct EnginePanel<'a>(pub &'a ViewModel);
 
 impl Widget for EnginePanel<'_> {

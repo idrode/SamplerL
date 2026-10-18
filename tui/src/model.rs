@@ -52,6 +52,8 @@ pub struct ViewModel {
     /// Grabación en curso: «REC drums 1/2» o, hasta que empieza el
     /// compás, «REC drums: al compás».
     pub recording: Option<String>,
+    /// Con `arrange()`: la línea de tiempo y por dónde va.
+    pub timeline: Option<TimelineView>,
     /// Pistas en el orden del script.
     pub tracks: Vec<TrackView>,
     /// Pista seleccionada (índice en `tracks`).
@@ -251,6 +253,18 @@ pub struct InstrumentView {
     /// Notas que sonaban a la vez (como mucho) en la última lectura del
     /// motor.
     pub sounding: usize,
+}
+
+/// La línea de tiempo de una canción con secciones.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TimelineView {
+    /// (sección, compases) en orden.
+    pub entries: Vec<(String, u32)>,
+    /// Entrada que suena y su compás (desde 0).
+    pub current: usize,
+    pub bar: u32,
+    /// Se repite la entrada que suena.
+    pub looping: bool,
 }
 
 impl ViewModel {

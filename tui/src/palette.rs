@@ -50,6 +50,11 @@ pub enum Action {
     DeleteBlock,
     YankSlot,
     PasteSlot,
+    NextSection,
+    PreviousSection,
+    JumpSection,
+    LoopSection,
+    FollowTimeline,
     Quit,
 }
 
@@ -309,6 +314,36 @@ pub const ACTIONS: &[ActionDef] = &[
         action: Action::PasteSlot,
         name: "Pegar una ranura (1-9)",
         description: "Pega la ranura del número que se pulse; las líneas enteras van encima de la del cursor",
+        keys: "",
+    },
+    ActionDef {
+        action: Action::NextSection,
+        name: "Saltar a la sección siguiente",
+        description: "Con arrange(): la entrada siguiente de la línea de tiempo empieza en el compás siguiente",
+        keys: "] (modo tocar)",
+    },
+    ActionDef {
+        action: Action::PreviousSection,
+        name: "Saltar a la sección anterior",
+        description: "Con arrange(): la entrada anterior de la línea de tiempo empieza en el compás siguiente",
+        keys: "[ (modo tocar)",
+    },
+    ActionDef {
+        action: Action::JumpSection,
+        name: "Saltar a una sección",
+        description: "Abre «seccion » para escribir su nombre: su primera entrada en la línea de tiempo empieza en el compás siguiente",
+        keys: "",
+    },
+    ActionDef {
+        action: Action::LoopSection,
+        name: "Repetir la sección",
+        description: "La sección que suena se repite en vez de pasar a la siguiente; otra vez, vuelve a la línea de tiempo",
+        keys: "l (modo tocar)",
+    },
+    ActionDef {
+        action: Action::FollowTimeline,
+        name: "Volver a la línea de tiempo",
+        description: "Deja de repetir la sección: al acabar, sigue la siguiente",
         keys: "",
     },
     ActionDef {

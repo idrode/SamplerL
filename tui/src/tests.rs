@@ -2349,6 +2349,7 @@ mod midi_in;
 mod midi_out;
 mod record;
 mod resample;
+mod sections;
 mod sends;
 mod shapes;
 mod stretch;

@@ -261,6 +261,11 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Borrar un bloque | Elige un bloque y borra su archivo; Enter dos veces | — |
 | Guardar en una ranura (1-9) | Guarda la selección (o la línea del cursor) en la ranura del número que se pulse, como los registros de vim | — |
 | Pegar una ranura (1-9) | Pega la ranura del número que se pulse; las líneas enteras van encima de la del cursor | — |
+| Saltar a la sección siguiente | Con arrange(): la entrada siguiente de la línea de tiempo empieza en el compás siguiente | ] (modo tocar) |
+| Saltar a la sección anterior | Con arrange(): la entrada anterior de la línea de tiempo empieza en el compás siguiente | [ (modo tocar) |
+| Saltar a una sección | Abre «seccion » para escribir su nombre: su primera entrada en la línea de tiempo empieza en el compás siguiente | — |
+| Repetir la sección | La sección que suena se repite en vez de pasar a la siguiente; otra vez, vuelve a la línea de tiempo | l (modo tocar) |
+| Volver a la línea de tiempo | Deja de repetir la sección: al acabar, sigue la siguiente | — |
 | Salir | Sale (pide confirmación si hay cambios sin guardar) | Ctrl-Q |
 | Snippet: `amen`, `fill`, `ghost`, `intro`, `euclid`, `melodia`, `polirritmo`, `barrido`, `groove`, `instrumento` | Inserta el snippet en el cursor (ver «Snippets» en la sección 4) | — |
 
@@ -324,6 +329,8 @@ de esta guía.
 | < > | lo mismo, de 1 en 1 ms |
 | m | mute de la pista seleccionada (en vivo, sin esperar al compás) |
 | s | solo de la pista seleccionada (en vivo) |
+| [ ] | con `arrange()`: salta a la sección anterior o siguiente de la línea de tiempo (en el compás siguiente) |
+| l | con `arrange()`: repite la sección que suena; otra vez, vuelve a la línea de tiempo |
 
 El corte suena al instante (no espera al compás), con el volumen, los
 efectos, la forma del corte (`cortes:set`) y el grupo de choke de la
@@ -394,7 +401,7 @@ proyecto o, si no hay, a la del script.
 
 | Orden | Qué hace |
 | --- | --- |
-| `exportar [archivo.wav] [compases] [metronomo]` | Renderiza la mezcla a WAV. Por defecto `<script>-mezcla.wav` y la canción entera (el ciclo de `every`/`chance`, al menos 4 compases). Con `metronomo`, lleva el clic; si no, nunca |
+| `exportar [archivo.wav] [compases] [metronomo]` | Renderiza la mezcla a WAV. Por defecto `<script>-mezcla.wav` y la canción entera (con `arrange()`, la línea de tiempo hasta 256 compases; si no, el ciclo de `every`/`chance`, al menos 4 compases). Con `metronomo`, lleva el clic; si no, nunca |
 | `guardar [proyecto.sampler]` | Guarda el script y el proyecto |
 | `abrir proyecto.sampler` | Abre un proyecto (`abrir!` descarta los cambios sin guardar) |
 | `muestras [carpeta]` | Cambia la carpeta de los samples (sin argumento, dice cuál es) |
@@ -402,6 +409,7 @@ proyecto o, si no hay, a la del script.
 | `etiquetar corte [nombre]` | Pone una etiqueta a un corte de la pista seleccionada (sin nombre, la quita). Se guarda en el proyecto abierto y se recarga |
 | `grabar [N]` | Graba N compases (1 por defecto) de lo que tocas en la pista seleccionada, desde el compás siguiente, y lo escribe como `steps("...")` en el cursor (ver «Modo tocar») |
 | `remuestrear [pista\|master] [compases] [archivo.wav]` | Graba por render offline la salida de la pista (por defecto la seleccionada, en solo) o del master como un WAV en la carpeta de samples (`<pista>-remuestreo.wav`; con `!`, sustituye uno que ya exista). Sin compases, lo que tarda en repetirse |
+| `seccion nombre` | Con `arrange()`: salta a la primera entrada de esa sección en la línea de tiempo, en el compás siguiente (y sigue desde ahí) |
 | `bloque nombre [etiquetas] [-- descripción]` | Guarda el texto seleccionado como bloque en la biblioteca global (`bloque-proyecto`: en la del proyecto; con `!`, sustituye uno que se llame igual). Ver «Biblioteca de bloques» |
 
 ### Biblioteca de bloques
@@ -522,6 +530,9 @@ paleta de 256.
 | `tap_tempo` | Tap tempo | — |
 | `metronomo` | Metrónomo | — |
 | `exportar` | Exportar la mezcla | — |
+| `seccion_siguiente` | Saltar a la sección siguiente | — |
+| `seccion_anterior` | Saltar a la sección anterior | — |
+| `repetir_seccion` | Repetir la sección | — |
 
 | En `[colores]` | Para |
 | --- | --- |
@@ -2005,7 +2016,14 @@ arrange({ {"intro", 4}, {"drop", 8}, {"break", 2}, {"drop", 8} })
 ```
 
 Cada cambio de sección entra al empezar un compás y entero. Al acabar, la
-línea de tiempo vuelve a empezar. Recargar el script a mitad de canción
+línea de tiempo vuelve a empezar. En vivo, desde el modo tocar, `]` y `[`
+saltan a la sección siguiente o anterior y `l` repite la que suena (otra
+vez, vuelve a la línea de tiempo); la paleta tiene lo mismo y «Saltar a
+una sección» (`seccion drop` en la línea de órdenes). Los saltos entran
+en el compás siguiente. Encima de la vista del sample, una fila enseña la
+línea de tiempo con la sección que suena resaltada y el compás por el que
+va (`intro 4 │ ▶ drop 3/8 │ break 2`, con `⟳` si se repite); el tracker y
+los paneles enseñan las pistas de esa sección. Recargar el script a mitad de canción
 sigue por la misma sección y el mismo compás; si esa sección ya no está,
 vuelve al principio y lo avisa. `exportar` (y `--render` sin `--bars`)
 graba la línea de tiempo entera, hasta 256 compases. Sin `arrange()` suena
