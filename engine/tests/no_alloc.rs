@@ -383,9 +383,12 @@ fn the_audio_thread_never_allocates() {
         .unwrap()
         .with_shapes(&looped)
         .unwrap();
+    // Con los formantes en su sitio (corrección por LPC en cada grano).
+    let shifted = shifted.with_formant(Some(0.0)).unwrap();
     controller.set_track_pattern(5, Some(shifted)).unwrap();
     let mut kept_instrument = instrument;
     kept_instrument.keep = true;
+    kept_instrument.formant = Some(-3.0);
     let melody_kept: Vec<Option<Step>> = (0..STEPS)
         .map(|k| {
             Some(

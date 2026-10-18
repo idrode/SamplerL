@@ -206,6 +206,9 @@ pub struct Pattern {
     pub(crate) instrument: Option<Instrument>,
     /// Toca el sample en granos (nube por golpe).
     pub(crate) granular: Option<Granular>,
+    /// Formantes de los pasos con `%`: `Some(0)` los mantiene, `Some(n)`
+    /// los desplaza `n` semitonos; `None`, se mueven con el pitch.
+    pub(crate) formant: Option<f32>,
 }
 
 impl Pattern {
@@ -269,6 +272,7 @@ impl Pattern {
             midi: None,
             instrument: None,
             granular: None,
+            formant: None,
         })
     }
 
@@ -286,6 +290,16 @@ impl Pattern {
             }
         }
         Ok(Pattern { instrument, ..self })
+    }
+
+    /// Formantes de los pasos con `%` (pitch sin cambiar la duración):
+    /// `Some(0.0)` los deja donde estaban, `Some(n)` los desplaza `n`
+    /// semitonos (de ±[`crate::shift::MAX_FORMANT`]); `None`, se mueven con
+    /// el pitch (como siempre). Ver [`crate::shift`].
+    pub fn with_formant(self, formant: Option<f32>) -> Result<Self, SendError> {
+        crate::shift::check_formant(formant)
+            .map_err(|reason| SendError::InvalidStep { step: 0, reason })?;
+        Ok(Pattern { formant, ..self })
     }
 
     /// Toca el sample en granos (ver [`crate::grain`]): cada golpe abre
@@ -500,6 +514,7 @@ fn resolve_bar(
                 gain: step.gain,
                 rate: rate(step.semitones),
                 keep: step.keep,
+                formant: None,
                 reverse: step.reverse,
                 shape: SliceShape::DEFAULT,
             },

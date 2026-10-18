@@ -1089,6 +1089,14 @@ impl Widget for FxPanel<'_> {
                     .fg(dim()),
                 );
             }
+            if let Some(formant) = track.formant {
+                let text = if formant == 0.0 {
+                    " · formant 0".to_string()
+                } else {
+                    format!(" · formant {formant:+}")
+                };
+                title.push(Span::from(text).fg(dim()));
+            }
             if let Some(grains) = &track.grains {
                 title.push(Span::from(format!(" · {grains}")).fg(dim()));
             }

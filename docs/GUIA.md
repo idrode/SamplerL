@@ -668,7 +668,18 @@ grano empieza en el golpe, así que el ataque queda en su sitio. Hasta ±12
 semitonos va bien; más allá los golpes se emborronan y suena metálico (la
 carga avisa en la línea de estado). Con `%0` suena exactamente igual que
 sin nada. En un instrumento, `keep = true` hace lo mismo con todas sus
-notas. `~` necesita un filtro en la pista
+notas.
+
+**Formantes.** Al transponer, con `^` o con `%`, la envolvente del sonido
+(sus formantes: lo que hace que una vocal sea una «a» o el cuerpo de una
+caja) se mueve con el tono: una voz subida suena a ardilla y una caja
+bajada, de juguete. `pista:formant(0)` los deja donde estaban en los
+pasos con `%`, y `pista:formant(n)` los desplaza `n` semitonos por su
+cuenta (también con `%0`: otro timbre, la misma nota). En un instrumento
+va en su tabla: `sample:instrument({ keep = true, formant = 0 })`. Cada
+grano se analiza con LPC y se le cambia la envolvente; cuesta otro 2 % de
+un núcleo por voz. Con `^` no actúa (el sampler clásico lo mueve todo), y
+si la pista no tiene pasos con `%`, la carga avisa. `~` necesita un filtro en la pista
 (`:fx("lowpass", { cutoff = 3000 })`): `"1~300 . 2 .  1 . 2~8000 ."` cierra
 el filtro en el primer golpe y lo abre del todo en la segunda caja.
 
@@ -1074,6 +1085,7 @@ Toca el sample como un instrumento: notas con polifonía, ADSR y bucle sostenido
 | `adsr` | envolvente de cada nota `{ataque, decay, sustain, release}`: ms, ms, nivel (0–1) y ms (0 ms: el fundido mínimo de 1,5 ms) | `{ 0, 0, 1, 100 }` | ms de 0 a 10000; sustain de 0 a 1 |
 | `crossfade` | fundido cruzado del salto del bucle, en ms (usa el audio de antes del inicio del bucle; si no cabe, se acorta y se avisa) | `10` | 0–1000 |
 | `keep` | transponer las notas sin cambiar su duración (granos alineados, como `%` en los pasos): el sample dura lo mismo en cualquier nota; va bien hasta ±12 semitonos | `false` | `true` o `false` |
+| `formant` | con `keep`, dónde quedan los formantes de las notas: 0 donde estaban (la voz no suena a ardilla al subir), n desplazados n semitonos; sin él, se mueven con la nota | `nil` | -24–24 (necesita `keep = true`) |
 
 ```lua
 bpm(100)
@@ -1476,6 +1488,22 @@ track("hielo", amen)
   :freeze(0.4, { size = 120, density = 25, jitter = 15, pitch = -12 })
 ```
 
+### `pista:formant(semitonos)`
+
+Devuelve: pista.
+
+Formantes de los pasos con % (pitch sin cambiar la duración): 0 los deja donde estaban, n los desplaza n semitonos. Al transponer, la envolvente del sonido sube o baja con el tono: una voz subida suena a ardilla y una caja bajada, a bombo de juguete. Con `formant(0)`, los pasos con `%` cambian de tono pero su envolvente se queda donde estaba (cada grano se analiza con LPC y se blanquea y se vuelve a colorear con la del original); con `formant(n)` se desplaza `n` semitonos por su cuenta, también con `%0` (cambiar el timbre sin cambiar la nota). Solo actúa en los pasos con `%` (si no hay ninguno, avisa); con `^` el sonido se lee más deprisa o más despacio entero, como un sampler clásico. Cuesta otro 2 % de un núcleo por voz. En un instrumento va en su tabla: `sample:instrument({ keep = true, formant = 0 })`.
+
+- `semitonos`: -24 a 24; 0 deja los formantes donde estaban
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+-- La caja una quinta arriba sin que encoja su cuerpo.
+track("drums", amen)
+  :steps("1 . 3 .  . . 3%7 .  1 1 3%-5 .  . . 3%7 .")
+  :formant(0)
+```
+
 ### `pista:send(bus, nivel)`
 
 Devuelve: pista.
@@ -1816,13 +1844,16 @@ track("pad", pad)
 
 `%` transpone sin cambiar la duración: la caja una octava abajo sigue
 ocupando su paso (con `^-12` duraría el doble y se comería el golpe
-siguiente). En el tracker sale `03%-12`.
+siguiente). En el tracker sale `03%-12`. Con `:formant(0)`, además, su
+cuerpo no cambia: suena más grave pero sigue siendo la misma caja (el
+panel de efectos dice `· formant 0`).
 
 ```lua
 bpm(170)
 local amen = sample("amen.wav"):slice(8)
 track("drums", amen)
   :steps("1 . 3 .  . . 3%-12 .  1 1 3 .  . . 3%-5 3%7")
+  :formant(0)
 ```
 
 ### Texturas con granos y congelar

@@ -1010,7 +1010,7 @@ mod tests {
             "{SONG}track(\"drums\", amen)\n  :steps(\"1 . . .  . . . .  . . . .  . . . .\")\n  -- comentario\n  :f|"
         );
         let c = at(&text).unwrap();
-        assert_eq!(labels(&c), ["fill", "fx", "freeze"]);
+        assert_eq!(labels(&c), ["fill", "fx", "freeze", "formant"]);
         let text = format!("{SONG}track(\"drums\", amen):every(4, function(c) c:|) end)");
         let c = at(&text).unwrap();
         assert_eq!(

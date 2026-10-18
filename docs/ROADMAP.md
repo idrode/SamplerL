@@ -173,14 +173,13 @@ Hecha: explorador de samples, tap tempo, `bpm_ramp()` y `meter()`,
 - Teclas y colores configurables en un archivo.
 - Ranuras 1-9 que se guardan entre sesiones.
 
-## Fase K: melodías con samples
+## Fase K: melodías con samples ✅
 
-En curso: hechos la interpolación del pitch (punto 1) y el instrumento
-(`sample:instrument()`, `pista:melody()`, `_` y acordes en la notación;
-punto 2), el pitch sin cambiar la duración (`%` y `keep`; punto 3),
-granular y congelar (`:grains()`, `:freeze()`; punto 4), tocarlo en vivo
-(punto 5), la salida MIDI de sus notas (punto 6) y el diagnóstico en vivo
-de `melody` (punto 7). Pendientes los formantes (punto 8). Detalle y decisiones en «Fase K»
+Hechos los ocho puntos: la interpolación del pitch, el instrumento
+(`sample:instrument()`, `pista:melody()`, `_` y acordes en la notación),
+el pitch sin cambiar la duración (`%` y `keep`), granular y congelar
+(`:grains()`, `:freeze()`), tocarlo en vivo, la salida MIDI de sus notas,
+el diagnóstico en vivo de `melody` y los formantes (`formant`). Detalle y decisiones en «Fase K»
 de [docs/ESTADO.md](ESTADO.md).
 
 Reglas de siempre: registro de la API (autocompletado, ayuda y guía), nada
@@ -212,5 +211,7 @@ huellas de `golden.rs` idénticas si no se usa nada nuevo, código portable
    con note on y note off al frame exacto.
 7. ✅ **Diagnóstico en vivo de `melody("...")`** en el editor, subrayando la
    nota errónea.
-8. **Formantes**: desplazar los formantes al transponer (que una voz
-   subida no suene a ardilla).
+8. ✅ **Formantes**: mantener o desplazar los formantes al transponer
+   (que una voz subida no suene a ardilla): `pista:formant(n)` para los
+   pasos con `%` y `formant = n` en un instrumento con `keep`; LPC por
+   grano, elegido midiendo una vocal y una caja sintéticas.

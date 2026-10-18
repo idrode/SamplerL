@@ -38,6 +38,7 @@ pub use sequencer::{
     MAX_SEMITONES, MAX_STEPS, MIN_BPM, Meter, Pattern, STEPS, Step, TempoRamp, bar_frames,
     bar_frames_steps, valid_bpm,
 };
+pub use shift::MAX_FORMANT;
 pub use slice::{DEFAULT_MIN_GAP_SECONDS, DetectOptions, Detector, Slices};
 pub use status::{MasterStatus, Status, TrackStatus};
 pub use stretch::{MAX_STRETCH, MIN_STRETCH};

@@ -138,6 +138,8 @@ pub(crate) struct Playback {
     pub rate: f64,
     /// El pitch no cambia la duración (ver [`crate::shift`]).
     pub keep: bool,
+    /// Formantes con `keep` (ver [`crate::shift`]).
+    pub formant: Option<f32>,
     pub reverse: bool,
     pub shape: SliceShape,
 }
@@ -147,6 +149,7 @@ impl Playback {
         gain: 1.0,
         rate: 1.0,
         keep: false,
+        formant: None,
         reverse: false,
         shape: SliceShape::DEFAULT,
     };
@@ -258,8 +261,8 @@ impl Voice {
         let rate = sample.sample_rate() as f32;
         let fade = ((FADE_SECONDS * rate) as usize).max(1);
         let ms = |ms: f32| (ms / 1000.0 * rate) as usize;
-        let shift = (playback.keep && playback.rate != 1.0)
-            .then(|| Shift::new(playback.rate, sample.sample_rate()));
+        let shift = (playback.keep && Shift::needed(playback.rate, playback.formant))
+            .then(|| Shift::new(playback.rate, sample.sample_rate(), playback.formant));
         // Con los granos, la voz avanza por el sample a velocidad 1.
         let speed = if shift.is_some() { 1.0 } else { playback.rate };
         // Último frame de salida: el que lee el último frame del rango. En
@@ -323,61 +326,39 @@ impl Voice {
 
     /// Frame del sample para el frame de salida actual, interpolado si la
     /// posición cae entre dos frames o el pitch sube (ver [`crate::interp`]).
-    /// Con el pitch que conserva la duración, la suma de sus dos granos.
+    /// Con el pitch que conserva la duración, la suma de sus dos granos
+    /// (con la corrección de formantes, si la hay).
     fn read(&mut self) -> (f32, f32) {
-        let Some(mut shift) = self.shift else {
-            return self.read_at(self.rendered as f64 * self.playback.rate);
+        let (start, end, playback) = (self.start, self.end, self.playback);
+        let sample = &self.sample;
+        let read_at = |offset: f64| {
+            let pos = voice_position(start, end, &playback, offset);
+            crate::interp::read(sample, pos, start, end, playback.rate)
         };
-        let span = (self.end - self.start) as f64;
+        let Some(shift) = self.shift.as_mut() else {
+            return read_at(self.rendered as f64 * playback.rate);
+        };
+        let span = (end - start) as f64;
         // Sin bucle, ningún grano pasa del final del corte.
-        let fit = (self.playback.shape.play == PlayMode::Once).then(|| span - 1.0 - shift.reach());
+        let fit = (playback.shape.play == PlayMode::Once).then(|| span - 1.0 - shift.reach());
         let grains = shift.grains(self.rendered as u64, fit, |offset| {
-            let pos = self.position(offset).round() as usize;
-            let (l, r) = self.sample.frame(pos.clamp(self.start, self.end - 1));
-            0.5 * (l + r)
+            crate::shift::mono_at(
+                sample,
+                voice_position(start, end, &playback, offset),
+                start,
+                end,
+            )
         });
-        self.shift = Some(shift);
         let (mut l, mut r) = (0.0, 0.0);
         for (offset, weight) in grains {
             if weight == 0.0 || (fit.is_some() && offset > span - 1.0) {
                 continue;
             }
-            let (gl, gr) = self.read_at(offset);
+            let (gl, gr) = read_at(offset);
             l += weight * gl;
             r += weight * gr;
         }
-        (l, r)
-    }
-
-    /// Posición en el sample del desplazamiento `offset` desde el inicio
-    /// de la voz (con su bucle y su sentido).
-    fn position(&self, mut offset: f64) -> f64 {
-        let span = (self.end - self.start) as f64;
-        match self.playback.shape.play {
-            PlayMode::Once => {}
-            PlayMode::Loop => offset = offset.rem_euclid(span),
-            PlayMode::PingPong => {
-                // Ida y vuelta sin repetir los extremos: 0, 1 … n-1, n-2 … 1.
-                let last = span - 1.0;
-                offset = if last > 0.0 {
-                    let t = offset.rem_euclid(2.0 * last);
-                    if t <= last { t } else { 2.0 * last - t }
-                } else {
-                    0.0
-                };
-            }
-        }
-        if self.playback.reverse {
-            (self.end - 1) as f64 - offset
-        } else {
-            self.start as f64 + offset
-        }
-    }
-
-    /// El sample en el desplazamiento `offset`, interpolado.
-    fn read_at(&self, offset: f64) -> (f32, f32) {
-        let pos = self.position(offset);
-        crate::interp::read(&self.sample, pos, self.start, self.end, self.playback.rate)
+        shift.correct((l, r))
     }
 
     /// Suma la voz en `out` (estéreo entrelazado).
@@ -401,6 +382,31 @@ impl Voice {
                 *left -= 1;
             }
         }
+    }
+}
+
+/// Posición en el sample del desplazamiento `offset` desde el inicio de
+/// una voz que toca `start..end` así (con su bucle y su sentido).
+fn voice_position(start: usize, end: usize, playback: &Playback, mut offset: f64) -> f64 {
+    let span = (end - start) as f64;
+    match playback.shape.play {
+        PlayMode::Once => {}
+        PlayMode::Loop => offset = offset.rem_euclid(span),
+        PlayMode::PingPong => {
+            // Ida y vuelta sin repetir los extremos: 0, 1 … n-1, n-2 … 1.
+            let last = span - 1.0;
+            offset = if last > 0.0 {
+                let t = offset.rem_euclid(2.0 * last);
+                if t <= last { t } else { 2.0 * last - t }
+            } else {
+                0.0
+            };
+        }
+    }
+    if playback.reverse {
+        (end - 1) as f64 - offset
+    } else {
+        start as f64 + offset
     }
 }
 
@@ -694,7 +700,9 @@ pub struct Engine {
     status: Arc<SharedStatus>,
     sample_rate: u32,
     transport: Transport,
-    tracks: [Track; MAX_TRACKS],
+    /// En el heap (se crean en `new_engine`): con los filtros de los
+    /// formantes de cada voz ocupan cientos de KB, demasiado para la pila.
+    tracks: Box<[Track; MAX_TRACKS]>,
     /// Buffers de mezcla (estéreo entrelazado), de tamaño fijo.
     track_buf: [f32; 2 * CHUNK],
     master: [f32; 2 * CHUNK],
@@ -742,7 +750,12 @@ pub fn new_engine(sample_rate: u32) -> (Controller, Engine) {
             status,
             sample_rate,
             transport: Transport::new(),
-            tracks: std::array::from_fn(|_| Track::default()),
+            tracks: (0..MAX_TRACKS)
+                .map(|_| Track::default())
+                .collect::<Vec<_>>()
+                .into_boxed_slice()
+                .try_into()
+                .unwrap_or_else(|_| unreachable!("son MAX_TRACKS pistas")),
             track_buf: [0.0; 2 * CHUNK],
             master: [0.0; 2 * CHUNK],
             batch_open: false,
@@ -1291,7 +1304,7 @@ impl Engine {
             Command::Start => {
                 self.transport.start();
                 self.status.clear_step();
-                for track in &mut self.tracks {
+                for track in self.tracks.iter_mut() {
                     track.retrig = None;
                 }
             }
@@ -1327,6 +1340,7 @@ impl Engine {
                     end,
                     rate,
                     keep: false,
+                    formant: None,
                     reverse: false,
                     gain,
                     pan: 0.0,
@@ -1497,7 +1511,11 @@ impl Engine {
             }
             return;
         }
-        let mut voice = Voice::new(pattern.sample.clone(), hit.start, hit.end, hit.playback);
+        let playback = Playback {
+            formant: pattern.formant,
+            ..hit.playback
+        };
+        let mut voice = Voice::new(pattern.sample.clone(), hit.start, hit.end, playback);
         if pattern.gate {
             voice = voice.with_gate(gate);
         }
@@ -1526,6 +1544,7 @@ impl Engine {
         if !self.tracks[t].sounding() {
             self.tracks[t].fresh = true;
         }
+        let formant = self.tracks[t].pattern.as_ref().and_then(|p| p.formant);
         let rates = std::iter::once(hit.playback.rate).chain(hit.chord.iter().flatten().copied());
         for rate in rates {
             let on = NoteOn {
@@ -1533,6 +1552,7 @@ impl Engine {
                 end: hit.end,
                 rate,
                 keep: hit.playback.keep,
+                formant,
                 reverse: hit.playback.reverse,
                 gain: hit.playback.gain,
                 pan: hit.playback.shape.pan,

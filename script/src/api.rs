@@ -1535,6 +1535,36 @@ pub const FUNCTIONS: &[Function] = &[
         ),
     },
     Function {
+        name: "formant",
+        receiver: Receiver::Track,
+        signature: "pista:formant(semitonos)",
+        returns: Some(Receiver::Track),
+        summary: "Formantes de los pasos con % (pitch sin cambiar la duración): 0 los deja donde estaban, n los desplaza n semitonos.",
+        doc: "Al transponer, la envolvente del sonido sube o baja con el tono: una \
+              voz subida suena a ardilla y una caja bajada, a bombo de juguete. Con \
+              `formant(0)`, los pasos con `%` cambian de tono pero su envolvente se \
+              queda donde estaba (cada grano se analiza con LPC y se blanquea y se \
+              vuelve a colorear con la del original); con `formant(n)` se desplaza \
+              `n` semitonos por su cuenta, también con `%0` (cambiar el timbre sin \
+              cambiar la nota). Solo actúa en los pasos con `%` (si no hay \
+              ninguno, avisa); con `^` el sonido se lee más deprisa o más despacio \
+              entero, como un sampler clásico. Cuesta otro 2 % de un núcleo por \
+              voz. En un instrumento va en su tabla: `sample:instrument({ keep = \
+              true, formant = 0 })`.",
+        params: &[Param {
+            name: "semitonos",
+            description: "-24 a 24; 0 deja los formantes donde estaban",
+        }],
+        template: "formant(${0})",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             -- La caja una quinta arriba sin que encoja su cuerpo.\n\
+             track(\"drums\", amen)\n  \
+             :steps(\"1 . 3 .  . . 3%7 .  1 1 3%-5 .  . . 3%7 .\")\n  \
+             :formant(0)\n",
+        ),
+    },
+    Function {
         name: "send",
         receiver: Receiver::Track,
         signature: "pista:send(bus, nivel)",
@@ -1990,6 +2020,14 @@ pub const INSTRUMENT_PARAMS: &[FxParam] = &[
         valid: "`true` o `false`",
         values: &[],
         template: "keep = ${true}",
+    },
+    FxParam {
+        name: "formant",
+        description: "con `keep`, dónde quedan los formantes de las notas: 0 donde estaban (la voz no suena a ardilla al subir), n desplazados n semitonos; sin él, se mueven con la nota",
+        default: Some("nil"),
+        valid: "-24–24 (necesita `keep = true`)",
+        values: &[],
+        template: "formant = ${0}",
     },
 ];
 

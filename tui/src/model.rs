@@ -218,6 +218,9 @@ pub struct TrackView {
     /// Toca en granos (`:grains()`, `:freeze()`): su resumen
     /// ([`grains_text`]).
     pub grains: Option<String>,
+    /// Formantes al transponer sin cambiar la duración (`:formant()` o
+    /// el `formant` del instrumento): semitonos de desplazamiento.
+    pub formant: Option<f32>,
 }
 
 /// Resumen de los granos de una pista para el panel de efectos:

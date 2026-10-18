@@ -158,6 +158,9 @@ pub struct TrackDef {
     /// Granos (`:grains()`, `:freeze()`): cada golpe abre una nube sobre su
     /// corte.
     pub granular: Option<engine::Granular>,
+    /// Formantes de los pasos con `%` (`:formant(n)`): `Some(0)` donde
+    /// estaban, `Some(n)` desplazados; `None`, se mueven con el pitch.
+    pub formant: Option<f32>,
 }
 
 /// `sample:instrument({ ... })`: el sample se toca como notas.
@@ -712,6 +715,7 @@ impl ScriptHost {
         let mut warnings = warnings.borrow().clone();
         if let Ok(tracks) = &expanded {
             warnings.extend(tracks.iter().filter_map(far_kept_pitch));
+            warnings.extend(tracks.iter().filter_map(idle_formant));
         }
         Ok(Song {
             bpm,
@@ -1248,6 +1252,7 @@ fn song_batch(song: &Song, slots: &[Option<String>; MAX_TRACKS]) -> Result<Batch
                     .and_then(|p| p.with_midi(track.midi))
                     .and_then(|p| p.with_instrument(track.instrument.map(|i| i.engine)))
                     .and_then(|p| p.with_granular(track.granular))
+                    .and_then(|p| p.with_formant(track.formant))
                     .map(|p| p.with_gate(track.gate))
                     .map(|p| p.with_mute(track.mute).with_solo(track.solo))
                     .map_err(|e| ScriptError::new(format!("pista \"{name}\": {e}")))?;
@@ -1439,6 +1444,7 @@ fn track_source(lua: &Lua, name: &str, source: &AnyUserData) -> mlua::Result<Tra
         stretch: None,
         instrument: None,
         granular: None,
+        formant: None,
     };
     if let Ok(source) = source.borrow::<SlicedHandle>() {
         let mut def = def(
@@ -2040,6 +2046,19 @@ fn instrument_options(
                     release_ms: adsr[3] as f32,
                 };
             }
+            "formant" => match number(&value) {
+                Some(semitones) => {
+                    def.engine.formant = Some(check_formant(lua, &who, semitones as f32)?);
+                }
+                None => {
+                    return Err(fail(
+                        lua,
+                        format!(
+                            "{who}: formant son semitonos (0 deja los formantes donde estaban)"
+                        ),
+                    ));
+                }
+            },
             "keep" => match value {
                 Value::Boolean(on) => def.engine.keep = on,
                 _ => {
@@ -2100,7 +2119,28 @@ fn instrument_options(
             format!("{who}: crossfade es del bucle: falta loop = {{inicio, fin}}"),
         ));
     }
+    if def.engine.formant.is_some() && !def.engine.keep {
+        return Err(fail(
+            lua,
+            format!(
+                "{who}: formant necesita keep = true (los formantes se corrigen al transponer sin cambiar la duración)"
+            ),
+        ));
+    }
     Ok(def)
+}
+
+/// Comprueba el desplazamiento de los formantes (semitonos).
+fn check_formant(lua: &Lua, who: &str, semitones: f32) -> mlua::Result<f32> {
+    let max = engine::MAX_FORMANT;
+    if (-max..=max).contains(&semitones) {
+        Ok(semitones)
+    } else {
+        Err(fail(
+            lua,
+            format!("{who}: formant = {semitones} fuera de rango (-{max} a {max} semitonos)"),
+        ))
+    }
 }
 
 /// Un parámetro de los granos: un número o una curva (`ramp`, `lfo`).
@@ -2200,6 +2240,18 @@ fn set_granular(
         .map_err(|e| fail(lua, format!("{who}: {e}")))?;
     this.with_track(|t| t.def.granular = Some(granular));
     Ok(())
+}
+
+/// Aviso si una pista tiene `:formant()` pero ningún paso con `%`: los
+/// formantes solo se corrigen ahí.
+fn idle_formant(track: &TrackDef) -> Option<String> {
+    let used = track.bars.iter().flatten().flatten().any(|step| step.keep);
+    (track.formant.is_some() && !used).then(|| {
+        format!(
+            "pista \"{}\": formant solo actúa en los pasos con % (pitch sin cambiar la duración) y no hay ninguno",
+            track.name
+        )
+    })
 }
 
 /// Transposición sin cambiar la duración a partir de la cual los golpes
@@ -3202,6 +3254,23 @@ impl UserData for TrackHandle {
                 Ok(this.clone())
             },
         );
+
+        // `:formant(n)`: los formantes de los pasos con `%`.
+        methods.add_method("formant", |lua, this, semitones: f32| {
+            let (name, instrument) =
+                this.with_track(|t| (t.def.name.clone(), t.def.instrument.is_some()));
+            if instrument {
+                return Err(fail(
+                    lua,
+                    format!(
+                        "formant: la pista \"{name}\" es un instrumento; ponlo en su tabla: sample:instrument({{ keep = true, formant = {semitones} }})"
+                    ),
+                ));
+            }
+            check_formant(lua, "formant", semitones)?;
+            this.with_track(|t| t.def.formant = Some(semitones));
+            Ok(this.clone())
+        });
 
         // `:send(bus, nivel)`: parte de la pista al delay o a la reverb.
         methods.add_method("send", |lua, this, (bus, level): (String, f32)| {

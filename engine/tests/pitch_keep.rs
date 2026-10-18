@@ -334,18 +334,21 @@ fn medida_de_calidad() {
     for st in [7, -12, 12, -5, 24, -24] {
         row(st);
     }
-    // Coste: una voz sonando todo el rato, con ^ y con %.
+    // Coste: una voz sonando todo el rato, con ^, con % y con % y los
+    // formantes en su sitio.
     let long = sine(440.0, 3.0);
     let whole = Slices::grid(&long, 1);
-    for text in [
-        "1^7 . . .  . . . .  . . . .  . . . .",
-        "1%7 . . .  . . . .  . . . .  . . . .",
+    for (text, formant) in [
+        ("1^7 . . .  . . . .  . . . .  . . . .", None),
+        ("1%7 . . .  . . . .  . . . .  . . . .", None),
+        ("1%7 . . .  . . . .  . . . .  . . . .", Some(0.0)),
     ] {
         let start = std::time::Instant::now();
-        render(pattern(&long, &whole, text), 20.0, long.frames());
+        let p = pattern(&long, &whole, text).with_formant(formant).unwrap();
+        render(p, 20.0, long.frames());
         let seconds = start.elapsed().as_secs_f64();
         println!(
-            "{text}: {:.2} % de un núcleo por voz",
+            "{text} (formant {formant:?}): {:.2} % de un núcleo por voz",
             100.0 * seconds / 3.0
         );
     }

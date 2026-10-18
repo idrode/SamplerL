@@ -67,6 +67,9 @@ pub struct Instrument {
     /// Las notas conservan la duración del sample al transponerse (granos
     /// alineados, ver `crate::shift`), como `%` en los pasos.
     pub keep: bool,
+    /// Formantes de sus notas con `keep`: `Some(0)` donde estaban,
+    /// `Some(n)` desplazados `n` semitonos; `None`, con el pitch.
+    pub formant: Option<f32>,
 }
 
 impl Instrument {
@@ -77,6 +80,7 @@ impl Instrument {
             sustain_loop: None,
             crossfade: 0,
             keep: false,
+            formant: None,
         }
     }
 
@@ -84,6 +88,10 @@ impl Instrument {
     pub fn validate(&self, frames: usize) -> Result<(), &'static str> {
         if !(1..=MAX_VOICES).contains(&(self.voices as usize)) {
             return Err("voces fuera de rango (1 a 16)");
+        }
+        crate::shift::check_formant(self.formant)?;
+        if self.formant.is_some() && !self.keep {
+            return Err("formant necesita keep (los formantes se corrigen en los granos)");
         }
         let a = &self.adsr;
         let envelope = 0.0..=MAX_ENVELOPE_MS;
@@ -153,6 +161,9 @@ pub(crate) struct NoteOn {
     pub rate: f64,
     /// El pitch no cambia la duración (del paso con `%` o del instrumento).
     pub keep: bool,
+    /// Formantes (ver [`crate::shift`]): del patrón; si no, los del
+    /// instrumento.
+    pub formant: Option<f32>,
     pub reverse: bool,
     pub gain: f32,
     pub pan: f32,
@@ -173,8 +184,10 @@ impl Note {
         let frames = |ms: f32| ((ms / 1000.0 * rate_hz) as u64).max(fade);
         let a = &instrument.adsr;
         let span = (on.end - on.start) as u64;
-        let shift = ((on.keep || instrument.keep) && on.rate != 1.0)
-            .then(|| Shift::new(on.rate, sample.sample_rate()));
+        let keep = on.keep || instrument.keep;
+        let formant = on.formant.or(instrument.formant);
+        let shift = (keep && Shift::needed(on.rate, formant))
+            .then(|| Shift::new(on.rate, sample.sample_rate(), formant));
         // Con los granos, la nota avanza por el sample a velocidad 1.
         let speed = if shift.is_some() { 1.0 } else { on.rate };
         let length = if span == 0 {
@@ -272,38 +285,82 @@ impl Note {
         gain
     }
 
-    fn at(&self, pos: f64) -> (f32, f32) {
-        crate::interp::read(&self.sample, pos, self.start, self.end, self.rate)
+    /// Cómo lee la nota el sample (copia pequeña, para leer mientras se
+    /// toca el desplazador).
+    fn axis(&self) -> Axis {
+        Axis {
+            start: self.start,
+            end: self.end,
+            rate: self.rate,
+            reverse: self.reverse,
+            sustain_loop: self.sustain_loop,
+            crossfade: self.crossfade,
+        }
     }
 
     /// Frame del sample que toca ahora. Con el pitch que conserva la
-    /// duración, la suma de sus dos granos.
+    /// duración, la suma de sus dos granos (con la corrección de formantes,
+    /// si la hay).
     fn read(&mut self) -> (f32, f32) {
-        let Some(mut shift) = self.shift else {
-            return self.read_offset(self.rendered as f64 * self.rate);
+        let axis = self.axis();
+        let sample = &self.sample;
+        let Some(shift) = self.shift.as_mut() else {
+            return axis.read(sample, self.rendered as f64 * axis.rate);
         };
-        let span = (self.end - self.start) as f64;
+        let span = (axis.end - axis.start) as f64;
         // Sin bucle, ningún grano pasa del final del rango.
-        let fit = self
+        let fit = axis
             .sustain_loop
             .is_none()
             .then(|| span - 1.0 - shift.reach());
         let grains = shift.grains(self.rendered, fit, |offset| {
-            let pos = self.position(offset).round() as usize;
-            let (l, r) = self.sample.frame(pos.clamp(self.start, self.end - 1));
-            0.5 * (l + r)
+            crate::shift::mono_at(sample, axis.position(offset), axis.start, axis.end)
         });
-        self.shift = Some(shift);
         let (mut l, mut r) = (0.0, 0.0);
         for (offset, weight) in grains {
             if weight == 0.0 || (fit.is_some() && offset > span - 1.0) {
                 continue;
             }
-            let (gl, gr) = self.read_offset(offset);
+            let (gl, gr) = axis.read(sample, offset);
             l += weight * gl;
             r += weight * gr;
         }
-        (l, r)
+        shift.correct((l, r))
+    }
+
+    /// Suma la nota en `out` (estéreo entrelazado).
+    pub fn mix_into(&mut self, out: &mut [f32]) {
+        for frame in out.as_chunks_mut::<2>().0 {
+            if !self.is_active() {
+                break;
+            }
+            let gain = self.gain * self.envelope();
+            let (l, r) = self.read();
+            let pan = self.pan;
+            frame[0] += (1.0 - pan).min(1.0) * (gain * l);
+            frame[1] += (1.0 + pan).min(1.0) * (gain * r);
+            self.rendered += 1;
+            if let Some(left) = &mut self.killed {
+                *left -= 1;
+            }
+        }
+    }
+}
+
+/// Cómo lee una nota su sample: rango, velocidad, sentido y bucle.
+#[derive(Clone, Copy)]
+struct Axis {
+    start: usize,
+    end: usize,
+    rate: f64,
+    reverse: bool,
+    sustain_loop: Option<(usize, usize)>,
+    crossfade: usize,
+}
+
+impl Axis {
+    fn at(&self, sample: &Sample, pos: f64) -> (f32, f32) {
+        crate::interp::read(sample, pos, self.start, self.end, self.rate)
     }
 
     /// Posición en el sample del desplazamiento `offset` desde el inicio
@@ -323,13 +380,13 @@ impl Note {
 
     /// Frame del sample en el desplazamiento `offset`, con el salto del
     /// bucle fundido.
-    fn read_offset(&self, offset: f64) -> (f32, f32) {
+    fn read(&self, sample: &Sample, offset: f64) -> (f32, f32) {
         if self.reverse {
-            return self.at((self.end - 1) as f64 - offset);
+            return self.at(sample, (self.end - 1) as f64 - offset);
         }
         let pos = self.start as f64 + offset;
         let Some((loop_start, loop_end)) = self.sustain_loop else {
-            return self.at(pos);
+            return self.at(sample, pos);
         };
         let (loop_start, loop_end) = (loop_start as f64, loop_end as f64);
         let span = loop_end - loop_start;
@@ -340,31 +397,13 @@ impl Note {
         };
         let fade_from = loop_end - self.crossfade as f64;
         if self.crossfade == 0 || pos < fade_from {
-            return self.at(pos);
+            return self.at(sample, pos);
         }
         // Del fin del bucle hacia lo que hay antes de su inicio: al llegar
         // al fin ya suena entero lo que sigue en el inicio.
         let t = ((pos - fade_from) / self.crossfade as f64) as f32;
-        let (l0, r0) = self.at(pos);
-        let (l1, r1) = self.at(pos - span);
+        let (l0, r0) = self.at(sample, pos);
+        let (l1, r1) = self.at(sample, pos - span);
         (l0 + t * (l1 - l0), r0 + t * (r1 - r0))
-    }
-
-    /// Suma la nota en `out` (estéreo entrelazado).
-    pub fn mix_into(&mut self, out: &mut [f32]) {
-        for frame in out.as_chunks_mut::<2>().0 {
-            if !self.is_active() {
-                break;
-            }
-            let gain = self.gain * self.envelope();
-            let (l, r) = self.read();
-            let pan = self.pan;
-            frame[0] += (1.0 - pan).min(1.0) * (gain * l);
-            frame[1] += (1.0 + pan).min(1.0) * (gain * r);
-            self.rendered += 1;
-            if let Some(left) = &mut self.killed {
-                *left -= 1;
-            }
-        }
     }
 }
