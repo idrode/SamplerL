@@ -266,6 +266,7 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Saltar a una sección | Abre «seccion » para escribir su nombre: su primera entrada en la línea de tiempo empieza en el compás siguiente | — |
 | Repetir la sección | La sección que suena se repite en vez de pasar a la siguiente; otra vez, vuelve a la línea de tiempo | l (modo tocar) |
 | Volver a la línea de tiempo | Deja de repetir la sección: al acabar, sigue la siguiente | — |
+| Versiones | El historial del script (una versión por carga buena): lista con fecha y vista previa; Enter la restaura en el editor sin guardar (Ctrl-Z lo deshace) | — |
 | Salir | Sale (pide confirmación si hay cambios sin guardar) | Ctrl-Q |
 | Snippet: `amen`, `fill`, `ghost`, `intro`, `euclid`, `melodia`, `polirritmo`, `barrido`, `groove`, `instrumento` | Inserta el snippet en el cursor (ver «Snippets» en la sección 4) | — |
 
@@ -481,6 +482,22 @@ tecla cancela. Las ranuras se guardan de una sesión a otra en
 se pueden editar a mano). Para guardar algo con nombre y etiquetas, hazlo
 bloque. Con F1 Enter se repite la última
 acción de la paleta, así que pegar otra vez es F1, Enter y el número.
+
+### Historial de versiones
+
+Cada vez que una carga sale bien (Ctrl-S, Ctrl-L, recargar del disco), el
+texto se guarda como una versión con su fecha en
+`~/.local/state/sampler/historial/<script>-<id>/` (o `$XDG_STATE_HOME`),
+fuera del proyecto y de git. Si el texto es igual que la última versión,
+no se repite; las cargas con errores no cuentan. Se guardan como mucho 200
+versiones y 20 MB por script: al pasarse, se borran las más antiguas.
+
+«Versiones» en la paleta abre la lista, de la más nueva a la más antigua,
+con la fecha (UTC), cuánto hace, sus líneas y la vista previa del texto;
+escribir filtra por la fecha o por el texto. Enter la restaura: la pone en
+el editor como un cambio más (Ctrl-Z lo deshace entero) y no toca el
+archivo hasta que guardes. Si el disco falla (sin sitio, sin permisos), se
+avisa en la línea de estado y todo lo demás sigue igual.
 
 ### Configuración: teclas y colores
 

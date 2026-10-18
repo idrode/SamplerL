@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use engine::{Controller, MAX_TRACKS, Sample, Status};
 use ratatui_textarea::{CursorMove, Input, Key, TextArea};
@@ -133,6 +133,14 @@ struct BlockPicker {
     armed: Option<String>,
 }
 
+/// Selector de versiones del historial abierto.
+struct VersionPicker {
+    query: String,
+    selected: usize,
+    /// Las versiones (de la más nueva a la más antigua) con su texto.
+    versions: Vec<(crate::history::Version, String)>,
+}
+
 /// Explorador de samples abierto.
 #[derive(Clone, Default)]
 struct Browser {
@@ -233,6 +241,10 @@ pub struct App {
     blocks: Library,
     /// Selector de bloques abierto.
     block_picker: Option<BlockPicker>,
+    /// Carpeta de los historiales (la pone `main`; sin ella, no se guarda
+    /// nada) y el selector de versiones abierto.
+    history_root: Option<PathBuf>,
+    versions: Option<VersionPicker>,
     /// Explorador de samples abierto.
     browser: Option<Browser>,
     /// Grabación de lo tocado en curso.
@@ -305,6 +317,8 @@ impl App {
             global_blocks: None,
             blocks: Library::default(),
             block_picker: None,
+            history_root: None,
+            versions: None,
             browser: None,
             tapping: None,
             recording: None,
@@ -1337,6 +1351,15 @@ impl App {
                 if let Some(on) = self.host.song().and_then(|s| s.metronome) {
                     self.set_metronome(on);
                 }
+                // Una versión en el historial (si el disco falla, se avisa).
+                if let Some(history) = self.history()
+                    && let Err(e) = history.record(&text, SystemTime::now())
+                {
+                    self.message.push_str(&format!(
+                        " · ⚠ historial: {e} ({})",
+                        history.dir().display()
+                    ));
+                }
             }
             Err(e) => {
                 self.message = "error: sigue sonando lo anterior".into();
@@ -2102,6 +2125,115 @@ impl App {
         };
     }
 
+    /// Carpeta de los historiales de versiones (cada script, la suya
+    /// dentro). `None`: sin historial.
+    pub fn set_history_root(&mut self, root: Option<PathBuf>) {
+        self.history_root = root;
+    }
+
+    /// El historial del script abierto.
+    fn history(&self) -> Option<crate::history::History> {
+        let root = self.history_root.as_ref()?;
+        Some(crate::history::History::for_script(root, &self.path))
+    }
+
+    /// Abre el selector de versiones: las del historial, de la más nueva a
+    /// la más antigua, con su texto.
+    pub fn open_versions(&mut self) {
+        let Some(history) = self.history() else {
+            self.message = "sin historial (no hay carpeta de estado)".into();
+            return;
+        };
+        let listed = history.list().and_then(|versions| {
+            versions
+                .into_iter()
+                .map(|v| history.read(&v).map(|text| (v, text)))
+                .collect::<std::io::Result<Vec<_>>>()
+        });
+        match listed {
+            Ok(versions) if versions.is_empty() => {
+                self.message =
+                    "el historial está vacío: cada carga buena guarda una versión".into();
+            }
+            Ok(versions) => {
+                self.completion = None;
+                self.message = String::new();
+                self.versions = Some(VersionPicker {
+                    query: String::new(),
+                    selected: 0,
+                    versions,
+                });
+            }
+            Err(e) => {
+                self.message = format!("⚠ historial: {e} ({})", history.dir().display());
+            }
+        }
+    }
+
+    /// Las versiones que coinciden con lo escrito (en su fecha o su texto).
+    fn version_matches(&self) -> Vec<usize> {
+        let Some(picker) = &self.versions else {
+            return Vec::new();
+        };
+        let query = picker.query.to_lowercase();
+        (0..picker.versions.len())
+            .filter(|&i| {
+                let (version, text) = &picker.versions[i];
+                query.is_empty()
+                    || crate::history::date(version.time).contains(&query)
+                    || text.to_lowercase().contains(&query)
+            })
+            .collect()
+    }
+
+    /// Tecla con el selector de versiones abierto: escribir filtra, flechas
+    /// eligen, Enter restaura y Esc cierra.
+    fn handle_versions(&mut self, input: Input) -> Flow {
+        let matches = self.version_matches();
+        let count = matches.len();
+        let Some(picker) = &mut self.versions else {
+            return Flow::Continue;
+        };
+        match input.key {
+            Key::Esc => self.versions = None,
+            Key::Enter => {
+                if let Some(&index) = matches.get(picker.selected) {
+                    let picker = self.versions.take().unwrap();
+                    let (version, text) = &picker.versions[index];
+                    self.restore_version(text, version.time);
+                }
+            }
+            Key::Up if count > 0 => picker.selected = (picker.selected + count - 1) % count,
+            Key::Down if count > 0 => picker.selected = (picker.selected + 1) % count,
+            Key::Backspace => {
+                picker.query.pop();
+                picker.selected = 0;
+            }
+            Key::Char(c) if !input.ctrl && !input.alt => {
+                picker.query.push(c);
+                picker.selected = 0;
+            }
+            _ => {}
+        }
+        Flow::Continue
+    }
+
+    /// Pone una versión en el editor como un cambio más (Ctrl-Z lo deshace
+    /// de una vez); el archivo no se toca hasta guardar.
+    fn restore_version(&mut self, text: &str, time: SystemTime) {
+        let text = text.strip_suffix('\n').unwrap_or(text).to_string();
+        self.marks.clear();
+        self.grouped(|editor| {
+            editor.select_all();
+            editor.insert_str(&text);
+        });
+        self.editor.move_cursor(CursorMove::Top);
+        self.message = format!(
+            "versión del {} en el editor, sin guardar (Ctrl-Z la deshace; Ctrl-S la guarda y la carga)",
+            crate::history::date(time)
+        );
+    }
+
     /// Carpeta de las ranuras (`ranuras/` en la de configuración): lee las
     /// que haya. Un archivo que no se puede leer se avisa y la ranura se
     /// queda vacía; si la carpeta falta, se crea al guardar la primera.
@@ -2335,6 +2467,7 @@ impl App {
             }
             Action::LoopSection => self.toggle_section_loop(),
             Action::FollowTimeline => self.set_section_loop(false),
+            Action::Versions => self.open_versions(),
             Action::PreviousSlice => self.select_slice(false),
             Action::Quit => {
                 let armed = std::mem::replace(&mut self.quit_armed, false);
@@ -2673,6 +2806,9 @@ impl App {
         }
         if self.block_picker.is_some() {
             return self.handle_block_picker(input);
+        }
+        if self.versions.is_some() {
+            return self.handle_versions(input);
         }
         if self.browser.is_some() {
             return self.handle_browser(input);
@@ -3081,6 +3217,39 @@ impl App {
                     description: selected.map_or(String::new(), |b| b.description.clone()),
                     preview: selected.map_or_else(Vec::new, |b| {
                         b.preview().lines().map(String::from).collect()
+                    }),
+                }
+            }),
+            versions: self.versions.as_ref().map(|p| {
+                let matches = self.version_matches();
+                let now = SystemTime::now();
+                let selected = matches.get(p.selected).map(|&i| &p.versions[i]);
+                BlockPickerView {
+                    title: "versiones del script (Enter restaura en el editor)".into(),
+                    confirm: String::new(),
+                    query: p.query.clone(),
+                    items: matches
+                        .iter()
+                        .map(|&i| {
+                            let (version, text) = &p.versions[i];
+                            let lines = text.lines().count();
+                            (
+                                crate::history::date(version.time),
+                                format!("{lines} líneas"),
+                                crate::history::ago(version.time, now),
+                            )
+                        })
+                        .collect(),
+                    selected: p.selected,
+                    description: selected.map_or(String::new(), |(v, _)| {
+                        if crate::history::hash(&self.text()) == v.hash {
+                            "igual que el texto del editor".into()
+                        } else {
+                            String::new()
+                        }
+                    }),
+                    preview: selected.map_or_else(Vec::new, |(_, text)| {
+                        text.lines().map(String::from).collect()
                     }),
                 }
             }),

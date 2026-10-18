@@ -28,6 +28,8 @@ pub struct ViewModel {
     pub palette: Option<PaletteView>,
     /// Selector de bloques abierto.
     pub block_picker: Option<BlockPickerView>,
+    /// Selector de versiones del historial abierto (como el de bloques).
+    pub versions: Option<BlockPickerView>,
     /// Explorador de samples abierto.
     pub browser: Option<BrowserView>,
     /// Esperando el número de una ranura rápida.

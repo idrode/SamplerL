@@ -2342,6 +2342,7 @@ mod config;
 mod formant;
 mod grains;
 mod grid;
+mod history;
 mod import;
 mod instrument;
 mod length;

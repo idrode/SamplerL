@@ -77,13 +77,13 @@ proyecto). Ver «Fase D» en [docs/ESTADO.md](ESTADO.md).
 
 En curso: hechas la grabación de lo tocado («Grabar lo tocado» en la
 paleta, orden `grabar [N]`) y las secciones con línea de tiempo
-(`section()`, `arrange()`; detalle y decisiones en
-[docs/ESTADO.md](ESTADO.md)). Faltan el historial de versiones y el A/B
-de variantes.
+(`section()`, `arrange()`) y el historial de versiones; detalle y
+decisiones en [docs/ESTADO.md](ESTADO.md). Falta el A/B de variantes.
 
 - Secciones con nombre y línea de tiempo: `section(nombre, función)` y
   `arrange({ {sección, compases}, ... })`, con el arreglo en el motor. ✅
-- Historial de versiones del script con marca de tiempo.
+- Historial de versiones del script con marca de tiempo: una por carga
+  buena, sin duplicar, fuera del repositorio, «Versiones» en la paleta. ✅
 - A/B de variantes.
 - Grabar lo tocado en el modo tocar como un patrón de `steps`. ✅
 

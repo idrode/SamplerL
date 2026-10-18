@@ -55,6 +55,7 @@ pub enum Action {
     JumpSection,
     LoopSection,
     FollowTimeline,
+    Versions,
     Quit,
 }
 
@@ -344,6 +345,12 @@ pub const ACTIONS: &[ActionDef] = &[
         action: Action::FollowTimeline,
         name: "Volver a la línea de tiempo",
         description: "Deja de repetir la sección: al acabar, sigue la siguiente",
+        keys: "",
+    },
+    ActionDef {
+        action: Action::Versions,
+        name: "Versiones",
+        description: "El historial del script (una versión por carga buena): lista con fecha y vista previa; Enter la restaura en el editor sin guardar (Ctrl-Z lo deshace)",
         keys: "",
     },
     ActionDef {
