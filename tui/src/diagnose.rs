@@ -478,6 +478,17 @@ mod tests {
         assert_eq!(d[0].cols, 8..12);
         let d = diagnose(r#":steps("1r17 . . .  . . . .  . . . .  . . . .")"#);
         assert!(d[0].message.contains("retrigger fuera de rango"));
+        // `%`, igual que `^`; y mal puesto, subrayado.
+        let d = diagnose(r#":steps("1%40 . . .  . . . .  . . . .  . . . .")"#);
+        assert!(d[0].message.contains("pitch fuera de rango"));
+        let d = diagnose(r#":steps("1 1^2%7 . .  . . . .  . . . .  . . . .")"#);
+        assert!(
+            d[0].message.contains("en vez del primer ^"),
+            "{}",
+            d[0].message
+        );
+        assert_eq!(d[0].cols, 10..15);
+        assert!(diagnose(r#":steps("1%7 1%-12 . .  . . . .  . . . .  . . . .")"#).is_empty());
     }
 
     #[test]

@@ -37,7 +37,7 @@ fn instrument_options_complete_and_explain_themselves() {
     app.handle(f(4));
     assert_eq!(
         completion_items(&app),
-        ["root", "loop", "voices", "adsr", "crossfade"]
+        ["root", "loop", "voices", "adsr", "crossfade", "keep"]
     );
     app.handle(esc());
     assert_eq!(

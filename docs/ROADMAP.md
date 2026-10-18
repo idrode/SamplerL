@@ -177,9 +177,9 @@ Hecha: explorador de samples, tap tempo, `bpm_ramp()` y `meter()`,
 
 En curso: hechos la interpolación del pitch (punto 1) y el instrumento
 (`sample:instrument()`, `pista:melody()`, `_` y acordes en la notación;
-punto 2), tocarlo en vivo (punto 5), la salida MIDI de sus notas (punto
-6) y el diagnóstico en vivo de `melody` (punto 7). Pendientes los puntos 3
-y 4. Detalle y decisiones en «Fase K»
+punto 2), el pitch sin cambiar la duración (`%` y `keep`; punto 3),
+tocarlo en vivo (punto 5), la salida MIDI de sus notas (punto 6) y el
+diagnóstico en vivo de `melody` (punto 7). Pendiente el punto 4. Detalle y decisiones en «Fase K»
 de [docs/ESTADO.md](ESTADO.md).
 
 Reglas de siempre: registro de la API (autocompletado, ayuda y guía), nada
@@ -195,9 +195,10 @@ huellas de `golden.rs` idénticas si no se usa nada nuevo, código portable
    con las voces limitadas y robo de la más antigua, envolvente ADSR por
    voz, bucle sostenido con fundido cruzado en el salto (sin clic) y nota
    raíz para que `:melody("c e g e")` toque cromáticamente respecto a ella.
-3. **Pitch sin cambiar la duración**: transponer un corte o una nota
-   manteniendo su duración (con el WSOLA de `stretch`, o algo mejor para
-   material tonal).
+3. ✅ **Pitch sin cambiar la duración**: transponer un corte o una nota
+   manteniendo su duración: `3%7` por paso y `keep = true` en un
+   instrumento (granos alineados en tiempo real, elegidos midiendo frente
+   al WSOLA de `stretch`; bien hasta ±12).
 4. **Granular y congelar, y formantes**: leer el sample en granos
    (posición, tamaño, densidad, dispersión) para texturas y para congelar
    un instante; desplazar los formantes al transponer (que una voz subida

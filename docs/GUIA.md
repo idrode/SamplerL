@@ -648,6 +648,7 @@ compases).
 | `kick` | El corte con esa etiqueta (ver `cortes:name` en la sección 4) | `kick`, `snare` |
 | `'` | Reverse: el corte suena del final al principio | `3'` |
 | `^n` | Pitch en semitonos (signo y decimales, de -36 a 36). Cambia también la duración | `3^7`, `3^-5`, `3^0.5` |
+| `%n` | Pitch en semitonos que **no** cambia la duración: el corte suena transpuesto y dura lo mismo (granos alineados; bien hasta ±12, más allá avisa). Va en vez del primer `^`; detrás pueden ir las notas de un acorde | `3%7`, `3%-12`, `1%0^4^7` |
 | `^a^b^c` | Acorde: varios `^` en un paso suenan a la vez (hasta 4 notas; solo en pistas con instrumento) | `1^0^4^7` |
 | `@g` | Volumen del paso (lineal, de 0 a 4) | `3@0.5` |
 | `rN` | Retrigger / stutter: el paso se divide en N partes y el corte vuelve a empezar en cada una (de 1 a 16) | `3r4` |
@@ -655,7 +656,19 @@ compases).
 
 Los sufijos se combinan en cualquier orden, cada uno una vez (salvo `^`,
 que repetido hace un acorde): `3'^7@0.5r2` es el corte 3, al revés, una quinta arriba, a media
-intensidad y repetido dos veces. `~` necesita un filtro en la pista
+intensidad y repetido dos veces.
+
+**`^` o `%`.** `^` es el pitch de un sampler clásico: lee el corte más
+deprisa o más despacio, así que al subir dura menos y al bajar, más (una
+octava abajo, el doble). `%` transpone sin tocar la duración: la caja a
+`%-12` suena una octava más grave y ocupa lo mismo que antes. Por dentro
+lee el corte en granos de 30 ms que se solapan, cada uno a la velocidad
+del pitch y alineado con el anterior para que no se cancelen; el primer
+grano empieza en el golpe, así que el ataque queda en su sitio. Hasta ±12
+semitonos va bien; más allá los golpes se emborronan y suena metálico (la
+carga avisa en la línea de estado). Con `%0` suena exactamente igual que
+sin nada. En un instrumento, `keep = true` hace lo mismo con todas sus
+notas. `~` necesita un filtro en la pista
 (`:fx("lowpass", { cutoff = 3000 })`): `"1~300 . 2 .  1 . 2~8000 ."` cierra
 el filtro en el primer golpe y lo abre del todo en la segunda caja.
 
@@ -1049,7 +1062,7 @@ track("drums", amen):steps("1 2 3 4  5 6 7 8  9 10 11 12  13 14 15 16")
 
 Devuelve: instrumento.
 
-Toca el sample como un instrumento: notas con polifonía, ADSR y bucle sostenido. Una pista con un instrumento (`track(nombre, instrumento)`) toca notas en vez de cortes: cada golpe abre una voz sin cortar las que suenan (si no queda ninguna libre, se roba la más antigua), sube y baja con su envolvente ADSR y dura su paso más sus `_`, y luego el release. El sample suena tal cual en la nota `root`: `pista:melody("c e g e")` toca cromáticamente desde ahí, y en `steps` el pitch (`^`) son semitonos sobre la raíz (varios `^` hacen un acorde: `1^0^4^7`). Con `loop`, la nota sigue en bucle mientras dure (también en su release), con un fundido cruzado en el salto para que no haga clic: los últimos ms antes del fin del bucle se funden con los de antes de su inicio (si no hay tanto audio antes del inicio, el fundido se acorta y se avisa). Sin `loop`, la nota acaba con el sample. Al bajar mucho el tono el sample dura más (y al subir, menos): el pitch cambia la velocidad.
+Toca el sample como un instrumento: notas con polifonía, ADSR y bucle sostenido. Una pista con un instrumento (`track(nombre, instrumento)`) toca notas en vez de cortes: cada golpe abre una voz sin cortar las que suenan (si no queda ninguna libre, se roba la más antigua), sube y baja con su envolvente ADSR y dura su paso más sus `_`, y luego el release. El sample suena tal cual en la nota `root`: `pista:melody("c e g e")` toca cromáticamente desde ahí, y en `steps` el pitch (`^`) son semitonos sobre la raíz (varios `^` hacen un acorde: `1^0^4^7`). Con `loop`, la nota sigue en bucle mientras dure (también en su release), con un fundido cruzado en el salto para que no haga clic: los últimos ms antes del fin del bucle se funden con los de antes de su inicio (si no hay tanto audio antes del inicio, el fundido se acorta y se avisa). Sin `loop`, la nota acaba con el sample. Al bajar mucho el tono el sample dura más (y al subir, menos): el pitch cambia la velocidad. Con `keep = true` no: cada nota conserva la duración del sample (granos alineados, como `%` en los pasos; bien hasta ±12 semitonos, más allá se avisa).
 
 - `opciones`: tabla con `root`, `loop`, `voices`, `adsr` y `crossfade` (ver abajo)
 
@@ -1060,6 +1073,7 @@ Toca el sample como un instrumento: notas con polifonía, ADSR y bucle sostenido
 | `voices` | notas que pueden sonar a la vez; con todas ocupadas, una nota nueva roba la más antigua | `4` | 1–16 |
 | `adsr` | envolvente de cada nota `{ataque, decay, sustain, release}`: ms, ms, nivel (0–1) y ms (0 ms: el fundido mínimo de 1,5 ms) | `{ 0, 0, 1, 100 }` | ms de 0 a 10000; sustain de 0 a 1 |
 | `crossfade` | fundido cruzado del salto del bucle, en ms (usa el audio de antes del inicio del bucle; si no cabe, se acorta y se avisa) | `10` | 0–1000 |
+| `keep` | transponer las notas sin cambiar su duración (granos alineados, como `%` en los pasos): el sample dura lo mismo en cualquier nota; va bien hasta ±12 semitonos | `false` | `true` o `false` |
 
 ```lua
 bpm(100)

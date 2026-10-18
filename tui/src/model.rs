@@ -335,9 +335,11 @@ pub fn step_text(step: &Option<Step>, labels: &[Option<String>]) -> String {
         text.push('\'');
     }
     let chord = step.chord.iter().any(Option::is_some);
-    if step.semitones != 0.0 || chord {
-        for st in step.notes() {
-            text.push_str(&format!("^{st}"));
+    if step.semitones != 0.0 || chord || step.keep {
+        for (i, st) in step.notes().enumerate() {
+            // `%`: el pitch que no cambia la duración (solo el primero).
+            let mark = if i == 0 && step.keep { '%' } else { '^' };
+            text.push_str(&format!("{mark}{st}"));
         }
     }
     text.push_str(&suffixes(step));
@@ -437,6 +439,11 @@ mod tests {
         assert_eq!(step_text(&Some(chord), &[]), "01^0^4^7@0.5");
         let parsed = engine::notation::parse_step("1^0^4^7@0.5").unwrap();
         assert_eq!(parsed, Some(chord));
+        // `%`: el pitch que no cambia la duración (también con 0).
+        for text in ["01%7", "01%-12^4", "01%0"] {
+            let step = engine::notation::parse_step(text).unwrap();
+            assert_eq!(step_text(&step, &[]), text);
+        }
         // En un instrumento, por su nombre desde la raíz (C3 = 48).
         assert_eq!(note_text(&Some(chord), 48), "C3+E3+G3@0.5");
         let low = Step::new(0).with_pitch(-13.0).with_retrig(2);

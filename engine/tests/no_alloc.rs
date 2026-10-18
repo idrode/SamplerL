@@ -359,6 +359,73 @@ fn the_audio_thread_never_allocates() {
     });
     assert_eq!(n, 0, "reservas al soltar notas en vivo");
 
+    // Pitch que conserva la duración: pasos con `%` (con reverse, bucle y
+    // retrigger) y un instrumento con `keep` (acordes, bucle, notas en
+    // vivo).
+    let kept: Vec<Option<Step>> = (0..STEPS)
+        .map(|k| {
+            let step = Step::new(k % 2).with_kept_pitch(k as f32 - 8.0);
+            Some(match k % 3 {
+                0 => step.reversed(),
+                1 => step.with_retrig(3),
+                _ => step,
+            })
+        })
+        .collect();
+    let looped = vec![
+        engine::SliceShape {
+            play: engine::PlayMode::Loop,
+            ..engine::SliceShape::DEFAULT
+        };
+        slices.len()
+    ];
+    let shifted = Pattern::from_steps(sample.clone(), &slices, kept)
+        .unwrap()
+        .with_shapes(&looped)
+        .unwrap();
+    controller.set_track_pattern(5, Some(shifted)).unwrap();
+    let mut kept_instrument = instrument;
+    kept_instrument.keep = true;
+    let melody_kept: Vec<Option<Step>> = (0..STEPS)
+        .map(|k| {
+            Some(
+                Step::new(0)
+                    .with_pitch(k as f32 - 5.0)
+                    .with_chord(&[k as f32]),
+            )
+        })
+        .collect();
+    let synth_kept = Pattern::from_steps(tone.clone(), &whole, melody_kept)
+        .unwrap()
+        .with_instrument(Some(kept_instrument))
+        .unwrap();
+    controller.set_track_pattern(4, Some(synth_kept)).unwrap();
+    let n = counted(|| {
+        for _ in 0..400 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas con pitch que conserva la duración");
+    for key in 0..4u8 {
+        controller
+            .note_on(
+                4,
+                &tone,
+                0..24_000,
+                kept_instrument,
+                key as f32 * 3.0,
+                0.8,
+                key,
+            )
+            .unwrap();
+    }
+    let n = counted(|| {
+        for _ in 0..100 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas con notas en vivo con keep");
+
     // Rampa de tempo y cambio de compás.
     controller
         .set_tempo_ramp(engine::TempoRamp {

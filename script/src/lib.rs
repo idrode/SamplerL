@@ -706,7 +706,10 @@ impl ScriptHost {
             .map(|track| expand(track, &mut rng, timing))
             .collect::<Result<Vec<_>, _>>();
         expanding.set(false);
-        let warnings = warnings.borrow().clone();
+        let mut warnings = warnings.borrow().clone();
+        if let Ok(tracks) = &expanded {
+            warnings.extend(tracks.iter().filter_map(far_kept_pitch));
+        }
         Ok(Song {
             bpm,
             tracks: expanded?,
@@ -2032,6 +2035,15 @@ fn instrument_options(
                     release_ms: adsr[3] as f32,
                 };
             }
+            "keep" => match value {
+                Value::Boolean(on) => def.engine.keep = on,
+                _ => {
+                    return Err(fail(
+                        lua,
+                        format!("{who}: keep es true o false (transponer sin cambiar la duración)"),
+                    ));
+                }
+            },
             "crossfade" => match number(&value) {
                 Some(ms) if (0.0..=1000.0).contains(&ms) => crossfade = Some(ms),
                 _ => {
@@ -2084,6 +2096,32 @@ fn instrument_options(
         ));
     }
     Ok(def)
+}
+
+/// Transposición sin cambiar la duración a partir de la cual los golpes
+/// se emborronan (ver `engine::shift`): se avisa.
+pub const KEEP_PITCH_LIMIT: f32 = 12.0;
+
+/// Aviso si una pista transpone sin cambiar la duración (`%` o un
+/// instrumento con `keep`) más de [`KEEP_PITCH_LIMIT`] semitonos.
+fn far_kept_pitch(track: &TrackDef) -> Option<String> {
+    let all = track.instrument.as_ref().is_some_and(|i| i.engine.keep);
+    let far = track
+        .bars
+        .iter()
+        .flatten()
+        .flatten()
+        .filter(|step| all || step.keep)
+        .flat_map(|step| step.notes())
+        .map(f32::abs)
+        .fold(0.0f32, f32::max);
+    (far > KEEP_PITCH_LIMIT).then(|| {
+        format!(
+            "pista \"{}\": transpone {far} semitonos sin cambiar la duración; \
+             más allá de ±{KEEP_PITCH_LIMIT} los golpes se emborronan y suena metálico",
+            track.name
+        )
+    })
 }
 
 /// Termina de cortar un sample: aplica las ediciones del proyecto

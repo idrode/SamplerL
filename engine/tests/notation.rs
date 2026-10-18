@@ -255,3 +255,25 @@ fn hold_lengthens_the_previous_hit() {
     assert!(check_label("_").is_err());
     assert!(check_label("_kick").is_ok());
 }
+
+#[test]
+fn percent_is_a_pitch_that_keeps_the_duration() {
+    let step = parse_step("3%7").unwrap().unwrap();
+    assert_eq!((step.slice, step.semitones, step.keep), (2, 7.0, true));
+    let step = parse_step("1'%-12@0.5").unwrap().unwrap();
+    assert!(step.keep && step.reverse && step.semitones == -12.0 && step.gain == 0.5);
+    // ^ sigue cambiando la duración.
+    assert!(!parse_step("1^7").unwrap().unwrap().keep);
+    // Detrás de %, las notas del acorde.
+    let chord = parse_step("1%0^4^7").unwrap().unwrap();
+    assert!(chord.keep);
+    assert_eq!(chord.notes().collect::<Vec<_>>(), [0.0, 4.0, 7.0]);
+    for (bad, message) in [
+        ("1^4%7", "en vez del primer ^"),
+        ("1%", "falta el número después de %"),
+        ("1%7%3", "en vez del primer ^"),
+    ] {
+        let err = parse_step(bad).unwrap_err();
+        assert!(err.contains(message), "{bad}: {err}");
+    }
+}

@@ -300,7 +300,7 @@ enorme).
 
 ## Fase K: melodías con samples
 
-En curso: hechos los puntos 1 (interpolación del pitch), 2 (instrumento), 5 (tocarlo en vivo), 6 (salida MIDI de sus notas) y 7 (diagnóstico en vivo de `melody`); faltan el 3 y el 4 (ver el ROADMAP).
+En curso: hechos los puntos 1 (interpolación del pitch), 2 (instrumento), 3 (pitch sin cambiar la duración), 5 (tocarlo en vivo), 6 (salida MIDI de sus notas) y 7 (diagnóstico en vivo de `melody`); falta el 4 (granular y formantes; ver el ROADMAP).
 
 - **Interpolación del pitch** (`engine/src/interp.rs`, `interp::read`, la usa `Voice::read`): sinc con ventana de Kaiser (8 cruces por cero, β = 8) en una tabla de 512 entradas por cruce (`LazyLock` de un array fijo, sin memoria dinámica; `new_engine` la calcula con `interp::prepare` para que el audio nunca la inicialice), interpolada entre entradas, normalizada por la suma de pesos. Al subir (`r` > 1) el corte baja a `0,9 / r` y el núcleo se ensancha a `8 / corte` frames por lado: filtra lo que se plegaría. Con `r` ≤ 1 el corte es 1 (pasa por las muestras) y una posición entera devuelve la muestra: pitch 0, bit a bit. Los vecinos fuera del rango de la voz repiten su borde. Tests en `engine/tests/interpolation.rs` (seno agudo a +12 y +24 que pasaría del Nyquist: lineal 0 dB, ahora < -75 dB; sin pasarlo, limpio y con su nivel; +7 y -12: lineal > -40 dB, ahora < -85 dB; pitch 0 bit a bit), `step_effects.rs` (el borde de un bloque se mide a media altura) y `no_alloc.rs` (pasos con pitch). Huellas nuevas en `golden.rs` para las canciones con pitch, y sus versiones sin pitch con las huellas de antes.
 - **Instrumento** (`engine/src/instrument.rs`): `Instrument { voices (1-16, MAX_VOICES), adsr: Adsr { attack_ms, decay_ms, sustain, release_ms }, sustain_loop: Option<(inicio, fin)> en frames, crossfade (frames) }` con `validate(frames)` y `Pattern::with_instrument` (`SendError::InvalidInstrument`). Cada pista del motor tiene `notes: [Option<Note>; 16]` y `tails` (robadas), fijos. `play_hit` en una pista con instrumento llama a `play_notes`: una nota por cada nota del acorde; si las voces (`Note::is_voice`: activa y no cortada) llegan al límite, roba la de menor `born` (orden de llegada), la corta (`kill`, fundido mínimo) y la pasa a `tails` (`park_tail`; si están llenas, sale la más antigua). Las notas no se cortan entre sí. `Note`: posición `rendered · rate` (con bucle, `inicio + (pos − inicio) mod largo`), lectura por `interp::read`, fundido cruzado lineal en `[fin − crossfade, fin)` con `pos − largo` (lo de antes del inicio), sin bucle si va al revés; ADSR como función pura del frame (`adsr(n)`, tramos de al menos 1,5 ms, release desde el nivel de `gate`), fundido mínimo al final del sample sin bucle; `is_active` hasta `gate + release` (o el final del sample). La duración (`gate`) es la del paso más `Step::hold` pasos (`Retrig::gate`: con retrigger, cada parte su trozo y la última, además, el `hold`); vale también para el modo gate y las notas MIDI de salida. Choke y `Stop` cortan las notas; la mezcla las suma en el buffer de la pista (después, efectos, volumen, envíos) y suelta las acabadas con `discard`; `holds` mira notas y colas. `TrackStatus::voices` (máximo a la vez desde la lectura anterior, `SharedStatus::add_voices` con `fetch_max`). Notación: `_` (`notation::HOLD`) suma `hold` al golpe anterior (error si no hay; `_` ya no vale como etiqueta) y varios `^` son un acorde (`Step::chord`: hasta `MAX_CHORD − 1` = 3 intervalos sobre `semitones`; `Step::notes()`, `with_chord`, `with_hold`; `Trigger::chord` con sus velocidades; el rango ±36 se valida por nota). Lua: `sample:instrument({ root, loop, voices, adsr, crossfade })` (`InstrumentHandle`, receptor `Receiver::Instrument`; claves de `api::INSTRUMENT_PARAMS`, tabla `api::INSTRUMENT_TABLE` para el autocompletado y la ayuda; `root` nota o MIDI, `loop` `{inicio, fin}` en ms, `adsr` `{a, d, s, r}`, `crossfade` 10 ms por defecto, acortado con aviso en `Song::warnings` si no cabe antes del inicio o en el bucle; error con `stretch`). `track()` acepta cortes o instrumento (`track_source`): un instrumento es una pista de un corte (`Slices::grid(1)`, `SliceOrigin` con `indices = [None]`) con `TrackDef::instrument` (`InstrumentDef { root, loop_ms, engine }`). `pista:melody(notas)` y `c:melody()` en `every` (`patterns::notes(texto, raíz)`: notas `c`…`b` con `#`/`b` y octava opcional (sin ella, la de la raíz), acordes con `+` (las siguientes sin octava, justo por encima), `.` y `_`, sufijos salvo `^`; `patterns::note_number`/`note_name`, C4 = 60); en una pista de cortes, raíz C4 sobre el corte 1. Errores con línea: acorde en una pista de cortes, `midi()` en un instrumento, notas fuera de ±36, opciones. Snippet `instrumento`. Interfaz: `TrackView::instrument` (`InstrumentView { root, voices, sounding }`), el tracker escribe las notas (`TrackView::cell_text`, `model::note_text`: `C3+E3+G3`) y `│` en las filas alargadas (`TrackView::held`), el panel de efectos `· ♪ C3 3/4`, autocompletado y ayuda en la tabla de `instrument`. Tests en `engine/tests/instrument.rs` (frecuencia de cada nota, ADSR al frame, solapes = suma, acorde, voces que nunca pasan del límite con 1-16, robo de la más antigua sin clic, bucle sostenido sin clic con fundido y con clic sin él, fin del sample, paro, rangos), `engine/tests/notation.rs` (acordes, `_`), `no_alloc.rs` (instrumento con acordes, robo, bucle y choke), `script/tests/instrument.rs` (frecuencia por nombre de nota con tres raíces, igual muestra a muestra que el motor, bucle sin clic, robo con acordes, `melody` en cortes y en `every`, aviso del fundido, 20 errores con línea), `script/tests/registry.rs` y `tui/src/tests/instrument.rs`.
@@ -311,8 +311,53 @@ En curso: hechos los puntos 1 (interpolación del pitch), 2 (instrumento), 5 (to
 
 - **Diagnóstico en vivo de `melody("...")`** (punto 7): `diagnose::steps_diagnostics` recorre `:steps(` y `:melody(` (también `c:melody` en `every`) igual. Para `melody`, `check_melody` pasa cada nota a un paso con `patterns::note_step(token, None)` (la conversión de `notes`, separada; sin raíz, no comprueba los ±36 semitonos) y subraya la que falla; luego `check_pattern` (común con `steps`, sobre los pasos ya convertidos pero con las columnas y el texto de las notas) mira cuántos pasos hay con la longitud de la pista, los `_` sin golpe (subraya ese `_`) y los rangos de volumen, retrigger y `~` (el pitch no: depende de la raíz). Los avisos salen ordenados por línea y columna. Tests en `tui/src/diagnose.rs` (nota errónea subrayada, acorde de más, `^`, sufijos, rangos, `_`, número de pasos, `:length`, `every`) y `tui/src/tests/instrument.rs` (aviso al pie mientras se escribe).
 
+- **Pitch sin cambiar la duración** (punto 3, `engine/src/shift.rs`): `Shift` (en `Voice` y en `Note`, `Option<Shift>`, solo con `keep` y un pitch distinto de 0) hace que la voz avance por el sample a velocidad 1 (su `length` se calcula con velocidad 1) y lo lea en granos de Hann de 30 ms solapados a la mitad, cada uno a la velocidad del pitch. `Shift::grains(n, fit, mono)` da los dos granos del frame de salida `n` (desplazamiento en el eje de la voz y peso; suman 1) y, al empezar cada medio grano, ancla el siguiente en `k·hop` desplazado hasta ±6 ms al mejor encaje con lo que seguiría leyendo el anterior (correlación normalizada sobre la versión mono; candidatos cada 4 frames, 90 puntos de referencia guardados en la pila, y afinado a 1). El primer grano no tiene fundido de entrada; sin bucle (`fit`), ningún grano se ancla tan tarde que lea más allá del final del corte, y lo que pase del final no se lee. Las voces pasan el desplazamiento a posición del sample con su bucle, ping-pong o sentido (`Voice::position`, `Note::position`) y leen con `interp::read` a la velocidad del pitch (el filtro antialias de siempre). Notación: `%n` (`Step::keep`, `Step::with_kept_pitch`; va en vez del primer `^` y detrás pueden ir las notas del acorde; `^` y luego `%`, error); `Playback::keep` y `NoteOn::keep`. Instrumento: `Instrument::keep` (`keep = true` en `sample:instrument{}`, del registro `api::INSTRUMENT_PARAMS`) para todas sus notas, también las en vivo. Con pitch 0 no se crea el `Shift`: `%0` es bit a bit lo de siempre. `scale:melody` y `melody` no aceptan `%` (el tono lo ponen ellas). Aviso en `Song::warnings` (`far_kept_pitch`, `KEEP_PITCH_LIMIT` = 12) si una pista transpone así más de ±12. El tracker escribe `%` (`model::step_text`). Tests en `engine/tests/pitch_keep.rs` (seno a 440 Hz con +7, −12, +12 y −5: duración < 1 ms de error y frecuencia < 0,5 %; `%0` idéntico con cortes, reverse, retrigger y volumen; reverse; instrumento con y sin `keep`; cada golpe de un break a +7 y −12 con su ataque a menos de 1 ms de su paso y determinista; la medida, ignorada), `engine/tests/notation.rs`, `no_alloc.rs` (pasos con `%` en bucle, reverse y retrigger; instrumento con `keep`, acordes y notas en vivo), `script/tests/pitch_keep.rs` (duración y frecuencia desde Lua, `keep`, `%0`, `every` conserva el `%`, avisos, errores con línea), `tui/src/diagnose.rs` y `tui/src/model.rs`.
+
 ### Decisiones
 
+- **Pitch sin cambiar la duración: granos alineados en tiempo real.**
+  Se midió (`cargo test -p engine --release --test pitch_keep -- --ignored
+  --nocapture`) contra la alternativa de reaprovechar el WSOLA de
+  `stretch` al cargar (estirar el sample ×2^(n/12) y leerlo a esa
+  velocidad):
+
+  | Semitonos | Técnica | Error de frecuencia (seno) | Pureza (seno) | Envolvente del break |
+  | --- | --- | --- | --- | --- |
+  | +7 | granos | +0,020 % | 41,2 dB | 3,75 dB |
+  | +7 | WSOLA al cargar | +0,005 % | 43,4 dB | 4,07 dB |
+  | −12 | granos | 0,000 % | 43,5 dB | 3,41 dB |
+  | −12 | WSOLA al cargar | −0,014 % | 49,0 dB | 3,88 dB |
+  | +12 | granos | −0,001 % | 42,9 dB | 4,32 dB |
+  | +12 | WSOLA al cargar | 0,000 % | 40,1 dB | 4,12 dB |
+  | −5 | granos | −0,059 % | 40,0 dB | 2,67 dB |
+  | −5 | WSOLA al cargar | −0,006 % | 54,0 dB | 3,39 dB |
+  | +24 | granos | 0,000 % | 46,0 dB | 4,96 dB |
+  | +24 | WSOLA al cargar | −0,005 % | 37,9 dB | 4,36 dB |
+
+  (Pureza: lo que explica una sinusoide ajustada por bloques frente al
+  resto. Envolvente: desviación media en dB, cada 2 ms, respecto al break
+  sin transponer, golpe a golpe.) Granos sin alinear daban 0 dB de pureza
+  y hasta un 9 % de error de frecuencia aparente (los granos se cancelan):
+  descartados. Con la misma calidad, en tiempo real gana: sirve para
+  cualquier nota (pads, MIDI, acordes) sin una copia del sample por
+  semitono ni esperar al cargar, y no gasta memoria; cuesta un 2,6 % de
+  núcleo por voz (0,6 % con `^`). Granos de 30 ms y búsqueda de ±6 ms:
+  con 20 ms los senos salían algo más puros y el break peor, con 10 ms al
+  revés. Reanclar los últimos granos antes del final del corte (en vez de
+  dejarlos leer silencio) mejora la cola a +12 y +24 (4,3 frente a
+  5,2 dB, y 5,0 frente a 8,6).
+- **Golpes**: el primer grano empieza en el golpe y sin fundido, así que
+  el ataque de cada corte cae en su paso (medido: a menos de 1 ms a +7 y
+  −12) y con el mismo nivel que con `^`. Lo que se oye peor son las colas:
+  dentro de un golpe, a ±12 la envolvente se separa 3-4 dB de la original
+  (como el WSOLA), y más allá de ±12 un grano lee hasta cuatro veces su
+  duración y el sonido se vuelve metálico. Por eso se avisa a partir de
+  ±12; el rango sigue siendo ±36, como `^`.
+- **Sintaxis**: `%` (corto, libre en la notación y fácil de recordar como
+  «tanto por ciento de tono»), en el sitio del primer `^`; `^` sigue siendo
+  el pitch de sampler clásico. En un instrumento, la opción `keep = true`
+  vale para todas sus notas (`melody`, acordes, pads, MIDI), porque las
+  notas se escriben sin sufijos de pitch.
 - **Interpolación**: sinc con ventana de Kaiser (8 cruces por cero a cada
   lado, β = 8) en tabla, con el corte escalado a `0,9 / r` al subir el
   pitch. Se eligió midiendo un seno agudo (`engine/tests/interpolation.rs`):

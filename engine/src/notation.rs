@@ -10,7 +10,9 @@
 //!   [`check_label`]). Lleva los mismos sufijos: `kick^7@0.5`, `kick'r2`.
 //! - Sufijos combinables, en cualquier orden y cada uno una vez (salvo `^`):
 //!   `'` reverse, `^7` / `^-5` / `^0.5` pitch en semitonos (varios `^` son
-//!   un acorde, hasta 4 notas: `1^0^4^7`; solo en instrumentos), `@0.5` volumen,
+//!   un acorde, hasta 4 notas: `1^0^4^7`; solo en instrumentos), `%7` /
+//!   `%-12` pitch en semitonos que no cambia la duración (va en vez del
+//!   primer `^`; detrás pueden ir las notas del acorde), `@0.5` volumen,
 //!   `r4` retrigger/stutter (el paso se repite 4 veces, de 1 a 16) y `~800`
 //!   corte del primer filtro de la pista en Hz desde ese golpe (parameter
 //!   lock).
@@ -233,6 +235,19 @@ pub fn parse_step_labeled(token: &str, labels: &[Option<String>]) -> Result<Opti
                 once(&mut seen_reverse, "reverse (')")?;
                 step.reverse = true;
             }
+            '%' => {
+                if pitches > 0 {
+                    return Err(
+                        "% (pitch sin cambiar la duración) va en vez del primer ^, no detrás"
+                            .into(),
+                    );
+                }
+                let (value, after) = number(rest, true).ok_or("falta el número después de %")?;
+                step.semitones = value;
+                step.keep = true;
+                pitches += 1;
+                rest = after;
+            }
             '^' => {
                 let (value, after) = number(rest, true).ok_or("falta el número después de ^")?;
                 // El primero es el pitch; los siguientes, notas del acorde.
@@ -270,7 +285,8 @@ pub fn parse_step_labeled(token: &str, labels: &[Option<String>]) -> Result<Opti
             other => {
                 return Err(format!(
                     "carácter inesperado '{other}' \
-                     (efectos: ' reverse, ^n pitch, @n volumen, rN retrigger, ~Hz corte)"
+                     (efectos: ' reverse, ^n pitch, %n pitch sin cambiar la duración, \
+                     @n volumen, rN retrigger, ~Hz corte)"
                 ));
             }
         }

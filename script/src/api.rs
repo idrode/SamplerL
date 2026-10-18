@@ -925,7 +925,10 @@ pub const FUNCTIONS: &[Function] = &[
               del fin del bucle se funden con los de antes de su inicio (si no hay \
               tanto audio antes del inicio, el fundido se acorta y se avisa). Sin \
               `loop`, la nota acaba con el sample. Al bajar mucho el tono el sample \
-              dura más (y al subir, menos): el pitch cambia la velocidad.",
+              dura más (y al subir, menos): el pitch cambia la velocidad. Con \
+              `keep = true` no: cada nota conserva la duración del sample (granos \
+              alineados, como `%` en los pasos; bien hasta ±12 semitonos, más allá \
+              se avisa).",
         params: &[Param {
             name: "opciones",
             description: "tabla con `root`, `loop`, `voices`, `adsr` y `crossfade` (ver abajo)",
@@ -1913,6 +1916,14 @@ pub const INSTRUMENT_PARAMS: &[FxParam] = &[
         valid: "0–1000",
         values: &[],
         template: "crossfade = ${20}",
+    },
+    FxParam {
+        name: "keep",
+        description: "transponer las notas sin cambiar su duración (granos alineados, como `%` en los pasos): el sample dura lo mismo en cualquier nota; va bien hasta ±12 semitonos",
+        default: Some("false"),
+        valid: "`true` o `false`",
+        values: &[],
+        template: "keep = ${true}",
     },
 ];
 

@@ -14,6 +14,7 @@ pub mod offline;
 mod output;
 mod sample;
 mod sequencer;
+mod shift;
 mod slice;
 mod status;
 pub mod stretch;

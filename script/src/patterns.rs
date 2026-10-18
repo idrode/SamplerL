@@ -162,9 +162,9 @@ pub fn melody(intervals: &[i32], root: i32, degrees: &str, hit: &str) -> Result<
     let who = "melody";
     let tokens = tokens(degrees, who)?;
     check_hit(hit, who)?;
-    if hit.contains('^') {
+    if hit.contains(['^', '%']) {
         return Err(format!(
-            "{who}: el golpe no puede llevar ^ (el pitch lo pone la escala): \"{hit}\""
+            "{who}: el golpe no puede llevar ^ ni % (el pitch lo pone la escala): \"{hit}\""
         ));
     }
     let steps: Vec<String> = tokens
@@ -180,8 +180,8 @@ pub fn melody(intervals: &[i32], root: i32, degrees: &str, hit: &str) -> Result<
             let degree: i64 = number
                 .parse()
                 .map_err(|_| format!("{who}: paso {} (\"{token}\"): debe empezar por un grado (1, 2, -1...) o ser \".\"", i + 1))?;
-            if suffixes.contains('^') {
-                return Err(format!("{who}: paso {} (\"{token}\"): el pitch lo pone la escala, sin ^", i + 1));
+            if suffixes.contains(['^', '%']) {
+                return Err(format!("{who}: paso {} (\"{token}\"): el pitch lo pone la escala, sin ^ ni %", i + 1));
             }
             let semitones = scale_pitch(intervals, root, degree)
                 .map_err(|e| format!("{who}: paso {} (\"{token}\"): {e}", i + 1))?;
@@ -317,8 +317,8 @@ pub fn note_step(token: &str, root: Option<i32>) -> Result<String, String> {
             engine::MAX_CHORD
         ));
     }
-    if rest.contains('^') {
-        return Err("el tono lo da la nota, sin ^".into());
+    if rest.contains(['^', '%']) {
+        return Err("el tono lo da la nota, sin ^ ni %".into());
     }
     engine::notation::parse_step(&format!("1{rest}"))?;
     let mut step = String::from("1");

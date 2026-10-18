@@ -34,6 +34,7 @@ uso: tui --edit <canción.lua | proyecto.sampler> [--allow-audio] [--allow-midi]
                3      corte 3 (desde 1; \"x\" = 1)      .      silencio
                3'     reverse                         3^7    pitch +7 semitonos (^-5, ^0.5...)
                3@0.5  volumen (0 a 4)                 3r4    retrigger/stutter (1 a 16)
+               3%7    pitch +7 sin cambiar la duración (granos; bien hasta ±12)
                3'^7@0.5r2  combinables, en cualquier orden
   --slices   cortes a detectar (por defecto 8)
   --bpm      tempo (por defecto 120)

@@ -13,6 +13,7 @@ use crate::limiter::{LIMIT_THRESHOLD, soft_limit};
 use crate::metronome::Metronome;
 use crate::sample::Sample;
 use crate::sequencer::{Meter, Pattern, TempoRamp, Transport, Trigger, valid_bpm};
+use crate::shift::Shift;
 use crate::slice::Slices;
 use crate::status::{SharedStatus, Status};
 
@@ -134,6 +135,8 @@ pub(crate) struct Playback {
     /// Frames del sample por frame de salida: 2.0 es una octava arriba (y
     /// dura la mitad), 0.5 una octava abajo (y dura el doble).
     pub rate: f64,
+    /// El pitch no cambia la duración (ver [`crate::shift`]).
+    pub keep: bool,
     pub reverse: bool,
     pub shape: SliceShape,
 }
@@ -142,6 +145,7 @@ impl Playback {
     pub const NORMAL: Playback = Playback {
         gain: 1.0,
         rate: 1.0,
+        keep: false,
         reverse: false,
         shape: SliceShape::DEFAULT,
     };
@@ -244,6 +248,8 @@ struct Voice {
     release: Option<(usize, usize)>,
     /// Modo gate: frame de salida en el que se cierra la puerta.
     gate_at: Option<usize>,
+    /// Pitch que conserva la duración: los granos (con pitch 0, ninguno).
+    shift: Option<Shift>,
 }
 
 impl Voice {
@@ -251,12 +257,16 @@ impl Voice {
         let rate = sample.sample_rate() as f32;
         let fade = ((FADE_SECONDS * rate) as usize).max(1);
         let ms = |ms: f32| (ms / 1000.0 * rate) as usize;
+        let shift = (playback.keep && playback.rate != 1.0)
+            .then(|| Shift::new(playback.rate, sample.sample_rate()));
+        // Con los granos, la voz avanza por el sample a velocidad 1.
+        let speed = if shift.is_some() { 1.0 } else { playback.rate };
         // Último frame de salida: el que lee el último frame del rango. En
         // bucle, la voz no acaba sola.
         let length = match (end - start, playback.shape.play) {
             (0, _) => 0,
             (_, PlayMode::Loop | PlayMode::PingPong) => usize::MAX,
-            (frames, PlayMode::Once) => ((frames - 1) as f64 / playback.rate).floor() as usize + 1,
+            (frames, PlayMode::Once) => ((frames - 1) as f64 / speed).floor() as usize + 1,
         };
         Voice {
             sample,
@@ -270,6 +280,7 @@ impl Voice {
             fade_out: fade.max(ms(playback.shape.release_ms)),
             release: None,
             gate_at: None,
+            shift,
         }
     }
 
@@ -311,8 +322,35 @@ impl Voice {
 
     /// Frame del sample para el frame de salida actual, interpolado si la
     /// posición cae entre dos frames o el pitch sube (ver [`crate::interp`]).
-    fn read(&self) -> (f32, f32) {
-        let mut offset = self.rendered as f64 * self.playback.rate;
+    /// Con el pitch que conserva la duración, la suma de sus dos granos.
+    fn read(&mut self) -> (f32, f32) {
+        let Some(mut shift) = self.shift else {
+            return self.read_at(self.rendered as f64 * self.playback.rate);
+        };
+        let span = (self.end - self.start) as f64;
+        // Sin bucle, ningún grano pasa del final del corte.
+        let fit = (self.playback.shape.play == PlayMode::Once).then(|| span - 1.0 - shift.reach());
+        let grains = shift.grains(self.rendered as u64, fit, |offset| {
+            let pos = self.position(offset).round() as usize;
+            let (l, r) = self.sample.frame(pos.clamp(self.start, self.end - 1));
+            0.5 * (l + r)
+        });
+        self.shift = Some(shift);
+        let (mut l, mut r) = (0.0, 0.0);
+        for (offset, weight) in grains {
+            if weight == 0.0 || (fit.is_some() && offset > span - 1.0) {
+                continue;
+            }
+            let (gl, gr) = self.read_at(offset);
+            l += weight * gl;
+            r += weight * gr;
+        }
+        (l, r)
+    }
+
+    /// Posición en el sample del desplazamiento `offset` desde el inicio
+    /// de la voz (con su bucle y su sentido).
+    fn position(&self, mut offset: f64) -> f64 {
         let span = (self.end - self.start) as f64;
         match self.playback.shape.play {
             PlayMode::Once => {}
@@ -328,11 +366,16 @@ impl Voice {
                 };
             }
         }
-        let pos = if self.playback.reverse {
+        if self.playback.reverse {
             (self.end - 1) as f64 - offset
         } else {
             self.start as f64 + offset
-        };
+        }
+    }
+
+    /// El sample en el desplazamiento `offset`, interpolado.
+    fn read_at(&self, offset: f64) -> (f32, f32) {
+        let pos = self.position(offset);
         crate::interp::read(&self.sample, pos, self.start, self.end, self.playback.rate)
     }
 
@@ -1275,6 +1318,7 @@ impl Engine {
                     start,
                     end,
                     rate,
+                    keep: false,
                     reverse: false,
                     gain,
                     pan: 0.0,
@@ -1452,6 +1496,7 @@ impl Engine {
                 start: hit.start,
                 end: hit.end,
                 rate,
+                keep: hit.playback.keep,
                 reverse: hit.playback.reverse,
                 gain: hit.playback.gain,
                 pan: hit.playback.shape.pan,

@@ -18,6 +18,7 @@
 use std::sync::Arc;
 
 use crate::sample::Sample;
+use crate::shift::Shift;
 
 /// Voces máximas de un instrumento.
 pub const MAX_VOICES: usize = 16;
@@ -63,6 +64,9 @@ pub struct Instrument {
     /// su fin se funden con los de antes de su inicio (no puede pasar de
     /// ninguno de los dos).
     pub crossfade: usize,
+    /// Las notas conservan la duración del sample al transponerse (granos
+    /// alineados, ver `crate::shift`), como `%` en los pasos.
+    pub keep: bool,
 }
 
 impl Instrument {
@@ -72,6 +76,7 @@ impl Instrument {
             adsr: Adsr::DEFAULT,
             sustain_loop: None,
             crossfade: 0,
+            keep: false,
         }
     }
 
@@ -137,6 +142,8 @@ pub(crate) struct Note {
     killed: Option<u64>,
     /// Tecla que la toca en vivo (pad o nota MIDI): su note off la suelta.
     pub key: Option<u8>,
+    /// Pitch que conserva la duración: los granos (con pitch 0, ninguno).
+    shift: Option<Shift>,
 }
 
 /// Lo que necesita una nota para empezar.
@@ -144,6 +151,8 @@ pub(crate) struct NoteOn {
     pub start: usize,
     pub end: usize,
     pub rate: f64,
+    /// El pitch no cambia la duración (del paso con `%` o del instrumento).
+    pub keep: bool,
     pub reverse: bool,
     pub gain: f32,
     pub pan: f32,
@@ -164,10 +173,14 @@ impl Note {
         let frames = |ms: f32| ((ms / 1000.0 * rate_hz) as u64).max(fade);
         let a = &instrument.adsr;
         let span = (on.end - on.start) as u64;
+        let shift = ((on.keep || instrument.keep) && on.rate != 1.0)
+            .then(|| Shift::new(on.rate, sample.sample_rate()));
+        // Con los granos, la nota avanza por el sample a velocidad 1.
+        let speed = if shift.is_some() { 1.0 } else { on.rate };
         let length = if span == 0 {
             0
         } else {
-            ((span - 1) as f64 / on.rate).floor() as u64 + 1
+            ((span - 1) as f64 / speed).floor() as u64 + 1
         };
         // Al revés no hay bucle: se lee de fin a principio una vez.
         let sustain_loop = instrument.sustain_loop.filter(|_| !on.reverse);
@@ -192,6 +205,7 @@ impl Note {
             born: on.born,
             killed: None,
             key: on.key,
+            shift,
         }
     }
 
@@ -262,9 +276,54 @@ impl Note {
         crate::interp::read(&self.sample, pos, self.start, self.end, self.rate)
     }
 
-    /// Frame del sample que toca ahora, con el salto del bucle fundido.
-    fn read(&self) -> (f32, f32) {
-        let offset = self.rendered as f64 * self.rate;
+    /// Frame del sample que toca ahora. Con el pitch que conserva la
+    /// duración, la suma de sus dos granos.
+    fn read(&mut self) -> (f32, f32) {
+        let Some(mut shift) = self.shift else {
+            return self.read_offset(self.rendered as f64 * self.rate);
+        };
+        let span = (self.end - self.start) as f64;
+        // Sin bucle, ningún grano pasa del final del rango.
+        let fit = self
+            .sustain_loop
+            .is_none()
+            .then(|| span - 1.0 - shift.reach());
+        let grains = shift.grains(self.rendered, fit, |offset| {
+            let pos = self.position(offset).round() as usize;
+            let (l, r) = self.sample.frame(pos.clamp(self.start, self.end - 1));
+            0.5 * (l + r)
+        });
+        self.shift = Some(shift);
+        let (mut l, mut r) = (0.0, 0.0);
+        for (offset, weight) in grains {
+            if weight == 0.0 || (fit.is_some() && offset > span - 1.0) {
+                continue;
+            }
+            let (gl, gr) = self.read_offset(offset);
+            l += weight * gl;
+            r += weight * gr;
+        }
+        (l, r)
+    }
+
+    /// Posición en el sample del desplazamiento `offset` desde el inicio
+    /// de la nota (con el bucle, sin su fundido).
+    fn position(&self, offset: f64) -> f64 {
+        if self.reverse {
+            return (self.end - 1) as f64 - offset;
+        }
+        let pos = self.start as f64 + offset;
+        match self.sustain_loop {
+            Some((a, b)) if pos >= b as f64 => {
+                a as f64 + (pos - a as f64).rem_euclid((b - a) as f64)
+            }
+            _ => pos,
+        }
+    }
+
+    /// Frame del sample en el desplazamiento `offset`, con el salto del
+    /// bucle fundido.
+    fn read_offset(&self, offset: f64) -> (f32, f32) {
         if self.reverse {
             return self.at((self.end - 1) as f64 - offset);
         }

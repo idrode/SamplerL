@@ -149,6 +149,7 @@ fn the_script_sounds_like_the_engine() {
         },
         sustain_loop: Some((4800, 28_800)),
         crossfade: 720,
+        keep: false,
     };
     let pattern = Pattern::from_steps(sample, &slices, steps)
         .unwrap()

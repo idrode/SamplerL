@@ -51,6 +51,9 @@ pub struct Step {
     /// Transposición en semitonos. Cambia la velocidad de lectura, así que
     /// también la duración (sin time-stretch).
     pub semitones: f32,
+    /// El pitch no cambia la duración (`3%7`): el corte suena transpuesto
+    /// pero dura lo mismo (granos alineados, ver `crate::shift`).
+    pub keep: bool,
     /// Reproducir el corte del final al principio.
     pub reverse: bool,
     /// Retrigger/stutter: el paso se divide en `retrig` partes iguales y el
@@ -77,6 +80,7 @@ impl Step {
             slice,
             gain: 1.0,
             semitones: 0.0,
+            keep: false,
             reverse: false,
             retrig: 1,
             delay: 0.0,
@@ -129,6 +133,15 @@ impl Step {
 
     pub fn with_pitch(self, semitones: f32) -> Self {
         Step { semitones, ..self }
+    }
+
+    /// Pitch que conserva la duración (`3%7`).
+    pub fn with_kept_pitch(self, semitones: f32) -> Self {
+        Step {
+            semitones,
+            keep: true,
+            ..self
+        }
     }
 
     pub fn reversed(self) -> Self {
@@ -463,6 +476,7 @@ fn resolve_bar(
             playback: Playback {
                 gain: step.gain,
                 rate: rate(step.semitones),
+                keep: step.keep,
                 reverse: step.reverse,
                 shape: SliceShape::DEFAULT,
             },
