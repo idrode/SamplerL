@@ -8,6 +8,7 @@ use rtrb::{Consumer, Producer, RingBuffer};
 use crate::automation::mix;
 use crate::bus::{BUSES, Buses, Rack};
 use crate::fx::{Fx, FxState, MAX_FX};
+use crate::grain::{Cloud, Position};
 use crate::instrument::{MAX_VOICES, Note, NoteOn};
 use crate::limiter::{LIMIT_THRESHOLD, soft_limit};
 use crate::metronome::Metronome;
@@ -427,6 +428,8 @@ pub enum SendError {
     InvalidBus(&'static str),
     /// Instrumento con parámetros fuera de rango.
     InvalidInstrument(&'static str),
+    /// Granos con parámetros fuera de rango.
+    InvalidGranular(&'static str),
 }
 
 impl fmt::Display for SendError {
@@ -439,6 +442,7 @@ impl fmt::Display for SendError {
             SendError::InvalidFx(reason) => write!(f, "efecto: {reason}"),
             SendError::InvalidBus(reason) => write!(f, "envío: {reason}"),
             SendError::InvalidInstrument(reason) => write!(f, "instrumento: {reason}"),
+            SendError::InvalidGranular(reason) => write!(f, "granos: {reason}"),
             SendError::InvalidCycle(bars) => write!(
                 f,
                 "ciclo de {bars} compases fuera de rango (1 a {})",
@@ -578,6 +582,8 @@ struct Track {
     /// Notas MIDI de un instrumento que siguen encendidas: su note off
     /// sale al acabar su paso, o antes si se roba o se corta la nota.
     midi_notes: [Option<MidiHeld>; MIDI_HELD],
+    /// Granos: la nube del último golpe y los granos que suenan.
+    cloud: Cloud,
 }
 
 /// Notas MIDI encendidas a la vez por pista de instrumento (si se llenan,
@@ -651,6 +657,7 @@ impl Default for Track {
             tails: std::array::from_fn(|_| None),
             born: 0,
             midi_notes: [None; MIDI_HELD],
+            cloud: Cloud::default(),
         }
     }
 }
@@ -669,11 +676,12 @@ impl Track {
         self.notes.iter().chain(&self.tails).any(Option::is_some)
     }
 
-    /// Algo suena en la pista: su voz, su fundido o notas.
+    /// Algo suena en la pista: su voz, su fundido, notas o granos.
     fn sounding(&self) -> bool {
         self.voice.as_ref().is_some_and(Voice::is_active)
             || self.fading.is_some()
             || self.has_notes()
+            || self.cloud.is_active()
     }
 }
 
@@ -1461,6 +1469,34 @@ impl Engine {
             self.choke(t);
             return;
         }
+        if pattern.granular.is_some() {
+            let sample = pattern.sample.clone();
+            let midi = pattern.midi;
+            self.status.set_hit(t, hit.start);
+            let track = &mut self.tracks[t];
+            track.lock = hit.lock;
+            if !track.sounding() {
+                track.fresh = true;
+            }
+            let p = hit.playback;
+            let old = track.cloud.open(
+                sample,
+                hit.start,
+                hit.end,
+                p.rate,
+                p.reverse,
+                p.gain,
+                gate as u64,
+            );
+            if let Some(old) = old {
+                self.discard(old.sample);
+            }
+            self.choke(t);
+            if let Some((channel, base)) = midi {
+                self.midi_note_on(t, channel, base, hit, gate);
+            }
+            return;
+        }
         let mut voice = Voice::new(pattern.sample.clone(), hit.start, hit.end, hit.playback);
         if pattern.gate {
             voice = voice.with_gate(gate);
@@ -1666,10 +1702,14 @@ impl Engine {
         }
     }
 
-    /// Corta (con el fundido mínimo) las notas de una pista.
+    /// Corta (con el fundido mínimo) las notas y los granos de una pista.
     fn kill_notes(&mut self, t: usize) {
         for note in self.tracks[t].notes.iter_mut().flatten() {
             note.kill();
+        }
+        let fade = ((FADE_SECONDS * self.sample_rate as f32) as u32).max(1);
+        if let Some(emission) = self.tracks[t].cloud.kill(fade) {
+            self.discard(emission.sample);
         }
         // Sus notas MIDI se apagan ya.
         let now = self.transport.frame;
@@ -1799,7 +1839,11 @@ impl Engine {
             } else {
                 1.0
             };
-            if track.voice.is_none() && track.fading.is_none() && !track.has_notes() {
+            if track.voice.is_none()
+                && track.fading.is_none()
+                && !track.has_notes()
+                && !track.cloud.is_active()
+            {
                 track.audible = audible;
                 // En silencio no hay nada que suavizar: el siguiente golpe
                 // empieza ya con el volumen nuevo y los efectos sin memoria.
@@ -1846,6 +1890,35 @@ impl Engine {
             for note in track.notes.iter_mut().chain(&mut track.tails).flatten() {
                 note.mix_into(buf);
             }
+            let mut ended = None;
+            let born = track.cloud.born;
+            if let Some(params) = track.pattern.as_ref().and_then(|p| p.granular) {
+                let at = Position {
+                    frame: self.transport.frame,
+                    steps: clock.steps,
+                    seconds: clock.seconds,
+                    frames_per_step: clock.frames_per_step,
+                    sample_rate: rate,
+                };
+                let fade = ((FADE_SECONDS * rate as f32) as u32).max(1);
+                ended = track.cloud.mix_into(buf, &params, &at, fade);
+            } else if track.cloud.is_active() {
+                // El patrón ya no tiene granos: no nacen más y los que
+                // suenan acaban su ventana.
+                let fade = ((FADE_SECONDS * rate as f32) as u32).max(1);
+                ended = track.cloud.emission.take();
+                let at = Position {
+                    frame: self.transport.frame,
+                    steps: clock.steps,
+                    seconds: clock.seconds,
+                    frames_per_step: clock.frames_per_step,
+                    sample_rate: rate,
+                };
+                track
+                    .cloud
+                    .mix_into(buf, &crate::grain::Granular::new(0), &at, fade);
+            }
+            let grains_born = track.cloud.born.wrapping_sub(born);
             let moving = track.lock.is_some()
                 || track.mods.iter().flatten().any(Option::is_some)
                 || track
@@ -1894,13 +1967,22 @@ impl Engine {
             }
             self.status.add_peak(t, peak);
             self.status.add_voices(t, voices);
+            self.status.add_grains(t, grains_born);
 
             if track.fading.as_ref().is_some_and(|v| !v.is_active())
                 && let Some(done) = track.fading.take()
             {
                 self.discard(done.sample);
             }
-            // Las notas que han acabado sueltan su sample.
+            // Los granos y las notas que han acabado sueltan su sample.
+            if let Some(done) = ended {
+                self.discard(done.sample);
+            }
+            for g in 0..crate::grain::MAX_GRAINS {
+                if let Some(done) = self.tracks[t].cloud.grains[g].take_if(|g| !g.is_active()) {
+                    self.discard(done.sample);
+                }
+            }
             for v in 0..MAX_VOICES {
                 if let Some(done) = self.tracks[t].notes[v].take_if(|n| !n.is_active()) {
                     self.discard(done.sample);
@@ -2006,6 +2088,8 @@ impl Engine {
                     .chain(&t.tails)
                     .flatten()
                     .any(|n| same(&n.sample))
+                || t.cloud.emission.as_ref().is_some_and(|e| same(&e.sample))
+                || t.cloud.grains.iter().flatten().any(|g| same(&g.sample))
                 || same_pattern(&t.pattern)
                 || t.pending.as_ref().is_some_and(same_pattern)
                 || t.staged.as_ref().is_some_and(same_pattern)

@@ -2339,6 +2339,7 @@ mod automation;
 mod blocks;
 mod browser;
 mod config;
+mod grains;
 mod grid;
 mod import;
 mod instrument;

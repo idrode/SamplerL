@@ -1089,6 +1089,9 @@ impl Widget for FxPanel<'_> {
                     .fg(dim()),
                 );
             }
+            if let Some(grains) = &track.grains {
+                title.push(Span::from(format!(" · {grains}")).fg(dim()));
+            }
             if let Some(group) = track.choke {
                 title.push(Span::from(format!(" · choke {group}")).fg(dim()));
             }

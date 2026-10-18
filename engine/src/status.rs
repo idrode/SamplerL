@@ -51,6 +51,8 @@ pub struct TrackStatus {
     /// Instrumento: notas que han sonado a la vez como máximo desde la
     /// lectura anterior (sin contar las robadas que hacen su fundido).
     pub voices: usize,
+    /// Granos que han nacido desde la lectura anterior.
+    pub grains: u32,
 }
 
 const NONE: u64 = u64::MAX;
@@ -68,6 +70,7 @@ pub(crate) struct SharedStatus {
     hit_start: [AtomicU64; MAX_TRACKS],
     peak: [AtomicU32; MAX_TRACKS],
     voices: [AtomicU32; MAX_TRACKS],
+    grains: [AtomicU32; MAX_TRACKS],
     master_peak: AtomicU32,
     limited: AtomicU64,
 }
@@ -85,6 +88,7 @@ impl SharedStatus {
             hit_start: std::array::from_fn(|_| AtomicU64::new(NONE)),
             peak: std::array::from_fn(|_| AtomicU32::new(0)),
             voices: std::array::from_fn(|_| AtomicU32::new(0)),
+            grains: std::array::from_fn(|_| AtomicU32::new(0)),
             master_peak: AtomicU32::new(0),
             limited: AtomicU64::new(0),
         }
@@ -138,6 +142,13 @@ impl SharedStatus {
         }
     }
 
+    /// Granos que han nacido en la pista.
+    pub fn add_grains(&self, track: usize, grains: u32) {
+        if grains > 0 {
+            self.grains[track].fetch_add(grains, Relaxed);
+        }
+    }
+
     /// Pico del master antes del limitador y frames en que actuó.
     pub fn add_master(&self, peak: f32, limited_frames: u64) {
         if peak > 0.0 && peak.is_finite() {
@@ -164,6 +175,7 @@ impl SharedStatus {
                 hit_start: opt(self.hit_start[t].load(Relaxed)).map(|s| s as usize),
                 peak: f32::from_bits(self.peak[t].swap(0, Relaxed)),
                 voices: self.voices[t].swap(0, Relaxed) as usize,
+                grains: self.grains[t].swap(0, Relaxed),
             }),
             master: MasterStatus {
                 peak: f32::from_bits(self.master_peak.swap(0, Relaxed)),

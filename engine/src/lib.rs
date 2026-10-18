@@ -5,6 +5,7 @@ pub mod bpm;
 pub mod bus;
 mod engine;
 mod fx;
+pub mod grain;
 pub mod instrument;
 mod interp;
 mod limiter;
@@ -27,6 +28,7 @@ pub use engine::{
     PlayMode, SendError, SliceShape, new_engine,
 };
 pub use fx::{DEFAULT_Q, FilterKind, Fx, MAX_FX};
+pub use grain::{GRAIN_PARAMS, Granular, Knob, MAX_GRAINS};
 pub use instrument::{Adsr, Instrument, MAX_VOICES};
 pub use limiter::{LIMIT_THRESHOLD, soft_limit};
 pub use output::{NullOutput, Output, open_null_output, open_output};

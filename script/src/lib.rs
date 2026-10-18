@@ -155,6 +155,9 @@ pub struct TrackDef {
     /// Instrumento (`sample:instrument()`): sus golpes son notas, con
     /// polifonía, ADSR y bucle sostenido. Tiene un solo corte (el sample).
     pub instrument: Option<InstrumentDef>,
+    /// Granos (`:grains()`, `:freeze()`): cada golpe abre una nube sobre su
+    /// corte.
+    pub granular: Option<engine::Granular>,
 }
 
 /// `sample:instrument({ ... })`: el sample se toca como notas.
@@ -1244,6 +1247,7 @@ fn song_batch(song: &Song, slots: &[Option<String>; MAX_TRACKS]) -> Result<Batch
                     .and_then(|p| p.with_choke(track.choke))
                     .and_then(|p| p.with_midi(track.midi))
                     .and_then(|p| p.with_instrument(track.instrument.map(|i| i.engine)))
+                    .and_then(|p| p.with_granular(track.granular))
                     .map(|p| p.with_gate(track.gate))
                     .map(|p| p.with_mute(track.mute).with_solo(track.solo))
                     .map_err(|e| ScriptError::new(format!("pista \"{name}\": {e}")))?;
@@ -1434,6 +1438,7 @@ fn track_source(lua: &Lua, name: &str, source: &AnyUserData) -> mlua::Result<Tra
         origin,
         stretch: None,
         instrument: None,
+        granular: None,
     };
     if let Ok(source) = source.borrow::<SlicedHandle>() {
         let mut def = def(
@@ -2096,6 +2101,105 @@ fn instrument_options(
         ));
     }
     Ok(def)
+}
+
+/// Un parámetro de los granos: un número o una curva (`ramp`, `lfo`).
+fn knob(lua: &Lua, who: &str, key: &str, value: Value) -> mlua::Result<engine::Knob> {
+    match value {
+        Value::UserData(ud) if ud.is::<CurveHandle>() => {
+            Ok(engine::Knob::Moving(ud.borrow::<CurveHandle>()?.0))
+        }
+        other => lua
+            .unpack::<f32>(other)
+            .map(engine::Knob::Fixed)
+            .map_err(|_| {
+                fail(
+                    lua,
+                    format!("{who}: {key} tiene que ser un número, ramp() o lfo()"),
+                )
+            }),
+    }
+}
+
+/// Pone los granos de la pista: los parámetros de la tabla (ver
+/// `api::GRAIN_PARAMS`) sobre los de por defecto; `freeze` congela la
+/// posición en `pos`. La semilla por defecto sale del nombre de la pista
+/// (dos pistas iguales no suenan igual).
+fn set_granular(
+    lua: &Lua,
+    this: &TrackHandle,
+    who: &str,
+    freeze: Option<engine::Knob>,
+    params: Option<&Table>,
+) -> mlua::Result<()> {
+    let (name, instrument) = this.with_track(|t| (t.def.name.clone(), t.def.instrument.is_some()));
+    if instrument {
+        return Err(fail(
+            lua,
+            format!(
+                "{who}: la pista \"{name}\" es un instrumento; los granos van en pistas de cortes"
+            ),
+        ));
+    }
+    // FNV-1a del nombre.
+    let seed = name.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
+        (h ^ b as u64).wrapping_mul(0x100_0000_01b3)
+    });
+    let mut granular = engine::Granular::new(seed);
+    if let Some(pos) = freeze {
+        granular.position = pos;
+        granular.speed = engine::Knob::Fixed(0.0);
+    }
+    if let Some(table) = params {
+        let known: Vec<&str> = api::GRAIN_PARAMS.iter().map(|p| p.name).collect();
+        for pair in table.pairs::<Value, Value>() {
+            let (key, value) = pair?;
+            let key = match &key {
+                Value::String(k) => k.to_str()?.to_string(),
+                other => {
+                    return Err(fail(
+                        lua,
+                        format!("{who}: clave no válida ({})", other.type_name()),
+                    ));
+                }
+            };
+            if key == "seed" {
+                granular.seed = match value {
+                    Value::Integer(n) if n >= 0 => n as u64,
+                    _ => {
+                        return Err(fail(
+                            lua,
+                            format!("{who}: seed es un número entero (0 o más)"),
+                        ));
+                    }
+                };
+                continue;
+            }
+            let Some(index) = engine::GRAIN_PARAMS.iter().position(|p| p.0 == key) else {
+                return Err(fail(
+                    lua,
+                    format!(
+                        "{who}: clave desconocida \"{key}\" (hay: {})",
+                        known.join(", ")
+                    ),
+                ));
+            };
+            if freeze.is_some() && key == "speed" {
+                return Err(fail(
+                    lua,
+                    format!(
+                        "{who}: congelado no avanza (speed = 0); para moverlo, grains({{ speed = ... }})"
+                    ),
+                ));
+            }
+            *granular.knobs_mut()[index] = knob(lua, who, &key, value)?;
+        }
+    }
+    granular
+        .validate()
+        .map_err(|e| fail(lua, format!("{who}: {e}")))?;
+    this.with_track(|t| t.def.granular = Some(granular));
+    Ok(())
 }
 
 /// Transposición sin cambiar la duración a partir de la cual los golpes
@@ -3080,6 +3184,24 @@ impl UserData for TrackHandle {
             this.with_track(|t| t.def.choke = group);
             Ok(this.clone())
         });
+
+        // `:grains({ ... })` y `:freeze([pos [, { ... }]])`: la pista toca
+        // en granos.
+        methods.add_method("grains", |lua, this, params: Option<Table>| {
+            set_granular(lua, this, "grains", None, params.as_ref())?;
+            Ok(this.clone())
+        });
+        methods.add_method(
+            "freeze",
+            |lua, this, (pos, params): (Option<Value>, Option<Table>)| {
+                let pos = match pos {
+                    None | Some(Value::Nil) => engine::Knob::Fixed(0.0),
+                    Some(value) => knob(lua, "freeze", "pos", value)?,
+                };
+                set_granular(lua, this, "freeze", Some(pos), params.as_ref())?;
+                Ok(this.clone())
+            },
+        );
 
         // `:send(bus, nivel)`: parte de la pista al delay o a la reverb.
         methods.add_method("send", |lua, this, (bus, level): (String, f32)| {

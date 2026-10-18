@@ -2837,6 +2837,7 @@ impl App {
                                 voices: i.engine.voices,
                                 sounding: track_status.map_or(0, |ts| ts.voices),
                             }),
+                            grains: t.granular.as_ref().map(crate::model::grains_text),
                         }
                     })
                     .collect()

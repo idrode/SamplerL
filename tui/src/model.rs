@@ -215,6 +215,27 @@ pub struct TrackView {
     pub solo: bool,
     /// Toca su sample como instrumento (`sample:instrument()`).
     pub instrument: Option<InstrumentView>,
+    /// Toca en granos (`:grains()`, `:freeze()`): su resumen
+    /// ([`grains_text`]).
+    pub grains: Option<String>,
+}
+
+/// Resumen de los granos de una pista para el panel de efectos:
+/// `❄ 0.4 · 120 ms · 25/s` (congelados) o `⁘ 80 ms · 20/s` (si la lectura
+/// avanza); `∿` en lo que se mueve con `ramp` o `lfo`.
+pub fn grains_text(g: &engine::Granular) -> String {
+    let show = |knob: &engine::Knob, unit: &str| match knob {
+        engine::Knob::Fixed(v) => format!("{v}{unit}"),
+        engine::Knob::Moving(_) => "∿".to_string(),
+    };
+    let size = show(&g.size_ms, " ms");
+    let density = show(&g.density, "/s");
+    match g.speed {
+        engine::Knob::Fixed(0.0) => {
+            format!("❄ {} · {size} · {density}", show(&g.position, ""))
+        }
+        _ => format!("⁘ {size} · {density}"),
+    }
 }
 
 /// Una pista con instrumento: su raíz y sus voces.

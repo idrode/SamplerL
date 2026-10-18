@@ -697,7 +697,7 @@ pub const FUNCTIONS: &[Function] = &[
         receiver: Receiver::Global,
         signature: "ramp(desde, hasta, duración)",
         returns: None,
-        summary: "Valor que va de desde a hasta en esa duración y vuelve a empezar (para un parámetro de :fx).",
+        summary: "Valor que va de desde a hasta en esa duración y vuelve a empezar (para un parámetro de :fx o de :grains).",
         doc: "Se pone en lugar de un número en la tabla de `:fx` (`cutoff`, `q`, \
               `threshold`, `makeup`, `drive` o `mix`). Es una rampa en diente de \
               sierra alineada con la canción: con `\"4 compases\"` sube en los \
@@ -705,7 +705,9 @@ pub const FUNCTIONS: &[Function] = &[
               arranca el secuenciador, así que recargar no la desplaza). Las \
               frecuencias suben en escala logarítmica (de 200 a 4000 Hz, la mitad \
               del camino es 894 Hz). Entra con el patrón al empezar el compás y se \
-              suaviza: nunca hace clic.",
+              suaviza: nunca hace clic. También vale en la tabla de `:grains` y \
+              `:freeze` (y en el `pos` de `freeze`): ahí se mira al nacer cada \
+              grano (`size` y `density`, en escala logarítmica).",
         params: &[
             Param {
                 name: "desde",
@@ -734,8 +736,9 @@ pub const FUNCTIONS: &[Function] = &[
         receiver: Receiver::Global,
         signature: "lfo(frecuencia, mín, máx)",
         returns: None,
-        summary: "Valor que oscila (seno) entre mín y máx (para un parámetro de :fx).",
-        doc: "Como `ramp`, va en lugar de un número en la tabla de `:fx`. La \
+        summary: "Valor que oscila (seno) entre mín y máx (para un parámetro de :fx o de :grains).",
+        doc: "Como `ramp`, va en lugar de un número en la tabla de `:fx` o de \
+              `:grains`. La \
               frecuencia es un número en Hz (de 0.01 a 50) o lo que dura un ciclo \
               en el tempo de la canción (`\"1 compás\"`, `\"8 pasos\"`). Empieza en \
               `mín` cuando arranca el secuenciador; las frecuencias oscilan en \
@@ -1469,6 +1472,69 @@ pub const FUNCTIONS: &[Function] = &[
         ),
     },
     Function {
+        name: "grains",
+        receiver: Receiver::Track,
+        signature: "pista:grains([parámetros])",
+        returns: Some(Receiver::Track),
+        summary: "Toca el sample en granos: cada golpe abre una nube sobre su corte mientras dura su paso.",
+        doc: "Cada golpe de la pista, en vez de tocar su corte, hace nacer granos de \
+              él durante su paso (y sus `_`): trozos de `size` ms con ventana de \
+              Hann, `density` por segundo, leídos desde `pos` (fracción del corte) \
+              más lo que avanza la lectura (`speed`: 1 recorre el corte a su \
+              velocidad, 0 lo congela) más hasta `jitter` ms al azar, con el pitch \
+              del paso más `pitch` más hasta `spread` semitonos al azar. Al acabar el \
+              paso no nacen más y los que suenan acaban su ventana. Todos los \
+              números admiten `ramp()` y `lfo()` (se miran al nacer cada grano). El \
+              azar sale de `seed` y de la posición de la canción: la misma canción \
+              suena igual en cada render; sin `seed`, una por pista sacada de su \
+              nombre. Hasta 32 granos a la vez por pista (`density × size`). Una \
+              pista con granos no puede ser instrumento; los pads del modo tocar \
+              tocan el corte tal cual.",
+        params: &[Param {
+            name: "parámetros",
+            description: "tabla con `size`, `density`, `pos`, `speed`, `jitter`, `pitch`, `spread` y `seed` (ver abajo)",
+        }],
+        template: "grains({ size = ${80}, density = ${20} })",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             -- Una nube larga sobre la caja, cada vez más densa.\n\
+             track(\"nube\", amen)\n  \
+             :steps(\"3 _ _ _  _ _ _ _  _ _ _ _  _ _ _ _\")\n  \
+             :grains({ size = 60, density = ramp(5, 60, \"1 compás\"), jitter = 20, spread = 3 })\n",
+        ),
+    },
+    Function {
+        name: "freeze",
+        receiver: Receiver::Track,
+        signature: "pista:freeze([pos [, parámetros]])",
+        returns: Some(Receiver::Track),
+        summary: "Congela un instante del corte y lo sostiene en granos (`grains` con `speed = 0`).",
+        doc: "Como `grains`, pero la lectura no avanza: todos los granos salen de \
+              `pos` (fracción del corte, 0 por defecto; admite `ramp()` y `lfo()` \
+              para pasearse por él), más su `jitter`. Con granos largos y \
+              solapados, un instante se convierte en un sonido sostenido mientras \
+              dure el paso y sus `_`.",
+        params: &[
+            Param {
+                name: "pos",
+                description: "dónde se congela, en fracción del corte (0 a 1)",
+            },
+            Param {
+                name: "parámetros",
+                description: "la tabla de `grains`, sin `speed`",
+            },
+        ],
+        template: "freeze(${0.5})",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             -- La cola de la caja, sostenida dos compases y una octava abajo.\n\
+             track(\"hielo\", amen)\n  \
+             :length(32)\n  \
+             :steps(\"3 _ _ _  _ _ _ _  _ _ _ _  _ _ _ _  _ _ _ _  _ _ _ _  _ _ _ _  _ _ _ _\")\n  \
+             :freeze(0.4, { size = 120, density = 25, jitter = 15, pitch = -12 })\n",
+        ),
+    },
+    Function {
         name: "send",
         receiver: Receiver::Track,
         signature: "pista:send(bus, nivel)",
@@ -1937,6 +2003,85 @@ pub const INSTRUMENT_TABLE: Effect = Effect {
     template: "{ root = \"${C3}\", voices = ${4} }",
 };
 
+/// Parámetros de `pista:grains()` y `pista:freeze()` (los rangos y los
+/// valores por defecto son los de `engine::GRAIN_PARAMS`).
+pub const GRAIN_PARAMS: &[FxParam] = &[
+    FxParam {
+        name: "size",
+        description: "duración de cada grano, en ms (admite `ramp()` y `lfo()`)",
+        default: Some("80"),
+        valid: "5–1000",
+        values: &[],
+        template: "size = ${80}",
+    },
+    FxParam {
+        name: "density",
+        description: "granos que nacen por segundo; con `size`, como mucho 32 a la vez (`density × size / 1000`)",
+        default: Some("20"),
+        valid: "0.5–400",
+        values: &[],
+        template: "density = ${20}",
+    },
+    FxParam {
+        name: "pos",
+        description: "de dónde se leen, en fracción del corte (0 su inicio, 1 su final)",
+        default: Some("0"),
+        valid: "0–1",
+        values: &[],
+        template: "pos = ${0.5}",
+    },
+    FxParam {
+        name: "speed",
+        description: "cuánto avanza la lectura: 1 recorre el corte a su velocidad, 0 lo congela, negativo va hacia atrás",
+        default: Some("1"),
+        valid: "-4–4",
+        values: &[],
+        template: "speed = ${0.5}",
+    },
+    FxParam {
+        name: "jitter",
+        description: "desplazamiento al azar de la posición de cada grano, en ms (±)",
+        default: Some("0"),
+        valid: "0–2000",
+        values: &[],
+        template: "jitter = ${20}",
+    },
+    FxParam {
+        name: "pitch",
+        description: "pitch de los granos en semitonos (se suma al del paso)",
+        default: Some("0"),
+        valid: "-24–24",
+        values: &[],
+        template: "pitch = ${-12}",
+    },
+    FxParam {
+        name: "spread",
+        description: "desplazamiento al azar del pitch de cada grano, en semitonos (±)",
+        default: Some("0"),
+        valid: "0–24",
+        values: &[],
+        template: "spread = ${3}",
+    },
+    FxParam {
+        name: "seed",
+        description: "semilla del azar (`jitter`, `spread`): con la misma, la misma nube; sin ella, una sacada del nombre de la pista",
+        default: Some("del nombre"),
+        valid: "entero de 0 en adelante",
+        values: &[],
+        template: "seed = ${1}",
+    },
+];
+
+/// La tabla de `pista:grains()` y `pista:freeze()`, como un efecto (para
+/// el autocompletado y la ayuda de sus claves).
+pub const GRAINS_TABLE: Effect = Effect {
+    name: "grains",
+    aliases: &[],
+    summary: "Cómo nacen y suenan los granos.",
+    params: GRAIN_PARAMS,
+    template: "{ size = ${80}, density = ${20} }",
+};
+
 /// La tabla de opciones de `sample()`, como un efecto (para el
 /// autocompletado y la ayuda de sus claves).
 pub const SAMPLE_TABLE: Effect = Effect {
@@ -2293,13 +2438,15 @@ pub fn guide_markdown() -> String {
             (Receiver::Global, "bus") => out.push_str(&params_table("Bus", BUSES)),
             (Receiver::Slices, "set")
             | (Receiver::Global, "sample")
-            | (Receiver::Sample, "instrument") => {
+            | (Receiver::Sample, "instrument")
+            | (Receiver::Track, "grains") => {
                 out.push_str(
                     "| Parámetro | Qué es | Por defecto | Valores |\n| --- | --- | --- | --- |\n",
                 );
                 let params = match f.name {
                     "set" => SLICE_PARAMS,
                     "instrument" => INSTRUMENT_PARAMS,
+                    "grains" => GRAIN_PARAMS,
                     _ => SAMPLE_PARAMS,
                 };
                 for p in params {

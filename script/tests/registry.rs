@@ -300,3 +300,22 @@ fn every_instrument_parameter_is_accepted() {
     ));
     eval(&source);
 }
+
+#[test]
+fn every_grain_parameter_is_accepted() {
+    let mut source = String::from(PRELUDE);
+    let (table, _) = expand_template(api::GRAINS_TABLE.template);
+    let all: Vec<String> = api::GRAIN_PARAMS
+        .iter()
+        .filter(|p| p.name != "speed")
+        .map(|p| expand_template(p.template).0)
+        .collect();
+    source.push_str(&format!(
+        "track(\"a\", s:slice(2)):steps(\"1 _ . .  . . . .  . . . .  . . . .\"):grains({table})\n\
+         track(\"b\", s:slice(2)):steps(\"1 _ . .  . . . .  . . . .  . . . .\"):grains({{ {}, speed = 0.5 }})\n\
+         track(\"c\", s:slice(2)):steps(\"1 _ . .  . . . .  . . . .  . . . .\"):freeze(0.5, {{ {} }})\n",
+        all.join(", "),
+        all.join(", ")
+    ));
+    eval(&source);
+}

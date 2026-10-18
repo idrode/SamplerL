@@ -12,6 +12,7 @@ use std::sync::Arc;
 use crate::automation::{Automation, MAX_AUTOMATIONS};
 use crate::engine::{MAX_CHOKE, Playback, SendError, SliceShape};
 use crate::fx::{Fx, MAX_FX};
+use crate::grain::Granular;
 use crate::instrument::Instrument;
 use crate::sample::Sample;
 use crate::slice::Slices;
@@ -203,6 +204,8 @@ pub struct Pattern {
     pub(crate) midi: Option<(u8, u8)>,
     /// Toca el sample como instrumento (polifonía, ADSR, bucle sostenido).
     pub(crate) instrument: Option<Instrument>,
+    /// Toca el sample en granos (nube por golpe).
+    pub(crate) granular: Option<Granular>,
 }
 
 impl Pattern {
@@ -265,6 +268,7 @@ impl Pattern {
             choke: None,
             midi: None,
             instrument: None,
+            granular: None,
         })
     }
 
@@ -275,8 +279,27 @@ impl Pattern {
         if let Some(i) = &instrument {
             i.validate(self.sample.frames())
                 .map_err(SendError::InvalidInstrument)?;
+            if self.granular.is_some() {
+                return Err(SendError::InvalidGranular(
+                    "una pista con granos no puede ser instrumento",
+                ));
+            }
         }
         Ok(Pattern { instrument, ..self })
+    }
+
+    /// Toca el sample en granos (ver [`crate::grain`]): cada golpe abre
+    /// una nube sobre su corte mientras dura su paso y sus `_`.
+    pub fn with_granular(self, granular: Option<Granular>) -> Result<Self, SendError> {
+        if let Some(g) = &granular {
+            g.validate().map_err(SendError::InvalidGranular)?;
+            if self.instrument.is_some() {
+                return Err(SendError::InvalidGranular(
+                    "una pista con granos no puede ser instrumento",
+                ));
+            }
+        }
+        Ok(Pattern { granular, ..self })
     }
 
     /// Manda cada golpe como una nota MIDI por `canal` (1 a 16): el corte 1

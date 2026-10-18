@@ -107,21 +107,26 @@ impl Automation {
         if ![a, b].iter().all(|v| (lo..=hi).contains(v)) {
             return Err("la automatización se sale del rango del parámetro");
         }
-        match self.curve {
-            Curve::Ramp { steps, .. } if !(steps >= 1.0 && steps.is_finite()) => {
-                Err("la rampa tiene que durar al menos un paso")
-            }
-            Curve::Lfo {
-                rate: LfoRate::Hz(hz),
-                ..
-            } if !(0.01..=50.0).contains(&hz) => Err("el LFO va de 0.01 a 50 Hz"),
-            Curve::Lfo {
-                rate: LfoRate::Steps(steps),
-                ..
-            } if !(steps >= 1.0 && steps.is_finite()) => {
-                Err("un ciclo del LFO tiene que durar al menos un paso")
-            }
-            _ => Ok(()),
+        check_curve(&self.curve)
+    }
+}
+
+/// Comprueba la duración de una rampa y la velocidad de un LFO.
+pub(crate) fn check_curve(curve: &Curve) -> Result<(), &'static str> {
+    match *curve {
+        Curve::Ramp { steps, .. } if !(steps >= 1.0 && steps.is_finite()) => {
+            Err("la rampa tiene que durar al menos un paso")
         }
+        Curve::Lfo {
+            rate: LfoRate::Hz(hz),
+            ..
+        } if !(0.01..=50.0).contains(&hz) => Err("el LFO va de 0.01 a 50 Hz"),
+        Curve::Lfo {
+            rate: LfoRate::Steps(steps),
+            ..
+        } if !(steps >= 1.0 && steps.is_finite()) => {
+            Err("un ciclo del LFO tiene que durar al menos un paso")
+        }
+        _ => Ok(()),
     }
 }

@@ -426,6 +426,61 @@ fn the_audio_thread_never_allocates() {
     });
     assert_eq!(n, 0, "reservas con notas en vivo con keep");
 
+    // Granos: nubes con curvas, reverse, retrigger, `_`, choke con otra
+    // pista de granos, y cambiar de patrón con granos sonando.
+    let cloud = |seed: u64, choke: u8| {
+        let steps: Vec<Option<Step>> = (0..STEPS)
+            .map(|k| match k % 4 {
+                0 => Some(Step::new(k % 2).with_hold(1)),
+                1 => None,
+                2 => Some(Step::new(0).reversed().with_retrig(3).with_pitch(5.0)),
+                _ => Some(Step::new(1).with_gain(0.5)),
+            })
+            .collect();
+        let granular = engine::Granular {
+            size_ms: engine::Knob::Moving(engine::Curve::Lfo {
+                min: 10.0,
+                max: 120.0,
+                rate: engine::LfoRate::Hz(3.0),
+            }),
+            density: engine::Knob::Moving(engine::Curve::Ramp {
+                from: 20.0,
+                to: 200.0,
+                steps: 8.0,
+            }),
+            jitter_ms: engine::Knob::Fixed(30.0),
+            spread: engine::Knob::Fixed(5.0),
+            ..engine::Granular::new(seed)
+        };
+        Pattern::from_steps(sample.clone(), &slices, steps)
+            .unwrap()
+            .with_granular(Some(granular))
+            .unwrap()
+            .with_choke(Some(choke))
+            .unwrap()
+    };
+    controller.set_track_pattern(3, Some(cloud(1, 9))).unwrap();
+    controller.set_track_pattern(2, Some(cloud(2, 9))).unwrap();
+    let n = counted(|| {
+        for _ in 0..400 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas con granos");
+    // Sin granos en el patrón nuevo: los que suenan acaban.
+    controller
+        .set_track_pattern(
+            3,
+            Some(Pattern::from_steps(sample.clone(), &slices, vec![None; STEPS]).unwrap()),
+        )
+        .unwrap();
+    let n = counted(|| {
+        for _ in 0..200 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas al quitar los granos");
+
     // Rampa de tempo y cambio de compás.
     controller
         .set_tempo_ramp(engine::TempoRamp {

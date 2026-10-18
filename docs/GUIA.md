@@ -933,7 +933,7 @@ track("drums", amen):steps(shuffle("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .", 3))
 
 ### `ramp(desde, hasta, duración)`
 
-Valor que va de desde a hasta en esa duración y vuelve a empezar (para un parámetro de :fx). Se pone en lugar de un número en la tabla de `:fx` (`cutoff`, `q`, `threshold`, `makeup`, `drive` o `mix`). Es una rampa en diente de sierra alineada con la canción: con `"4 compases"` sube en los compases 0-3, otra vez en los 4-7... (como `every`, cuenta desde que arranca el secuenciador, así que recargar no la desplaza). Las frecuencias suben en escala logarítmica (de 200 a 4000 Hz, la mitad del camino es 894 Hz). Entra con el patrón al empezar el compás y se suaviza: nunca hace clic.
+Valor que va de desde a hasta en esa duración y vuelve a empezar (para un parámetro de :fx o de :grains). Se pone en lugar de un número en la tabla de `:fx` (`cutoff`, `q`, `threshold`, `makeup`, `drive` o `mix`). Es una rampa en diente de sierra alineada con la canción: con `"4 compases"` sube en los compases 0-3, otra vez en los 4-7... (como `every`, cuenta desde que arranca el secuenciador, así que recargar no la desplaza). Las frecuencias suben en escala logarítmica (de 200 a 4000 Hz, la mitad del camino es 894 Hz). Entra con el patrón al empezar el compás y se suaviza: nunca hace clic. También vale en la tabla de `:grains` y `:freeze` (y en el `pos` de `freeze`): ahí se mira al nacer cada grano (`size` y `density`, en escala logarítmica).
 
 - `desde`: valor al empezar
 - `hasta`: valor al acabar
@@ -949,7 +949,7 @@ track("drums", amen)
 
 ### `lfo(frecuencia, mín, máx)`
 
-Valor que oscila (seno) entre mín y máx (para un parámetro de :fx). Como `ramp`, va en lugar de un número en la tabla de `:fx`. La frecuencia es un número en Hz (de 0.01 a 50) o lo que dura un ciclo en el tempo de la canción (`"1 compás"`, `"8 pasos"`). Empieza en `mín` cuando arranca el secuenciador; las frecuencias oscilan en escala logarítmica.
+Valor que oscila (seno) entre mín y máx (para un parámetro de :fx o de :grains). Como `ramp`, va en lugar de un número en la tabla de `:fx` o de `:grains`. La frecuencia es un número en Hz (de 0.01 a 50) o lo que dura un ciclo en el tempo de la canción (`"1 compás"`, `"8 pasos"`). Empieza en `mín` cuando arranca el secuenciador; las frecuencias oscilan en escala logarítmica.
 
 - `frecuencia`: Hz, o la duración de un ciclo: `"1 compás"`, `"8 pasos"`
 - `mín`: valor más bajo
@@ -1431,6 +1431,51 @@ track("bajo", amen)
   :gain(0.3)
 ```
 
+### `pista:grains([parámetros])`
+
+Devuelve: pista.
+
+Toca el sample en granos: cada golpe abre una nube sobre su corte mientras dura su paso. Cada golpe de la pista, en vez de tocar su corte, hace nacer granos de él durante su paso (y sus `_`): trozos de `size` ms con ventana de Hann, `density` por segundo, leídos desde `pos` (fracción del corte) más lo que avanza la lectura (`speed`: 1 recorre el corte a su velocidad, 0 lo congela) más hasta `jitter` ms al azar, con el pitch del paso más `pitch` más hasta `spread` semitonos al azar. Al acabar el paso no nacen más y los que suenan acaban su ventana. Todos los números admiten `ramp()` y `lfo()` (se miran al nacer cada grano). El azar sale de `seed` y de la posición de la canción: la misma canción suena igual en cada render; sin `seed`, una por pista sacada de su nombre. Hasta 32 granos a la vez por pista (`density × size`). Una pista con granos no puede ser instrumento; los pads del modo tocar tocan el corte tal cual.
+
+- `parámetros`: tabla con `size`, `density`, `pos`, `speed`, `jitter`, `pitch`, `spread` y `seed` (ver abajo)
+
+| Parámetro | Qué es | Por defecto | Valores |
+| --- | --- | --- | --- |
+| `size` | duración de cada grano, en ms (admite `ramp()` y `lfo()`) | `80` | 5–1000 |
+| `density` | granos que nacen por segundo; con `size`, como mucho 32 a la vez (`density × size / 1000`) | `20` | 0.5–400 |
+| `pos` | de dónde se leen, en fracción del corte (0 su inicio, 1 su final) | `0` | 0–1 |
+| `speed` | cuánto avanza la lectura: 1 recorre el corte a su velocidad, 0 lo congela, negativo va hacia atrás | `1` | -4–4 |
+| `jitter` | desplazamiento al azar de la posición de cada grano, en ms (±) | `0` | 0–2000 |
+| `pitch` | pitch de los granos en semitonos (se suma al del paso) | `0` | -24–24 |
+| `spread` | desplazamiento al azar del pitch de cada grano, en semitonos (±) | `0` | 0–24 |
+| `seed` | semilla del azar (`jitter`, `spread`): con la misma, la misma nube; sin ella, una sacada del nombre de la pista | `del nombre` | entero de 0 en adelante |
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+-- Una nube larga sobre la caja, cada vez más densa.
+track("nube", amen)
+  :steps("3 _ _ _  _ _ _ _  _ _ _ _  _ _ _ _")
+  :grains({ size = 60, density = ramp(5, 60, "1 compás"), jitter = 20, spread = 3 })
+```
+
+### `pista:freeze([pos [, parámetros]])`
+
+Devuelve: pista.
+
+Congela un instante del corte y lo sostiene en granos (`grains` con `speed = 0`). Como `grains`, pero la lectura no avanza: todos los granos salen de `pos` (fracción del corte, 0 por defecto; admite `ramp()` y `lfo()` para pasearse por él), más su `jitter`. Con granos largos y solapados, un instante se convierte en un sonido sostenido mientras dure el paso y sus `_`.
+
+- `pos`: dónde se congela, en fracción del corte (0 a 1)
+- `parámetros`: la tabla de `grains`, sin `speed`
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+-- La cola de la caja, sostenida dos compases y una octava abajo.
+track("hielo", amen)
+  :length(32)
+  :steps("3 _ _ _  _ _ _ _  _ _ _ _  _ _ _ _  _ _ _ _  _ _ _ _  _ _ _ _  _ _ _ _")
+  :freeze(0.4, { size = 120, density = 25, jitter = 15, pitch = -12 })
+```
+
 ### `pista:send(bus, nivel)`
 
 Devuelve: pista.
@@ -1764,6 +1809,46 @@ local pad = sample("amen.wav"):instrument({
 })
 track("pad", pad)
   :melody("c+eb+g _ _ _  _ _ _ _  ab2+c+eb _ _ _  bb2+d+f _ _ _")
+  :gain(0.4)
+```
+
+### Una caja más grave que dura lo mismo
+
+`%` transpone sin cambiar la duración: la caja una octava abajo sigue
+ocupando su paso (con `^-12` duraría el doble y se comería el golpe
+siguiente). En el tracker sale `03%-12`.
+
+```lua
+bpm(170)
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen)
+  :steps("1 . 3 .  . . 3%-12 .  1 1 3 .  . . 3%-5 3%7")
+```
+
+### Texturas con granos y congelar
+
+`:grains()` hace que cada golpe de la pista se deshaga en granos durante su
+paso y sus `_`; `:freeze(pos)` congela un instante del corte y lo sostiene.
+El panel de efectos lo resume (`⁘ 60 ms · ∿`, `❄ 0.4 · 120 ms · 25/s`).
+Todo lo que sea número admite `ramp()` y `lfo()`; el azar (`jitter`,
+`spread`) sale de la semilla, así que cada render suena igual.
+
+```lua
+bpm(90)
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+
+-- La cola de la caja, congelada y una octava abajo, dos compases.
+track("hielo", amen)
+  :length(32)
+  :steps("3 _ _ _  _ _ _ _  _ _ _ _  _ _ _ _  _ _ _ _  _ _ _ _  _ _ _ _  _ _ _ _")
+  :freeze(lfo("2 compases", 0.2, 0.6), { size = 120, density = 25, jitter = 15, pitch = -12 })
+  :gain(0.5)
+
+-- Un bombo que se deshace: granos cortos cada vez más densos.
+track("polvo", amen)
+  :steps("1 _ _ _  _ _ _ _  . . . .  . . . .")
+  :grains({ size = 30, density = ramp(5, 120, "1 compás"), jitter = 40, spread = 2, seed = 7 })
   :gain(0.4)
 ```
 

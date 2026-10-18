@@ -557,6 +557,7 @@ impl Scan {
             ("set", 0 | 1) => Some(&api::SLICE_TABLE),
             ("sample", 1) => Some(&api::SAMPLE_TABLE),
             ("instrument", 0) => Some(&api::INSTRUMENT_TABLE),
+            ("grains", 0) | ("freeze", 1) => Some(&api::GRAINS_TABLE),
             _ => None,
         }
     }
@@ -648,6 +649,8 @@ pub fn help_at(lines: &[String], row: usize, col: usize) -> Option<Help> {
             "sample(ruta, { ... })".to_string()
         } else if std::ptr::eq(effect, &api::INSTRUMENT_TABLE) {
             "sample:instrument({ ... })".to_string()
+        } else if std::ptr::eq(effect, &api::GRAINS_TABLE) {
+            "pista:grains({ ... })".to_string()
         } else if api::bus(effect.name).is_some_and(|b| std::ptr::eq(b, effect)) {
             format!("bus(\"{}\", {{ ... }})", effect.name)
         } else {
@@ -1007,7 +1010,7 @@ mod tests {
             "{SONG}track(\"drums\", amen)\n  :steps(\"1 . . .  . . . .  . . . .  . . . .\")\n  -- comentario\n  :f|"
         );
         let c = at(&text).unwrap();
-        assert_eq!(labels(&c), ["fill", "fx"]);
+        assert_eq!(labels(&c), ["fill", "fx", "freeze"]);
         let text = format!("{SONG}track(\"drums\", amen):every(4, function(c) c:|) end)");
         let c = at(&text).unwrap();
         assert_eq!(
@@ -1158,7 +1161,7 @@ mod tests {
     fn comments_with_accents_keep_positions() {
         let c =
             at("-- línea con tildes: ñandú\ntrack(\"d\", sample(\"a.wav\"):slice(2)):g|").unwrap();
-        assert_eq!(labels(&c), ["gain"]);
+        assert_eq!(labels(&c), ["gain", "grains"]);
     }
 
     fn help(text: &str) -> Option<Help> {
