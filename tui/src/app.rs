@@ -2676,6 +2676,53 @@ impl App {
         Flow::Continue
     }
 
+    /// Teclas que llegaron juntas. Si son una ráfaga de texto con saltos
+    /// de línea en el editor (un pegado en un terminal sin bracketed
+    /// paste), se pegan; si no, se atienden una a una.
+    pub fn handle_keys(&mut self, inputs: Vec<Input>) -> Flow {
+        if let Some(text) = editing::burst_text(&inputs).filter(|_| self.pastes_in_editor()) {
+            self.paste(&text);
+            return Flow::Continue;
+        }
+        for input in inputs {
+            if self.handle(input) == Flow::Quit {
+                return Flow::Quit;
+            }
+        }
+        Flow::Continue
+    }
+
+    /// El texto pegado va al editor: modo editar y sin nada encima.
+    fn pastes_in_editor(&self) -> bool {
+        self.mode == Mode::Edit
+            && self.prompt.is_none()
+            && self.palette.is_none()
+            && self.block_picker.is_none()
+            && self.browser.is_none()
+            && self.tapping.is_none()
+            && self.slot_prompt.is_none()
+    }
+
+    /// Pega texto del terminal en el cursor tal cual (líneas y sangría),
+    /// sin autocompletado, plantillas ni atajos; se deshace de una vez.
+    /// En la línea de órdenes entra solo la primera línea.
+    pub fn paste(&mut self, text: &str) {
+        let text = editing::normalize_newlines(text);
+        if let Some(prompt) = &mut self.prompt {
+            prompt.push_str(text.lines().next().unwrap_or_default());
+            return;
+        }
+        if !self.pastes_in_editor() {
+            self.message = "pegar: solo en el editor".into();
+            return;
+        }
+        self.completion = None;
+        self.marks.clear();
+        self.mark_selected = false;
+        self.quit_armed = false;
+        self.grouped(|editor| editor.insert_str(text));
+    }
+
     fn then(&mut self, f: impl FnOnce(&mut App)) -> Flow {
         f(self);
         Flow::Continue

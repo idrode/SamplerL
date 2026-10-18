@@ -2351,3 +2351,80 @@ mod sends;
 mod shapes;
 mod stretch;
 mod tempo;
+
+const PASTED: &str = "track(\"hats\", amen)\r\n  :steps(\"x . x .\") -- abiertos\r\n  :gain(0.5)";
+
+#[test]
+fn pasting_keeps_the_lines_and_the_indent_and_undoes_at_once() {
+    let (mut app, _engine) = open_at_end("paste_lines");
+    let before = app.editor.lines().to_vec();
+    app.paste(PASTED);
+    let lines = app.editor.lines();
+    assert_eq!(lines.len(), before.len() + 2);
+    assert_eq!(
+        lines[before.len() - 1..],
+        [
+            "track(\"hats\", amen)",
+            "  :steps(\"x . x .\") -- abiertos",
+            "  :gain(0.5)"
+        ]
+    );
+    assert!(app.view().completion.is_none());
+    let screen = text(&draw(&mut app, 120, 40));
+    assert!(
+        screen.contains("  :steps(\"x . x .\") -- abiertos"),
+        "{screen}"
+    );
+    assert!(screen.contains("  :gain(0.5)"), "{screen}");
+
+    // Un solo Ctrl-Z deshace el pegado entero.
+    app.handle(ctrl('z'));
+    assert_eq!(app.editor.lines(), before);
+}
+
+#[test]
+fn pasting_with_the_completion_open_accepts_nothing() {
+    let (mut app, _engine) = open_at_end("paste_completion");
+    type_text(&mut app, "tr");
+    assert_eq!(completion_items(&app), ["track", "true"]);
+    // Tras moverse, Enter aceptaría la opción marcada.
+    app.handle(special(Key::Down));
+    app.paste("ue\rbpm(90)\n");
+    assert!(app.view().completion.is_none());
+    let n = app.editor.lines().len();
+    assert_eq!(app.editor.lines()[n - 3..], ["true", "bpm(90)", ""]);
+}
+
+#[test]
+fn a_burst_of_keys_with_line_breaks_is_a_paste() {
+    let (mut app, _engine) = open_at_end("paste_burst");
+    let before = app.editor.lines().len();
+    type_text(&mut app, "tr");
+    app.handle(special(Key::Down));
+    // Sin bracketed paste: el terminal manda `\r` (Enter) y a veces `\n`
+    // (Ctrl-J), todo en la misma ráfaga.
+    let mut burst: Vec<Input> = "ue".chars().map(key).collect();
+    burst.push(special(Key::Enter));
+    burst.extend("  -- uno".chars().map(key));
+    burst.push(ctrl('j'));
+    burst.extend("  x".chars().map(key));
+    assert_eq!(app.handle_keys(burst), Flow::Continue);
+    assert!(app.view().completion.is_none());
+    assert_eq!(
+        app.editor.lines()[before - 1..],
+        ["true", "  -- uno", "  x"]
+    );
+    // Una tecla sola sigue siendo una tecla.
+    app.handle_keys(vec![special(Key::Enter)]);
+    assert_eq!(app.editor.lines().len(), before + 3);
+}
+
+#[test]
+fn a_burst_in_play_mode_plays_pads() {
+    let (mut app, _engine) = open_at_end("paste_play");
+    let before = app.editor.lines().to_vec();
+    app.handle(esc());
+    app.handle_keys(vec![key('1'), special(Key::Enter), key('2')]);
+    app.paste("x\ny");
+    assert_eq!(app.editor.lines(), before);
+}

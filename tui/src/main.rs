@@ -420,7 +420,10 @@ fn play_script(path: &str) -> Result<(), BoxError> {
 /// Interfaz de terminal. Sin `--allow-audio`, el motor avanza con una salida
 /// nula (a ritmo real, sin abrir la tarjeta): se ve todo y no suena nada.
 fn run_editor(path: &std::path::Path, allow_audio: bool, allow_midi: bool) -> Result<(), BoxError> {
-    use ratatui::crossterm::event::{self, Event, KeyEventKind};
+    use ratatui::crossterm::event::{
+        self, EnableBracketedPaste, Event, KeyEventKind, KeyboardEnhancementFlags,
+        PushKeyboardEnhancementFlags,
+    };
 
     let (controller, engine) = engine::new_engine(RENDER_RATE);
     // Hay que mantener viva la salida mientras dure la interfaz.
@@ -478,27 +481,53 @@ fn run_editor(path: &std::path::Path, allow_audio: bool, allow_midi: bool) -> Re
     };
 
     let mut terminal = ratatui::init();
+    // Pegado del terminal (bracketed paste): lo pegado llega de una vez,
+    // con sus saltos de línea. Si el terminal no lo sabe, llega como
+    // teclas en ráfaga (ver `App::handle_keys`).
+    let paste = ratatui::crossterm::execute!(std::io::stdout(), EnableBracketedPaste).is_ok();
     // Si la terminal sabe decir cuándo se suelta una tecla (protocolo de
     // teclado de kitty: kitty, foot, WezTerm, Ghostty...), se le pide: los
     // pads de un instrumento sueltan su nota al soltar la tecla. Si no
     // (tmux, la mayoría), la sueltan cuando dejan de llegar repeticiones.
-    use ratatui::crossterm::event::{
-        KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
-    };
     let releases = ratatui::crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false)
         && ratatui::crossterm::execute!(
             std::io::stdout(),
             PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::REPORT_EVENT_TYPES)
         )
         .is_ok();
+    // Modos del terminal que se piden al entrar y se quitan al salir,
+    // también con error o pánico (al soltar la guarda).
+    let modes = TerminalModes { paste, releases };
     app.set_key_releases(releases);
     let result = (|| -> Result<(), BoxError> {
         loop {
             app.poll_midi();
             app.tick();
             terminal.draw(|frame| ui::draw(frame, &mut app))?;
-            if event::poll(poll)? {
-                match event::read()? {
+            if !event::poll(poll)? {
+                continue;
+            }
+            // Lo que ya ha llegado, junto: un pegado sin bracketed paste
+            // es una ráfaga de teclas.
+            let mut events = vec![event::read()?];
+            while events.len() < BURST_MAX && event::poll(Duration::ZERO)? {
+                events.push(event::read()?);
+            }
+            let presses: Option<Vec<_>> = events
+                .iter()
+                .map(|e| match e {
+                    Event::Key(key) if key.kind != KeyEventKind::Release => Some((*key).into()),
+                    _ => None,
+                })
+                .collect();
+            if let Some(inputs) = presses {
+                if app.handle_keys(inputs) == app::Flow::Quit {
+                    return Ok(());
+                }
+                continue;
+            }
+            for event in events {
+                match event {
                     Event::Key(key) if key.kind == KeyEventKind::Release => {
                         app.key_release(key.into());
                     }
@@ -507,17 +536,35 @@ fn run_editor(path: &std::path::Path, allow_audio: bool, allow_midi: bool) -> Re
                             return Ok(());
                         }
                     }
-                    Event::Paste(text) => {
-                        app.editor.insert_str(text);
-                    }
+                    Event::Paste(text) => app.paste(&text),
                     _ => {}
                 }
             }
         }
     })();
-    if releases {
-        let _ = ratatui::crossterm::execute!(std::io::stdout(), PopKeyboardEnhancementFlags);
-    }
+    drop(modes);
     ratatui::restore();
     result
+}
+
+/// Eventos leídos de una vez como mucho (un pegado largo sin bracketed
+/// paste llega en varias ráfagas).
+const BURST_MAX: usize = 4096;
+
+/// Modos pedidos al terminal; se quitan al soltarla.
+struct TerminalModes {
+    paste: bool,
+    releases: bool,
+}
+
+impl Drop for TerminalModes {
+    fn drop(&mut self) {
+        use ratatui::crossterm::event::{DisableBracketedPaste, PopKeyboardEnhancementFlags};
+        if self.releases {
+            let _ = ratatui::crossterm::execute!(std::io::stdout(), PopKeyboardEnhancementFlags);
+        }
+        if self.paste {
+            let _ = ratatui::crossterm::execute!(std::io::stdout(), DisableBracketedPaste);
+        }
+    }
 }

@@ -4,7 +4,7 @@
 //! del propio editor (`insert_str`, `delete_str`), así que deshacer y
 //! rehacer funcionan con ellas.
 
-use ratatui_textarea::{CursorMove, TextArea};
+use ratatui_textarea::{CursorMove, Input, Key, TextArea};
 use script::api;
 
 /// Campo pendiente de una plantilla insertada.
@@ -346,6 +346,38 @@ pub fn paste(editor: &mut TextArea, text: &str) {
         editor.move_cursor(CursorMove::Head);
     }
     editor.insert_str(text);
+}
+
+/// Saltos de línea de cualquier terminal (`\r\n` y `\r`) como `\n`.
+pub fn normalize_newlines(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
+}
+
+/// Texto pegado sin bracketed paste: el terminal manda lo pegado como
+/// teclas, todas en la misma ráfaga. Si la ráfaga es solo texto (letras,
+/// Enter, Ctrl-J o Tab) y trae algún salto de línea o tabulador, es un
+/// pegado: Enter (`\r`) y Ctrl-J (`\n`) son saltos de línea. Una tecla
+/// sola no lo es nunca (se escribe a mano).
+pub fn burst_text(inputs: &[Input]) -> Option<String> {
+    if inputs.len() < 2 {
+        return None;
+    }
+    let mut text = String::new();
+    let mut breaks = false;
+    for input in inputs {
+        match input.key {
+            Key::Enter if !input.ctrl && !input.alt => text.push('\n'),
+            Key::Char('j' | 'm') if input.ctrl && !input.alt => text.push('\n'),
+            Key::Tab if !input.ctrl && !input.alt => text.push('\t'),
+            Key::Char(c) if !input.ctrl && !input.alt => {
+                text.push(c);
+                continue;
+            }
+            _ => return None,
+        }
+        breaks = true;
+    }
+    breaks.then_some(text)
 }
 
 /// Duplica las líneas seleccionadas o la del cursor debajo de sí mismas;

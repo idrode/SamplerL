@@ -600,6 +600,16 @@ Ctrl-K borrar hasta el final de la línea, Ctrl-W borrar la palabra
 anterior, Ctrl-A / Ctrl-E inicio y final de línea, Ctrl-V / Alt-V página
 abajo y arriba.
 
+Pegar desde el terminal (Ctrl-Shift-V, el botón central o el menú del
+terminal) pone el texto tal cual en el cursor: con sus líneas y su
+sangría, sin abrir el autocompletado, sin aceptar la opción que tenga
+abierta y sin disparar atajos ni plantillas. Un solo Ctrl-Z lo deshace
+entero. La interfaz pide al terminal el pegado entre corchetes (bracketed
+paste) al entrar y lo quita al salir; si el terminal no lo sabe hacer, una
+ráfaga de teclas con saltos de línea también se toma como un pegado. En la
+línea de órdenes (F2) solo entra la primera línea, y en el modo tocar no
+se pega nada.
+
 ## 3. Mini-notación
 
 Un patrón son **16 pasos** (semicorcheas de un compás de 4/4) separados por
@@ -1816,6 +1826,15 @@ track("hats", amen:slice_at(2))
 - En Lua, `:slice(n)` usa siempre el detector por flujo con 40 ms; los
   ajustes `--min-gap` y `--detector` son de la línea de comandos. Para
   probarlos, renderiza el WAV con `--pattern` y mira la lista de cortes.
+
+### Al pegar, todo queda en una línea
+
+La interfaz pide el pegado entre corchetes al terminal; tmux, kitty,
+foot, WezTerm, Alacritty, GNOME Terminal y xterm lo admiten. Si aun así
+se pierden los saltos de línea, el terminal (o algo entre medias, como un
+multiplexor antiguo) manda lo pegado como teclas sueltas que no llegan
+juntas: pega con el método del propio terminal en vez de escribirlo por
+otro programa, o carga el texto como archivo.
 
 ### Saturación
 
