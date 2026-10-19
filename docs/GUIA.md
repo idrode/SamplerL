@@ -162,7 +162,10 @@ cargo run -p tui -- --edit mi-cancion.lua
 
 Si el archivo no existe, se abre una plantilla. A la izquierda está el
 editor; a la derecha, el estado del motor, la forma de onda del sample y el
-tracker; abajo, los efectos de cada pista. Ctrl-S guarda y carga.
+tracker; abajo, los efectos de cada pista. Ctrl-S guarda y carga. El
+tracker enseña sus 16 pasos enteros en cuanto caben (le quita filas a la
+forma de onda hasta dejarle cuatro); en una terminal más baja se desplaza
+siguiendo el paso que suena.
 
 **Sin `--allow-audio` no suena nada**: el motor avanza igual (el tracker se
 mueve), pero el audio se tira. Para oírlo por la tarjeta:

@@ -2403,6 +2403,7 @@ mod slice_fx;
 mod split;
 mod stretch;
 mod tempo;
+mod tracker_rows;
 mod variants;
 
 const PASTED: &str = "track(\"hats\", amen)\r\n  :steps(\"x . x .\") -- abiertos\r\n  :gain(0.5)";

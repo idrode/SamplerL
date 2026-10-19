@@ -69,11 +69,14 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // Motor arriba (una línea por pista), sample y tracker debajo.
     let engine_height = (view.tracks.len() as u16 + 4).clamp(5, 12);
     // El tracker pide 16 filas (más cabecera y bordes); el sample se queda
-    // con lo que sobre. Si no cabe (o hay pistas más largas), se desplaza.
+    // con lo que sobre. Si así no queda nada para el sample, el tracker se
+    // queda sus filas mientras el sample tenga lo mínimo; si ni así, el
+    // reparto de siempre y el tracker se desplaza.
+    let rest = right.height.saturating_sub(engine_height);
     let [engine_area, sample_area, tracker_area] = Layout::vertical([
         Constraint::Length(engine_height),
-        Constraint::Min(6),
-        Constraint::Length(engine::STEPS as u16 + 3),
+        Constraint::Min(tracker_first(rest, SAMPLE_MIN, SAMPLE_SQUEEZED)),
+        Constraint::Length(TRACKER_HEIGHT),
     ])
     .areas(right);
     // Con línea de tiempo, una fila con las secciones bajo el motor (se la
@@ -93,6 +96,28 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     frame.render_widget(FxPanel(&view), fx);
     frame.render_widget(HelpLine(&view), help);
     draw_popups(frame, &view, popup);
+}
+
+/// Alto del tracker con sus 16 filas sin desplazarse (cabecera y bordes).
+pub const TRACKER_HEIGHT: u16 = engine::STEPS as u16 + 3;
+/// Alto mínimo del panel del sample con espacio de sobra y cuando hace
+/// falta para que el tracker quepa entero (bordes y dos filas de onda).
+const SAMPLE_MIN: u16 = 6;
+const SAMPLE_SQUEEZED: u16 = 4;
+/// Lo mismo para la forma de onda grande (con su fila de números y la de
+/// los ms).
+const BIG_SAMPLE_SQUEEZED: u16 = 6;
+
+/// Alto mínimo del panel de encima del tracker con `height` filas para los
+/// dos: `normal`, salvo que con él el tracker no quepa entero y con
+/// `squeezed` sí (entonces, lo que deja el tracker).
+fn tracker_first(height: u16, normal: u16, squeezed: u16) -> u16 {
+    let left = height.saturating_sub(TRACKER_HEIGHT);
+    if left < normal && left >= squeezed {
+        left
+    } else {
+        normal
+    }
 }
 
 /// La ventana principal con el editor en la suya (fase L): las vistas
@@ -118,10 +143,14 @@ fn draw_main_window(frame: &mut Frame, view: &ViewModel) {
         _ => body,
     };
     // El tracker pide sus 16 filas; el sample se queda con lo demás (y
-    // al menos un tercio).
+    // al menos un tercio, o lo mínimo para que el tracker quepa entero).
     let [sample_area, lower] = Layout::vertical([
-        Constraint::Min(body.height / 3),
-        Constraint::Length(engine::STEPS as u16 + 3),
+        Constraint::Min(tracker_first(
+            body.height,
+            body.height / 3,
+            BIG_SAMPLE_SQUEEZED,
+        )),
+        Constraint::Length(TRACKER_HEIGHT),
     ])
     .areas(body);
     frame.render_widget(BigSamplePanel(view), sample_area);

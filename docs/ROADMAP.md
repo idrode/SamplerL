@@ -338,3 +338,5 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
    editor y la parte 1 de la fase L); verificado, sin cambios.
 2. ✅ **Portapapeles del sistema**: copiar y cortar por OSC 52 y `wl-copy`;
    pegar con `wl-paste` o, si no, el interno.
+3. ✅ **Tracker con sus 16 filas** sin desplazarse en cuanto caben dejando
+   al sample lo mínimo; si no, como antes.
