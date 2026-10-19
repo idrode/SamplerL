@@ -235,6 +235,31 @@ fn string_context(
                 .collect(),
         });
     }
+    // En `cortes:fx("...", ...)` (o en su lista `{ "...", ... }`): las
+    // etiquetas de corte.
+    let fx_slices = match &scan.frames[..] {
+        [.., frame @ Frame::Paren { arg: 0, .. }] => scan.slices_fx(frame),
+        [.., frame @ Frame::Paren { arg: 0, .. }, Frame::Brace { .. }] => scan.slices_fx(frame),
+        _ => false,
+    };
+    if fx_slices {
+        if labels.is_empty() {
+            return None;
+        }
+        return Some(Context {
+            prefix,
+            candidates: labels
+                .iter()
+                .map(|l| Candidate {
+                    label: l.clone(),
+                    kind: "etiqueta".into(),
+                    signature: format!("cortes:fx(\"{l}\", nombre, {{ ... }})"),
+                    description: "el corte con esa etiqueta".into(),
+                    insert: l.clone(),
+                })
+                .collect(),
+        });
+    }
     let candidates = match scan.frames.last()? {
         Frame::Paren { name, arg, .. } => match (name.as_str(), *arg) {
             ("sample", 0) => wavs()
@@ -247,13 +272,16 @@ fn string_context(
                     insert: w,
                 })
                 .collect(),
-            ("fx", 0) => api::EFFECTS
+            // El de la pista (`fx("...", { ... })`) o, el segundo, el de un
+            // corte (`cortes:fx(cuál, "...", { ... })`).
+            ("fx", 0 | 1) => api::EFFECTS
                 .iter()
                 .map(|e| Candidate {
                     label: e.name.into(),
                     kind: "efecto".into(),
                     signature: format!(
-                        "fx(\"{}\", {{ {} }})",
+                        "fx({}\"{}\", {{ {} }})",
+                        if *arg == 1 { "cuál, " } else { "" },
                         e.name,
                         e.params
                             .iter()
@@ -536,6 +564,20 @@ impl Scan {
         }
     }
 
+    /// Si `frame` es la llamada `cortes:fx(...)` (el método de unos
+    /// cortes, no el de una pista).
+    fn slices_fx(&self, frame: &Frame) -> bool {
+        let Frame::Paren {
+            name,
+            colon: Some(at),
+            ..
+        } = frame
+        else {
+            return false;
+        };
+        name == "fx" && type_of(&self.code, &self.code[..*at], 0) == Some(Receiver::Slices)
+    }
+
     /// Efecto de la tabla abierta, si es la de `fx("efecto", { ... })`.
     fn fx_effect(&self) -> Option<&'static api::Effect> {
         let [
@@ -553,6 +595,8 @@ impl Scan {
         // `sample:instrument({ ... })`.
         match (name.as_str(), *arg) {
             ("fx", 1) => api::effect(strings.first()?.as_deref()?),
+            // `cortes:fx(cuál, "efecto", { ... })`.
+            ("fx", 2) => api::effect(strings.get(1)?.as_deref()?),
             ("bus", 1) => api::bus(strings.first()?.as_deref()?),
             ("set", 0 | 1) => Some(&api::SLICE_TABLE),
             ("sample", 1) => Some(&api::SAMPLE_TABLE),
@@ -653,6 +697,11 @@ pub fn help_at(lines: &[String], row: usize, col: usize) -> Option<Help> {
             "pista:grains({ ... })".to_string()
         } else if api::bus(effect.name).is_some_and(|b| std::ptr::eq(b, effect)) {
             format!("bus(\"{}\", {{ ... }})", effect.name)
+        } else if matches!(
+            scan.frames.iter().rev().nth(1),
+            Some(Frame::Paren { arg: 2, .. })
+        ) {
+            format!("cortes:fx(cuál, \"{}\", {{ ... }})", effect.name)
         } else {
             format!("fx(\"{}\", {{ ... }})", effect.name)
         };
@@ -687,6 +736,11 @@ pub fn help_at(lines: &[String], row: usize, col: usize) -> Option<Help> {
         match (f.receiver, f.name) {
             (Receiver::Track, "fx") => {
                 if let Some(e) = chosen(0).as_deref().and_then(api::effect) {
+                    description = format!("{} · {}: {}", description, e.name, e.summary);
+                }
+            }
+            (Receiver::Slices, "fx") => {
+                if let Some(e) = chosen(1).as_deref().and_then(api::effect) {
                     description = format!("{} · {}: {}", description, e.name, e.summary);
                 }
             }
@@ -1074,6 +1128,53 @@ mod tests {
                 "{SONG}track(\"d\", amen):fx(\"bitcrush\", {{ bits = |"
             ))
             .is_none()
+        );
+    }
+
+    #[test]
+    fn slice_fx_offers_labels_then_effects_then_parameters() {
+        let all = ["kick", "snare", "hat"];
+        let c = at(&format!("{SONG}amen:fx(\"|")).unwrap();
+        assert_eq!(labels(&c), all);
+        let c = at(&format!("{SONG}amen:fx(\"sn|")).unwrap();
+        assert_eq!(
+            (c.prefix.as_str(), labels(&c)),
+            ("sn", vec!["snare".into()])
+        );
+        // En la lista también; tras un número, nada que ofrecer.
+        let c = at(&format!("{SONG}amen:fx({{ 3, \"|")).unwrap();
+        assert_eq!(labels(&c), all);
+        assert!(at(&format!("{SONG}amen:fx(3|")).is_none());
+        // El segundo, el efecto; luego la tabla de ese efecto.
+        let c = at(&format!("{SONG}amen:fx(\"snare\", \"bit|")).unwrap();
+        assert_eq!(labels(&c), ["bitcrush"]);
+        assert!(
+            c.matches()[0]
+                .signature
+                .starts_with("fx(cuál, \"bitcrush\"")
+        );
+        let c = at(&format!("{SONG}amen:fx({{ 1, \"snare\" }}, \"gain\", {{ |")).unwrap();
+        assert_eq!(labels(&c), ["level"]);
+        let c = at(&format!("{SONG}amen:fx(2, \"lowpass\", {{ cutoff = |")).unwrap();
+        assert_eq!(labels(&c), ["ramp", "lfo"]);
+        // En una pista, el primero sigue siendo el efecto.
+        let c = at(&format!("{SONG}track(\"d\", amen):fx(\"gai|")).unwrap();
+        assert_eq!(labels(&c), ["gain"]);
+        // Los métodos de unos cortes ofrecen fx.
+        let c = at(&format!("{SONG}amen:f|")).unwrap();
+        assert_eq!(labels(&c), ["fx"]);
+        let h = help(&format!("{SONG}amen:fx(\"snare\", \"bitcrush\", |")).unwrap();
+        assert_eq!(h.signature, "cortes:fx(cuál, nombre, parámetros) → cortes");
+        let h = help(&format!(
+            "{SONG}amen:fx(\"snare\", \"bitcrush\", {{ bits = |"
+        ))
+        .unwrap();
+        assert_eq!(h.signature, "cortes:fx(cuál, \"bitcrush\", { ... })");
+        assert_eq!(h.description, "bits: resolución (1–16, por defecto 8)");
+        let h = help(&format!("{SONG}amen:fx(|")).unwrap();
+        assert_eq!(
+            h.description,
+            "cuál: número de corte (desde 1), etiqueta o lista de ellos"
         );
     }
 

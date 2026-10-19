@@ -3375,6 +3375,24 @@ impl App {
                             }),
                             grains: t.granular.as_ref().map(crate::model::grains_text),
                             formant: t.formant.or(t.instrument.and_then(|i| i.engine.formant)),
+                            slice_fx: t
+                                .slice_fx
+                                .iter()
+                                .enumerate()
+                                .filter(|(_, c)| !c.fx.is_empty())
+                                .map(|(slice, c)| crate::model::SliceFxView {
+                                    slice,
+                                    fx: c.fx.clone(),
+                                    automated: c
+                                        .automation
+                                        .iter()
+                                        .filter_map(|a| {
+                                            let name = c.fx.get(a.fx)?.params().get(a.param)?;
+                                            Some((a.fx, *name))
+                                        })
+                                        .collect(),
+                                })
+                                .collect(),
                         }
                     })
                     .collect()

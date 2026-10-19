@@ -2398,6 +2398,7 @@ mod resample;
 mod sections;
 mod sends;
 mod shapes;
+mod slice_fx;
 mod split;
 mod stretch;
 mod tempo;

@@ -174,6 +174,24 @@ pub struct TransportView {
     pub step: Option<usize>,
 }
 
+/// Los efectos de un corte, para el panel de efectos.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SliceFxView {
+    pub slice: usize,
+    pub fx: Vec<Fx>,
+    pub automated: Vec<(usize, &'static str)>,
+}
+
+impl SliceFxView {
+    /// Lo que se escribe del corte: `3 snare` o `3`.
+    pub fn name(&self, labels: &[Option<String>]) -> String {
+        match labels.get(self.slice).cloned().flatten() {
+            Some(label) => format!("{} {label}", self.slice + 1),
+            None => (self.slice + 1).to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct TrackView {
     pub name: String,
@@ -235,6 +253,10 @@ pub struct TrackView {
     /// Formantes al transponer sin cambiar la duración (`:formant()` o
     /// el `formant` del instrumento): semitonos de desplazamiento.
     pub formant: Option<f32>,
+    /// Efectos de corte (`cortes:fx()`): cada corte que los tiene (desde
+    /// 0) con sus efectos y los parámetros que se mueven de cada uno
+    /// (índice en sus efectos).
+    pub slice_fx: Vec<SliceFxView>,
 }
 
 /// Resumen de los granos de una pista para el panel de efectos:

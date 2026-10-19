@@ -1,5 +1,7 @@
-//! Diagnóstico en vivo de la notación de `steps("...")` y de las notas de
-//! `melody("...")`: mientras se escribe, sin cargar el script. La longitud que se pide es la de la
+//! Diagnóstico en vivo de la notación de `steps("...")`, de las notas de
+//! `melody("...")` y de los nombres de `:fx(...)` (el efecto y, en
+//! `cortes:fx(cuál, ...)`, las etiquetas de corte): mientras se escribe,
+//! sin cargar el script. La longitud que se pide es la de la
 //! pista ([`track_lengths`]): la de `:length(n)` en la misma cadena de
 //! `track(...)` o en la definición de esa pista, o 16. Usa el mismo lector de la notación que el
 //! motor ([`engine::notation`]) y los mismos rangos (ganancia, pitch y
@@ -9,6 +11,7 @@ use std::ops::Range;
 
 use engine::notation::{parse_pattern_labeled, parse_step_labeled};
 use engine::{MAX_GAIN, MAX_RETRIG, MAX_SEMITONES, STEPS};
+use script::api;
 
 /// Un problema en una línea del editor.
 #[derive(Debug, Clone, PartialEq)]
@@ -85,8 +88,157 @@ pub fn steps_diagnostics(lines: &[String], labels: &[String]) -> Vec<Diagnostic>
                 i = end;
             }
         }
+        let mut i = 0;
+        while let Some(at) = find(&chars[..code_end], ":fx", i) {
+            i = at + 3;
+            if in_string(&chars[..at]) {
+                continue;
+            }
+            for (cols, message) in check_fx(&chars[..code_end], i, labels_known(&labels)) {
+                out.push(Diagnostic { row, cols, message });
+            }
+        }
     }
     out.sort_by_key(|d| (d.row, d.cols.start));
+    out
+}
+
+fn labels_known(labels: &[Option<String>]) -> impl Fn(&str) -> bool + '_ {
+    |name| labels.iter().flatten().any(|l| l == name)
+}
+
+/// Un argumento de `:fx(...)` tal como se lee en la línea.
+enum Arg {
+    /// Cadena: su texto y las columnas de dentro de las comillas.
+    Text(String, Range<usize>),
+    /// Lista `{ ... }`: sus cadenas.
+    List(Vec<(String, Range<usize>)>),
+    /// Otra cosa (un número, una tabla de parámetros, una variable).
+    Other,
+}
+
+/// Lee una cadena que empieza en `chars[at]` (con su comilla); `None` si
+/// no se cierra en la línea.
+fn read_string(chars: &[char], at: usize) -> Option<(String, Range<usize>, usize)> {
+    let quote = *chars.get(at).filter(|c| **c == '"' || **c == '\'')?;
+    let end = (at + 1..chars.len()).find(|&k| chars[k] == quote)?;
+    Some((chars[at + 1..end].iter().collect(), at + 1..end, end + 1))
+}
+
+/// Los dos primeros argumentos de la llamada que abre en `chars[open]`
+/// (`(`), cada uno con dónde acaba.
+fn fx_args(chars: &[char], open: usize) -> Vec<Arg> {
+    let skip = |mut k: usize| {
+        while chars.get(k) == Some(&' ') {
+            k += 1;
+        }
+        k
+    };
+    let mut args = Vec::new();
+    let mut k = skip(open + 1);
+    while args.len() < 2 {
+        let (arg, next) = match chars.get(k) {
+            Some('"' | '\'') => match read_string(chars, k) {
+                Some((text, cols, next)) => (Arg::Text(text, cols), next),
+                None => break,
+            },
+            Some('{') => {
+                let Some(close) = (k..chars.len()).find(|&j| chars[j] == '}') else {
+                    break;
+                };
+                let mut items = Vec::new();
+                let mut j = k + 1;
+                while j < close {
+                    if let Some((text, cols, next)) = read_string(&chars[..close], j)
+                        .filter(|_| chars[j] == '"' || chars[j] == '\'')
+                    {
+                        items.push((text, cols));
+                        j = next;
+                    } else {
+                        j += 1;
+                    }
+                }
+                // Una lista con `=` es la tabla de parámetros.
+                if chars[k..close].contains(&'=') {
+                    (Arg::Other, close + 1)
+                } else {
+                    (Arg::List(items), close + 1)
+                }
+            }
+            Some(_) => {
+                let end = (k..chars.len())
+                    .find(|&j| chars[j] == ',' || chars[j] == ')')
+                    .unwrap_or(chars.len());
+                (Arg::Other, end)
+            }
+            None => break,
+        };
+        args.push(arg);
+        k = skip(next);
+        if chars.get(k) != Some(&',') {
+            break;
+        }
+        k = skip(k + 1);
+    }
+    args
+}
+
+/// Problemas de una llamada `:fx(...)` cuyo nombre acaba en `chars[after]`:
+/// un efecto que no existe y, en `cortes:fx(cuál, "efecto", ...)`, una
+/// etiqueta que no conoce ninguna pista ni el texto.
+fn check_fx(
+    chars: &[char],
+    after: usize,
+    known: impl Fn(&str) -> bool,
+) -> Vec<(Range<usize>, String)> {
+    let mut k = after;
+    while chars.get(k) == Some(&' ') {
+        k += 1;
+    }
+    if chars.get(k) != Some(&'(') {
+        return Vec::new();
+    }
+    let args = fx_args(chars, k);
+    let mut out = Vec::new();
+    let effect = |name: &str, cols: Range<usize>, out: &mut Vec<(Range<usize>, String)>| {
+        if api::effect(name).is_none() {
+            let all: Vec<&str> = api::EFFECTS.iter().map(|e| e.name).collect();
+            out.push((
+                cols,
+                format!("fx: el efecto \"{name}\" no existe ({})", all.join(", ")),
+            ));
+        }
+    };
+    let label = |name: &str, cols: Range<usize>, out: &mut Vec<(Range<usize>, String)>| {
+        if !known(name) {
+            out.push((
+                cols,
+                format!(
+                    "fx: ningún corte se llama \"{name}\" (ponle la etiqueta con cortes:name(i, \"{name}\"))"
+                ),
+            ));
+        }
+    };
+    match args.as_slice() {
+        // `cortes:fx("etiqueta", "efecto", ...)`.
+        [Arg::Text(which, which_cols), Arg::Text(name, cols), ..] => {
+            label(which, which_cols.clone(), &mut out);
+            effect(name, cols.clone(), &mut out);
+        }
+        [Arg::List(items), rest @ ..] => {
+            for (which, cols) in items {
+                label(which, cols.clone(), &mut out);
+            }
+            if let [Arg::Text(name, cols), ..] = rest {
+                effect(name, cols.clone(), &mut out);
+            }
+        }
+        // `cortes:fx(3, "efecto", ...)`.
+        [Arg::Other, Arg::Text(name, cols), ..] => effect(name, cols.clone(), &mut out),
+        // `pista:fx("efecto", { ... })` (o mientras se escribe).
+        [Arg::Text(name, cols), ..] if !name.is_empty() => effect(name, cols.clone(), &mut out),
+        _ => {}
+    }
     out
 }
 
@@ -403,6 +555,55 @@ mod tests {
         let lines: Vec<String> = text.lines().map(String::from).collect();
         let labels: Vec<String> = labels.iter().map(|l| l.to_string()).collect();
         steps_diagnostics(&lines, &labels)
+    }
+
+    #[test]
+    fn fx_underlines_unknown_effects_and_slice_labels() {
+        let under = |line: &str, d: &Diagnostic| -> String {
+            line.chars().skip(d.cols.start).take(d.cols.len()).collect()
+        };
+        let known = ["kick", "snare"];
+        let ok = [
+            r#"amen:fx("snare", "bitcrush", { bits = 6 })"#,
+            r#"amen:fx({ "kick", 3 }, "gain", { level = 0.5 })"#,
+            r#"amen:fx(3, "lowpass", { cutoff = 300 })"#,
+            r#"track("d", amen):fx("filter", { type = "lowpass", cutoff = 300 })"#,
+            r#"track("d", amen):fx("bitcrusher")"#,
+            r#"t:fx(""#,
+            r#"x = "a:fx('nada')" -- :fx("tampoco")"#,
+        ];
+        for line in ok {
+            assert!(diagnose_with(line, &known).is_empty(), "{line}");
+        }
+        let cases = [
+            (r#"amen:fx("snre", "bitcrush", {})"#, vec!["snre"]),
+            (r#"amen:fx("snare", "bitcrsh", {})"#, vec!["bitcrsh"]),
+            (
+                r#"amen:fx({ "kik", 2, "snare" }, "chorus", {})"#,
+                vec!["kik", "chorus"],
+            ),
+            (r#"amen:fx(4, "reverb", {})"#, vec!["reverb"]),
+            (
+                r#"track("d", amen):fx("lowpas", { cutoff = 3 })"#,
+                vec!["lowpas"],
+            ),
+        ];
+        for (line, expected) in cases {
+            let d = diagnose_with(line, &known);
+            let got: Vec<String> = d.iter().map(|d| under(line, d)).collect();
+            assert_eq!(got, expected, "{line}");
+        }
+        let d = diagnose_with(r#"amen:fx("tom", "gain", {})"#, &known);
+        assert_eq!(
+            d[0].message,
+            "fx: ningún corte se llama \"tom\" (ponle la etiqueta con cortes:name(i, \"tom\"))"
+        );
+        // Las etiquetas del texto también cuentan (las pasa la interfaz).
+        let d = diagnose_with(r#"amen:fx("kick", "gian", {})"#, &known);
+        assert!(
+            d[0].message
+                .starts_with("fx: el efecto \"gian\" no existe (filter,")
+        );
     }
 
     #[test]

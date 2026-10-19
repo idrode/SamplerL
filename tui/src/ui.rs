@@ -11,7 +11,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
 use crate::app::App;
 use crate::model::{
     BlockPickerView, BrowserView, CompletionView, PaletteView, SlotsView, TimelineView, ViewModel,
-    fx_text_named,
+    fx_text, fx_text_named,
 };
 use crate::theme;
 
@@ -1680,8 +1680,24 @@ impl Widget for FxPanel<'_> {
                     },
                 ]),
             ];
-            if track.fx.is_empty() {
+            if track.fx.is_empty() && track.slice_fx.is_empty() {
                 lines.push(Line::from("sin efectos").fg(dim()));
+            }
+            // Los de cada corte, que suenan antes que los de la pista:
+            // `◇ 3 snare › crush 6b ÷1 · LP 800 Hz q2.00 ∿cutoff`.
+            for chain in &track.slice_fx {
+                let mut spans =
+                    vec![Span::from(format!("◇ {} › ", chain.name(&track.labels))).fg(dim())];
+                for (i, fx) in chain.fx.iter().enumerate() {
+                    if i > 0 {
+                        spans.push(Span::from(" · ").fg(dim()));
+                    }
+                    spans.push(Span::raw(fx_text(fx)));
+                    for (_, p) in chain.automated.iter().filter(|(f, _)| *f == i) {
+                        spans.push(Span::from(format!(" ∿{p}")).fg(accent()));
+                    }
+                }
+                lines.push(Line::from(spans));
             }
             for (i, fx) in track.fx.iter().enumerate() {
                 // Los parámetros que se mueven (ramp, lfo): `∿cutoff`.
