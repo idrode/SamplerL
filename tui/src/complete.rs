@@ -1040,6 +1040,7 @@ mod tests {
                 "bitcrush",
                 "compressor",
                 "distortion",
+                "gain",
                 "eq",
                 "dyneq"
             ]

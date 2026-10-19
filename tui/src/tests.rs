@@ -1185,6 +1185,7 @@ fn completion_follows_the_context() {
             "bitcrush",
             "compressor",
             "distortion",
+            "gain",
             "eq",
             "dyneq"
         ]
@@ -1381,6 +1382,7 @@ fn choosing_another_effect_with_the_arrows_replaces_the_rest_of_the_name() {
             "bitcrush",
             "compressor",
             "distortion",
+            "gain",
             "eq",
             "dyneq"
         ]

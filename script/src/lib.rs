@@ -35,7 +35,7 @@ use engine::notation::{check_label, parse_pattern_labeled, split_label};
 use engine::{
     Batch, Buses, Controller, Division, EQ_BANDS, EqBand, EqKind, FilterKind, Fx, MAX_CYCLE_BARS,
     MAX_FX, MAX_GAIN, MAX_RETRIG, MAX_SEMITONES, MAX_STEPS, MAX_TRACKS, Pattern, STEPS, Sample,
-    SendError, SliceShape, Slices, Step, valid_bpm,
+    SendError, SliceFx, SliceShape, Slices, Step, valid_bpm,
 };
 pub mod api;
 pub mod blocks;
@@ -201,6 +201,17 @@ pub struct TrackDef {
     /// Pistas que escucha por sidechain cada EQ dinámico de la cadena:
     /// (índice en `fx`, nombre de la pista).
     pub sidechains: Vec<(usize, String)>,
+    /// Efectos de cada corte (`cortes:fx()`), uno por corte (o ninguno).
+    pub slice_fx: Vec<SliceFxDef>,
+}
+
+/// Efectos de un corte (`cortes:fx(i, ...)`): su cadena, en orden, y los
+/// parámetros que llevan `ramp()` o `lfo()` (`Automation::fx`: el índice
+/// en `fx`).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SliceFxDef {
+    pub fx: Vec<Fx>,
+    pub automation: Vec<engine::Automation>,
 }
 
 /// `sample:instrument({ ... })`: el sample se toca como notas.
@@ -914,6 +925,7 @@ impl ScriptHost {
             for warning in all()
                 .filter_map(far_kept_pitch)
                 .chain(all().filter_map(idle_formant))
+                .chain(all().filter_map(grains_skip_slice_fx))
             {
                 if !warnings.contains(&warning) {
                     warnings.push(warning);
@@ -1771,12 +1783,26 @@ fn track_pattern(
             params.sidechain = Some(slot);
         }
     }
+    let chains = track
+        .slice_fx
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            if c.fx.is_empty() {
+                return Ok(None);
+            }
+            SliceFx::new(&c.fx, &c.automation).map(Some).map_err(|e| {
+                ScriptError::new(format!("pista \"{}\": corte {}: {e}", track.name, i + 1))
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     Pattern::from_bars(track.sample.clone(), &track.slices, &track.bars)
         .and_then(|p| p.with_gain(track.gain))
         .and_then(|p| p.with_fx(&fx))
         .and_then(|p| p.with_automation(&track.automation))
         .and_then(|p| p.with_sends(track.sends))
         .and_then(|p| p.with_shapes(&track.shapes))
+        .and_then(|p| p.with_slice_fx(&chains))
         .and_then(|p| p.with_choke(track.choke))
         .and_then(|p| p.with_midi(track.midi))
         .and_then(|p| p.with_instrument(track.instrument.map(|i| i.engine)))
@@ -2116,6 +2142,7 @@ fn track_source(lua: &Lua, name: &str, source: &AnyUserData) -> mlua::Result<Tra
         granular: None,
         formant: None,
         sidechains: Vec::new(),
+        slice_fx: Vec::new(),
     };
     if let Ok(source) = source.borrow::<SlicedHandle>() {
         let mut def = def(
@@ -2134,6 +2161,7 @@ fn track_source(lua: &Lua, name: &str, source: &AnyUserData) -> mlua::Result<Tra
             labels: source.labels.clone(),
             stale: source.stale.clone(),
             shapes: source.shapes.clone(),
+            slice_fx: source.slice_fx.clone(),
             transforms: Vec::new(),
             steps_set: false,
         });
@@ -2154,6 +2182,7 @@ fn track_source(lua: &Lua, name: &str, source: &AnyUserData) -> mlua::Result<Tra
             labels: Rc::new(RefCell::new(vec![None])),
             stale: Rc::new(Vec::new()),
             shapes: Rc::new(RefCell::new(vec![SliceShape::DEFAULT])),
+            slice_fx: Rc::default(),
             transforms: Vec::new(),
             steps_set: false,
         });
@@ -2228,6 +2257,8 @@ struct TrackBuild {
     stale: Rc<Vec<(String, Cut)>>,
     /// Forma de los cortes, compartida con la variable como las etiquetas.
     shapes: Rc<RefCell<Vec<SliceShape>>>,
+    /// Efectos de los cortes, compartidos con la variable como las formas.
+    slice_fx: Rc<RefCell<Vec<SliceFxDef>>>,
     transforms: Vec<Transform>,
     /// Ya se llamó a `:steps()` (luego `:length()` no puede cambiar la
     /// longitud).
@@ -2314,11 +2345,13 @@ fn expand(track: TrackBuild, rng: &mut Rng, timing: Timing) -> Result<TrackDef, 
         labels,
         stale,
         shapes,
+        slice_fx,
         transforms,
         steps_set: _,
     } = track;
     def.labels = labels.borrow().clone();
     def.shapes = shapes.borrow().clone();
+    def.slice_fx = slice_fx.borrow().clone();
     // Humanize cambia cada vuelta: el ciclo es de 16 como con `chance`.
     let mut cycle = if def.humanize.is_some() {
         CHANCE_CYCLE_BARS
@@ -2632,7 +2665,18 @@ struct InstrumentHandle {
     def: InstrumentDef,
 }
 
-impl UserData for InstrumentHandle {}
+impl UserData for InstrumentHandle {
+    fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        // Un instrumento es un solo corte: sus efectos van en la pista.
+        methods.add_method("fx", |lua, _, _: mlua::MultiValue| -> mlua::Result<()> {
+            Err(fail(
+                lua,
+                "fx: un instrumento no tiene efectos por corte (es un solo corte); \
+                 ponlos en la pista: track(...):fx(nombre, { ... })",
+            ))
+        });
+    }
+}
 
 /// Fundido cruzado del bucle si no se dice otro, en ms.
 const DEFAULT_CROSSFADE_MS: f64 = 10.0;
@@ -2966,6 +3010,19 @@ fn idle_formant(track: &TrackDef) -> Option<String> {
     })
 }
 
+/// Aviso si una pista con granos tiene cortes con efectos: los granos no
+/// son voces y no pasan por ellos.
+fn grains_skip_slice_fx(track: &TrackDef) -> Option<String> {
+    let any = track.slice_fx.iter().any(|c| !c.fx.is_empty());
+    (track.granular.is_some() && any).then(|| {
+        format!(
+            "pista \"{}\": los efectos de corte (cortes:fx) no suenan en los granos; \
+             para toda la nube, usa :fx de la pista",
+            track.name
+        )
+    })
+}
+
 /// Transposición sin cambiar la duración a partir de la cual los golpes
 /// se emborronan (ver `engine::shift`): se avisa.
 pub const KEEP_PITCH_LIMIT: f32 = 12.0;
@@ -3126,6 +3183,7 @@ fn cut_sample(
         adjusted,
         stretch: this.stretch,
         shapes: Rc::new(RefCell::new(vec![SliceShape::DEFAULT; count])),
+        slice_fx: Rc::new(RefCell::new(vec![SliceFxDef::default(); count])),
     })
 }
 
@@ -3148,6 +3206,8 @@ struct SlicedHandle {
     /// Forma de cada corte (`:set()`); compartida por la variable y sus
     /// pistas, como las etiquetas.
     shapes: Rc<RefCell<Vec<SliceShape>>>,
+    /// Efectos de cada corte (`:fx()`); compartidos como las formas.
+    slice_fx: Rc<RefCell<Vec<SliceFxDef>>>,
 }
 
 /// Lee la tabla de opciones de `sample(nombre, { ... })` (claves del
@@ -3266,6 +3326,131 @@ fn apply_slice_table(
         .map_err(|e| fail(lua, format!("{who}: {e}")))
 }
 
+/// El primer argumento de `cortes:fx()` como se escribió (para los
+/// errores): `3`, `"snare"` o `{1, "snare"}`.
+fn which_text(which: &Value) -> String {
+    match which {
+        Value::Integer(i) => i.to_string(),
+        Value::Number(n) => n.to_string(),
+        Value::String(s) => format!("\"{}\"", s.to_string_lossy()),
+        Value::Table(t) => {
+            let items: Vec<String> = t
+                .clone()
+                .sequence_values::<Value>()
+                .filter_map(Result::ok)
+                .map(|v| which_text(&v))
+                .collect();
+            format!("{{{}}}", items.join(", "))
+        }
+        _ => "?".to_string(),
+    }
+}
+
+/// Los cortes (desde 0) a los que se refiere el primer argumento de
+/// `cortes:fx()`: un número (desde 1), una etiqueta o una lista de ellos.
+fn slice_targets(
+    lua: &Lua,
+    who: &str,
+    this: &SlicedHandle,
+    which: &Value,
+) -> mlua::Result<Vec<usize>> {
+    let count = this.slices.len();
+    let one = |v: &Value| -> mlua::Result<usize> {
+        let number = match v {
+            Value::Integer(i) => Some(*i),
+            Value::Number(n) if n.fract() == 0.0 => Some(*n as i64),
+            _ => None,
+        };
+        if let Some(n) = number {
+            return usize::try_from(n - 1)
+                .ok()
+                .filter(|&i| i < count)
+                .ok_or_else(|| fail(lua, format!("{who}: el corte {n} no existe (hay {count})")));
+        }
+        let Value::String(label) = v else {
+            return Err(fail(
+                lua,
+                format!("{who}: el corte es un número, una etiqueta o una lista de ellos"),
+            ));
+        };
+        let label = label.to_str()?.to_string();
+        let labels = this.labels.borrow();
+        if let Some(i) = labels
+            .iter()
+            .position(|l| l.as_deref() == Some(label.as_str()))
+        {
+            return Ok(i);
+        }
+        let known: Vec<&str> = labels.iter().flatten().map(String::as_str).collect();
+        Err(fail(
+            lua,
+            if known.is_empty() {
+                format!(
+                    "{who}: ningún corte se llama \"{label}\" (no hay etiquetas: ponlas antes con cortes:name(i, \"{label}\"))"
+                )
+            } else {
+                format!(
+                    "{who}: ningún corte se llama \"{label}\" (etiquetas: {})",
+                    known.join(", ")
+                )
+            },
+        ))
+    };
+    let mut targets = Vec::new();
+    match which {
+        Value::Table(t) => {
+            for v in t.clone().sequence_values::<Value>() {
+                let i = one(&v?)?;
+                if !targets.contains(&i) {
+                    targets.push(i);
+                }
+            }
+            if targets.is_empty() {
+                return Err(fail(lua, format!("{who}: la lista de cortes está vacía")));
+            }
+        }
+        v => targets.push(one(v)?),
+    }
+    Ok(targets)
+}
+
+/// Las automatizaciones de los parámetros de `fx` (en la ranura `index` de
+/// su cadena) que llevan `ramp()` o `lfo()`.
+fn fx_automations(
+    lua: &Lua,
+    name: &str,
+    fx: Fx,
+    index: usize,
+    curves: &[(String, engine::Curve)],
+) -> mlua::Result<Vec<engine::Automation>> {
+    let mut chain = [None; MAX_FX];
+    chain[index] = Some(fx);
+    let mut automations = Vec::new();
+    for (key, curve) in curves {
+        let Some(param) = fx.param_index(key) else {
+            let can = if fx.params().is_empty() {
+                "este efecto no tiene parámetros automatizables".to_string()
+            } else {
+                format!("sí: {}", fx.params().join(", "))
+            };
+            return Err(fail(
+                lua,
+                format!("fx(\"{name}\"): {key} no se puede automatizar ({can})"),
+            ));
+        };
+        let automation = engine::Automation {
+            fx: index,
+            param,
+            curve: *curve,
+        };
+        automation
+            .validate(&chain)
+            .map_err(|e| fail(lua, format!("fx(\"{name}\"): {key}: {e}")))?;
+        automations.push(automation);
+    }
+    Ok(automations)
+}
+
 impl UserData for SlicedHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_method("count", |_, this, ()| Ok(this.slices.len()));
@@ -3339,6 +3524,7 @@ impl UserData for SlicedHandle {
                 adjusted: vec![this.adjusted[i]],
                 stretch: this.stretch,
                 shapes: Rc::new(RefCell::new(vec![this.shapes.borrow()[i]])),
+                slice_fx: Rc::new(RefCell::new(vec![this.slice_fx.borrow()[i].clone()])),
             })
         });
 
@@ -3369,6 +3555,9 @@ impl UserData for SlicedHandle {
             let mut shapes = this.shapes.borrow().clone();
             shapes.insert(k, SliceShape::DEFAULT);
             this.shapes = Rc::new(RefCell::new(shapes));
+            let mut chains = this.slice_fx.borrow().clone();
+            chains.insert(k, SliceFxDef::default());
+            this.slice_fx = Rc::new(RefCell::new(chains));
             this.adjusted.insert(k, false);
             this.origin.indices.insert(k, None);
             Ok(this.clone())
@@ -3401,6 +3590,9 @@ impl UserData for SlicedHandle {
             let mut shapes = this.shapes.borrow().clone();
             shapes.remove(i);
             this.shapes = Rc::new(RefCell::new(shapes));
+            let mut chains = this.slice_fx.borrow().clone();
+            chains.remove(i);
+            this.slice_fx = Rc::new(RefCell::new(chains));
             this.adjusted.remove(i);
             this.origin.indices.remove(i);
             Ok(this.clone())
@@ -3442,6 +3634,52 @@ impl UserData for SlicedHandle {
             this.adjusted[i] = true;
             Ok(this.clone())
         });
+
+        // `:fx(cuál, nombre, { parámetros })`: un efecto que solo suena en
+        // ese corte (número, etiqueta o una lista de ellos).
+        methods.add_method(
+            "fx",
+            |lua, this, (which, name, params): (Value, String, Option<Table>)| {
+                let who = format!("fx({}, \"{name}\")", which_text(&which));
+                let targets = slice_targets(lua, &who, this, &which)?;
+                if let Some(p) = &params
+                    && !matches!(p.get::<Value>("sidechain")?, Value::Nil)
+                {
+                    return Err(fail(
+                        lua,
+                        format!(
+                            "{who}: el EQ dinámico de un corte no puede escuchar otra pista \
+                             (sidechain solo en el :fx de la pista)"
+                        ),
+                    ));
+                }
+                let (fx, curves) = parse_fx(lua, &name, params)?;
+                let mut chains = this.slice_fx.borrow_mut();
+                for &i in &targets {
+                    let chain = &mut chains[i];
+                    if chain.fx.len() >= MAX_FX {
+                        return Err(fail(
+                            lua,
+                            format!(
+                                "{who}: el corte {} ya tiene {MAX_FX} efectos (máximo)",
+                                i + 1
+                            ),
+                        ));
+                    }
+                    let index = chain.fx.len();
+                    let automations = fx_automations(lua, &name, fx, index, &curves)?;
+                    let mut all = chain.automation.clone();
+                    all.extend(automations);
+                    let mut list = chain.fx.clone();
+                    list.push(fx);
+                    SliceFx::new(&list, &all).map_err(|e| fail(lua, format!("{who}: {e}")))?;
+                    chain.fx = list;
+                    chain.automation = all;
+                }
+                drop(chains);
+                Ok(this.clone())
+            },
+        );
 
         // `:name(i, "kick")`: etiqueta el corte `i` para usarla en `steps`
         // (`nil` la quita).
@@ -3768,6 +4006,12 @@ fn parse_fx(
             Fx::Distortion {
                 drive: get("drive")?.unwrap_or(4.0),
                 mix: get("mix")?.unwrap_or(1.0),
+            }
+        }
+        "gain" => {
+            fx_params(lua, name, &params)?;
+            Fx::Gain {
+                level: get("level")?.unwrap_or(1.0),
             }
         }
         "dyneq" => {
@@ -4118,31 +4362,7 @@ impl UserData for TrackHandle {
                     return Err(fail(lua, format!("fx: máximo {MAX_FX} efectos por pista")));
                 }
                 // Los parámetros con ramp() o lfo(): automatizaciones.
-                let mut chain = [None; MAX_FX];
-                chain[count] = Some(fx);
-                let mut automations = Vec::new();
-                for (key, curve) in curves {
-                    let Some(param) = fx.param_index(&key) else {
-                        let can = if fx.params().is_empty() {
-                            "este efecto no tiene parámetros automatizables".to_string()
-                        } else {
-                            format!("sí: {}", fx.params().join(", "))
-                        };
-                        return Err(fail(
-                            lua,
-                            format!("fx(\"{name}\"): {key} no se puede automatizar ({can})"),
-                        ));
-                    };
-                    let automation = engine::Automation {
-                        fx: count,
-                        param,
-                        curve,
-                    };
-                    automation
-                        .validate(&chain)
-                        .map_err(|e| fail(lua, format!("fx(\"{name}\"): {key}: {e}")))?;
-                    automations.push(automation);
-                }
+                let automations = fx_automations(lua, &name, fx, count, &curves)?;
                 this.with_track(|t| {
                     if let Some(key) = sidechain {
                         t.def.sidechains.push((t.def.fx.len(), key));

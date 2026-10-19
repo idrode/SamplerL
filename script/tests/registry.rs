@@ -259,7 +259,7 @@ fn unknown_effect_errors_list_the_registry() {
     };
     assert!(
         err.message.contains(
-            "no existe (filter, lowpass, highpass, bitcrush, compressor, distortion, eq, dyneq)"
+            "no existe (filter, lowpass, highpass, bitcrush, compressor, distortion, gain, eq, dyneq)"
         ),
         "{err}"
     );

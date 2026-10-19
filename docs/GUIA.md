@@ -1415,6 +1415,27 @@ amen:set(8, { length = 0.5, play = "pingpong" })
 track("drums", amen):steps("1 . 3 .  2 . 3 .  1 1 3 .  2 . 3 3"):mode("gate")
 ```
 
+### `cortes:fx(cuál, nombre, parámetros)`
+
+Devuelve: cortes.
+
+Efecto que solo suena en un corte (o en varios): por número, etiqueta o lista. Los efectos son los de `pista:fx` (la misma tabla, con `ramp()` y `lfo()`), hasta 4 por corte, en orden. Cada golpe de ese corte pasa por ellos con su propio estado (el filtro de un golpe no arrastra el anterior) y luego por los de la pista: voz → efectos del corte → efectos de la pista → volumen de la pista → mezcla. Los demás cortes suenan exactamente igual que sin ellos. Vale para todas las pistas que usan esta variable, también las definidas antes (como `:set`), y para sus pads. `cuál` es el número del corte (desde 1), su etiqueta (ponla antes con `:name`) o una lista: `{"snare", 7}`. Una etiqueta o un corte que no existe, o un parámetro fuera de rango, da error con la línea y sigue sonando lo anterior. El EQ dinámico de un corte no admite `sidechain`. Con `:grains()` no suenan (los granos no son voces: se avisa) y un instrumento no tiene cortes que elegir (usa `pista:fx`). Con `~` en `steps` se sigue moviendo el primer filtro de la pista, no el del corte. Los envíos (`send`) son de la pista entera.
+
+- `cuál`: número de corte (desde 1), etiqueta o lista de ellos
+- `nombre`: el efecto (los de pista:fx)
+- `parámetros`: tabla con los parámetros del efecto
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+amen:name(3, "snare"):name(1, "kick")
+-- Solo la caja, sucia y con un filtro que se abre cada dos compases.
+amen:fx("snare", "bitcrush", { bits = 6 })
+amen:fx("snare", "lowpass", { cutoff = ramp(800, 8000, "2 compases") })
+-- El bombo y el corte 7, más bajos.
+amen:fx({ "kick", 7 }, "gain", { level = 0.7 })
+track("drums", amen):steps("kick . snare .  3 . snare 7  kick kick snare .  7 . snare 3")
+```
+
 ### `cortes:add(ms)`
 
 Devuelve: cortes.
@@ -1625,7 +1646,7 @@ Devuelve: pista.
 
 Añade un efecto a la cadena de la pista (hasta 4, en orden). Un parámetro desconocido da error, para pillar las erratas. Los efectos y sus parámetros están en la tabla de abajo.
 
-El filtro es un biquad de 12 dB/octava; `q = 0.707` es la respuesta más plana y valores altos resuenan en el corte. El bitcrusher reduce la resolución a `bits` y repite cada muestra `downsample` veces (reducción de la frecuencia de muestreo, sin filtro: suena sucio a propósito). El EQ tiene hasta 4 bandas en serie, cada una con su `freqN`, `gainN`, `qN` y `typeN` (`"bell"`, campana; `"lowshelf"` y `"highshelf"`, estantes que mueven todo lo que queda por debajo o por encima); una banda con `gainN = 0` no hace nada, y un EQ sin ganancias suena idéntico a no tenerlo. Al recargar con otras ganancias, el EQ va hacia ellas en unos 5 ms, sin clic. El EQ dinámico (`dyneq`) tiene una banda que escucha (un paso de banda en `freq` y `q`) y baja solo mientras lo que oye pasa de `threshold`: `1 − 1/ratio` dB por dB de más, como mucho `range`, con `attack` y `release`. Sin `sidechain` escucha la propia pista; con `sidechain = "kick"`, la salida de esa pista (tras sus efectos, antes de su volumen, aunque esté en mute o fuera del solo). Por debajo del umbral suena idéntico a no tenerlo. Los `freq`, `q`, `threshold` y `range` del EQ dinámico también admiten `ramp()` y `lfo()`. Los parámetros `cutoff`, `q`, `threshold`, `makeup`, `drive`, `mix` y los `freqN`, `gainN` y `qN` del EQ admiten `ramp()` y `lfo()` en lugar de un número; el corte del primer filtro, además, puede cambiar en cada golpe con `~` en `steps` (`3~800`).
+El filtro es un biquad de 12 dB/octava; `q = 0.707` es la respuesta más plana y valores altos resuenan en el corte. El bitcrusher reduce la resolución a `bits` y repite cada muestra `downsample` veces (reducción de la frecuencia de muestreo, sin filtro: suena sucio a propósito). El EQ tiene hasta 4 bandas en serie, cada una con su `freqN`, `gainN`, `qN` y `typeN` (`"bell"`, campana; `"lowshelf"` y `"highshelf"`, estantes que mueven todo lo que queda por debajo o por encima); una banda con `gainN = 0` no hace nada, y un EQ sin ganancias suena idéntico a no tenerlo. Al recargar con otras ganancias, el EQ va hacia ellas en unos 5 ms, sin clic. El EQ dinámico (`dyneq`) tiene una banda que escucha (un paso de banda en `freq` y `q`) y baja solo mientras lo que oye pasa de `threshold`: `1 − 1/ratio` dB por dB de más, como mucho `range`, con `attack` y `release`. Sin `sidechain` escucha la propia pista; con `sidechain = "kick"`, la salida de esa pista (tras sus efectos, antes de su volumen, aunque esté en mute o fuera del solo). Por debajo del umbral suena idéntico a no tenerlo. Los `freq`, `q`, `threshold` y `range` del EQ dinámico también admiten `ramp()` y `lfo()`. Los parámetros `cutoff`, `q`, `threshold`, `makeup`, `drive`, `mix`, `level` y los `freqN`, `gainN` y `qN` del EQ admiten `ramp()` y `lfo()` en lugar de un número; el corte del primer filtro, además, puede cambiar en cada golpe con `~` en `steps` (`3~800`).
 
 - `nombre`: el efecto (ver la tabla)
 - `parámetros`: tabla con los parámetros del efecto
@@ -1648,6 +1669,7 @@ El filtro es un biquad de 12 dB/octava; `q = 0.707` es la respuesta más plana y
 |  | `makeup` | dB que se suben después, para compensar | `0` | 0–24 |
 | `"distortion"` (o `"drive"`) | `drive` | ganancia antes de saturar | `4` | 1–50 |
 |  | `mix` | parte saturada (1 = solo la saturada) | `1` | 0–1 |
+| `"gain"` | `level` | volumen (1 = igual, 0 = silencio) | `1` | 0–4 |
 | `"eq"` | `freq1` | frecuencia de la banda 1 en Hz | `100` | 20–20000 |
 |  | `gain1` | dB que sube (o baja, en negativo) la banda 1; 0 la apaga | `0` | -24–24 |
 |  | `q1` | ancho de la banda 1 (más q, más estrecha) | `1` | 0.1–18 |

@@ -1157,6 +1157,52 @@ pub const FUNCTIONS: &[Function] = &[
         ),
     },
     Function {
+        name: "fx",
+        receiver: Receiver::Slices,
+        signature: "cortes:fx(cuál, nombre, parámetros)",
+        returns: Some(Receiver::Slices),
+        summary: "Efecto que solo suena en un corte (o en varios): por número, etiqueta o lista.",
+        doc: "Los efectos son los de `pista:fx` (la misma tabla, con `ramp()` y `lfo()`), \
+              hasta 4 por corte, en orden. Cada golpe de ese corte pasa por ellos con su \
+              propio estado (el filtro de un golpe no arrastra el anterior) y luego por los \
+              de la pista: voz → efectos del corte → efectos de la pista → volumen de la \
+              pista → mezcla. Los demás cortes suenan exactamente igual que sin ellos. \
+              Vale para todas las pistas que usan esta variable, también las definidas \
+              antes (como `:set`), y para sus pads. `cuál` es el número del corte (desde \
+              1), su etiqueta (ponla antes con `:name`) o una lista: `{\"snare\", 7}`. \
+              Una etiqueta o un corte que no existe, o un parámetro fuera de rango, da \
+              error con la línea y sigue sonando lo anterior. El EQ dinámico de un corte \
+              no admite `sidechain`. Con `:grains()` no suenan (los granos no son voces: \
+              se avisa) y un instrumento no tiene cortes que elegir (usa `pista:fx`). \
+              Con `~` en `steps` se sigue moviendo el primer filtro de la pista, no el del \
+              corte. Los envíos (`send`) son de la pista entera.",
+        params: &[
+            Param {
+                name: "cuál",
+                description: "número de corte (desde 1), etiqueta o lista de ellos",
+            },
+            Param {
+                name: "nombre",
+                description: "el efecto (los de pista:fx)",
+            },
+            Param {
+                name: "parámetros",
+                description: "tabla con los parámetros del efecto",
+            },
+        ],
+        template: "fx(${3}, \"${bitcrush}\", { bits = ${6} })",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             amen:name(3, \"snare\"):name(1, \"kick\")\n\
+             -- Solo la caja, sucia y con un filtro que se abre cada dos compases.\n\
+             amen:fx(\"snare\", \"bitcrush\", { bits = 6 })\n\
+             amen:fx(\"snare\", \"lowpass\", { cutoff = ramp(800, 8000, \"2 compases\") })\n\
+             -- El bombo y el corte 7, más bajos.\n\
+             amen:fx({ \"kick\", 7 }, \"gain\", { level = 0.7 })\n\
+             track(\"drums\", amen):steps(\"kick . snare .  3 . snare 7  kick kick snare .  7 . snare 3\")\n",
+        ),
+    },
+    Function {
         name: "add",
         receiver: Receiver::Slices,
         signature: "cortes:add(ms)",
@@ -1514,7 +1560,7 @@ pub const FUNCTIONS: &[Function] = &[
               debajo del umbral suena idéntico a no tenerlo. Los `freq`, `q`, \
               `threshold` y `range` del EQ dinámico también admiten `ramp()` y \
               `lfo()`. Los \
-              parámetros `cutoff`, `q`, `threshold`, `makeup`, `drive`, `mix` y los \
+              parámetros `cutoff`, `q`, `threshold`, `makeup`, `drive`, `mix`, `level` y los \
               `freqN`, `gainN` y `qN` del EQ admiten `ramp()` y `lfo()` en lugar de \
               un número; el corte del primer filtro, además, puede cambiar en cada \
               golpe con `~` en `steps` (`3~800`).",
@@ -2079,6 +2125,20 @@ pub const EFFECTS: &[Effect] = &[
         template: "{ drive = ${4}, mix = ${0.7} }",
     },
     Effect {
+        name: "gain",
+        aliases: &[],
+        summary: "Volumen (lineal): sobre todo para un corte (cortes:fx) o para moverlo con ramp() o lfo().",
+        params: &[FxParam {
+            name: "level",
+            description: "volumen (1 = igual, 0 = silencio)",
+            default: Some("1"),
+            valid: "0–4",
+            values: &[],
+            template: "level = ${0.5}",
+        }],
+        template: "{ level = ${0.5} }",
+    },
+    Effect {
         name: "eq",
         aliases: &[],
         summary: "EQ paramétrico de hasta 4 bandas (campana o estante grave/agudo); una banda con gain 0 no hace nada.",
@@ -2640,6 +2700,7 @@ pub fn automatable(effect: &str, param: &str) -> bool {
         Some("filter" | "lowpass" | "highpass") => engine::Fx::lowpass(1000.0),
         Some("compressor") => engine::Fx::compressor(-18.0, 4.0),
         Some("distortion") => engine::Fx::distortion(4.0, 1.0),
+        Some("gain") => engine::Fx::gain(1.0),
         Some("bitcrush") => engine::Fx::bitcrush(8, 1),
         Some("eq") => engine::Fx::eq(&[]),
         Some("dyneq") => engine::Fx::DynEq(engine::DynEqParams::new(100.0)),
