@@ -1683,8 +1683,11 @@ pub const FUNCTIONS: &[Function] = &[
               azar sale de `seed` y de la posición de la canción: la misma canción \
               suena igual en cada render; sin `seed`, una por pista sacada de su \
               nombre. Hasta 32 granos a la vez por pista (`density × size`). Una \
-              pista con granos no puede ser instrumento; los pads del modo tocar \
-              tocan el corte tal cual.",
+              pista con granos no puede ser instrumento. En el modo tocar (y con el MIDI \
+              de entrada) la tecla abre una nube mientras se mantiene: con varios \
+              cortes elige el corte de donde salen los granos, y con uno solo (lo \
+              normal en una textura) es el pitch, un semitono por tecla; el resto \
+              son los parámetros de la pista.",
         params: &[Param {
             name: "parámetros",
             description: "tabla con `size`, `density`, `pos`, `speed`, `jitter`, `pitch`, `spread` y `seed` (ver abajo)",

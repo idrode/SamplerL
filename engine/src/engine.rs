@@ -139,6 +139,19 @@ enum Command {
     },
     /// Suelta la nota en vivo de esa tecla: empieza su release.
     NoteOff { track: usize, key: u8 },
+    /// Una nube de granos en vivo (un pad o MIDI) en una pista con granos:
+    /// nace de `start..end` al pitch `rate` hasta su `GrainOff`.
+    GrainOn {
+        track: usize,
+        sample: Arc<Sample>,
+        start: usize,
+        end: usize,
+        rate: f64,
+        gain: f32,
+        key: u8,
+    },
+    /// Suelta la nube en vivo de esa tecla: no nacen más granos.
+    GrainOff { track: usize, key: u8 },
 }
 
 /// Cómo se reproduce un rango: ganancia, velocidad de lectura (pitch),
@@ -1141,6 +1154,57 @@ impl Controller {
         self.send(cmd, Some(start < end))
     }
 
+    /// Toca ya una nube de granos en la pista `track` (un pad o una nota
+    /// MIDI de entrada): los granos nacen del rango `range` del sample, con
+    /// los parámetros de la nube de la pista (`:grains()`, `:freeze()`) y
+    /// `semitones` más de pitch, hasta [`Controller::grain_off`] con la
+    /// misma `key`. Una nube por pista: la última tecla manda. Si el patrón
+    /// de la pista no tiene granos (todavía), toca el rango tal cual.
+    pub fn grain_on(
+        &mut self,
+        track: usize,
+        sample: &Arc<Sample>,
+        range: Range<usize>,
+        semitones: f32,
+        gain: f32,
+        key: u8,
+    ) -> Result<(), SendError> {
+        if track >= MAX_TRACKS {
+            return Err(SendError::NoSuchTrack(track));
+        }
+        let invalid = |reason| SendError::InvalidStep { step: 0, reason };
+        if !(0.0..=crate::sequencer::MAX_GAIN).contains(&gain) {
+            return Err(invalid("ganancia fuera de rango (0 a 4)"));
+        }
+        if !(-crate::sequencer::MAX_SEMITONES..=crate::sequencer::MAX_SEMITONES)
+            .contains(&semitones)
+        {
+            return Err(invalid("pitch fuera de rango (-36 a 36 semitonos)"));
+        }
+        let end = range.end.min(sample.frames());
+        let start = range.start.min(end);
+        let cmd = Command::GrainOn {
+            track,
+            sample: sample.clone(),
+            start,
+            end,
+            rate: 2f64.powf(semitones as f64 / 12.0),
+            gain,
+            key,
+        };
+        self.send(cmd, Some(start < end))
+    }
+
+    /// Suelta la nube en vivo de la tecla `key` en la pista `track`: no
+    /// nacen más granos y los que suenan acaban su ventana. Una tecla sin
+    /// nube no hace nada.
+    pub fn grain_off(&mut self, track: usize, key: u8) -> Result<(), SendError> {
+        if track >= MAX_TRACKS {
+            return Err(SendError::NoSuchTrack(track));
+        }
+        self.send(Command::GrainOff { track, key }, None)
+    }
+
     /// Suelta la nota en vivo de la tecla `key` en la pista `track`: empieza
     /// su release. Una tecla sin nota no hace nada.
     pub fn note_off(&mut self, track: usize, key: u8) -> Result<(), SendError> {
@@ -1491,6 +1555,7 @@ impl Engine {
                 t.voice.as_ref().is_some_and(Voice::is_active)
                     || t.fading.is_some()
                     || t.has_notes()
+                    || t.cloud.is_active()
             })
             || self.preview.as_ref().is_some_and(Voice::is_active)
             || self.preview_fading.is_some();
@@ -1672,6 +1737,53 @@ impl Engine {
                 self.discard(sample);
             }
             Command::NoteOff { track, key } => self.note_off(track, key),
+            Command::GrainOn {
+                track,
+                sample,
+                start,
+                end,
+                rate,
+                gain,
+                key,
+            } => {
+                if start >= end {
+                    self.discard(sample);
+                    return;
+                }
+                self.status.set_hit(track, start);
+                // Los parámetros: los del patrón; si aún no tiene granos (o no
+                // ha entrado, antes de la primera marcha), los del que espera.
+                let t = &mut self.tracks[track];
+                let current = t.pattern.as_ref().and_then(|p| p.granular);
+                let waiting = t
+                    .pending
+                    .as_ref()
+                    .and_then(|p| p.as_ref())
+                    .and_then(|p| p.granular);
+                if current.or(waiting).is_some() {
+                    t.cloud.standby = current.is_none().then_some(waiting).flatten();
+                    if !t.sounding() {
+                        t.fresh = true;
+                    }
+                    if let Some(old) = t.cloud.open_live(sample, (start, end), rate, gain, key) {
+                        self.discard(old.sample);
+                    }
+                } else {
+                    // Aún sin granos (el patrón entra al compás): el corte.
+                    let playback = Playback {
+                        gain,
+                        rate,
+                        ..Playback::NORMAL
+                    };
+                    self.trigger(track, Some(Voice::new(sample, start, end, playback)));
+                }
+                self.choke(track);
+            }
+            Command::GrainOff { track, key } => {
+                if let Some(old) = self.tracks[track].cloud.release_live(key) {
+                    self.discard(old.sample);
+                }
+            }
             Command::SetMute { track, on } => self.tracks[track].live_mute = on,
             Command::SetSolo { track, on } => self.tracks[track].live_solo = on,
             Command::Preview { sample, start, end } => {
@@ -2238,7 +2350,12 @@ impl Engine {
             }
             let mut ended = None;
             let born = track.cloud.born;
-            if let Some(params) = track.pattern.as_ref().and_then(|p| p.granular) {
+            let granular = track
+                .pattern
+                .as_ref()
+                .and_then(|p| p.granular)
+                .or(track.cloud.standby);
+            if let Some(params) = granular {
                 let at = Position {
                     frame: self.transport.frame,
                     steps: clock.steps,
@@ -2588,6 +2705,9 @@ impl Engine {
 /// estado de los efectos.
 fn put_pattern(track: &mut Track, new: Option<Pattern>, sample_rate: u32) -> Option<Pattern> {
     let old = std::mem::replace(&mut track.pattern, new);
+    // Una nube en vivo con los parámetros del patrón que esperaba: ya
+    // manda el que ha entrado.
+    track.cloud.standby = None;
     // Un efecto de otro tipo en la ranura: su parámetro suavizado ya no
     // vale.
     for (i, mods) in track.mods.iter_mut().enumerate() {

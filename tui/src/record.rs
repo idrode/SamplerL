@@ -28,8 +28,12 @@ struct Hit {
     /// Corte (desde 0).
     slice: usize,
     gain: f32,
-    /// Nota de un instrumento: semitonos sobre la raíz.
+    /// Nota de un instrumento (o de una nube con un solo corte): semitonos
+    /// sobre la raíz.
     semitones: Option<f32>,
+    /// Un corte de una nube de granos: suena mientras se mantiene la tecla,
+    /// como una nota.
+    held: bool,
     /// Pasos que sigue sonando después del suyo (hasta el note off).
     hold: usize,
 }
@@ -62,6 +66,16 @@ impl Recording {
         self.put(position, slice, gain, None)
     }
 
+    /// Apunta un corte de una nube de granos tocado en `position`: dura
+    /// hasta que se suelte ([`Recording::release`]).
+    pub fn hit_held(&mut self, position: f64, slice: usize, gain: f32) -> Option<usize> {
+        let step = self.put(position, slice, gain, None)?;
+        if let Some(Some(hit)) = self.hits.get_mut(step) {
+            hit.held = true;
+        }
+        Some(step)
+    }
+
     /// Apunta una nota de un instrumento (`semitones` sobre la raíz) tocada
     /// en `position`. Devuelve el paso, para [`Recording::release`].
     pub fn note(&mut self, position: f64, semitones: f32, gain: f32) -> Option<usize> {
@@ -73,7 +87,7 @@ impl Recording {
     pub fn release(&mut self, step: usize, position: f64) {
         let end = (position - self.start as f64).round().max(0.0) as usize;
         if let Some(Some(hit)) = self.hits.get_mut(step)
-            && hit.semitones.is_some()
+            && (hit.semitones.is_some() || hit.held)
         {
             hit.hold = end.saturating_sub(step + 1).min(self.steps - step - 1);
         }
@@ -91,6 +105,7 @@ impl Recording {
             slice,
             gain,
             semitones,
+            held: false,
             hold: 0,
         });
         Some(step)
@@ -213,5 +228,22 @@ mod tests {
         let last = rec.note(14.0, 2.0, 1.0).unwrap();
         rec.release(last, 40.0);
         assert_eq!(rec.notation(&[]), "1^0 . . .  . . . .  . . . .  . . 1^2 _");
+    }
+
+    #[test]
+    fn grain_slices_last_while_the_key_is_held_and_cuts_are_not_held() {
+        let mut rec = Recording::new("nube", 0, 1, 16);
+        let kick = rec.hit_held(0.2, 0, 1.0).unwrap();
+        rec.release(kick, 3.1);
+        let snare = rec.hit_held(8.0, 2, 0.5).unwrap();
+        rec.release(snare, 9.4);
+        // Un corte normal no se alarga aunque se llame a release.
+        let plain = rec.hit(12.0, 1, 1.0).unwrap();
+        rec.release(plain, 15.0);
+        let labels = vec![Some("kick".into()), None, Some("hat".into())];
+        assert_eq!(
+            rec.notation(&labels),
+            "kick _ _ .  . . . .  hat@0.5 . . .  2 . . ."
+        );
     }
 }

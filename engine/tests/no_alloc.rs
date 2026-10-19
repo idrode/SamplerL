@@ -2,7 +2,7 @@
 //! asignador global cuenta las reservas que hace este hilo mientras corre
 //! `Engine::process`, con retrasos (swing, humanize), retrigger, pitch,
 //! instrumentos (polifonía, ADSR, bucles), el EQ (suavizado y automatizado),
-//! el EQ dinámico con sidechain, efectos por corte (con sus colas), bucles de corte con fundido, cambios de
+//! el EQ dinámico con sidechain, efectos por corte (con sus colas), bucles de corte con fundido, nubes de granos en vivo, cambios de
 //! patrón al compás y un patrón que se suelta a la cola de basura.
 
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -806,6 +806,118 @@ fn the_audio_thread_never_allocates() {
         }
     });
     assert_eq!(n, 0, "reservas al quitar los bucles");
+    controller.collect_garbage();
+
+    // Nubes de granos en vivo: pads y MIDI abren y sueltan nubes (con
+    // curvas, jitter y spread) en una pista con granos y en una sin ellos,
+    // una tecla sustituye a otra, un patrón nuevo entra con la tecla
+    // mantenida, el paro las corta y una emisión del patrón las sustituye.
+    let cloud = |seed: u64, density: f32| {
+        let params = engine::Granular {
+            size_ms: engine::Knob::Fixed(40.0),
+            density: engine::Knob::Moving(engine::Curve::Lfo {
+                min: density / 2.0,
+                max: density,
+                rate: engine::LfoRate::Steps(8.0),
+            }),
+            jitter_ms: engine::Knob::Fixed(80.0),
+            spread: engine::Knob::Fixed(3.0),
+            ..engine::Granular::new(seed)
+        };
+        let steps: Vec<Option<Step>> = (0..STEPS)
+            .map(|k| (k % 8 == 4).then(|| Step::new(k % 2)))
+            .collect();
+        Pattern::from_steps(sample.clone(), &slices, steps)
+            .unwrap()
+            .with_granular(Some(params))
+            .unwrap()
+    };
+    controller
+        .set_track_pattern(1, Some(cloud(1, 40.0)))
+        .unwrap();
+    controller.start().unwrap();
+    let n = counted(|| {
+        for _ in 0..50 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas al montar la nube");
+    for (i, (key, semitones)) in [(130u8, 0.0f32), (131, 7.0), (132, -12.0)]
+        .into_iter()
+        .enumerate()
+    {
+        controller
+            .grain_on(1, &sample, slices.get(i % 2).unwrap(), semitones, 0.8, key)
+            .unwrap();
+        let n = counted(|| {
+            for _ in 0..60 {
+                engine.process(&mut out, 2);
+            }
+        });
+        assert_eq!(n, 0, "reservas con la tecla {key} de una nube en vivo");
+    }
+    controller.grain_off(1, 130).unwrap();
+    controller.grain_off(1, 132).unwrap();
+    // Otro patrón (más denso) con la tecla mantenida, y un pad en otra
+    // pista sin granos.
+    let mut batch = engine::Batch::new();
+    batch.set_pattern(1, Some(cloud(2, 80.0)));
+    controller.apply(batch).unwrap();
+    controller
+        .grain_on(0, &sample, 0..sample.frames(), 3.0, 1.0, 140)
+        .unwrap();
+    let n = counted(|| {
+        for _ in 0..400 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas con otro patrón y una tecla mantenida");
+    controller.grain_off(1, 131).unwrap();
+    controller.grain_off(0, 140).unwrap();
+    controller
+        .grain_on(1, &sample, 0..sample.frames(), 0.0, 1.0, 133)
+        .unwrap();
+    controller.stop().unwrap();
+    let n = counted(|| {
+        for _ in 0..100 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas al parar con una nube en vivo");
+    controller
+        .grain_on(1, &sample, 0..sample.frames(), 0.0, 1.0, 134)
+        .unwrap();
+    controller.set_track_pattern(1, None).unwrap();
+    controller.start().unwrap();
+    let n = counted(|| {
+        for _ in 0..300 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas al quitar el patrón con una nube en vivo");
+    controller.set_track_pattern(0, None).unwrap();
+    // Una tecla con el patrón con granos todavía esperando al compás (sus
+    // parámetros de reserva) y entrando después.
+    controller
+        .set_track_pattern(2, Some(cloud(3, 40.0)))
+        .unwrap();
+    controller
+        .grain_on(2, &sample, 0..sample.frames(), 0.0, 1.0, 135)
+        .unwrap();
+    let n = counted(|| {
+        for _ in 0..500 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas con una nube en vivo y el patrón pendiente");
+    controller.grain_off(2, 135).unwrap();
+    controller.set_track_pattern(2, None).unwrap();
+    let n = counted(|| {
+        for _ in 0..300 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas al quitar el patrón de una nube en vivo");
     controller.collect_garbage();
 
     // Rampa de tempo y cambio de compás.

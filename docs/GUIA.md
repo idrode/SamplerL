@@ -610,6 +610,26 @@ mantenida y se suelta cuando dejan de llegar (unos 0,7 s tras una
 pulsación corta, 0,15 s tras la última repetición). Volver al editor o
 cambiar de pista suelta las notas de los pads.
 
+**En una pista con granos** (`pista:grains()`, `pista:freeze()`), cada tecla
+abre una nube de granos que dura mientras la mantienes (se suelta como las
+notas de un instrumento: con el aviso de la terminal o cuando dejan de llegar
+las repeticiones) y no tiene que sonar la canción. La tecla elige:
+
+- **con varios cortes, el corte** de donde salen los granos (`2` es el corte
+  2, como el número de un paso);
+- **con un solo corte** (lo normal en una textura, `slice(1)`), **el pitch**:
+  `1` deja la nube como es y cada tecla sube un semitono (`2` uno, `8` una
+  quinta, `e` una octava). Por MIDI, la nota menos la nota base (36), también
+  hacia abajo.
+
+El resto (tamaño, densidad, posición, `jitter`, `spread`...) es lo que diga
+el script, y lo que cambies entra al compás como siempre, aunque la tecla
+siga apretada. Hay una nube por pista: la última tecla manda, y soltar la
+otra no la corta. El azar sale de `seed`, así que tocar lo mismo suena igual
+(cada pulsación, un poco distinta de la anterior). Con la velocidad MIDI como
+volumen. «Grabar lo tocado» las apunta como `agudo _ _` (el corte y lo que
+duró). Una pista sin granos sigue tocando el corte tal cual.
+
 La **preescucha** (← →, espacio, o «Preescuchar el corte seleccionado» en
 la paleta) toca el corte en una voz aparte: no corta lo que suena en las
 pistas, no pasa por su volumen, efectos ni mute, suena también con el
@@ -1870,7 +1890,7 @@ track("bajo", amen)
 
 Devuelve: pista.
 
-Toca el sample en granos: cada golpe abre una nube sobre su corte mientras dura su paso. Cada golpe de la pista, en vez de tocar su corte, hace nacer granos de él durante su paso (y sus `_`): trozos de `size` ms con ventana de Hann, `density` por segundo, leídos desde `pos` (fracción del corte) más lo que avanza la lectura (`speed`: 1 recorre el corte a su velocidad, 0 lo congela) más hasta `jitter` ms al azar, con el pitch del paso más `pitch` más hasta `spread` semitonos al azar. Al acabar el paso no nacen más y los que suenan acaban su ventana. Todos los números admiten `ramp()` y `lfo()` (se miran al nacer cada grano). El azar sale de `seed` y de la posición de la canción: la misma canción suena igual en cada render; sin `seed`, una por pista sacada de su nombre. Hasta 32 granos a la vez por pista (`density × size`). Una pista con granos no puede ser instrumento; los pads del modo tocar tocan el corte tal cual.
+Toca el sample en granos: cada golpe abre una nube sobre su corte mientras dura su paso. Cada golpe de la pista, en vez de tocar su corte, hace nacer granos de él durante su paso (y sus `_`): trozos de `size` ms con ventana de Hann, `density` por segundo, leídos desde `pos` (fracción del corte) más lo que avanza la lectura (`speed`: 1 recorre el corte a su velocidad, 0 lo congela) más hasta `jitter` ms al azar, con el pitch del paso más `pitch` más hasta `spread` semitonos al azar. Al acabar el paso no nacen más y los que suenan acaban su ventana. Todos los números admiten `ramp()` y `lfo()` (se miran al nacer cada grano). El azar sale de `seed` y de la posición de la canción: la misma canción suena igual en cada render; sin `seed`, una por pista sacada de su nombre. Hasta 32 granos a la vez por pista (`density × size`). Una pista con granos no puede ser instrumento. En el modo tocar (y con el MIDI de entrada) la tecla abre una nube mientras se mantiene: con varios cortes elige el corte de donde salen los granos, y con uno solo (lo normal en una textura) es el pitch, un semitono por tecla; el resto son los parámetros de la pista.
 
 - `parámetros`: tabla con `size`, `density`, `pos`, `speed`, `jitter`, `pitch`, `spread` y `seed` (ver abajo)
 

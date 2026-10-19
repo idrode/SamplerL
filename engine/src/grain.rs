@@ -16,6 +16,13 @@
 //! de la pista y el frame de la canción en que nace el grano: la misma
 //! canción suena igual en cada render, y recargar no lo cambia.
 //!
+//! En vivo (pads y MIDI), una tecla abre una emisión que dura hasta que se
+//! suelta ([`Cloud::open_live`], [`Cloud::release_live`]): no depende del
+//! paso ni de que el secuenciador corra. Su azar sale de la semilla y de un
+//! reloj propio (cuántas emisiones en vivo lleva la pista y cuántos frames
+//! lleva esta), no de la posición de la canción: tocar lo mismo en el mismo
+//! orden suena igual esté la canción donde esté.
+//!
 //! Los granos van en un array fijo por pista ([`MAX_GRAINS`]): nada de
 //! memoria dinámica en el hilo de audio. Si se llenan (no debería: la
 //! validación no deja que se solapen más), el grano nuevo no nace.
@@ -232,7 +239,23 @@ pub(crate) struct Emission {
     next: f64,
     /// Lo que ha avanzado la lectura (frames del sample).
     scan: f64,
+    /// Emisión en vivo: sigue hasta que se suelta su tecla.
+    live: Option<Live>,
 }
+
+/// Lo propio de una emisión en vivo.
+struct Live {
+    /// Tecla que la mantiene (la del motor, como las notas de un
+    /// instrumento).
+    key: u8,
+    /// Cuántas emisiones en vivo había abierto la pista antes de esta.
+    serial: u64,
+    /// Frames de salida desde que se abrió.
+    elapsed: u64,
+}
+
+/// Duración de una emisión en vivo hasta que se suelta.
+const HELD: u64 = u64::MAX;
 
 /// La nube de granos de una pista.
 pub(crate) struct Cloud {
@@ -240,6 +263,11 @@ pub(crate) struct Cloud {
     pub emission: Option<Emission>,
     /// Granos que han nacido (para el estado).
     pub born: u32,
+    /// Emisiones en vivo abiertas (para su azar).
+    opened: u64,
+    /// Parámetros de una nube en vivo mientras el patrón con granos de su
+    /// pista no ha entrado (el que espera al compás): los usa en su lugar.
+    pub standby: Option<Granular>,
 }
 
 impl Default for Cloud {
@@ -248,6 +276,8 @@ impl Default for Cloud {
             grains: std::array::from_fn(|_| None),
             emission: None,
             born: 0,
+            opened: 0,
+            standby: None,
         }
     }
 }
@@ -291,8 +321,45 @@ impl Cloud {
             left: gate.max(1),
             next: 0.0,
             scan: 0.0,
+            live: None,
         });
         std::mem::replace(&mut self.emission, emission)
+    }
+
+    /// Una tecla en vivo: los granos nacen del rango `start..end` (al pitch
+    /// `rate`) hasta que se suelta la tecla `key`, que cierra esta emisión
+    /// ([`Cloud::release_live`]). Devuelve la emisión anterior.
+    pub fn open_live(
+        &mut self,
+        sample: Arc<Sample>,
+        (start, end): (usize, usize),
+        rate: f64,
+        gain: f32,
+        key: u8,
+    ) -> Option<Emission> {
+        let serial = self.opened;
+        self.opened += 1;
+        let old = self.open(sample, start, end, rate, false, gain, HELD);
+        // (Con un rango vacío no se abre nada.)
+        if let Some(e) = &mut self.emission {
+            e.live = Some(Live {
+                key,
+                serial,
+                elapsed: 0,
+            });
+        }
+        old
+    }
+
+    /// Se soltó la tecla `key`: si mantenía la emisión, no nacen más granos
+    /// (los que suenan acaban su ventana). Devuelve la emisión para soltar
+    /// su sample fuera del audio.
+    pub fn release_live(&mut self, key: u8) -> Option<Emission> {
+        let holds = self
+            .emission
+            .as_ref()
+            .is_some_and(|e| e.live.as_ref().is_some_and(|l| l.key == key));
+        if holds { self.emission.take() } else { None }
     }
 
     /// Para la emisión y corta los granos con el fundido mínimo.
@@ -326,8 +393,13 @@ impl Cloud {
                 if e.next <= 0.0 {
                     let [size_ms, density, position, _, jitter_ms, pitch, spread] =
                         params.values(steps, seconds);
-                    // Azar de este grano: la semilla y el frame de la canción.
-                    let mut random = Random::new(params.seed, at.frame + k as u64);
+                    // Azar de este grano: la semilla y el frame de la canción
+                    // (en vivo, el reloj de la emisión).
+                    let clock = match &e.live {
+                        Some(live) => (live.serial << 40) ^ live.elapsed,
+                        None => at.frame + k as u64,
+                    };
+                    let mut random = Random::new(params.seed, clock);
                     let (u, w) = (random.next(), random.next());
                     let span = (e.end - e.start) as f64;
                     let semitones = pitch as f64 + (2.0 * w - 1.0) * spread as f64;
@@ -369,6 +441,9 @@ impl Cloud {
                 }
                 e.next -= 1.0;
                 e.left -= 1;
+                if let Some(live) = &mut e.live {
+                    live.elapsed += 1;
+                }
                 // La lectura avanza con la velocidad de ese momento.
                 e.scan += params.speed.at(steps, seconds, false) as f64;
                 if e.left == 0 {

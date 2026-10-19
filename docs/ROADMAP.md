@@ -251,7 +251,9 @@ huellas de `golden.rs` idénticas si no se usa nada nuevo, código portable
 4. ✅ **Granular y congelar**: leer el sample en granos (posición, tamaño,
    densidad, dispersión) para texturas y para congelar un instante:
    `pista:grains({ ... })` y `pista:freeze(pos)`, con semilla y con
-   `ramp`/`lfo` en sus parámetros.
+   `ramp`/`lfo` en sus parámetros. Y en vivo: los pads y el MIDI de entrada
+   abren una nube mientras se mantiene la tecla (ver «Nube en vivo» en
+   [docs/ESTADO.md](ESTADO.md)).
 5. ✅ **Tocar un instrumento en vivo** desde el modo tocar y desde el MIDI
    de entrada, con note on y note off: la nota arranca la envolvente y el
    note off dispara el release. Decide la pista seleccionada; en las

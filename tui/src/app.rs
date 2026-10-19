@@ -74,6 +74,8 @@ struct HeldNote {
     repeated: bool,
     /// Paso en que se grabó, si se está grabando esa pista.
     recorded: Option<usize>,
+    /// Es una nube de granos (se suelta con `grain_off`), no una nota.
+    grain: bool,
 }
 
 /// Modo de la interfaz: escribir en el editor o tocar cortes con el teclado.
@@ -1511,6 +1513,10 @@ impl App {
                     // En un instrumento, la nota es la que suena.
                     let now = Instant::now();
                     self.live_note_on(note, (note as i32 - root) as f32, gain, now);
+                } else if self.selected_granular() {
+                    // En una pista con granos, la nota abre una nube.
+                    let offset = note as i32 - self.midi.base_note as i32;
+                    self.live_grain_on(note, offset, gain, Instant::now());
                 } else if let Some(index) = self.midi.slice_for(channel, note) {
                     self.play_pad_with_gain(index, gain);
                 }
@@ -1550,7 +1556,8 @@ impl App {
     /// El pad `index` pulsado en `now` (el instante se pasa para probar los
     /// tiempos sin esperar).
     pub fn press_pad_at(&mut self, index: usize, now: Instant) {
-        if self.selected_instrument().is_none() {
+        let granular = self.selected_granular();
+        if self.selected_instrument().is_none() && !granular {
             self.play_pad_with_gain(index, 1.0);
             return;
         }
@@ -1561,7 +1568,11 @@ impl App {
             held.repeated = true;
             return;
         }
-        self.live_note_on(key, index as f32, 1.0, now);
+        if granular {
+            self.live_grain_on(key, index as i32, 1.0, now);
+        } else {
+            self.live_note_on(key, index as f32, 1.0, now);
+        }
     }
 
     /// Se soltó una tecla (solo llega si la terminal lo dice): el pad suelta
@@ -1760,6 +1771,85 @@ impl App {
         self.tracks().get(self.selected).and_then(|t| t.instrument)
     }
 
+    /// La pista seleccionada toca en granos (`:grains()`, `:freeze()`).
+    fn selected_granular(&self) -> bool {
+        self.tracks()
+            .get(self.selected)
+            .is_some_and(|t| t.granular.is_some())
+    }
+
+    /// Una nube de granos en vivo en la pista seleccionada, que sigue hasta
+    /// soltar la tecla `key` (la tecla elige el corte, o el pitch si la
+    /// pista tiene un solo corte: ver `n`).
+    ///
+    /// `n` es el número de pad o la distancia de la nota MIDI a la nota
+    /// base. Con varios cortes, la tecla `n` abre la nube del corte `n`
+    /// (desde 0), como el número de un paso; con uno solo (lo normal en una
+    /// textura), las teclas son semitonos sobre el pitch de la nube, como
+    /// las de un instrumento. La posición, el tamaño, la densidad y los
+    /// demás parámetros son los de la pista (lo que diga el script).
+    fn live_grain_on(&mut self, key: u8, n: i32, gain: f32, now: Instant) {
+        let Some(track) = self.tracks().get(self.selected) else {
+            return;
+        };
+        let Some(slot) = self.host.track_slot(&track.name) else {
+            return;
+        };
+        let (sample, name, slices) = (track.sample.clone(), track.name.clone(), track.slices.len());
+        let single = slices == 1;
+        let (range, semitones, index, text) = if single {
+            let range = track.slices.get(0).unwrap_or(0..sample.frames());
+            (range, n as f32, 0, format!("{n:+} st"))
+        } else {
+            let Some(range) = usize::try_from(n).ok().and_then(|i| {
+                let shape = track.shapes.get(i).copied().unwrap_or_default();
+                track.slices.get(i).map(|r| shape.range(r))
+            }) else {
+                self.message = format!("{name} no tiene corte {} (tiene {slices})", n + 1);
+                return;
+            };
+            let i = n as usize;
+            let label = track
+                .labels
+                .get(i)
+                .cloned()
+                .flatten()
+                .map_or(String::new(), |l| format!(" ({l})"));
+            (range, 0.0, i, format!("corte {}{label}", i + 1))
+        };
+        match self
+            .controller
+            .grain_on(slot, &sample, range, semitones, gain, key)
+        {
+            Ok(()) => {
+                // La misma tecla otra vez (MIDI sin note off): la sustituye.
+                self.held.retain(|h| h.key != key);
+                self.selected_slice = index;
+                let position = self.controller.position();
+                let recorded = match (&mut self.recording, position) {
+                    (Some(rec), Some(position)) if rec.track == name && single => {
+                        rec.note(position, semitones, gain)
+                    }
+                    (Some(rec), Some(position)) if rec.track == name => {
+                        rec.hit_held(position, index, gain)
+                    }
+                    _ => None,
+                };
+                self.held.push(HeldNote {
+                    key,
+                    slot,
+                    track: name.clone(),
+                    last: now,
+                    repeated: false,
+                    recorded,
+                    grain: true,
+                });
+                self.message = format!("⁘ {name}: {text}");
+            }
+            Err(e) => self.message = format!("{name}: {text}: {e}"),
+        }
+    }
+
     /// Una nota en vivo (`semitones` sobre la raíz) en el instrumento de la
     /// pista seleccionada, con la tecla `key` del motor.
     fn live_note_on(&mut self, key: u8, semitones: f32, gain: f32, now: Instant) {
@@ -1802,6 +1892,7 @@ impl App {
                     last: now,
                     repeated: false,
                     recorded,
+                    grain: false,
                 });
                 self.message = format!("♪ {name}: {note}");
             }
@@ -1815,7 +1906,11 @@ impl App {
             return;
         };
         let held = self.held.remove(at);
-        let _ = self.controller.note_off(held.slot, key);
+        let _ = if held.grain {
+            self.controller.grain_off(held.slot, key)
+        } else {
+            self.controller.note_off(held.slot, key)
+        };
         if let (Some(rec), Some(step), Some(position)) = (
             &mut self.recording,
             held.recorded,
