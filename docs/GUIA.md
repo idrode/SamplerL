@@ -159,8 +159,11 @@ anterior.
   ocupan toda la ventana: arriba el transporte; la forma de onda grande de
   la pista seleccionada, con los cortes numerados en una fila aparte (el
   que suena y el elegido, resaltados) y al pie dónde empieza cada uno en
-  ms; debajo, el tracker con todas las pistas a la vez (las columnas se
-  estrechan para que quepan; si ni así, el título dice cuántas se ven), y
+  ms; debajo, a la izquierda el mezclador (una tira por pista con su
+  medidor vertical, el nivel en dB, el volumen, mute `M`, solo `S`, `SAT`
+  si satura y los envíos, y la del master con `LIM` y `SAT`) y a la
+  derecha el tracker con todas las pistas a la vez (las columnas se
+  estrechan para que quepan; si ni así, el título dice cuántas se ven); y
   abajo los efectos.
 - **Lo que cambia la principal en el texto** (etiquetar, `bpm`, el EQ
   sugerido, lo grabado, restaurar una versión) llega al editor como un

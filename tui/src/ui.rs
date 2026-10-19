@@ -97,7 +97,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
 /// La ventana principal con el editor en la suya (fase L): las vistas
 /// ocupan toda la ventana. Arriba, el transporte y el enlace; la forma de
-/// onda grande; debajo, el motor y el tracker; abajo, los efectos.
+/// onda grande; debajo, el mezclador y el tracker; abajo, los efectos.
 fn draw_main_window(frame: &mut Frame, view: &ViewModel) {
     let [top, body, fx, help] = Layout::vertical([
         Constraint::Length(1),
@@ -125,9 +125,12 @@ fn draw_main_window(frame: &mut Frame, view: &ViewModel) {
     ])
     .areas(body);
     frame.render_widget(BigSamplePanel(view), sample_area);
-    let [engine_area, tracker_area] =
-        Layout::horizontal([Constraint::Percentage(40), Constraint::Percentage(60)]).areas(lower);
-    frame.render_widget(EnginePanel(view), engine_area);
+    // El mezclador, lo que pidan sus tiras (hasta la mitad); el tracker,
+    // lo demás.
+    let mixer_width = MixerPanel::width(view.tracks.len()).min(lower.width / 2);
+    let [mixer_area, tracker_area] =
+        Layout::horizontal([Constraint::Length(mixer_width), Constraint::Min(0)]).areas(lower);
+    frame.render_widget(MixerPanel(view), mixer_area);
     frame.render_widget(FullTrackerPanel(view), tracker_area);
     frame.render_widget(FxPanel(view), fx);
     frame.render_widget(HelpLine(view), help);
@@ -1380,6 +1383,180 @@ fn render_tracker(view: &ViewModel, inner: Rect, buf: &mut Buffer, column: usize
             buf.set_style(row_area, Style::new().bg(playing_color()));
         }
         line.render(row_area, buf);
+    }
+}
+
+/// Ancho de cada tira del mezclador.
+const STRIP: u16 = 9;
+
+/// Medidor vertical de `rows` filas, de abajo arriba (la primera es la de
+/// arriba), con octavos de celda: `level` de 0 a 1.
+pub fn vertical_meter(level: f32, rows: u16) -> Vec<char> {
+    const LOWER: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    let eighths = (level.clamp(0.0, 1.0) * rows as f32 * 8.0).round() as u32;
+    (0..rows as u32)
+        .map(|row| {
+            // Octavos que llenan esta fila, contando desde abajo.
+            let from_bottom = rows as u32 - 1 - row;
+            match eighths.saturating_sub(from_bottom * 8).min(8) {
+                0 => ' ',
+                n => LOWER[n as usize - 1],
+            }
+        })
+        .collect()
+}
+
+/// Texto de un nivel en dB (`-6.0`, `-∞`).
+fn db_text(level: f32) -> String {
+    if level > 0.0 {
+        format!("{:+.1}", 20.0 * level.log10())
+    } else {
+        "-∞".into()
+    }
+}
+
+/// Mezclador de la ventana principal sin editor: una tira por pista con
+/// su medidor vertical (en rojo si satura), el nivel en dB, el volumen,
+/// mute y solo y los envíos, y una más para el master (antes del
+/// limitador, con LIM y SAT). Si no caben, el título dice cuántas se ven
+/// (`mezclador 6/8`).
+pub struct MixerPanel<'a>(pub &'a ViewModel);
+
+impl MixerPanel<'_> {
+    /// Ancho que piden `tracks` tiras más la del master (con el borde).
+    pub fn width(tracks: usize) -> u16 {
+        (tracks as u16 + 1) * STRIP + 2
+    }
+}
+
+impl Widget for MixerPanel<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let view = self.0;
+        let count = view.tracks.len();
+        // La del master siempre; las pistas, las que quepan.
+        let room = (area.width.saturating_sub(2) / STRIP).saturating_sub(1) as usize;
+        let shown = count.min(room);
+        let title = if shown < count {
+            format!(" mezclador {shown}/{count} ")
+        } else {
+            " mezclador ".to_string()
+        };
+        let block = Block::bordered().title(title);
+        let inner = block.inner(area);
+        block.render(area, buf);
+        // Nombre, al menos una fila de medidor, dB, volumen, mute/solo y
+        // envíos.
+        if inner.height < 6 || inner.width < STRIP {
+            return;
+        }
+        let meter_rows = inner.height - 5;
+        let strip = |i: u16| Rect {
+            x: inner.x + i * STRIP,
+            width: STRIP - 1,
+            ..inner
+        };
+        for (i, track) in view.tracks.iter().enumerate().take(shown) {
+            let area = strip(i as u16);
+            let audible = view.audible(i);
+            let name: String = track.name.chars().take(STRIP as usize - 1).collect();
+            let name_style = if view.selected == Some(i) {
+                Style::new().fg(accent()).bold()
+            } else if audible {
+                Style::new().bold()
+            } else {
+                Style::new().fg(dim())
+            };
+            buf.set_string(area.x, area.y, name, name_style);
+            let color = if track.clipping {
+                error_color()
+            } else if audible {
+                meter_color()
+            } else {
+                dim()
+            };
+            draw_vertical_meter(track.level, area, meter_rows, color, buf);
+            let below = area.y + 1 + meter_rows;
+            buf.set_string(area.x, below, db_text(track.level), Style::new().fg(dim()));
+            buf.set_string(
+                area.x,
+                below + 1,
+                format!("vol {:.2}", track.gain),
+                Style::new(),
+            );
+            let flag = |on: bool, bg: Color| {
+                if on {
+                    Style::new().fg(Color::Black).bg(bg).bold()
+                } else {
+                    Style::new().fg(dim())
+                }
+            };
+            buf.set_string(area.x, below + 2, "M", flag(track.mute, error_color()));
+            buf.set_string(area.x + 2, below + 2, "S", flag(track.solo, Color::Yellow));
+            if track.clipping {
+                buf.set_string(
+                    area.x + 4,
+                    below + 2,
+                    "SAT",
+                    Style::new().fg(error_color()).bold(),
+                );
+            }
+            let sends = sends_text(track.sends);
+            buf.set_string(
+                area.x,
+                below + 3,
+                sends
+                    .trim_start_matches(" → ")
+                    .chars()
+                    .take(STRIP as usize - 1)
+                    .collect::<String>(),
+                Style::new().fg(dim()),
+            );
+        }
+        // El master, a continuación.
+        let area = strip(shown as u16);
+        let master = &view.master;
+        buf.set_string(area.x, area.y, "master", Style::new().bold());
+        let color = if master.clipping {
+            error_color()
+        } else if master.limiting {
+            Color::Yellow
+        } else {
+            meter_color()
+        };
+        draw_vertical_meter(master.level, area, meter_rows, color, buf);
+        let below = area.y + 1 + meter_rows;
+        buf.set_string(area.x, below, db_text(master.level), Style::new().fg(dim()));
+        if master.limiting {
+            buf.set_string(
+                area.x,
+                below + 2,
+                "LIM",
+                Style::new().fg(Color::Black).bg(Color::Yellow),
+            );
+        }
+        if master.clipping {
+            buf.set_string(
+                area.x + 4,
+                below + 2,
+                "SAT",
+                Style::new().fg(Color::Black).bg(error_color()),
+            );
+        }
+    }
+}
+
+/// El medidor vertical de una tira: dos columnas bajo el nombre.
+fn draw_vertical_meter(level: f32, strip: Rect, rows: u16, color: Color, buf: &mut Buffer) {
+    for (row, cell) in vertical_meter(level, rows).into_iter().enumerate() {
+        let y = strip.y + 1 + row as u16;
+        // Lo que no llega, una guía tenue.
+        let (symbol, style) = match cell {
+            ' ' => ('·', Style::new().fg(dim())),
+            c => (c, Style::new().fg(color)),
+        };
+        for dx in 0..2 {
+            buf[(strip.x + dx, y)].set_char(symbol).set_style(style);
+        }
     }
 }
 
