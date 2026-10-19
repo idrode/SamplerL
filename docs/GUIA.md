@@ -141,6 +141,46 @@ listo para `sample("drums-remuestreo.wav")`.
 
 Para escuchar en otra máquina: `scp laptop:~/sampler/renders/ritmo.wav .`
 
+### Choques de frecuencia entre pistas
+
+Dos pistas que suenan a la vez en la misma zona del espectro se tapan (el
+bajo y el bombo en 60-100 Hz, la caja y una voz en 1-3 kHz). El análisis lo
+mide sin escuchar y sin tocar lo que suena:
+
+```sh
+cargo run -p tui -- --script canción.lua --analyze-masking
+```
+
+En la interfaz, «Choques de frecuencia» (paleta) analiza lo último cargado
+y abre el informe: un choque por fila (pareja, banda y puntuación), el
+resumen del elegido y debajo la tabla pareja × banda (`·` sin choque, `-`
+banda vacía). Escribir filtra por pista o banda; Esc cierra.
+
+Cómo se mide: cada pista se renderiza offline en solo (con sus efectos,
+envíos y el limitador, como al remuestrear) durante un ciclo entero de la
+canción (lo que tarda en repetirse, o la línea de tiempo), con el mismo
+tope de 256 compases que la exportación. Su espectro se mide en 30 bandas de
+tercio de octava (25 Hz a 20 kHz) en ventanas de 50 ms cada 25 ms. En cada
+ventana:
+
+- Una pista está **activa** en una banda si no queda más de **30 dB** por
+  debajo de su propio máximo (el de esa pista en cualquier banda y momento).
+  Así lo flojo de una pista cuenta igual que lo fuerte de otra, y las colas
+  casi mudas no.
+- Si las dos están activas, su **cercanía** vale 1 con el mismo nivel y baja
+  en línea recta hasta 0 cuando las separan **9 dB** (a esa distancia una
+  ya tapa a la otra).
+- La **puntuación** de la banda (0 a 1) es la media de la cercanía
+  ponderada por la energía de las dos en cada ventana: pesan más los
+  momentos fuertes.
+- Una banda con muy poca energía para la pareja (**40 dB** por debajo de su
+  banda más fuerte) no se puntúa. Se informa desde **0,25**; el resumen dice
+  «leve» hasta 0,4, «medio» hasta 0,6 y «fuerte» desde ahí.
+
+Por debajo de unos 60 Hz la ventana de 50 ms no separa bien los tercios de
+octava: un choque allí sale también en las bandas vecinas. Analizar una
+canción larga tarda (cada pista se renderiza entera).
+
 ### Proyectos
 
 Un proyecto (`.sampler`) es un archivo de texto con el script, la carpeta
@@ -268,6 +308,7 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Volver a la línea de tiempo | Deja de repetir la sección: al acabar, sigue la siguiente | — |
 | Alternar variante A/B | Con variant(): pasa a la otra variante; entra entera al empezar el compás siguiente (con secciones, por la misma sección y compás) | v (modo tocar) |
 | Versiones | El historial del script (una versión por carga buena): lista con fecha y vista previa; Enter la restaura en el editor sin guardar (Ctrl-Z lo deshace) | — |
+| Choques de frecuencia | Renderiza offline cada pista en solo (un ciclo entero de la canción) y muestra en qué bandas se pisan: tabla pareja × banda con su puntuación (0 a 1) y un resumen; no toca lo que suena | — |
 | Salir | Sale (pide confirmación si hay cambios sin guardar) | Ctrl-Q |
 | Snippet: `amen`, `fill`, `ghost`, `intro`, `euclid`, `melodia`, `polirritmo`, `barrido`, `groove`, `instrumento` | Inserta el snippet en el cursor (ver «Snippets» en la sección 4) | — |
 

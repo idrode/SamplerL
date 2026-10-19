@@ -56,6 +56,7 @@ pub enum Action {
     LoopSection,
     FollowTimeline,
     Versions,
+    AnalyzeMasking,
     ToggleVariant,
     Quit,
 }
@@ -358,6 +359,12 @@ pub const ACTIONS: &[ActionDef] = &[
         action: Action::Versions,
         name: "Versiones",
         description: "El historial del script (una versión por carga buena): lista con fecha y vista previa; Enter la restaura en el editor sin guardar (Ctrl-Z lo deshace)",
+        keys: "",
+    },
+    ActionDef {
+        action: Action::AnalyzeMasking,
+        name: "Choques de frecuencia",
+        description: "Renderiza offline cada pista en solo (un ciclo entero de la canción) y muestra en qué bandas se pisan: tabla pareja × banda con su puntuación (0 a 1) y un resumen; no toca lo que suena",
         keys: "",
     },
     ActionDef {

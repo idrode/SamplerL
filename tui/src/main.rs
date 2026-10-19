@@ -28,6 +28,7 @@ uso: tui --edit <canción.lua | proyecto.sampler> [--allow-audio] [--allow-midi]
      tui <archivo.wav> --detect-bpm               (propone bpm() y compases)
      tui --script <canción.lua> --render <salida.wav> [--bars M] [--metronome] [--track pista]
      tui --script <canción.lua> --allow-audio     (reproduce y recarga al guardar)
+     tui --script <canción.lua> --analyze-masking (choques de frecuencia entre pistas)
      tui <archivo.wav> --render <salida.wav> --pattern \"1 . 3 . ...\" \
 [--slices N] [--bpm B] [--bars M] [--min-gap MS] [--detector flux|energy] [--metronome]
 
@@ -43,6 +44,8 @@ uso: tui --edit <canción.lua | proyecto.sampler> [--allow-audio] [--allow-midi]
   --min-gap  separación mínima entre cortes en ms (por defecto 40)
   --detector detección de transitorios: flux (flujo espectral, por defecto) o energy
   --metronome  añade al render el clic del metrónomo (si no, nunca lo lleva)
+  --analyze-masking  renderiza offline cada pista en solo (un ciclo entero de la
+               canción, hasta 256 compases) y dice en qué bandas chocan
   --allow-midi abre los puertos MIDI virtuales «sampler entrada» y «sampler salida» (ALSA)
 
 Sin --render, tui se niega a reproducir por la tarjeta de sonido salvo con
@@ -93,6 +96,7 @@ fn run() -> Result<(), BoxError> {
     let mut metronome = false;
     let mut detect = false;
     let mut track = None;
+    let mut masking = false;
     while let Some(arg) = args.next() {
         let mut value = || {
             args.next()
@@ -104,6 +108,7 @@ fn run() -> Result<(), BoxError> {
             "--allow-midi" => allow_midi = true,
             "--metronome" => metronome = true,
             "--detect-bpm" => detect = true,
+            "--analyze-masking" => masking = true,
             "--pattern" => {
                 let text = value()?;
                 let length = text.split_whitespace().count();
@@ -158,6 +163,16 @@ fn run() -> Result<(), BoxError> {
                 "con --script, el sample y los patrones van en el script\n{USAGE}"
             )
             .into());
+        }
+        if masking {
+            if render_to.is_some() || allow_audio || track.is_some() || bars.is_some() {
+                return Err(format!(
+                    "--analyze-masking no se combina con --render, --track, --bars ni --allow-audio\n{USAGE}"
+                )
+                .into());
+            }
+            print!("{}", masking_report(std::path::Path::new(&script))?);
+            return Ok(());
         }
         return match render_to {
             Some(out) => match track {
@@ -349,6 +364,23 @@ fn render_track(path: &str, out: &str, track: &str, bars: Option<u64>) -> Result
     engine::offline::write_wav(out, &audio, 2, RENDER_RATE)?;
     println!("{out}: pista \"{track}\", {bars} compases");
     Ok(())
+}
+
+/// `--script canción.lua --analyze-masking`: el informe de choques de
+/// frecuencia (con los avisos de la carga delante). Todo offline, en
+/// motores aparte: nunca abre la tarjeta.
+fn masking_report(path: &std::path::Path) -> Result<String, BoxError> {
+    let mut host = script::ScriptHost::new(RENDER_RATE);
+    let (mut controller, _engine) = engine::new_engine(RENDER_RATE);
+    let song = host.load_file(&mut controller, path)?.clone();
+    let report = song.analyze_masking(RENDER_RATE, &engine::masking::MaskingOptions::default())?;
+    let mut out: String = song
+        .warnings
+        .iter()
+        .map(|w| format!("aviso: {w}\n"))
+        .collect();
+    out.push_str(&report.text());
+    Ok(out)
 }
 
 fn render_script(

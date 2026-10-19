@@ -198,7 +198,7 @@ salida de audio real.
    solo, espectro en tercios de octava en ventanas de ~50 ms y, por pareja de
    pistas y banda, una puntuación de choque ponderada por energía. Un ciclo
    completo de la canción, con el tope de compases de la exportación.
-3. **Informe**: `tui --script x.lua --analyze-masking` y una acción de la
+3. ✅ **Informe**: `tui --script x.lua --analyze-masking` y una acción de la
    paleta con la tabla pareja × banda, sin tocar el audio.
 4. **Prioridad entre pistas**: `priority({ "kick", "snare", ... })` (por
    defecto manda la más fuerte) y sugerencias de recorte (como mucho 4, de 2

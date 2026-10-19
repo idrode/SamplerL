@@ -109,6 +109,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     if let Some(picker) = &view.versions {
         frame.render_widget(BlockPickerPopup(picker), picker_area(frame.area(), picker));
     }
+    if let Some(picker) = &view.masking {
+        frame.render_widget(BlockPickerPopup(picker), picker_area(frame.area(), picker));
+    }
 }
 
 /// Sitio de las ranuras: centradas arriba, una fila por ranura.

@@ -141,6 +141,15 @@ struct VersionPicker {
     versions: Vec<(crate::history::Version, String)>,
 }
 
+/// Informe de choques de frecuencia abierto: el análisis y sus choques
+/// (del más fuerte al más débil).
+struct MaskingPicker {
+    query: String,
+    selected: usize,
+    report: script::masking::MaskingReport,
+    clashes: Vec<script::masking::Clash>,
+}
+
 /// Explorador de samples abierto.
 #[derive(Clone, Default)]
 struct Browser {
@@ -245,6 +254,8 @@ pub struct App {
     /// nada) y el selector de versiones abierto.
     history_root: Option<PathBuf>,
     versions: Option<VersionPicker>,
+    /// Informe de choques de frecuencia abierto.
+    masking: Option<MaskingPicker>,
     /// Explorador de samples abierto.
     browser: Option<Browser>,
     /// Grabación de lo tocado en curso.
@@ -319,6 +330,7 @@ impl App {
             block_picker: None,
             history_root: None,
             versions: None,
+            masking: None,
             browser: None,
             tapping: None,
             recording: None,
@@ -2235,6 +2247,95 @@ impl App {
         Flow::Continue
     }
 
+    /// Analiza los choques de frecuencia de lo último cargado (cada pista en
+    /// solo, offline, en motores aparte: lo que suena no se toca) y abre el
+    /// informe; sin choques, lo dice en la línea de estado.
+    pub fn open_masking(&mut self) {
+        let Some(song) = self.host.song() else {
+            self.message = "no hay nada cargado que analizar".into();
+            return;
+        };
+        if song.track_names().len() < 2 {
+            self.message = "choques de frecuencia: hace falta más de una pista".into();
+            return;
+        }
+        let options = engine::masking::MaskingOptions::default();
+        let report = match song.analyze_masking(self.sample_rate, &options) {
+            Ok(report) => report,
+            Err(e) => {
+                self.message = format!("no se pudo analizar: {e}");
+                return;
+            }
+        };
+        let note = if self.dirty() || self.error.is_some() {
+            " (de lo último cargado bien, no del texto actual)"
+        } else {
+            ""
+        };
+        let clashes = report.clashes();
+        if clashes.is_empty() {
+            self.message = format!(
+                "sin choques de frecuencia entre {} pistas en {} compases{note}",
+                report.tracks.len(),
+                report.bars
+            );
+            return;
+        }
+        self.completion = None;
+        self.message = format!(
+            "{} choques en {} compases{note}",
+            clashes.len(),
+            report.bars
+        );
+        self.masking = Some(MaskingPicker {
+            query: String::new(),
+            selected: 0,
+            report,
+            clashes,
+        });
+    }
+
+    /// Los choques del informe que coinciden con lo escrito (en la pareja o
+    /// la banda).
+    fn masking_matches(&self) -> Vec<usize> {
+        let Some(picker) = &self.masking else {
+            return Vec::new();
+        };
+        let query = picker.query.to_lowercase();
+        (0..picker.clashes.len())
+            .filter(|&i| {
+                let (pair, band, _) = picker.report.clash_line(&picker.clashes[i]);
+                query.is_empty()
+                    || pair.to_lowercase().contains(&query)
+                    || band.to_lowercase().contains(&query)
+            })
+            .collect()
+    }
+
+    /// Tecla con el informe de choques abierto: escribir filtra, flechas
+    /// eligen y Esc cierra.
+    fn handle_masking(&mut self, input: Input) -> Flow {
+        let count = self.masking_matches().len();
+        let Some(picker) = &mut self.masking else {
+            return Flow::Continue;
+        };
+        match input.key {
+            Key::Esc | Key::Enter => self.masking = None,
+            Key::Up if count > 0 => picker.selected = (picker.selected + count - 1) % count,
+            Key::Down if count > 0 => picker.selected = (picker.selected + 1) % count,
+            Key::Backspace => {
+                picker.query.pop();
+                picker.selected = 0;
+            }
+            Key::Char(c) if !input.ctrl && !input.alt => {
+                picker.query.push(c);
+                picker.selected = 0;
+            }
+            _ => {}
+        }
+        Flow::Continue
+    }
+
     /// Pone una versión en el editor como un cambio más (Ctrl-Z lo deshace
     /// de una vez); el archivo no se toca hasta guardar.
     fn restore_version(&mut self, text: &str, time: SystemTime) {
@@ -2485,6 +2586,7 @@ impl App {
             Action::LoopSection => self.toggle_section_loop(),
             Action::FollowTimeline => self.set_section_loop(false),
             Action::Versions => self.open_versions(),
+            Action::AnalyzeMasking => self.open_masking(),
             Action::ToggleVariant => self.toggle_variant(),
             Action::PreviousSlice => self.select_slice(false),
             Action::Quit => {
@@ -2827,6 +2929,9 @@ impl App {
         }
         if self.versions.is_some() {
             return self.handle_versions(input);
+        }
+        if self.masking.is_some() {
+            return self.handle_masking(input);
         }
         if self.browser.is_some() {
             return self.handle_browser(input);
@@ -3272,6 +3377,34 @@ impl App {
                     preview: selected.map_or_else(Vec::new, |(_, text)| {
                         text.lines().map(String::from).collect()
                     }),
+                }
+            }),
+            masking: self.masking.as_ref().map(|p| {
+                let matches = self.masking_matches();
+                let selected = matches.get(p.selected).map(|&i| &p.clashes[i]);
+                BlockPickerView {
+                    title: format!(
+                        "choques de frecuencia · {} compases · {} pistas",
+                        p.report.bars,
+                        p.report.tracks.len()
+                    ),
+                    confirm: String::new(),
+                    query: p.query.clone(),
+                    items: matches
+                        .iter()
+                        .map(|&i| {
+                            let clash = &p.clashes[i];
+                            let (pair, band, _) = p.report.clash_line(clash);
+                            (
+                                format!("{pair}  {band}"),
+                                script::masking::score_text(clash.clash.score),
+                                String::new(),
+                            )
+                        })
+                        .collect(),
+                    selected: p.selected,
+                    description: selected.map_or(String::new(), |c| p.report.summary(c)),
+                    preview: p.report.table().lines().map(String::from).collect(),
                 }
             }),
             completion: self.completion.as_ref().map(|c| {
