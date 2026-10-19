@@ -194,7 +194,7 @@ salida de audio real.
    y valores por defecto, con `ramp` y `lfo`, suavizados y sin reservas en el
    callback. Tests de respuesta en frecuencia medida y salida idéntica bit a
    bit sin cambios.
-2. **Análisis offline de choques** (`rustfft`): cada pista renderizada en
+2. ✅ **Análisis offline de choques** (`rustfft`): cada pista renderizada en
    solo, espectro en tercios de octava en ventanas de ~50 ms y, por pareja de
    pistas y banda, una puntuación de choque ponderada por energía. Un ciclo
    completo de la canción, con el tope de compases de la exportación.

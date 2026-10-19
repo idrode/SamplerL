@@ -10,6 +10,7 @@ pub mod grain;
 pub mod instrument;
 mod interp;
 mod limiter;
+pub mod masking;
 pub mod metronome;
 pub mod notation;
 pub mod offline;

@@ -39,6 +39,7 @@ use engine::{
 };
 pub mod api;
 pub mod blocks;
+pub mod masking;
 pub mod patterns;
 pub mod project;
 mod watch;
