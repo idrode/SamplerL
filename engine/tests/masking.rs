@@ -117,12 +117,31 @@ fn the_score_falls_with_the_level_gap_and_with_time_apart() {
 #[test]
 fn a_silent_track_clashes_with_nothing_and_shorter_ones_are_padded() {
     let s = scores(&sine(300.0, 0.5, 1.0), &vec![0.0; 2 * RATE as usize]);
-    assert!(s.iter().flatten().all(|&x| x == 0.0));
+    assert!(s.iter().all(Option::is_none));
     // La segunda dura la mitad: chocan la mitad del tiempo, pero esas
     // ventanas tienen el doble de energía: 2/3.
     let s = scores(&sine(300.0, 0.5, 2.0), &sine(300.0, 0.5, 1.0));
     let half = s[band_of(300.0)].unwrap();
     assert!((half - 2.0 / 3.0).abs() < 0.03, "{half}");
+}
+
+#[test]
+fn bands_where_either_track_barely_sounds_are_ignored() {
+    // Dos senos a 300 Hz con un chasquido a la vez a mitad: en las bandas
+    // agudas solo hay ese chasquido (las dos, en el mismo instante), pero
+    // ninguna suena ahí de verdad: no se puntúan.
+    let click = |mut x: Vec<f32>| {
+        let mid = x.len() / 2;
+        for v in &mut x[mid..mid + 8] {
+            *v = 0.8;
+        }
+        x
+    };
+    let s = scores(&click(sine(300.0, 0.5, 2.0)), &click(sine(300.0, 0.5, 2.0)));
+    for band in [band_of(2000.0), band_of(8000.0)] {
+        assert!(s[band].is_none(), "{}: {:?}", BAND_NAMES[band], s[band]);
+    }
+    assert!(s[band_of(300.0)].unwrap() > 0.9);
 }
 
 #[test]

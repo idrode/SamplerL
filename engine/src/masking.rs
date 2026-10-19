@@ -9,8 +9,9 @@
 //! dos lo están, su *cercanía* vale 1 con el mismo nivel y baja en línea
 //! recta hasta 0 cuando las separan [`MaskingOptions::level_gap_db`]. La
 //! puntuación de la banda es la media de la cercanía ponderada por la
-//! energía de las dos pistas en cada ventana (de 0 a 1). Las bandas casi
-//! vacías para la pareja no se puntúan.
+//! energía de las dos pistas en cada ventana (de 0 a 1). Las bandas en
+//! las que una de las dos casi no suena
+//! ([`MaskingOptions::empty_band_db`]) no se puntúan.
 
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex;
@@ -51,9 +52,10 @@ pub struct MaskingOptions {
     /// Diferencia de nivel a la que dos pistas activas dejan de chocar
     /// (la cercanía es `1 − diferencia / esto`).
     pub level_gap_db: f32,
-    /// Una banda cuya energía (de la pareja, en todo el análisis) queda
-    /// más de estos dB por debajo de la banda más fuerte de la pareja no se
-    /// puntúa.
+    /// Una banda en la que una de las dos pistas casi no suena (su energía
+    /// en todo el análisis queda más de estos dB por debajo de la de su
+    /// propia banda más fuerte) no se puntúa: para chocar, las dos tienen
+    /// que sonar ahí de verdad, no solo con el chasquido de un ataque.
     pub empty_band_db: f32,
     /// Puntuación a partir de la cual se informa de un choque (y se
     /// sugiere un recorte).
@@ -67,7 +69,7 @@ impl Default for MaskingOptions {
             hop_ms: 25.0,
             active_range_db: 30.0,
             level_gap_db: 9.0,
-            empty_band_db: 40.0,
+            empty_band_db: 30.0,
             report_score: 0.25,
         }
     }
@@ -89,8 +91,22 @@ pub struct BandSpectrum {
 
 impl BandSpectrum {
     /// Analiza `audio` (estéreo entrelazado; se mezcla a mono) a
-    /// `sample_rate`. Las bandas por encima de Nyquist quedan a cero.
+    /// `sample_rate`, con ventanas hasta el final (lo que pasa del final,
+    /// silencio). Las bandas por encima de Nyquist quedan a cero.
     pub fn analyze(audio: &[f32], sample_rate: u32, options: &MaskingOptions) -> Self {
+        Self::analyze_cycle(audio, audio.len() / 2, sample_rate, options)
+    }
+
+    /// Como [`BandSpectrum::analyze`], con ventanas que empiezan en los
+    /// primeros `cycle` frames: si `audio` sigue después (lo que suena al
+    /// volver a empezar el ciclo), las últimas lo leen en vez de acabar en
+    /// silencio de golpe, que esparciría energía por todas las bandas.
+    pub fn analyze_cycle(
+        audio: &[f32],
+        cycle: usize,
+        sample_rate: u32,
+        options: &MaskingOptions,
+    ) -> Self {
         let mono: Vec<f32> = audio
             .as_chunks::<2>()
             .0
@@ -110,7 +126,7 @@ impl BandSpectrum {
         let mut scratch = vec![Complex::new(0.0f32, 0.0); fft.get_inplace_scratch_len()];
         let mut power = Vec::new();
         let mut start = 0;
-        while start < mono.len() {
+        while start < cycle {
             buffer.fill(Complex::new(0.0, 0.0));
             for (i, (slot, w)) in buffer.iter_mut().zip(&window).enumerate() {
                 *slot = Complex::new(mono.get(start + i).copied().unwrap_or(0.0) * w, 0.0);
@@ -181,8 +197,8 @@ pub struct BandClash {
 }
 
 /// Choques de las pistas `a` y `b`, banda a banda: `None` en las bandas
-/// casi vacías para la pareja. Si una es más corta, lo que le falta cuenta
-/// como silencio.
+/// en las que una de las dos casi no suena. Si una es más corta, lo que le
+/// falta cuenta como silencio.
 pub fn clashes(
     a: &BandSpectrum,
     b: &BandSpectrum,
@@ -201,9 +217,14 @@ pub fn clashes(
         .map(|band| [a.band_energy(band), b.band_energy(band)])
         .collect();
     let loudest = energy.iter().map(|e| e[0] + e[1]).fold(0.0, f32::max);
+    // La banda más fuerte de cada pista.
+    let strongest = |i: usize| energy.iter().map(|e| e[i]).fold(0.0, f32::max);
+    let (strongest_a, strongest_b) = (strongest(0), strongest(1));
+    let sounds =
+        |e: f32, strongest: f32| strongest > 0.0 && db(e) >= db(strongest) - options.empty_band_db;
     std::array::from_fn(|band| {
         let [ea, eb] = energy[band];
-        if loudest <= 0.0 || db(ea + eb) < db(loudest) - options.empty_band_db {
+        if !sounds(ea, strongest_a) || !sounds(eb, strongest_b) {
             return None;
         }
         let (mut weighted, mut total, mut both) = (0.0f64, 0.0f64, 0usize);

@@ -173,8 +173,10 @@ ventana:
 - La **puntuación** de la banda (0 a 1) es la media de la cercanía
   ponderada por la energía de las dos en cada ventana: pesan más los
   momentos fuertes.
-- Una banda con muy poca energía para la pareja (**40 dB** por debajo de su
-  banda más fuerte) no se puntúa. Se informa desde **0,25**; el resumen dice
+- Una banda en la que una de las dos casi no suena (su energía queda
+  **30 dB** por debajo de la de su propia banda más fuerte) no se puntúa:
+  para chocar, las dos tienen que sonar ahí de verdad, no solo con el
+  chasquido de un ataque. Se informa desde **0,25**; el resumen dice
   «leve» hasta 0,4, «medio» hasta 0,6 y «fuerte» desde ahí.
 
 **Sugerencias.** En cada choque, una pista manda y la otra cede: la

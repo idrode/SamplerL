@@ -90,13 +90,21 @@ impl Song {
     ) -> Result<MaskingReport, ScriptError> {
         let bars = self.length_bars(1).min(MAX_SONG_BARS);
         let tracks: Vec<String> = self.track_names().into_iter().map(String::from).collect();
+        // Un compás más: las últimas ventanas del ciclo leen cómo vuelve a
+        // empezar, en vez de un corte en seco.
+        let cycle = self.frames(sample_rate, bars) as usize;
         let spectra = tracks
             .iter()
             .map(|name| {
                 let audio = self
-                    .render_track(sample_rate, bars, name)
+                    .render_track(sample_rate, bars + 1, name)
                     .expect("la pista es de la canción")?;
-                Ok(BandSpectrum::analyze(&audio, sample_rate, options))
+                Ok(BandSpectrum::analyze_cycle(
+                    &audio,
+                    cycle,
+                    sample_rate,
+                    options,
+                ))
             })
             .collect::<Result<Vec<_>, ScriptError>>()?;
         let mut pairs = Vec::new();
