@@ -279,3 +279,32 @@ fn the_main_window_has_the_mixer_and_a_single_window_the_engine_panel() {
     assert!(screen.contains("┌ motor"), "{screen}");
     assert!(!screen.contains("mezclador"), "{screen}");
 }
+
+/// La última línea de la pantalla: la de ayuda.
+fn help_line(screen: &str) -> String {
+    screen.lines().last().unwrap_or_default().to_string()
+}
+
+#[test]
+fn the_play_help_says_esc_editor_only_with_an_editor() {
+    // Principal con el editor en su ventana: siempre tocando, y Esc no
+    // lleva a ningún editor.
+    let path = fixture("main_window_help", Some(SONG));
+    let (mut main, _engine) = main_window(&path, None);
+    let (mut editor, _idle) = editor_window(&path);
+    pump(&mut main, &mut editor);
+    let help = help_line(&text(&draw(&mut main, 160, 40)));
+    assert!(help.contains("TOCAR: 1-0 q-i cortes"), "{help}");
+    assert!(help.contains("F1 paleta"), "{help}");
+    assert!(!help.contains("Esc"), "{help}");
+    // En una sola ventana, en el modo tocar, sí; en el editor, «Esc tocar».
+    let (_, mut single, _engine) = open("main_window_help_single", Some(SONG));
+    let help = help_line(&text(&draw(&mut single, 160, 40)));
+    assert!(help.contains("Esc tocar"), "{help}");
+    // (Al entrar, la línea enseña antes un mensaje: la ayuda, en la vista.)
+    single.handle(super::special(ratatui_textarea::Key::Esc));
+    let help = single.view().key_help;
+    assert!(help.starts_with("TOCAR: 1-0 q-i cortes"), "{help}");
+    assert!(help.ends_with("Esc editor"), "{help}");
+    assert!(!main.view().key_help.contains("Esc"));
+}

@@ -345,3 +345,5 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
    con 12, 16 y 24, sin cambios.
 5. ✅ **Fundido en el salto de los bucles de corte**: `crossfade` en
    `cortes:set` (10 ms por defecto; con 0, el salto seco de siempre).
+6. ✅ **Ayuda del modo tocar** sin «Esc editor» en la principal con el
+   editor en su ventana.

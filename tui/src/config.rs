@@ -217,10 +217,18 @@ impl Keymap {
     }
 
     /// Línea de ayuda con los atajos principales (`Ctrl-S guardar y cargar
-    /// · ...`): la del modo editor o la del modo tocar.
-    pub fn help(&self, playing: bool) -> String {
+    /// · ...`): la del modo editor o la del modo tocar. Sin `editor` (la
+    /// ventana principal con el editor en la suya), el modo tocar no dice
+    /// cómo volver al editor: ahí no hay.
+    pub fn help(&self, playing: bool, editor: bool) -> String {
         let action = |a| Bound::Action(a);
-        let items: &[(Bound, &str)] = if playing {
+        let items: &[(Bound, &str)] = if playing && !editor {
+            &[
+                (action(Action::NextTrack), "pista"),
+                (action(Action::Transport), "marcha/paro"),
+                (Bound::Palette, "paleta"),
+            ]
+        } else if playing {
             &[
                 (action(Action::NextTrack), "pista"),
                 (action(Action::Transport), "marcha/paro"),

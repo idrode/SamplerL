@@ -3639,7 +3639,7 @@ impl App {
                 }
             }),
             external_change: self.external.is_some(),
-            key_help: self.keys.help(self.mode == Mode::Play),
+            key_help: self.keys.help(self.mode == Mode::Play, true),
             prompt: self.prompt.clone(),
             project: self
                 .project

@@ -246,7 +246,8 @@ anterior.
   grabar, saltar a una sección o remuestrear se abren en la principal:
   hay que ir a esa ventana. `etiquetar` pregunta en el editor.
 - **El modo tocar** es de la principal, que con el editor fuera está
-  siempre en él (Esc no vuelve al editor). Sin el editor, sus vistas
+  siempre en él (Esc no vuelve al editor, y la línea de ayuda no lo
+  ofrece). Sin el editor, sus vistas
   ocupan toda la ventana: arriba el transporte; la forma de onda grande de
   la pista seleccionada, con los cortes numerados en una fila aparte (el
   que suena y el elegido, resaltados) y al pie dónde empieza cada uno en

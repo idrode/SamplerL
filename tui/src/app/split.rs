@@ -749,6 +749,8 @@ impl App {
                 });
                 view.dirty = self.text() != main.synced;
                 view.editor_outside = true;
+                // Siempre en el modo tocar, y Esc no lleva a ningún editor.
+                view.key_help = self.keys.help(true, false);
             }
             Some(Link::Editor(editor)) => {
                 view.link = Some(match (&editor.remote, editor.client.connected()) {
