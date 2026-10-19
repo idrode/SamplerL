@@ -2381,6 +2381,7 @@ fn slices_are_nudged_with_keys_and_saved_in_the_project() {
 mod automation;
 mod blocks;
 mod browser;
+mod clipboard;
 mod config;
 mod formant;
 mod grains;

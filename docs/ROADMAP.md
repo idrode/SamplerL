@@ -328,3 +328,13 @@ propia ventana» en [docs/GUIA.md](GUIA.md).
 6. **Cambiar en caliente**: sacar el editor a su ventana y volver a
    meterlo desde la paleta sin perder el texto, el cursor ni el historial
    de deshacer.
+
+## Mejoras sueltas
+
+Arreglos pequeños fuera de las fases, con las reglas de siempre. Detalle
+en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
+
+1. ✅ **Pegado multilínea** (bracketed paste): ya estaba (pegar en el
+   editor y la parte 1 de la fase L); verificado, sin cambios.
+2. ✅ **Portapapeles del sistema**: copiar y cortar por OSC 52 y `wl-copy`;
+   pegar con `wl-paste` o, si no, el interno.

@@ -1,5 +1,6 @@
 mod app;
 mod browser;
+mod clipboard;
 mod complete;
 mod config;
 mod diagnose;
@@ -639,6 +640,16 @@ fn run_terminal(
             app.poll_midi();
             app.tick();
             terminal.draw(|frame| draw(frame, app))?;
+            // Lo copiado, al portapapeles de la terminal (OSC 52).
+            let osc = app.clipboard.take_osc();
+            if !osc.is_empty() {
+                use std::io::Write;
+                let mut out = std::io::stdout();
+                for sequence in osc {
+                    let _ = out.write_all(sequence.as_bytes());
+                }
+                let _ = out.flush();
+            }
             if !event::poll(poll)? {
                 continue;
             }

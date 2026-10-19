@@ -889,6 +889,15 @@ Ctrl-K borrar hasta el final de la línea, Ctrl-W borrar la palabra
 anterior, Ctrl-A / Ctrl-E inicio y final de línea, Ctrl-V / Alt-V página
 abajo y arriba.
 
+**Portapapeles del sistema.** Ctrl-C y Ctrl-X mandan la selección
+también al portapapeles del sistema: por OSC 52 (la terminal lo guarda;
+funciona por SSH, y dentro de tmux con `set -g set-clipboard on`) y, si
+está instalado, por `wl-copy` (Wayland). Ctrl-Y pega lo que haya en el
+portapapeles del sistema si `wl-paste` está instalado y contesta en un
+cuarto de segundo (se deshace de una vez, como un pegado); si no, lo
+último copiado en el editor. Sin ninguno de los dos, todo funciona igual
+que siempre dentro del editor.
+
 Pegar desde el terminal (Ctrl-Shift-V, el botón central o el menú del
 terminal) pone el texto tal cual en el cursor: con sus líneas y su
 sangría, sin abrir el autocompletado, sin aceptar la opción que tenga

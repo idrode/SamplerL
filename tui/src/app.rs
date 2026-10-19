@@ -189,6 +189,8 @@ pub enum Flow {
 
 pub struct App {
     pub editor: TextArea<'static>,
+    /// Portapapeles del sistema (OSC 52 y `wl-copy`/`wl-paste`).
+    pub(crate) clipboard: crate::clipboard::Clipboard,
     path: PathBuf,
     /// Proyecto abierto o guardado (`.sampler`), si lo hay.
     project: Option<PathBuf>,
@@ -306,6 +308,7 @@ impl App {
         let (text, saved) = read_script(path)?;
         let mut app = App {
             editor: TextArea::new(text.lines().map(String::from).collect()),
+            clipboard: crate::clipboard::Clipboard::system(),
             path: path.to_path_buf(),
             project: None,
             sample_rate,
@@ -3198,6 +3201,25 @@ impl App {
             (Key::Right, _) if self.mode == Mode::Play => self.browse_slice(true),
             // En modo tocar el texto no se toca.
             _ if self.mode == Mode::Play => {}
+            // Copiar y cortar: también al portapapeles del sistema.
+            (Key::Char('c' | 'x'), true) if !input.alt => {
+                let selected = self.editor.selection_range().is_some();
+                self.editor.input(input);
+                if selected {
+                    let text = self.editor.yank_text();
+                    self.clipboard.set(&text);
+                }
+            }
+            // Pegar: el del sistema si se puede leer; si no, el interno.
+            (Key::Char('y'), true) if !input.alt => match self.clipboard.get() {
+                Some(text) if !text.is_empty() => {
+                    self.editor.set_yank_text(text.clone());
+                    self.paste(&text);
+                }
+                _ => {
+                    self.editor.input(input);
+                }
+            },
             _ => {
                 let typed = match input.key {
                     Key::Char(c) if !input.ctrl && !input.alt => Some(c),
