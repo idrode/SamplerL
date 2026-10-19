@@ -21,6 +21,10 @@ use crate::model::{
 };
 use crate::palette::{self, Action, Item};
 
+mod split;
+#[cfg(test)]
+pub use split::editor_command;
+
 /// Plantilla para un script nuevo.
 const TEMPLATE: &str = r#"bpm(170)
 
@@ -284,11 +288,21 @@ pub struct App {
     midi_in: Option<rtrb::Consumer<crate::midi::TimedEvent>>,
     /// Destino de las notas que salen de las pistas con `:midi()`.
     midi_out: Option<Box<dyn crate::midi::MidiSink>>,
+    /// Con el editor en su propia ventana: de qué lado está esta (ver
+    /// `split`). Sin él, una sola ventana como siempre.
+    link: Option<split::Link>,
 }
 
 impl App {
     /// Abre el script (o una plantilla si no existe) y lo carga.
     pub fn open(path: &Path, controller: Controller, sample_rate: u32) -> std::io::Result<App> {
+        let mut app = App::build(path, controller, sample_rate)?;
+        app.load();
+        Ok(app)
+    }
+
+    /// Abre el script sin cargarlo.
+    fn build(path: &Path, controller: Controller, sample_rate: u32) -> std::io::Result<App> {
         let (text, saved) = read_script(path)?;
         let mut app = App {
             editor: TextArea::new(text.lines().map(String::from).collect()),
@@ -346,9 +360,9 @@ impl App {
             clock: crate::midi::ClockTempo::default(),
             midi_in: None,
             midi_out: None,
+            link: None,
         };
         app.reload_blocks();
-        app.load();
         Ok(app)
     }
 
@@ -368,6 +382,13 @@ impl App {
     /// Pone el proyecto en el editor y el motor (entra en el compás
     /// siguiente, como cualquier carga).
     fn apply_project(&mut self, path: &Path, project: &Project) -> std::io::Result<()> {
+        self.set_project(path, project)?;
+        self.load();
+        Ok(())
+    }
+
+    /// Pone el proyecto en el editor, sin cargarlo.
+    fn set_project(&mut self, path: &Path, project: &Project) -> std::io::Result<()> {
         let (text, saved) = read_script(&project.script)?;
         self.editor = TextArea::new(text.lines().map(String::from).collect());
         self.path = project.script.clone();
@@ -381,7 +402,6 @@ impl App {
         self.host.set_positions(project.positions.clone());
         self.host.set_edits(project.edits.clone());
         self.reload_blocks();
-        self.load();
         Ok(())
     }
 
@@ -435,6 +455,9 @@ impl App {
     /// Ejecuta una orden de la línea de órdenes (F2).
     pub fn run_command(&mut self, line: &str) {
         let line = line.trim();
+        if self.link_command(line) {
+            return;
+        }
         let mut words = line.split_whitespace();
         let Some(command) = words.next() else { return };
         let args: Vec<&str> = words.collect();
@@ -1290,6 +1313,10 @@ impl App {
     /// Mira si el archivo cambió fuera del editor (otro editor, `git
     /// checkout`...). No toca nada: avisa y ofrece recargar con F3.
     pub fn check_external(&mut self) {
+        // Con el editor fuera, el archivo es suyo.
+        if self.is_main_window() {
+            return;
+        }
         let Ok(disk) = std::fs::read_to_string(&self.path) else {
             return;
         };
@@ -1343,6 +1370,10 @@ impl App {
     /// Carga el contenido del editor (sin guardar). Entra en el siguiente
     /// compás; si falla, sigue sonando lo anterior y el error va al editor.
     pub fn load(&mut self) {
+        // En el editor separado, carga la ventana principal.
+        if self.link_load() {
+            return;
+        }
         let name = self.file_name();
         let base = self.path.parent().unwrap_or(Path::new(".")).to_path_buf();
         let text = self.text();
@@ -1864,6 +1895,9 @@ impl App {
         }
         for label in self.host.labels() {
             add(&label.name);
+        }
+        for name in self.remote_labels() {
+            add(name);
         }
         for name in complete::text_labels(&self.editor.lines().join("\n")) {
             add(&name);
@@ -2601,6 +2635,9 @@ impl App {
 
     /// Ejecuta una acción (de la paleta o de un atajo).
     pub fn run_action(&mut self, action: Action) -> Flow {
+        if let Some(flow) = self.link_action(action) {
+            return flow;
+        }
         let edits = matches!(
             action,
             Action::Undo
@@ -2692,6 +2729,7 @@ impl App {
             Action::AnalyzeMasking => self.open_masking(),
             Action::ToggleVariant => self.toggle_variant(),
             Action::PreviousSlice => self.select_slice(false),
+            Action::EditorWindow => self.launch_editor(),
             Action::Quit => {
                 let armed = std::mem::replace(&mut self.quit_armed, false);
                 return self.request_quit(armed);
@@ -2742,6 +2780,9 @@ impl App {
 
     /// Salir: si hay cambios sin guardar, la primera vez solo avisa.
     fn request_quit(&mut self, armed: bool) -> Flow {
+        if self.is_main_window() {
+            return self.quit_main(armed);
+        }
         if self.dirty() && !armed {
             self.quit_armed = true;
             self.message = "hay cambios sin guardar: Ctrl-Q otra vez para salir".into();
@@ -3226,6 +3267,7 @@ impl App {
 
     /// Lee el estado del motor, actualiza medidores y recoge la basura.
     pub fn tick(&mut self) {
+        self.poll_link();
         if self.last_external_check.elapsed() >= EXTERNAL_CHECK {
             self.last_external_check = Instant::now();
             self.check_external();
@@ -3361,7 +3403,7 @@ impl App {
                     looping: place.is_some_and(|p| p.looping),
                 }
             });
-        ViewModel {
+        let mut view = ViewModel {
             timeline,
             variant: self.host.variant(),
             error: self.error.as_ref().map(|e| ErrorView {
@@ -3590,7 +3632,10 @@ impl App {
                 limiting: self.limiting_until.is_some_and(|u| Instant::now() < u),
                 clipping: self.clipping_until.is_some_and(|u| Instant::now() < u),
             },
-        }
+            link: None,
+        };
+        self.link_view(&mut view);
+        view
     }
 }
 

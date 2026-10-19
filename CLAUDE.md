@@ -4,7 +4,7 @@ Sampler + secuenciador para remixes con amen breaks, controlado por código en v
 
 Guía de uso (inicio rápido, atajos, mini-notación, API de Lua, recetas y problemas): [docs/GUIA.md](docs/GUIA.md). Sus bloques de Lua y las recetas de `scripts/ejemplos/` se comprueban en `script/tests/guide.rs`. La sección de la API se genera desde el registro `script/src/api.rs`: al cambiar la API, actualiza el registro y ejecuta `cargo run -p script --example guia`.
 
-Hoja de ruta (fases A-K después de los pasos 1-7, con sus reglas comunes; la F se hizo antes que la E y la J, EQ y choques de frecuencia entre pistas, después de la K): [docs/ROADMAP.md](docs/ROADMAP.md). Estado detallado y decisiones de cada fase: [docs/ESTADO.md](docs/ESTADO.md). Resumen abajo, en «Estado (resumen)».
+Hoja de ruta (fases A-L después de los pasos 1-7, con sus reglas comunes; la F se hizo antes que la E y la J, EQ y choques de frecuencia entre pistas, después de la K): [docs/ROADMAP.md](docs/ROADMAP.md). Estado detallado y decisiones de cada fase: [docs/ESTADO.md](docs/ESTADO.md). Resumen abajo, en «Estado (resumen)».
 
 ## Idea central
 
@@ -91,13 +91,13 @@ El detalle de lo hecho (dónde está cada cosa en el código, cómo funciona, su
 - **Crates**: `engine` (motor, sin interfaz), `script` (Lua con `mlua`, modelo `Song`, proyectos, bloques, registro de la API) y `tui` (binario: interfaz `ratatui`, render offline, MIDI tras la feature `midi`).
 - **Pasos 1-7 hechos**: motor con cola de comandos lock-free y cola de basura, cortes por transitorios, secuenciador con lotes atómicos al compás, efectos por paso y pista, mini-notación y Lua con recarga al guardar, interfaz de paneles, exportar a WAV y proyectos `.sampler`.
 - **Fases hechas**: A (editor: paleta, deshacer, snippets, diagnóstico en vivo, autocompletado y ayuda), B (etiquetas de corte), C (generadores, escalas, swing, humanize, fill), D (mute/solo, medidores, metrónomo, detección de BPM, preescucha, ajuste de cortes), E (grabar lo tocado, secciones con línea de tiempo en el motor, historial de versiones, variantes A/B), F (biblioteca de bloques y ranuras), G (longitud variable, time-stretch, delay y reverb como envíos, compresor y distorsión, automatización), H (gate/choke, forma por corte, rejilla, remuestreo, preparar al importar), I (explorador, tap tempo, rampas de BPM y compases, configuración, MIDI de entrada y salida, ranuras que persisten), J (EQ paramétrico, choques de frecuencia entre pistas con `--analyze-masking` y la paleta, `priority()` y sugerencias de EQ que se insertan tras confirmarlas, EQ dinámico con sidechain por bandas) y K (melodías con samples: interpolación sinc, instrumento con `melody`, en vivo y por MIDI, pitch sin cambiar la duración con `%` y `keep`, granular y congelar, formantes).
-- **En curso**: ninguna fase; todas las de la hoja de ruta están hechas.
+- **En curso**: L ([editor en ventana propia](docs/ROADMAP.md#fase-l-editor-en-ventana-propia)). Hecha la parte 1: el editor en otro proceso y otra terminal (`tui --edit x --split`, `tui --window-editor x`), unido a la principal por un socket Unix privado con un protocolo de líneas; si uno cae, el otro sigue. Pendiente la parte 2: forma de onda grande, tracker con todas las pistas, mezclador y tabla de choques en el hueco que deja.
 - **Comprobaciones que no hay que romper**:
   - `engine/tests/no_alloc.rs`: cero reservas en `Engine::process`; todo lo nuevo del motor entra ahí.
   - `script/tests/golden.rs`: huellas del audio (solo en x86_64); sin usar nada nuevo, idénticas bit a bit.
   - `script/tests/guide.rs`: la guía coincide con el registro (`cargo run -p script --example guia`) y sus bloques de Lua y las recetas de `scripts/ejemplos/` se ejecutan. Las tablas de la paleta y de la configuración se reescriben con `ACTUALIZAR_GUIA=1 cargo test -p tui the_guide_lists_the_palette` (y `the_guide_lists_the_config`).
   - `script/tests/registry.rs`: cada función, efecto, parámetro y snippet del registro existe y funciona en Lua.
-- **Ver la interfaz sin terminal**: `cargo test -p tui pantalla -- --ignored --nocapture` (y `pantalla_autocompletado`, `pantalla_paleta`, `pantalla_bloques`, `pantalla_choques`).
+- **Ver la interfaz sin terminal**: `cargo test -p tui pantalla -- --ignored --nocapture` (y `pantalla_autocompletado`, `pantalla_paleta`, `pantalla_bloques`, `pantalla_choques`, `pantalla_ventanas`).
 - **Audio de prueba**: `scripts/render-demo.sh` genera un break sintético y lo renderiza a `renders/` sin tocar la tarjeta (ver `docs/ESTADO.md`).
 - **Pendiente conocido**: cpal avisa de un underrun al arrancar el stream (una vez, ~200 ms).
 

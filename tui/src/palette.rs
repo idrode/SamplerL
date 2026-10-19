@@ -58,6 +58,7 @@ pub enum Action {
     Versions,
     AnalyzeMasking,
     ToggleVariant,
+    EditorWindow,
     Quit,
 }
 
@@ -365,6 +366,12 @@ pub const ACTIONS: &[ActionDef] = &[
         action: Action::AnalyzeMasking,
         name: "Choques de frecuencia",
         description: "Renderiza offline cada pista en solo (un ciclo entero de la canción) y muestra en qué bandas se pisan: tabla pareja × banda con su puntuación (0 a 1), un resumen y el EQ sugerido para la que cede; Enter lo propone y Enter otra vez lo inserta en el script sin guardar; no toca lo que suena",
+        keys: "",
+    },
+    ActionDef {
+        action: Action::EditorWindow,
+        name: "Abrir el editor en su ventana",
+        description: "Con tui --edit … --split: abre el editor en una terminal nueva ([editor] terminal en config.toml) si no está conectado",
         keys: "",
     },
     ActionDef {

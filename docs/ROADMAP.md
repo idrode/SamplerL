@@ -257,3 +257,66 @@ huellas de `golden.rs` idénticas si no se usa nada nuevo, código portable
    (que una voz subida no suene a ardilla): `pista:formant(n)` para los
    pasos con `%` y `formant = n` en un instrumento con `keep`; LPC por
    grano, elegido midiendo una vocal y una caja sintéticas.
+
+## Fase L: editor en ventana propia
+
+Objetivo: poder abrir el editor de código en una ventana de terminal
+independiente, para que el gestor de ventanas (Hyprland, por ejemplo) la
+trate como cualquier otra: flotante, redimensionable y movible entre
+workspaces. Y que el espacio que deja libre en la ventana principal lo
+ocupen otras vistas.
+
+Reglas de siempre: el motor y el modelo `Song` viven en un solo proceso (el
+de la ventana principal); el editor nunca toca el audio, solo envía el
+texto y sus órdenes. Todo con test (dos extremos simulados del protocolo,
+backend de test de ratatui para las dos ventanas) y nunca la salida de
+audio real.
+
+### Parte 1: separación en dos procesos ✅
+
+Hecha: ver «Fase L» en [docs/ESTADO.md](ESTADO.md) y «El editor en su
+propia ventana» en [docs/GUIA.md](GUIA.md).
+
+1. **`tui --edit x.lua` sigue igual**, en una sola ventana: sin socket ni
+   nada nuevo si no se pide.
+2. **Dos procesos, un motor**: la ventana principal (motor, estado, vistas,
+   modo tocar, MIDI) y el editor (texto, deshacer, autocompletado,
+   diagnóstico en vivo, paleta, ayuda contextual, bloques, ranuras,
+   versiones) en procesos distintos, cada uno en su terminal, con las
+   librerías `script` y `tui` compartidas.
+3. **Socket Unix local** en `$XDG_RUNTIME_DIR/sampler/` (carpeta 0700,
+   socket 0600, se rechaza a cualquier otro usuario por sus credenciales;
+   nada de red). Protocolo de líneas de texto, versionado. Del editor a la
+   principal: el texto, cargarlo y las acciones y órdenes de la paleta que
+   tocan el motor; de la principal al editor: el texto que cambie ella
+   (etiquetas, EQ sugerido, grabación...), los errores, avisos, compás,
+   paso, pista y corte seleccionados y las etiquetas conocidas.
+4. **Caídas y reconexión**: si el editor se cierra o se cae, la principal
+   sigue sonando y se puede volver a abrir (recupera el texto); si cae la
+   principal, el editor sigue editando y guardando y se reconecta solo
+   cuando vuelve. El audio no depende del socket.
+5. **Cargar igual que hoy**: una carga desde el editor entra al compás
+   siguiente; si el código es inválido, sigue sonando lo anterior y el
+   error se ve en el editor (regla 5).
+6. **Lanzadores**: `tui --edit x.lua --split` arranca la principal y abre
+   el editor en otra terminal con el comando de `[editor] terminal` de
+   `config.toml` (p. ej. `kitty --class sampler-editor -e`);
+   `tui --window-editor x.lua` conecta con una instancia ya en marcha (por
+   SSH, en otro panel de `tmux`). Regla de ejemplo para Hyprland en la
+   guía.
+7. **Pegar** con la selección nativa del terminal: bracketed paste activado
+   al entrar y quitado al salir (también con error o pánico), varias
+   líneas con sangría tal cual y un solo Ctrl-Z para deshacer el pegado.
+
+### Parte 2: vistas en el hueco del editor
+
+1. **Layout sin editor en la principal**: con el editor fuera, su panel lo
+   ocupan las vistas; con el editor dentro, el layout de siempre.
+2. **Forma de onda grande** con los cortes, el loop y más resolución.
+3. **Tracker con todas las pistas** a la vez, en columnas.
+4. **Mezclador** con medidores, volumen, mute/solo y envíos por pista.
+5. **Tabla de choques de frecuencia** (la de `--analyze-masking`), si se
+   ha calculado.
+6. **Cambiar en caliente**: sacar el editor a su ventana y volver a
+   meterlo desde la paleta sin perder el texto, el cursor ni el historial
+   de deshacer.

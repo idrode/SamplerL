@@ -5,6 +5,7 @@ mod config;
 mod diagnose;
 mod editing;
 mod history;
+mod link;
 mod midi;
 #[cfg(feature = "midi")]
 mod midi_io;
@@ -24,6 +25,8 @@ use engine::{DetectOptions, Detector, Pattern, Slices, Step};
 
 const USAGE: &str = "\
 uso: tui --edit <canción.lua | proyecto.sampler> [--allow-audio] [--allow-midi]   (interfaz)
+     tui --edit <canción.lua | proyecto.sampler> --split [...]  (el editor en otra ventana)
+     tui --window-editor <canción.lua | proyecto.sampler>    (editor de una --split en marcha)
      tui <archivo.wav> --render <salida.wav>
      tui <archivo.wav> --detect-bpm               (propone bpm() y compases)
      tui --script <canción.lua> --render <salida.wav> [--bars M] [--metronome] [--track pista]
@@ -47,6 +50,9 @@ uso: tui --edit <canción.lua | proyecto.sampler> [--allow-audio] [--allow-midi]
   --analyze-masking  renderiza offline cada pista en solo (un ciclo entero de la
                canción, hasta 256 compases) y dice en qué bandas chocan
   --allow-midi abre los puertos MIDI virtuales «sampler entrada» y «sampler salida» (ALSA)
+  --split    con --edit: el motor y las vistas aquí y el editor en una terminal nueva
+               ([editor] terminal en config.toml); se hablan por un socket local
+  --window-editor  abre solo el editor y conecta con la ventana principal de ese script
 
 Sin --render, tui se niega a reproducir por la tarjeta de sonido salvo con
 --allow-audio (ver CLAUDE.md: no usarlo en sesiones automáticas).";
@@ -97,6 +103,8 @@ fn run() -> Result<(), BoxError> {
     let mut detect = false;
     let mut track = None;
     let mut masking = false;
+    let mut split = false;
+    let mut window_editor = None;
     while let Some(arg) = args.next() {
         let mut value = || {
             args.next()
@@ -122,6 +130,8 @@ fn run() -> Result<(), BoxError> {
             "--script" => script = Some(value()?),
             "--track" => track = Some(value()?),
             "--edit" => edit = Some(value()?),
+            "--split" => split = true,
+            "--window-editor" => window_editor = Some(value()?),
             "--detector" => {
                 detector = Some(match value()?.as_str() {
                     "flux" => Detector::Flux,
@@ -151,11 +161,32 @@ fn run() -> Result<(), BoxError> {
             _ => return Err(USAGE.into()),
         }
     }
+    if let Some(target) = window_editor {
+        if edit.is_some()
+            || split
+            || allow_audio
+            || allow_midi
+            || path.is_some()
+            || script.is_some()
+            || render_to.is_some()
+            || pattern.is_some()
+        {
+            return Err(format!(
+                "--window-editor no se combina con otras opciones (el audio y el MIDI son de la \
+                 ventana principal)\n{USAGE}"
+            )
+            .into());
+        }
+        return run_window_editor(std::path::Path::new(&target));
+    }
+    if split && edit.is_none() {
+        return Err(format!("--split va con --edit\n{USAGE}").into());
+    }
     if let Some(edit) = edit {
         if path.is_some() || script.is_some() || render_to.is_some() || pattern.is_some() {
             return Err(format!("--edit no se combina con otras opciones\n{USAGE}").into());
         }
-        return run_editor(std::path::Path::new(&edit), allow_audio, allow_midi);
+        return run_editor(std::path::Path::new(&edit), allow_audio, allow_midi, split);
     }
     if let Some(script) = script {
         if path.is_some() || pattern.is_some() || slices.is_some() || min_gap_ms.is_some() {
@@ -474,12 +505,14 @@ fn play_script(path: &str) -> Result<(), BoxError> {
 
 /// Interfaz de terminal. Sin `--allow-audio`, el motor avanza con una salida
 /// nula (a ritmo real, sin abrir la tarjeta): se ve todo y no suena nada.
-fn run_editor(path: &std::path::Path, allow_audio: bool, allow_midi: bool) -> Result<(), BoxError> {
-    use ratatui::crossterm::event::{
-        self, EnableBracketedPaste, Event, KeyEventKind, KeyboardEnhancementFlags,
-        PushKeyboardEnhancementFlags,
-    };
-
+/// Con `split`, esta es la ventana principal y el editor se abre en una
+/// terminal nueva.
+fn run_editor(
+    path: &std::path::Path,
+    allow_audio: bool,
+    allow_midi: bool,
+    split: bool,
+) -> Result<(), BoxError> {
     let (controller, engine) = engine::new_engine(RENDER_RATE);
     // Hay que mantener viva la salida mientras dure la interfaz.
     let (_audio, _null, sample_rate);
@@ -514,6 +547,18 @@ fn run_editor(path: &std::path::Path, allow_audio: bool, allow_midi: bool) -> Re
     app.set_slots_dir(config::dir().map(|d| d.join("ranuras")));
     // El historial de versiones del script, fuera del repositorio.
     app.set_history_root(history::root());
+    // El editor en su ventana: se escucha antes de abrir la interfaz (si
+    // ya hay otra principal de este script, el error sale normal).
+    if split {
+        let socket = link::socket_path(&link::runtime_dir()?, app.script_path());
+        let server = link::Server::bind(&socket)?;
+        app.serve(
+            server,
+            config.editor_terminal.clone(),
+            std::env::current_exe()?,
+        );
+        app.launch_editor();
+    }
     // MIDI solo si se pide: abre puertos del sistema.
     #[cfg(feature = "midi")]
     let _midi_in = if allow_midi {
@@ -535,6 +580,39 @@ fn run_editor(path: &std::path::Path, allow_audio: bool, allow_midi: bool) -> Re
         Duration::from_millis(2)
     } else {
         Duration::from_millis(30)
+    };
+
+    run_terminal(&mut app, poll, ui::draw)
+}
+
+/// `--window-editor`: solo el editor, conectado con la ventana principal
+/// del mismo script (si aún no está, se reintenta). Nunca abre la tarjeta
+/// ni el MIDI: su motor no se mueve; todo lo que suena es de la principal.
+fn run_window_editor(path: &std::path::Path) -> Result<(), BoxError> {
+    let (controller, _engine) = engine::new_engine(RENDER_RATE);
+    let mut app = app::App::open_editor(path, controller, RENDER_RATE, &link::runtime_dir()?)?;
+    app.set_global_blocks(script::blocks::global_dir());
+    let config = match config::dir() {
+        Some(dir) => config::Config::load(&dir.join("config.toml"), theme::truecolor()),
+        None => config::Config::default(),
+    };
+    theme::set(config.theme);
+    app.set_config(&config);
+    app.set_slots_dir(config::dir().map(|d| d.join("ranuras")));
+    app.set_history_root(history::root());
+    run_terminal(&mut app, Duration::from_millis(30), ui::draw_editor_window)
+}
+
+/// El bucle de la interfaz en la terminal: dibuja, lee teclas y pegados y
+/// atiende al motor y al enlace en cada vuelta.
+fn run_terminal(
+    app: &mut app::App,
+    poll: Duration,
+    draw: fn(&mut ratatui::Frame, &mut app::App),
+) -> Result<(), BoxError> {
+    use ratatui::crossterm::event::{
+        self, EnableBracketedPaste, Event, KeyEventKind, KeyboardEnhancementFlags,
+        PushKeyboardEnhancementFlags,
     };
 
     let mut terminal = ratatui::init();
@@ -560,7 +638,7 @@ fn run_editor(path: &std::path::Path, allow_audio: bool, allow_midi: bool) -> Re
         loop {
             app.poll_midi();
             app.tick();
-            terminal.draw(|frame| ui::draw(frame, &mut app))?;
+            terminal.draw(|frame| draw(frame, app))?;
             if !event::poll(poll)? {
                 continue;
             }

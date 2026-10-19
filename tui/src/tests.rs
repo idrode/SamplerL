@@ -2395,6 +2395,7 @@ mod resample;
 mod sections;
 mod sends;
 mod shapes;
+mod split;
 mod stretch;
 mod tempo;
 mod variants;

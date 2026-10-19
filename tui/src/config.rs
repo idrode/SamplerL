@@ -334,6 +334,10 @@ pub struct Config {
     pub theme: Theme,
     /// `[midi]`: nota del corte 1, canal y reloj.
     pub midi: MidiConfig,
+    /// `[editor] terminal`: el comando que abre una terminal nueva para el
+    /// editor en su ventana (`tui --edit … --split`); detrás va
+    /// `tui --window-editor <script>`.
+    pub editor_terminal: Option<Vec<String>>,
     /// Avisos (archivo que falta o roto, claves desconocidas, choques...).
     pub warnings: Vec<String>,
 }
@@ -426,8 +430,32 @@ impl Config {
                         }
                     }
                 }
+                "editor" => {
+                    for (key, value) in inner {
+                        let words: Option<Vec<String>> = match value {
+                            toml::Value::String(s) => {
+                                Some(s.split_whitespace().map(String::from).collect())
+                            }
+                            toml::Value::Array(list) => {
+                                list.iter().map(|v| v.as_str().map(String::from)).collect()
+                            }
+                            _ => None,
+                        };
+                        match (key.as_str(), words) {
+                            ("terminal", Some(words)) if !words.is_empty() => {
+                                config.editor_terminal = Some(words)
+                            }
+                            ("terminal", _) => config.warnings.push(
+                                "[editor] terminal: un comando, como \"kitty --class sampler-editor -e\" o una lista de palabras".into(),
+                            ),
+                            _ => config.warnings.push(format!(
+                                "[editor] «{key}» no existe (hay: terminal)"
+                            )),
+                        }
+                    }
+                }
                 other => config.warnings.push(format!(
-                    "{name}: sección [{other}] desconocida (hay: teclas, colores, midi)"
+                    "{name}: sección [{other}] desconocida (hay: teclas, colores, midi, editor)"
                 )),
             }
         }
@@ -592,6 +620,27 @@ brillo = "red"
         // Sin truecolor, el más cercano de 256.
         let plain = Config::parse(text, false, "config.toml");
         assert_eq!(plain.theme.accent, Color::Indexed(208));
+    }
+
+    #[test]
+    fn the_editor_terminal_is_a_command_or_a_list_of_words() {
+        let text = "[editor]\nterminal = \"kitty --class sampler-editor -e\"\n";
+        let config = Config::parse(text, true, "c.toml");
+        assert_eq!(
+            config.editor_terminal.unwrap(),
+            ["kitty", "--class", "sampler-editor", "-e"]
+        );
+        let text = "[editor]\nterminal = [\"foot\", \"--app-id\", \"sampler editor\"]\n";
+        let config = Config::parse(text, true, "c.toml");
+        assert_eq!(
+            config.editor_terminal.unwrap(),
+            ["foot", "--app-id", "sampler editor"]
+        );
+        assert!(config.warnings.is_empty());
+        let config = Config::parse("[editor]\nterminal = 3\nventana = 1\n", true, "c.toml");
+        assert_eq!(config.editor_terminal, None);
+        assert_eq!(config.warnings.len(), 2, "{:?}", config.warnings);
+        assert!(config.warnings[1].contains("(hay: terminal)"));
     }
 
     #[test]

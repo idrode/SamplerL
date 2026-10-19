@@ -88,6 +88,33 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     frame.render_widget(TrackerPanel(&view), tracker_area);
     frame.render_widget(FxPanel(&view), fx);
     frame.render_widget(HelpLine(&view), help);
+    draw_popups(frame, &view, popup);
+}
+
+/// Dibuja el editor en su propia ventana (`tui --window-editor`): el
+/// editor entero, la línea del enlace con la principal y la de ayuda.
+pub fn draw_editor_window(frame: &mut Frame, app: &mut App) {
+    let view = app.view();
+    let [main, link, help] = Layout::vertical([
+        Constraint::Min(3),
+        Constraint::Length(1),
+        Constraint::Length(1),
+    ])
+    .areas(frame.area());
+    let popup = draw_editor(frame, app, &view, main);
+    let text = view.link.clone().unwrap_or_default();
+    let color = if text.starts_with('✗') {
+        warning_color()
+    } else {
+        accent()
+    };
+    frame.render_widget(Line::from(text).fg(color), link);
+    frame.render_widget(HelpLine(&view), help);
+    draw_popups(frame, &view, popup);
+}
+
+/// Lo que se abre encima de los paneles.
+fn draw_popups(frame: &mut Frame, view: &ViewModel, popup: Option<Rect>) {
     // El autocompletado, encima de todo (puede salirse del editor).
     if let (Some(completion), Some(area)) = (&view.completion, popup) {
         frame.render_widget(CompletionPopup(completion), area);
@@ -371,7 +398,12 @@ fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rect) -
         .project
         .as_ref()
         .map_or(String::new(), |p| format!(" · {p}"));
-    let mut block = Block::bordered().title(format!(" {}{dirty}{project} ", view.file));
+    let link = view
+        .link
+        .as_ref()
+        .filter(|_| view.playing_mode)
+        .map_or(String::new(), |l| format!(" · {l}"));
+    let mut block = Block::bordered().title(format!(" {}{dirty}{project}{link} ", view.file));
     if view.external_change {
         block = block.title(
             Line::from(" ⚠ cambiado fuera · F3 recargar ")
@@ -380,8 +412,10 @@ fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rect) -
         );
     }
     if view.playing_mode {
+        // (En la principal con el editor fuera no se vuelve al editor.)
+        let esc = if view.link.is_some() { "" } else { " · Esc" };
         block = block.title(
-            Line::from(" TOCAR · 1-0 q-i · Esc ")
+            Line::from(format!(" TOCAR · 1-0 q-i{esc} "))
                 .fg(Color::Black)
                 .bg(Color::Yellow),
         );

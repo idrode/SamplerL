@@ -105,6 +105,94 @@ mueve), pero el audio se tira. Para oírlo por la tarjeta:
 cargo run -p tui -- --edit mi-cancion.lua --allow-audio
 ```
 
+### El editor en su propia ventana
+
+Con `--split`, el editor sale a una ventana de terminal aparte, que el
+gestor de ventanas trata como cualquier otra (flotante, redimensionable,
+en otro workspace). La ventana de siempre se queda con el motor, las
+vistas, el modo tocar y el MIDI; el editor, con el texto, deshacer, el
+autocompletado, el diagnóstico, la ayuda, los bloques, las ranuras y las
+versiones. Son dos procesos que se hablan por un socket local; si se
+cierra el editor, la principal sigue sonando, y si se cae la principal, el
+editor sigue editando y guardando y se reconecta solo cuando vuelve.
+
+```sh
+cargo run -p tui -- --edit mi-cancion.lua --split [--allow-audio] [--allow-midi]
+```
+
+La principal abre el editor con el comando de `[editor] terminal` de
+`config.toml`, al que añade `tui --window-editor mi-cancion.lua`:
+
+```toml
+[editor]
+terminal = "kitty --class sampler-editor -e"
+# terminal = "foot --app-id sampler-editor"
+# terminal = ["alacritty", "--class", "sampler-editor", "-e"]
+```
+
+Sin esa línea, o por SSH (en otro panel de `tmux`), se abre a mano y
+conecta con la principal de ese script que esté en marcha:
+
+```sh
+cargo run -p tui -- --window-editor mi-cancion.lua
+```
+
+Si el editor se cierra, F1 «Abrir el editor en su ventana» en la
+principal lo vuelve a abrir; el nuevo recupera el texto, también lo que
+estaba sin guardar. Solo hay un editor a la vez: uno nuevo sustituye al
+anterior.
+
+- **Cargar** (Ctrl-L o F5) y **guardar y cargar** (Ctrl-S) mandan el
+  texto a la principal, que lo carga como siempre: entra en el compás
+  siguiente, y si tiene errores sigue sonando lo anterior y el error sale
+  en el editor. Al pie del editor, una línea dice si está conectado, la
+  marcha, el compás y el paso, y la pista y el corte seleccionados en la
+  principal.
+- **Las acciones del motor** (marcha/paro, mute, solo, metrónomo, cortes,
+  secciones, variantes, exportar, las órdenes de F2 menos `bloque`) se
+  pueden lanzar desde la paleta del editor y se hacen en la principal.
+  El explorador, el tap tempo, el informe de choques y las preguntas de
+  grabar, saltar a una sección o remuestrear se abren en la principal:
+  hay que ir a esa ventana. `etiquetar` pregunta en el editor.
+- **El modo tocar** es de la principal, que con el editor fuera está
+  siempre en él (Esc no vuelve al editor). El texto se ve allí, sin
+  poder escribirlo.
+- **Lo que cambia la principal en el texto** (etiquetar, `bpm`, el EQ
+  sugerido, lo grabado, restaurar una versión) llega al editor como un
+  solo cambio (Ctrl-Z lo deshace), sin guardar. Si en ese momento estás
+  escribiendo en el editor, se queda lo tuyo y se avisa: haz el cambio
+  otra vez.
+- **Pegar**: con el editor en su ventana se usa la selección del propio
+  terminal (el pegado con corchetes se pide al entrar y se quita al
+  salir, también si hay un error). Varias líneas con su sangría entran tal
+  cual y un solo Ctrl-Z lo deshace.
+- **Seguridad**: el socket está en `$XDG_RUNTIME_DIR/sampler/` (carpeta
+  0700, socket 0600, uno por script) y la principal rechaza conexiones de
+  otro usuario; nada va por la red.
+
+Para que Hyprland abra el editor flotante y de un tamaño cómodo, una regla
+que lo reconozca por su clase (la que pone `--class` o `--app-id`). Con la
+configuración en Lua (`~/.config/hypr/hyprland.lua`; va como `text`
+porque no es un script del sampler):
+
+```text
+hl.window_rule({
+  match = { class = "^sampler-editor$" },
+  float = true,
+  size = { 900, 700 },
+})
+```
+
+O, en un `hyprland.conf` clásico:
+
+```ini
+windowrule = float, class:^(sampler-editor)$
+windowrule = size 900 700, class:^(sampler-editor)$
+```
+
+(Los nombres de las reglas cambian entre versiones de Hyprland:
+compruébalos en la documentación de la tuya.)
+
 ### Renderizar a WAV
 
 Sin abrir la interfaz, un script de Lua:
@@ -336,6 +424,7 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Alternar variante A/B | Con variant(): pasa a la otra variante; entra entera al empezar el compás siguiente (con secciones, por la misma sección y compás) | v (modo tocar) |
 | Versiones | El historial del script (una versión por carga buena): lista con fecha y vista previa; Enter la restaura en el editor sin guardar (Ctrl-Z lo deshace) | — |
 | Choques de frecuencia | Renderiza offline cada pista en solo (un ciclo entero de la canción) y muestra en qué bandas se pisan: tabla pareja × banda con su puntuación (0 a 1), un resumen y el EQ sugerido para la que cede; Enter lo propone y Enter otra vez lo inserta en el script sin guardar; no toca lo que suena | — |
+| Abrir el editor en su ventana | Con tui --edit … --split: abre el editor en una terminal nueva ([editor] terminal en config.toml) si no está conectado | — |
 | Salir | Sale (pide confirmación si hay cambios sin guardar) | Ctrl-Q |
 | Snippet: `amen`, `fill`, `ghost`, `intro`, `euclid`, `melodia`, `polirritmo`, `barrido`, `groove`, `instrumento` | Inserta el snippet en el cursor (ver «Snippets» en la sección 4) | — |
 
@@ -585,6 +674,9 @@ paleta = "ctrl-p"            # además de F1
 acento = "#ff8700"           # nombre, #rrggbb o número de la paleta de 256
 sonando = 22
 ```
+
+La sección `[editor]` tiene `terminal`, el comando que abre el editor en
+su ventana con `--split` (ver «El editor en su propia ventana»).
 
 Las teclas son `ctrl-` y/o `alt-` con una letra o un número, `f1` a `f12`
 o `esc`. Una letra sola no vale (escribiría texto). F1 abre siempre la

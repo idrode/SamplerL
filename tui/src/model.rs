@@ -67,6 +67,9 @@ pub struct ViewModel {
     /// Corte seleccionado de esa pista (desde 0).
     pub selected_slice: Option<usize>,
     pub master: MasterView,
+    /// Con el editor en su propia ventana: cómo está el enlace (y, en el
+    /// editor, por dónde va la principal).
+    pub link: Option<String>,
 }
 
 /// Medidor del master.
