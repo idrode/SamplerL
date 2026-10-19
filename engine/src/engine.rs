@@ -751,6 +751,56 @@ pub struct Engine {
     staged_ramp: Option<TempoRamp>,
     staged_meter: Option<Meter>,
     send_buf: [[f32; 2 * CHUNK]; BUSES],
+    /// La salida (tras sus efectos, antes del volumen) de cada pista que
+    /// otra escucha por sidechain, en el trozo que se está mezclando. En el
+    /// heap, como las pistas.
+    side_buf: Box<[[f32; 2 * CHUNK]; MAX_TRACKS]>,
+}
+
+/// Silencio para el sidechain de una pista que calla en este trozo.
+static SILENCE: [f32; 2 * CHUNK] = [0.0; 2 * CHUNK];
+
+/// Orden en que se mezclan las pistas en un trozo: cada una después de las
+/// que escucha por sidechain (`listens[t][k]`: la pista `t` escucha la
+/// `k`), y si no, por su número (sin sidechain, 0, 1, 2...). En un círculo
+/// (que el script no deja hacer), la de número más bajo primero.
+fn mix_order(listens: &[[bool; MAX_TRACKS]; MAX_TRACKS]) -> [usize; MAX_TRACKS] {
+    let mut placed = [false; MAX_TRACKS];
+    let mut order = [0; MAX_TRACKS];
+    for slot in &mut order {
+        let ready = (0..MAX_TRACKS).find(|&t| {
+            !placed[t] && (0..MAX_TRACKS).all(|k| k == t || !listens[t][k] || placed[k])
+        });
+        let next = ready
+            .or_else(|| (0..MAX_TRACKS).find(|&t| !placed[t]))
+            .unwrap_or(0);
+        placed[next] = true;
+        *slot = next;
+    }
+    order
+}
+
+/// Los efectos de una pista sobre `buf` (los frames `range` del trozo),
+/// cada EQ dinámico con sidechain con su trozo de la pista que escucha
+/// (silencio si no ha sonado en este trozo).
+fn run_fx(
+    fx: &mut [FxState; MAX_FX],
+    buf: &mut [f32],
+    own: usize,
+    side: &[[f32; 2 * CHUNK]; MAX_TRACKS],
+    live: &[bool; MAX_TRACKS],
+    range: std::ops::Range<usize>,
+) {
+    for state in fx.iter_mut() {
+        let key = state.sidechain().filter(|&k| k != own).map(|k| {
+            if live[k] {
+                &side[k][range.clone()]
+            } else {
+                &SILENCE[range.clone()]
+            }
+        });
+        state.process_keyed(buf, key);
+    }
 }
 
 /// Crea el par controlador/motor. `sample_rate` es la frecuencia a la que
@@ -801,6 +851,10 @@ pub fn new_engine(sample_rate: u32) -> (Controller, Engine) {
             staged_ramp: None,
             staged_meter: None,
             send_buf: [[0.0; 2 * CHUNK]; BUSES],
+            side_buf: vec![[0.0; 2 * CHUNK]; MAX_TRACKS]
+                .into_boxed_slice()
+                .try_into()
+                .unwrap_or_else(|_| unreachable!("son MAX_TRACKS pistas")),
         },
     )
 }
@@ -1926,7 +1980,21 @@ impl Engine {
             frames_per_step: crate::sequencer::frames_per_step(self.transport.bpm(), rate),
             sample_rate: rate,
         };
-        for t in 0..MAX_TRACKS {
+        // Quién escucha a quién por sidechain: las que se escuchan se mezclan
+        // antes y guardan su salida en `side_buf`.
+        let mut listens = [[false; MAX_TRACKS]; MAX_TRACKS];
+        let mut heard = [false; MAX_TRACKS];
+        for (t, track) in self.tracks.iter().enumerate() {
+            let chain = track.pattern.as_ref().map_or(&[None; MAX_FX], |p| &p.fx);
+            for k in chain.iter().flatten().filter_map(Fx::sidechain) {
+                if k != t && k < MAX_TRACKS {
+                    listens[t][k] = true;
+                    heard[k] = true;
+                }
+            }
+        }
+        let mut live = [false; MAX_TRACKS];
+        for t in mix_order(&listens) {
             let track = &mut self.tracks[t];
             let target = track.pattern.as_ref().map_or(1.0, |p| p.gain);
             let target_sends = track.pattern.as_ref().map_or([0.0; BUSES], |p| p.sends);
@@ -2022,11 +2090,13 @@ impl Engine {
                     .as_ref()
                     .is_some_and(|p| p.automation.iter().any(Option::is_some));
             if moving {
-                modulate(track, buf, &clock, fresh);
+                modulate(track, buf, &clock, fresh, t, &self.side_buf, &live);
             } else {
-                for state in &mut track.fx {
-                    state.process(buf);
-                }
+                run_fx(&mut track.fx, buf, t, &self.side_buf, &live, 0..2 * n);
+            }
+            if heard[t] {
+                self.side_buf[t][..2 * n].copy_from_slice(buf);
+                live[t] = true;
             }
 
             let master = &mut self.master[..2 * n];
@@ -2373,11 +2443,17 @@ struct Clock {
 /// golpe con `~`), lo suaviza (~5 ms) y se lo pasa al efecto. Con `snap`
 /// (la voz acaba de empezar desde el silencio), el primer valor entra ya.
 /// Un parámetro que vuelve a su valor fijo deja de moverse.
-fn modulate(track: &mut Track, buf: &mut [f32], clock: &Clock, snap: bool) {
+fn modulate(
+    track: &mut Track,
+    buf: &mut [f32],
+    clock: &Clock,
+    snap: bool,
+    own: usize,
+    side: &[[f32; 2 * CHUNK]; MAX_TRACKS],
+    live: &[bool; MAX_TRACKS],
+) {
     let Some(pattern) = &track.pattern else {
-        for state in &mut track.fx {
-            state.process(buf);
-        }
+        run_fx(&mut track.fx, buf, own, side, live, 0..buf.len());
         return;
     };
     let rate = clock.sample_rate;
@@ -2429,9 +2505,9 @@ fn modulate(track: &mut Track, buf: &mut [f32], clock: &Clock, snap: bool) {
                 }
             }
         }
-        for state in &mut track.fx {
-            state.process(sub);
-        }
+        let from = block * 2 * MOD_BLOCK;
+        let range = from..from + sub.len();
+        run_fx(&mut track.fx, sub, own, side, live, range);
     }
 }
 

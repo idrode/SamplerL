@@ -1504,7 +1504,16 @@ pub const FUNCTIONS: &[Function] = &[
               `\"lowshelf\"` y `\"highshelf\"`, estantes que mueven todo lo que \
               queda por debajo o por encima); una banda con `gainN = 0` no hace nada, \
               y un EQ sin ganancias suena idéntico a no tenerlo. Al recargar con \
-              otras ganancias, el EQ va hacia ellas en unos 5 ms, sin clic. Los \
+              otras ganancias, el EQ va hacia ellas en unos 5 ms, sin clic. El EQ \
+              dinámico (`dyneq`) tiene una banda que escucha (un paso de banda en \
+              `freq` y `q`) y baja solo mientras lo que oye pasa de `threshold`: \
+              `1 − 1/ratio` dB por dB de más, como mucho `range`, con `attack` y \
+              `release`. Sin `sidechain` escucha la propia pista; con \
+              `sidechain = \"kick\"`, la salida de esa pista (tras sus efectos, \
+              antes de su volumen, aunque esté en mute o fuera del solo). Por \
+              debajo del umbral suena idéntico a no tenerlo. Los `freq`, `q`, \
+              `threshold` y `range` del EQ dinámico también admiten `ramp()` y \
+              `lfo()`. Los \
               parámetros `cutoff`, `q`, `threshold`, `makeup`, `drive`, `mix` y los \
               `freqN`, `gainN` y `qN` del EQ admiten `ramp()` y `lfo()` en lugar de \
               un número; el corte del primer filtro, además, puede cambiar en cada \
@@ -2076,6 +2085,86 @@ pub const EFFECTS: &[Effect] = &[
         params: eq_params!(1 "100", 2 "500", 3 "2000", 4 "8000"),
         template: "{ freq1 = ${300}, gain1 = ${-3}, q1 = ${1} }",
     },
+    Effect {
+        name: "dyneq",
+        aliases: &[],
+        summary: "EQ dinámico de una banda: la baja solo mientras suena fuerte en ella la propia pista o, con sidechain, otra.",
+        params: &[
+            FxParam {
+                name: "freq",
+                description: "centro de la banda en Hz (la que se escucha y la que baja)",
+                default: None,
+                valid: "20–20000",
+                values: &[],
+                template: "freq = ${100}",
+            },
+            FxParam {
+                name: "q",
+                description: "ancho de la banda (más q, más estrecha)",
+                default: Some("1"),
+                valid: "0.1–18",
+                values: &[],
+                template: "q = ${1}",
+            },
+            FxParam {
+                name: "type",
+                description: "forma de la banda que baja",
+                default: Some("\"bell\""),
+                valid: "`\"bell\"`, `\"lowshelf\"` o `\"highshelf\"`",
+                values: &["bell", "lowshelf", "highshelf"],
+                template: "type = \"${bell}\"",
+            },
+            FxParam {
+                name: "threshold",
+                description: "nivel en dB de la banda (en lo que se escucha) desde el que baja",
+                default: Some("-30"),
+                valid: "-60–0",
+                values: &[],
+                template: "threshold = ${-30}",
+            },
+            FxParam {
+                name: "ratio",
+                description: "por cada dB de más, baja 1 − 1/ratio dB",
+                default: Some("4"),
+                valid: "1–20",
+                values: &[],
+                template: "ratio = ${4}",
+            },
+            FxParam {
+                name: "range",
+                description: "lo más que baja, en dB",
+                default: Some("6"),
+                valid: "0–24",
+                values: &[],
+                template: "range = ${6}",
+            },
+            FxParam {
+                name: "attack",
+                description: "ms que tarda en bajar",
+                default: Some("5"),
+                valid: "0.1–200",
+                values: &[],
+                template: "attack = ${5}",
+            },
+            FxParam {
+                name: "release",
+                description: "ms que tarda en volver",
+                default: Some("120"),
+                valid: "1–2000",
+                values: &[],
+                template: "release = ${120}",
+            },
+            FxParam {
+                name: "sidechain",
+                description: "pista que se escucha en vez de la propia (aunque esté en mute)",
+                default: Some("la propia"),
+                valid: "nombre de otra pista",
+                values: &[],
+                template: "sidechain = \"${kick}\"",
+            },
+        ],
+        template: "{ freq = ${80}, range = ${6}, sidechain = \"${kick}\" }",
+    },
 ];
 
 /// Parámetros de `cortes:set([i,] { ... })`: la forma de un corte.
@@ -2553,6 +2642,7 @@ pub fn automatable(effect: &str, param: &str) -> bool {
         Some("distortion") => engine::Fx::distortion(4.0, 1.0),
         Some("bitcrush") => engine::Fx::bitcrush(8, 1),
         Some("eq") => engine::Fx::eq(&[]),
+        Some("dyneq") => engine::Fx::DynEq(engine::DynEqParams::new(100.0)),
         _ => return false,
     };
     fx.param_index(param).is_some()

@@ -1040,7 +1040,8 @@ mod tests {
                 "bitcrush",
                 "compressor",
                 "distortion",
-                "eq"
+                "eq",
+                "dyneq"
             ]
         );
         let c = at(&format!("{SONG}track(\"d\", amen):fx(\"bit|")).unwrap();

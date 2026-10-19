@@ -1185,7 +1185,8 @@ fn completion_follows_the_context() {
             "bitcrush",
             "compressor",
             "distortion",
-            "eq"
+            "eq",
+            "dyneq"
         ]
     );
     type_text(&mut app, "filter\", { ");
@@ -1380,7 +1381,8 @@ fn choosing_another_effect_with_the_arrows_replaces_the_rest_of_the_name() {
             "bitcrush",
             "compressor",
             "distortion",
-            "eq"
+            "eq",
+            "dyneq"
         ]
     );
     app.handle(special(Key::Down));

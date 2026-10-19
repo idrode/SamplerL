@@ -181,7 +181,8 @@ Hecha: explorador de samples, tap tempo, `bpm_ramp()` y `meter()`,
 Hecha: `:fx("eq")` (4 bandas, campana y estantes, con `ramp`/`lfo`), el
 análisis de choques (`--analyze-masking` y «Choques de frecuencia» en la
 paleta), `priority()` con sus sugerencias de recorte y aplicarlas desde la
-paleta tras confirmarlo. Ecualizar cada pista y encontrar dónde se pisan
+paleta tras confirmarlo; después, el EQ dinámico con sidechain por bandas
+(`:fx("dyneq")`). Ecualizar cada pista y encontrar dónde se pisan
 dos pistas (masking): el análisis se hace offline, en el hilo de control, y
 nunca cambia el script sin confirmación. Detalle y decisiones en «Fase J»
 de [docs/ESTADO.md](ESTADO.md); uso en «Choques de frecuencia entre
@@ -209,6 +210,10 @@ salida de audio real.
    a 4 dB) en la pista de menor prioridad.
 5. ✅ **Aplicar**: la paleta inserta el `fx("eq", {...})` sugerido en el
    script, tras confirmarlo.
+6. ✅ **EQ dinámico y sidechain por bandas** (de las ideas): `:fx("dyneq",
+   { freq, threshold, range, sidechain = "kick" })`, una banda que baja solo
+   mientras suena fuerte en ella la propia pista u otra; sin reservas en el
+   callback y con las huellas de siempre si no se usa.
 
 ## Fase K: melodías con samples ✅
 

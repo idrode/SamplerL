@@ -57,6 +57,8 @@ const PRELUDE: &str = r#"
 local s = sample("amen.wav")
 local amen = s:slice(8)
 local t = track("t", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+-- La pista que escuchan las plantillas con sidechain.
+track("kick", amen:slice_at(1))
 local escala = scale("minor", "C")
 local inst = s:instrument({ root = "C3" })
 "#;
@@ -257,7 +259,7 @@ fn unknown_effect_errors_list_the_registry() {
     };
     assert!(
         err.message.contains(
-            "no existe (filter, lowpass, highpass, bitcrush, compressor, distortion, eq)"
+            "no existe (filter, lowpass, highpass, bitcrush, compressor, distortion, eq, dyneq)"
         ),
         "{err}"
     );

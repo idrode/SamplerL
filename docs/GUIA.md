@@ -1525,7 +1525,7 @@ Devuelve: pista.
 
 Añade un efecto a la cadena de la pista (hasta 4, en orden). Un parámetro desconocido da error, para pillar las erratas. Los efectos y sus parámetros están en la tabla de abajo.
 
-El filtro es un biquad de 12 dB/octava; `q = 0.707` es la respuesta más plana y valores altos resuenan en el corte. El bitcrusher reduce la resolución a `bits` y repite cada muestra `downsample` veces (reducción de la frecuencia de muestreo, sin filtro: suena sucio a propósito). El EQ tiene hasta 4 bandas en serie, cada una con su `freqN`, `gainN`, `qN` y `typeN` (`"bell"`, campana; `"lowshelf"` y `"highshelf"`, estantes que mueven todo lo que queda por debajo o por encima); una banda con `gainN = 0` no hace nada, y un EQ sin ganancias suena idéntico a no tenerlo. Al recargar con otras ganancias, el EQ va hacia ellas en unos 5 ms, sin clic. Los parámetros `cutoff`, `q`, `threshold`, `makeup`, `drive`, `mix` y los `freqN`, `gainN` y `qN` del EQ admiten `ramp()` y `lfo()` en lugar de un número; el corte del primer filtro, además, puede cambiar en cada golpe con `~` en `steps` (`3~800`).
+El filtro es un biquad de 12 dB/octava; `q = 0.707` es la respuesta más plana y valores altos resuenan en el corte. El bitcrusher reduce la resolución a `bits` y repite cada muestra `downsample` veces (reducción de la frecuencia de muestreo, sin filtro: suena sucio a propósito). El EQ tiene hasta 4 bandas en serie, cada una con su `freqN`, `gainN`, `qN` y `typeN` (`"bell"`, campana; `"lowshelf"` y `"highshelf"`, estantes que mueven todo lo que queda por debajo o por encima); una banda con `gainN = 0` no hace nada, y un EQ sin ganancias suena idéntico a no tenerlo. Al recargar con otras ganancias, el EQ va hacia ellas en unos 5 ms, sin clic. El EQ dinámico (`dyneq`) tiene una banda que escucha (un paso de banda en `freq` y `q`) y baja solo mientras lo que oye pasa de `threshold`: `1 − 1/ratio` dB por dB de más, como mucho `range`, con `attack` y `release`. Sin `sidechain` escucha la propia pista; con `sidechain = "kick"`, la salida de esa pista (tras sus efectos, antes de su volumen, aunque esté en mute o fuera del solo). Por debajo del umbral suena idéntico a no tenerlo. Los `freq`, `q`, `threshold` y `range` del EQ dinámico también admiten `ramp()` y `lfo()`. Los parámetros `cutoff`, `q`, `threshold`, `makeup`, `drive`, `mix` y los `freqN`, `gainN` y `qN` del EQ admiten `ramp()` y `lfo()` en lugar de un número; el corte del primer filtro, además, puede cambiar en cada golpe con `~` en `steps` (`3~800`).
 
 - `nombre`: el efecto (ver la tabla)
 - `parámetros`: tabla con los parámetros del efecto
@@ -1564,6 +1564,15 @@ El filtro es un biquad de 12 dB/octava; `q = 0.707` es la respuesta más plana y
 |  | `gain4` | dB que sube (o baja, en negativo) la banda 4; 0 la apaga | `0` | -24–24 |
 |  | `q4` | ancho de la banda 4 (más q, más estrecha) | `1` | 0.1–18 |
 |  | `type4` | forma de la banda 4 | `"bell"` | `"bell"`, `"lowshelf"` o `"highshelf"` |
+| `"dyneq"` | `freq` | centro de la banda en Hz (la que se escucha y la que baja) | obligatorio | 20–20000 |
+|  | `q` | ancho de la banda (más q, más estrecha) | `1` | 0.1–18 |
+|  | `type` | forma de la banda que baja | `"bell"` | `"bell"`, `"lowshelf"` o `"highshelf"` |
+|  | `threshold` | nivel en dB de la banda (en lo que se escucha) desde el que baja | `-30` | -60–0 |
+|  | `ratio` | por cada dB de más, baja 1 − 1/ratio dB | `4` | 1–20 |
+|  | `range` | lo más que baja, en dB | `6` | 0–24 |
+|  | `attack` | ms que tarda en bajar | `5` | 0.1–200 |
+|  | `release` | ms que tarda en volver | `120` | 1–2000 |
+|  | `sidechain` | pista que se escucha en vez de la propia (aunque esté en mute) | `la propia` | nombre de otra pista |
 
 ```lua
 local amen = sample("amen.wav"):slice(8)
@@ -2117,6 +2126,37 @@ track("hats", amen:slice_at(2))
   :fx("bitcrush", { bits = 6, downsample = 2 })
   :gain(0.3)
 ```
+
+### Que el break deje sitio al bombo (EQ dinámico y sidechain)
+
+Un EQ fijo (`fx("eq")`) quita una zona siempre; el dinámico (`fx("dyneq")`)
+solo mientras hace falta. Con `sidechain`, la banda de una pista baja solo
+cuando suena fuerte en ella otra: aquí los graves del break se apartan
+mientras pega el bombo y vuelven en cuanto acaba, y los medios del break
+se calman solos cuando un golpe se pasa de fuerte. El análisis de choques
+(«Choques de frecuencia») dice qué banda y qué pistas.
+
+```lua
+bpm(170)
+local amen = sample("amen.wav"):slice(8)
+
+track("kick", amen:slice_at(1))
+  :steps("x . . .  . . . .  x . x .  . . . .")
+  :gain(0.5)
+
+track("drums", amen)
+  :steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+  -- Graves: −6 dB como mucho, solo mientras suena el bombo.
+  :fx("dyneq", { freq = 80, q = 1, range = 6, threshold = -30,
+                 attack = 2, release = 80, sidechain = "kick" })
+  -- Medios: se escucha a sí misma y baja si un golpe pasa de −18 dB.
+  :fx("dyneq", { freq = 1500, threshold = -18, range = 4 })
+  :gain(0.7)
+```
+
+El bombo puede estar en mute y seguir mandando (un «bombo fantasma» que
+solo empuja). Una pista no puede escucharse a sí misma por sidechain (sin
+`sidechain` ya lo hace) ni en círculo (a escucha a b y b a a).
 
 ### Una canción entera con secciones
 

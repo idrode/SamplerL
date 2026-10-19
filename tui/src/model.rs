@@ -424,6 +424,17 @@ fn suffixes(step: &Step) -> String {
 }
 
 /// Descripción corta de un efecto.
+/// Como [`fx_text`], con el nombre de la pista que escucha un EQ dinámico
+/// por sidechain (`dyneq 80 -6 ⟵kick`).
+pub fn fx_text_named(fx: &Fx, key: Option<&str>) -> String {
+    match (fx, key) {
+        (Fx::DynEq(p), Some(name)) => {
+            format!("dyneq {} -{:.0} ⟵{name}", hz_label(p.freq_hz), p.range_db)
+        }
+        _ => fx_text(fx),
+    }
+}
+
 pub fn fx_text(fx: &Fx) -> String {
     match fx {
         Fx::Filter { kind, cutoff_hz, q } => {
@@ -448,6 +459,12 @@ pub fn fx_text(fx: &Fx) -> String {
             format!("comp {threshold_db:.0} dB {ratio}:1{makeup}")
         }
         Fx::Distortion { drive, mix } => format!("drive ×{drive} mix {mix:.2}"),
+        Fx::DynEq(p) => {
+            let key = p
+                .sidechain
+                .map_or(String::new(), |k| format!(" ⟵pista {}", k + 1));
+            format!("dyneq {} -{:.0}{key}", hz_label(p.freq_hz), p.range_db)
+        }
         Fx::Eq { bands } => {
             let active: Vec<String> = bands
                 .iter()
@@ -554,5 +571,12 @@ mod tests {
         assert_eq!(fx_text(&Fx::bitcrush(6, 2)), "crush 6b ÷2");
         assert_eq!(fx_text(&Fx::compressor(-18.0, 4.0)), "comp -18 dB 4:1");
         assert_eq!(fx_text(&Fx::distortion(8.0, 0.5)), "drive ×8 mix 0.50");
+        let dyn_eq = Fx::DynEq(engine::DynEqParams::new(80.0).with_sidechain(2));
+        assert_eq!(fx_text(&dyn_eq), "dyneq 80 -6 ⟵pista 3");
+        assert_eq!(fx_text_named(&dyn_eq, Some("kick")), "dyneq 80 -6 ⟵kick");
+        assert_eq!(
+            fx_text(&Fx::DynEq(engine::DynEqParams::new(2500.0))),
+            "dyneq 2.5k -6"
+        );
     }
 }

@@ -1,5 +1,5 @@
 //! Efectos de pista: filtro paso bajo/alto, bitcrusher, compresor,
-//! distorsión y EQ paramétrico.
+//! distorsión, EQ paramétrico y EQ dinámico (con sidechain de otra pista).
 //!
 //! La configuración ([`Fx`]) va dentro del `Pattern` y entra con él al
 //! empezar el compás. El estado ([`FxState`]) vive en la pista, en el hilo
@@ -122,6 +122,54 @@ pub enum Fx {
     /// EQ paramétrico: hasta [`EQ_BANDS`] bandas en serie (biquads RBJ).
     /// Las que tienen ganancia 0 no se procesan.
     Eq { bands: [EqBand; EQ_BANDS] },
+    /// EQ dinámico de una banda: un detector en la misma banda (campana de
+    /// paso de banda en `freq_hz` y `q`) escucha la propia pista o, con
+    /// `sidechain`, otra pista del motor (su salida tras sus efectos y antes
+    /// de su volumen, aunque esté en mute); cuando pasa de `threshold_db`,
+    /// la banda baja `1 − 1/ratio` dB por dB de más, como mucho `range_db`,
+    /// con `attack_ms` y `release_ms`.
+    DynEq(DynEqParams),
+}
+
+/// Parámetros del EQ dinámico ([`Fx::DynEq`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DynEqParams {
+    pub kind: EqKind,
+    pub freq_hz: f32,
+    pub q: f32,
+    pub threshold_db: f32,
+    pub ratio: f32,
+    /// Lo más que baja la banda, en dB (positivo).
+    pub range_db: f32,
+    pub attack_ms: f32,
+    pub release_ms: f32,
+    /// Pista del motor que dispara la reducción; `None`, la propia.
+    pub sidechain: Option<usize>,
+}
+
+impl DynEqParams {
+    /// Campana en `freq_hz` con los valores por defecto: q 1, umbral −30 dB,
+    /// ratio 4, como mucho 6 dB, ataque 5 ms y release 120 ms, sin
+    /// sidechain.
+    pub fn new(freq_hz: f32) -> Self {
+        DynEqParams {
+            kind: EqKind::Bell,
+            freq_hz,
+            q: EQ_DEFAULT_Q,
+            threshold_db: -30.0,
+            ratio: 4.0,
+            range_db: 6.0,
+            attack_ms: 5.0,
+            release_ms: 120.0,
+            sidechain: None,
+        }
+    }
+
+    /// La misma, disparada por la pista `track` del motor.
+    pub fn with_sidechain(mut self, track: usize) -> Self {
+        self.sidechain = Some(track);
+        self
+    }
 }
 
 pub const DEFAULT_Q: f32 = std::f32::consts::FRAC_1_SQRT_2;
@@ -181,6 +229,16 @@ impl Fx {
                 "freq1", "gain1", "q1", "freq2", "gain2", "q2", "freq3", "gain3", "q3", "freq4",
                 "gain4", "q4",
             ],
+            Fx::DynEq(_) => &["freq", "q", "threshold", "range"],
+        }
+    }
+
+    /// Pista del motor que escucha este efecto (sidechain), si escucha
+    /// otra.
+    pub fn sidechain(&self) -> Option<usize> {
+        match self {
+            Fx::DynEq(p) => p.sidechain,
+            _ => None,
         }
     }
 
@@ -204,6 +262,10 @@ impl Fx {
                 1 => (EQ_GAIN_RANGE.0, EQ_GAIN_RANGE.1, false),
                 _ => (EQ_Q_RANGE.0, EQ_Q_RANGE.1, true),
             },
+            (Fx::DynEq(_), 0) => (EQ_FREQ_RANGE.0, EQ_FREQ_RANGE.1, true),
+            (Fx::DynEq(_), 1) => (EQ_Q_RANGE.0, EQ_Q_RANGE.1, true),
+            (Fx::DynEq(_), 2) => (-60.0, 0.0, false),
+            (Fx::DynEq(_), 3) => (0.0, 24.0, false),
             _ => return None,
         })
     }
@@ -221,6 +283,7 @@ impl Fx {
                 let band = bands[i / 3];
                 [band.freq_hz, band.gain_db, band.q][i % 3]
             }
+            (Fx::DynEq(p), i) if i < 4 => [p.freq_hz, p.q, p.threshold_db, p.range_db][i],
             _ => return None,
         })
     }
@@ -290,6 +353,33 @@ impl Fx {
                     }
                 }
             }
+            Fx::DynEq(p) => {
+                let within = |v: f32, (lo, hi): (f32, f32)| (lo..=hi).contains(&v);
+                if !within(p.freq_hz, EQ_FREQ_RANGE) {
+                    return Err("freq fuera de rango (20 a 20000 Hz)");
+                }
+                if !within(p.q, EQ_Q_RANGE) {
+                    return Err("q fuera de rango (0.1 a 18)");
+                }
+                if !(-60.0..=0.0).contains(&p.threshold_db) {
+                    return Err("threshold fuera de rango (-60 a 0 dB)");
+                }
+                if !(1.0..=20.0).contains(&p.ratio) {
+                    return Err("ratio fuera de rango (1 a 20)");
+                }
+                if !(0.0..=24.0).contains(&p.range_db) {
+                    return Err("range fuera de rango (0 a 24 dB)");
+                }
+                if !(0.1..=200.0).contains(&p.attack_ms) {
+                    return Err("attack fuera de rango (0.1 a 200 ms)");
+                }
+                if !(1.0..=2000.0).contains(&p.release_ms) {
+                    return Err("release fuera de rango (1 a 2000 ms)");
+                }
+                if p.sidechain.is_some_and(|t| t >= crate::engine::MAX_TRACKS) {
+                    return Err("sidechain: esa pista no existe");
+                }
+            }
         }
         Ok(())
     }
@@ -336,6 +426,125 @@ pub(crate) enum FxState {
         bands: [EqState; EQ_BANDS],
         sample_rate: u32,
     },
+    Dyn(DynState),
+}
+
+/// Estado del EQ dinámico: el detector (paso de banda y envolvente), la
+/// reducción que suena y la campana que la aplica.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct DynState {
+    params: DynEqParams,
+    sample_rate: u32,
+    /// Coeficientes (por muestra) de la envolvente al subir y al bajar.
+    attack: f32,
+    release: f32,
+    detect: Biquad,
+    detect_z: [f32; 2],
+    /// Envolvente del detector (lineal).
+    envelope: f32,
+    /// Reducción que suena ahora, en dB (0 o más).
+    applied: f32,
+    /// Frames que la campana, ya plana, sigue filtrando para que su memoria
+    /// se asiente antes de saltársela (si no, su retraso de unos ms sería un
+    /// escalón).
+    settling: u32,
+    coefs: Biquad,
+    z: [[f32; 2]; 2],
+}
+
+/// Lo que sigue filtrando la campana plana del EQ dinámico antes de
+/// saltársela: más de diez veces lo que tarda en asentarse a 20 Hz con q 1.
+const DYN_SETTLE_SECONDS: f32 = 0.05;
+
+impl DynState {
+    fn new(params: DynEqParams, sample_rate: u32) -> Self {
+        let coef = |ms: f32| (-1.0 / (ms / 1000.0 * sample_rate as f32)).exp();
+        DynState {
+            params,
+            sample_rate,
+            attack: coef(params.attack_ms),
+            release: coef(params.release_ms),
+            detect: Biquad::bandpass(params.freq_hz, params.q, sample_rate),
+            detect_z: [0.0; 2],
+            envelope: 0.0,
+            applied: 0.0,
+            settling: 0,
+            coefs: Biquad::eq(params.kind, [params.freq_hz, 0.0, params.q], sample_rate),
+            z: [[0.0; 2]; 2],
+        }
+    }
+
+    /// Recalcula los filtros con la frecuencia, la q y la reducción de
+    /// ahora.
+    fn retune(&mut self) {
+        let p = self.params;
+        self.detect = Biquad::bandpass(p.freq_hz, p.q, self.sample_rate);
+        self.coefs = Biquad::eq(p.kind, [p.freq_hz, -self.applied, p.q], self.sample_rate);
+    }
+
+    /// Procesa `buf` con la señal de detección `key` (la de otra pista, o
+    /// `None`: la propia, antes del EQ), por trozos de [`DYN_BLOCK`] frames:
+    /// la envolvente de cada trozo decide la reducción con la que suena.
+    fn process(&mut self, buf: &mut [f32], key: Option<&[f32]>) {
+        let p = self.params;
+        let slope = 1.0 - 1.0 / p.ratio;
+        for (i, sub) in buf.chunks_mut(2 * DYN_BLOCK).enumerate() {
+            let from = i * 2 * DYN_BLOCK;
+            let source: &[f32] = match key {
+                Some(k) => k.get(from..from + sub.len()).unwrap_or(&[]),
+                None => sub,
+            };
+            let d = self.detect;
+            let mut envelope = self.envelope;
+            let mut z = self.detect_z;
+            for frame in source.as_chunks::<2>().0 {
+                let x = 0.5 * (frame[0] + frame[1]);
+                let y = d.b0 * x + z[0];
+                z[0] = d.b1 * x - d.a1 * y + z[1];
+                z[1] = d.b2 * x - d.a2 * y;
+                let level = y.abs();
+                let coef = if level > envelope {
+                    self.attack
+                } else {
+                    self.release
+                };
+                envelope = level + coef * (envelope - level);
+            }
+            // Sin señal de detección en este trozo (la clave calla): la
+            // envolvente cae como en silencio.
+            if source.is_empty() {
+                let frames = sub.len() / 2;
+                envelope *= self.release.powi(frames as i32);
+                z = [0.0; 2];
+            }
+            self.envelope = envelope;
+            self.detect_z = z;
+            let over = 20.0 * envelope.max(1e-9).log10() - p.threshold_db;
+            let target = if over > 0.0 {
+                (over * slope).min(p.range_db)
+            } else {
+                0.0
+            };
+            // Medio centésimo de dB no se oye: no se recalcula.
+            if (target - self.applied).abs() > 0.005 || (target == 0.0 && self.applied != 0.0) {
+                self.applied = target;
+                if target == 0.0 {
+                    self.settling = (DYN_SETTLE_SECONDS * self.sample_rate as f32) as u32;
+                }
+                self.retune();
+            }
+            if self.applied > 0.0 || self.settling > 0 {
+                self.coefs.run(sub, &mut self.z);
+                if self.applied == 0.0 {
+                    self.settling = self.settling.saturating_sub((sub.len() / 2) as u32);
+                    if self.settling == 0 {
+                        // Ya asentada: fuera de camino, sin memoria.
+                        self.z = [[0.0; 2]; 2];
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Estado de una banda del EQ: los parámetros a los que va (`target`, los
@@ -396,6 +605,10 @@ impl EqState {
         self.coefs = Biquad::eq(self.kind, self.current, sample_rate);
     }
 }
+
+/// Frames entre recálculos de la reducción del EQ dinámico: corto, para que
+/// la campana cambie a pasos que no se oyen (con 32 se medía un escalón).
+const DYN_BLOCK: usize = 8;
 
 /// Frames entre recálculos de los coeficientes del EQ mientras se suaviza.
 const EQ_BLOCK: usize = 32;
@@ -474,6 +687,23 @@ impl Biquad {
             b2: b2 / a0,
             a1: a1 / a0,
             a2: a2 / a0,
+        }
+    }
+
+    /// Paso de banda (ganancia 1 en el centro) del Audio EQ Cookbook: el
+    /// detector del EQ dinámico.
+    fn bandpass(freq_hz: f32, q: f32, sample_rate: u32) -> Self {
+        let freq = freq_hz.min(0.45 * sample_rate as f32);
+        let w0 = TAU * freq / sample_rate as f32;
+        let (sin, cos) = w0.sin_cos();
+        let alpha = sin / (2.0 * q);
+        let a0 = 1.0 + alpha;
+        Biquad {
+            b0: alpha / a0,
+            b1: 0.0,
+            b2: -alpha / a0,
+            a1: -2.0 * cos / a0,
+            a2: (1.0 - alpha) / a0,
         }
     }
 
@@ -558,6 +788,22 @@ impl FxState {
                     }),
                 }
             }
+            (Some(Fx::DynEq(params)), previous) => {
+                let mut state = DynState::new(params, sample_rate);
+                // Otro EQ dinámico en la ranura: sigue con su envolvente, su
+                // reducción y su memoria.
+                if let FxState::Dyn(old) = previous
+                    && old.params.kind == params.kind
+                {
+                    state.envelope = old.envelope;
+                    state.applied = old.applied;
+                    state.settling = old.settling;
+                    state.detect_z = old.detect_z;
+                    state.z = old.z;
+                    state.retune();
+                }
+                FxState::Dyn(state)
+            }
             (Some(Fx::Bitcrush { bits, downsample }), previous) => {
                 let (counter, held) = match previous {
                     FxState::Crush { counter, held, .. } => (counter % downsample, held),
@@ -606,6 +852,21 @@ impl FxState {
                     band.coefs = Biquad::eq(band.kind, band.current, sample_rate);
                 }
             }
+            (FxState::Dyn(state), i) if i < 4 => {
+                let p = &mut state.params;
+                let target = match i {
+                    0 => &mut p.freq_hz,
+                    1 => &mut p.q,
+                    2 => &mut p.threshold_db,
+                    _ => &mut p.range_db,
+                };
+                if *target != value {
+                    *target = value;
+                    if i < 2 {
+                        state.retune();
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -630,13 +891,45 @@ impl FxState {
                     }
                 }
             }
+            FxState::Dyn(state) => {
+                state.z = [[0.0; 2]; 2];
+                state.detect_z = [0.0; 2];
+                state.envelope = 0.0;
+                state.settling = 0;
+                if state.applied != 0.0 {
+                    state.applied = 0.0;
+                    state.retune();
+                }
+            }
         }
     }
 
-    /// Procesa `buf` (estéreo entrelazado) en su sitio.
+    /// Pista del motor que escucha este efecto (sidechain), si escucha
+    /// otra.
+    pub fn sidechain(&self) -> Option<usize> {
+        match self {
+            FxState::Dyn(state) => state.params.sidechain,
+            _ => None,
+        }
+    }
+
+    /// Como [`FxState::process`], con la señal de la pista que escucha (el
+    /// trozo de los mismos frames que `buf`) para el EQ dinámico con
+    /// sidechain; vacía, esa pista calla.
+    pub fn process_keyed(&mut self, buf: &mut [f32], key: Option<&[f32]>) {
+        match self {
+            FxState::Dyn(state) => state.process(buf, key),
+            other => other.process(buf),
+        }
+    }
+
+    /// Procesa `buf` (estéreo entrelazado) en su sitio. El EQ dinámico
+    /// escucha aquí la propia pista; con sidechain, ver
+    /// [`FxState::process_keyed`].
     pub fn process(&mut self, buf: &mut [f32]) {
         match self {
             FxState::Off => {}
+            FxState::Dyn(state) => state.process(buf, None),
             FxState::Biquad { coefs, z, .. } => {
                 let c = *coefs;
                 for frame in buf.as_chunks_mut::<2>().0 {

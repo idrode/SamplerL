@@ -11,7 +11,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
 use crate::app::App;
 use crate::model::{
     BlockPickerView, BrowserView, CompletionView, PaletteView, SlotsView, TimelineView, ViewModel,
-    fx_text,
+    fx_text_named,
 };
 use crate::theme;
 
@@ -1274,7 +1274,17 @@ impl Widget for FxPanel<'_> {
                     .map(|(_, p)| format!("∿{p}"))
                     .collect();
                 lines.push(Line::from(vec![
-                    Span::raw(format!("› {}", fx_text(fx))),
+                    Span::raw(format!(
+                        "› {}",
+                        fx_text_named(
+                            fx,
+                            fx.sidechain().and_then(|k| view
+                                .tracks
+                                .iter()
+                                .find(|t| t.slot == Some(k))
+                                .map(|t| t.name.as_str()))
+                        )
+                    )),
                     Span::from(if moving.is_empty() {
                         String::new()
                     } else {

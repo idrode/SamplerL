@@ -1,7 +1,8 @@
 //! El callback de audio no reserva memoria (regla 1 de CLAUDE.md): un
 //! asignador global cuenta las reservas que hace este hilo mientras corre
 //! `Engine::process`, con retrasos (swing, humanize), retrigger, pitch,
-//! instrumentos (polifonía, ADSR, bucles), el EQ (suavizado y automatizado), cambios de
+//! instrumentos (polifonía, ADSR, bucles), el EQ (suavizado y automatizado),
+//! el EQ dinámico con sidechain, cambios de
 //! patrón al compás y un patrón que se suelta a la cola de basura.
 
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -285,6 +286,34 @@ fn the_audio_thread_never_allocates() {
         }
     });
     assert_eq!(n, 0, "reservas al suavizar el EQ");
+
+    // EQ dinámico: uno que se escucha a sí mismo y otro que escucha a la
+    // pista 6 por sidechain (con el orden de mezcla cambiado y la salida de
+    // la 6 guardada para él), con la 6 sonando y luego callada.
+    let ducked = Pattern::from_bars(sample.clone(), &slices, &bars[..1])
+        .unwrap()
+        .with_fx(&[
+            Fx::DynEq(engine::DynEqParams {
+                threshold_db: -40.0,
+                ..engine::DynEqParams::new(200.0)
+            }),
+            Fx::DynEq(
+                engine::DynEqParams {
+                    threshold_db: -40.0,
+                    range_db: 12.0,
+                    ..engine::DynEqParams::new(100.0)
+                }
+                .with_sidechain(6),
+            ),
+        ])
+        .unwrap();
+    controller.set_track_pattern(3, Some(ducked)).unwrap();
+    let n = counted(|| {
+        for _ in 0..200 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas con el EQ dinámico y el sidechain");
 
     // Modo gate, forma por corte (envolvente, pan, parte, bucle e ida y
     // vuelta) y choke entre dos pistas.

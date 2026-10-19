@@ -198,6 +198,9 @@ pub struct TrackDef {
     /// Formantes de los pasos con `%` (`:formant(n)`): `Some(0)` donde
     /// estaban, `Some(n)` desplazados; `None`, se mueven con el pitch.
     pub formant: Option<f32>,
+    /// Pistas que escucha por sidechain cada EQ dinámico de la cadena:
+    /// (índice en `fx`, nombre de la pista).
+    pub sidechains: Vec<(usize, String)>,
 }
 
 /// `sample:instrument({ ... })`: el sample se toca como notas.
@@ -916,6 +919,7 @@ impl ScriptHost {
                     warnings.push(warning);
                 }
             }
+            check_sidechains(all())?;
             for name in &priority {
                 if !all().any(|t| &t.name == name) {
                     warnings.push(format!(
@@ -1666,7 +1670,7 @@ fn song_batch(song: &Song, slots: &[Option<String>; MAX_TRACKS]) -> Result<Batch
                     .expect("cada pista tiene su ranura");
                 patterns.push((
                     slot,
-                    track_pattern(track).map_err(|e| {
+                    track_pattern(track, slots).map_err(|e| {
                         ScriptError::new(format!("sección \"{}\": {}", section.name, e.message))
                     })?,
                 ));
@@ -1690,7 +1694,7 @@ fn song_batch(song: &Song, slots: &[Option<String>; MAX_TRACKS]) -> Result<Batch
         let pattern = match assigned {
             Some(name) => {
                 let track = song.tracks.iter().find(|t| &t.name == name).unwrap();
-                Some(track_pattern(track)?)
+                Some(track_pattern(track, slots)?)
             }
             None => None,
         };
@@ -1699,11 +1703,77 @@ fn song_batch(song: &Song, slots: &[Option<String>; MAX_TRACKS]) -> Result<Batch
     Ok(batch)
 }
 
-/// El patrón que manda al motor una pista.
-fn track_pattern(track: &TrackDef) -> Result<Pattern, ScriptError> {
+/// Comprueba el sidechain de los EQ dinámicos de `tracks`: que cada pista
+/// que se escucha exista y que nadie se escuche en círculo (a escucha a b y
+/// b a a, directa o indirectamente).
+fn check_sidechains<'a>(
+    tracks: impl Iterator<Item = &'a TrackDef> + Clone,
+) -> Result<(), ScriptError> {
+    let mut names: Vec<&str> = Vec::new();
+    for t in tracks.clone() {
+        if !names.contains(&t.name.as_str()) {
+            names.push(&t.name);
+        }
+    }
+    let mut edges: Vec<(&str, &str)> = Vec::new();
+    for t in tracks {
+        for (_, key) in &t.sidechains {
+            if !names.contains(&key.as_str()) {
+                return Err(ScriptError::new(format!(
+                    "pista \"{}\": fx(\"dyneq\"): sidechain \"{key}\" no es ninguna pista (hay: {})",
+                    t.name,
+                    names.join(", ")
+                )));
+            }
+            if !edges.contains(&(t.name.as_str(), key.as_str())) {
+                edges.push((&t.name, key));
+            }
+        }
+    }
+    // Un círculo: desde alguna pista se vuelve a ella siguiendo a quién
+    // escucha.
+    for &start in &names {
+        let mut seen = vec![start];
+        let mut frontier = vec![start];
+        while let Some(at) = frontier.pop() {
+            for &(from, to) in &edges {
+                if from != at {
+                    continue;
+                }
+                if to == start {
+                    return Err(ScriptError::new(format!(
+                        "pista \"{start}\": fx(\"dyneq\"): sidechain en círculo (\"{start}\" acaba escuchándose a sí misma a través de \"{}\")",
+                        if at == start { to } else { at }
+                    )));
+                }
+                if !seen.contains(&to) {
+                    seen.push(to);
+                    frontier.push(to);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// El patrón que manda al motor una pista (`slots[i]`: el nombre de la
+/// pista de la ranura `i`, para el sidechain).
+fn track_pattern(
+    track: &TrackDef,
+    slots: &[Option<String>; MAX_TRACKS],
+) -> Result<Pattern, ScriptError> {
+    let mut fx = track.fx.clone();
+    for (index, name) in &track.sidechains {
+        let slot = slots
+            .iter()
+            .position(|s| s.as_deref() == Some(name.as_str()));
+        if let (Some(Fx::DynEq(params)), Some(slot)) = (fx.get_mut(*index), slot) {
+            params.sidechain = Some(slot);
+        }
+    }
     Pattern::from_bars(track.sample.clone(), &track.slices, &track.bars)
         .and_then(|p| p.with_gain(track.gain))
-        .and_then(|p| p.with_fx(&track.fx))
+        .and_then(|p| p.with_fx(&fx))
         .and_then(|p| p.with_automation(&track.automation))
         .and_then(|p| p.with_sends(track.sends))
         .and_then(|p| p.with_shapes(&track.shapes))
@@ -2045,6 +2115,7 @@ fn track_source(lua: &Lua, name: &str, source: &AnyUserData) -> mlua::Result<Tra
         instrument: None,
         granular: None,
         formant: None,
+        sidechains: Vec::new(),
     };
     if let Ok(source) = source.borrow::<SlicedHandle>() {
         let mut def = def(
@@ -3699,6 +3770,40 @@ fn parse_fx(
                 mix: get("mix")?.unwrap_or(1.0),
             }
         }
+        "dyneq" => {
+            fx_params(lua, name, &params)?;
+            let kind: Option<String> = match &params {
+                Some(p) => p
+                    .get("type")
+                    .map_err(|_| fail(lua, "fx(\"dyneq\"): type tiene que ser un texto"))?,
+                None => None,
+            };
+            let kind = match kind.as_deref() {
+                None => EqKind::Bell,
+                Some(k) => EqKind::from_name(k).ok_or_else(|| {
+                    fail(
+                        lua,
+                        format!(
+                            "fx(\"dyneq\"): type \"{k}\" no existe (bell, lowshelf o highshelf)"
+                        ),
+                    )
+                })?,
+            };
+            let freq_hz =
+                get("freq")?.ok_or_else(|| fail(lua, "fx(\"dyneq\"): falta freq (Hz)"))?;
+            let d = engine::DynEqParams::new(freq_hz);
+            Fx::DynEq(engine::DynEqParams {
+                kind,
+                freq_hz,
+                q: get("q")?.unwrap_or(d.q),
+                threshold_db: get("threshold")?.unwrap_or(d.threshold_db),
+                ratio: get("ratio")?.unwrap_or(d.ratio),
+                range_db: get("range")?.unwrap_or(d.range_db),
+                attack_ms: get("attack")?.unwrap_or(d.attack_ms),
+                release_ms: get("release")?.unwrap_or(d.release_ms),
+                sidechain: None,
+            })
+        }
         "eq" => {
             fx_params(lua, name, &params)?;
             let mut bands = [EqBand::flat(0); EQ_BANDS];
@@ -3983,6 +4088,30 @@ impl UserData for TrackHandle {
         methods.add_method(
             "fx",
             |lua, this, (name, params): (String, Option<Table>)| {
+                // `sidechain = "pista"` del EQ dinámico: la pista se busca al
+                // acabar el script (puede definirse después).
+                let sidechain = match (&params, name.as_str()) {
+                    (Some(p), "dyneq") => match p.get::<Value>("sidechain")? {
+                        Value::Nil => None,
+                        Value::String(s) => Some(s.to_str()?.to_string()),
+                        _ => {
+                            return Err(fail(
+                                lua,
+                                "fx(\"dyneq\"): sidechain es el nombre de una pista, entre comillas",
+                            ));
+                        }
+                    },
+                    _ => None,
+                };
+                if sidechain.as_deref() == Some(this.name.as_str()) {
+                    return Err(fail(
+                        lua,
+                        format!(
+                            "fx(\"dyneq\"): \"{}\" no puede escucharse a sí misma por sidechain (sin sidechain ya escucha la propia pista)",
+                            this.name
+                        ),
+                    ));
+                }
                 let (fx, curves) = parse_fx(lua, &name, params)?;
                 let count = this.with_track(|t| t.def.fx.len());
                 if count >= MAX_FX {
@@ -4015,6 +4144,9 @@ impl UserData for TrackHandle {
                     automations.push(automation);
                 }
                 this.with_track(|t| {
+                    if let Some(key) = sidechain {
+                        t.def.sidechains.push((t.def.fx.len(), key));
+                    }
                     t.def.fx.push(fx);
                     t.def.automation.extend(automations);
                 });
