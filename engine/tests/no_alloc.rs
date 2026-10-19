@@ -2,7 +2,7 @@
 //! asignador global cuenta las reservas que hace este hilo mientras corre
 //! `Engine::process`, con retrasos (swing, humanize), retrigger, pitch,
 //! instrumentos (polifonía, ADSR, bucles), el EQ (suavizado y automatizado),
-//! el EQ dinámico con sidechain, cambios de
+//! el EQ dinámico con sidechain, efectos por corte (con sus colas), cambios de
 //! patrón al compás y un patrón que se suelta a la cola de basura.
 
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -627,6 +627,124 @@ fn the_audio_thread_never_allocates() {
         }
     });
     assert_eq!(n, 0, "reservas al quitar el arreglo");
+    controller.collect_garbage();
+
+    // Efectos por corte: dos pistas con cadenas distintas en cada corte
+    // (filtro, EQ, EQ dinámico, bitcrusher, distorsión, compresor, gain),
+    // curvas en sus parámetros, retrigger, reverse, pitch con y sin `%`,
+    // gate y choke entre ellas; pads con sus efectos, otro patrón con las
+    // colas sonando y quitarlos.
+    let ramp = engine::Curve::Ramp {
+        from: 300.0,
+        to: 6000.0,
+        steps: 16.0,
+    };
+    let lfo = engine::Curve::Lfo {
+        min: 0.2,
+        max: 1.0,
+        rate: engine::LfoRate::Steps(8.0),
+    };
+    let chains = |seed: usize| -> Vec<Option<engine::SliceFx>> {
+        let mut filter = Fx::lowpass(1200.0);
+        if let Fx::Filter { q, .. } = &mut filter {
+            *q = 12.0;
+        }
+        vec![
+            Some(
+                engine::SliceFx::new(
+                    &[filter, Fx::bitcrush(6, 1 + seed as u32), Fx::gain(0.8)],
+                    &[
+                        engine::Automation {
+                            fx: 0,
+                            param: 0,
+                            curve: ramp,
+                        },
+                        engine::Automation {
+                            fx: 2,
+                            param: 0,
+                            curve: lfo,
+                        },
+                    ],
+                )
+                .unwrap(),
+            ),
+            Some(
+                engine::SliceFx::new(
+                    &[
+                        Fx::eq(&[engine::EqBand::bell(800.0, 6.0, 2.0)]),
+                        Fx::DynEq(engine::DynEqParams::new(200.0)),
+                        Fx::distortion(8.0, 0.5),
+                        Fx::compressor(-20.0, 4.0),
+                    ],
+                    &[],
+                )
+                .unwrap(),
+            ),
+        ]
+    };
+    let sliced = |t: usize, seed: usize| {
+        let steps: Vec<Option<Step>> = (0..STEPS)
+            .map(|k| {
+                let step = Step::new((k + t) % 2).with_retrig(if k % 5 == 2 { 3 } else { 1 });
+                Some(match (k + seed) % 4 {
+                    0 => step.reversed(),
+                    1 => step.with_pitch(7.0),
+                    2 => step.with_kept_pitch(-5.0),
+                    _ => step,
+                })
+            })
+            .collect();
+        Pattern::from_steps(sample.clone(), &slices, steps)
+            .unwrap()
+            .with_fx(&[Fx::highpass(60.0)])
+            .unwrap()
+            .with_slice_fx(&chains(seed))
+            .unwrap()
+            .with_gate(t == 0)
+            .with_choke(Some(3))
+            .unwrap()
+    };
+    let mut batch = engine::Batch::new();
+    for t in 0..2 {
+        batch.set_pattern(t, Some(sliced(t, 0)));
+    }
+    controller.apply(batch).unwrap();
+    let n = counted(|| {
+        for _ in 0..400 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas con efectos por corte");
+    for i in 0..2 {
+        controller
+            .play_slice_with_gain(1, &sample, &slices, i, engine::SliceShape::DEFAULT, 1.0)
+            .unwrap();
+    }
+    let mut batch = engine::Batch::new();
+    for t in 0..2 {
+        batch.set_pattern(t, Some(sliced(t, 1)));
+    }
+    controller.apply(batch).unwrap();
+    let n = counted(|| {
+        for _ in 0..300 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(
+        n, 0,
+        "reservas con pads y otro patrón con efectos por corte"
+    );
+    let mut batch = engine::Batch::new();
+    for t in 0..2 {
+        batch.set_pattern(t, None);
+    }
+    controller.apply(batch).unwrap();
+    let n = counted(|| {
+        for _ in 0..200 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas al quitar los efectos por corte");
     controller.collect_garbage();
 
     // Rampa de tempo y cambio de compás.

@@ -19,6 +19,7 @@ mod sample;
 mod sequencer;
 mod shift;
 mod slice;
+mod slice_fx;
 mod status;
 pub mod stretch;
 
@@ -32,7 +33,7 @@ pub use engine::{
 };
 pub use fx::{
     DEFAULT_Q, DynEqParams, EQ_BANDS, EQ_DEFAULT_FREQS, EQ_DEFAULT_Q, EQ_FREQ_RANGE, EQ_GAIN_RANGE,
-    EQ_Q_RANGE, EqBand, EqKind, FilterKind, Fx, MAX_FX, MAX_PARAMS,
+    EQ_Q_RANGE, EqBand, EqKind, FilterKind, Fx, MAX_FX, MAX_LEVEL, MAX_PARAMS,
 };
 pub use grain::{GRAIN_PARAMS, Granular, Knob, MAX_GRAINS};
 pub use instrument::{Adsr, Instrument, MAX_VOICES};
@@ -46,5 +47,6 @@ pub use sequencer::{
 };
 pub use shift::MAX_FORMANT;
 pub use slice::{DEFAULT_MIN_GAP_SECONDS, DetectOptions, Detector, Slices};
+pub use slice_fx::SliceFx;
 pub use status::{MasterStatus, SectionStatus, Status, TrackStatus};
 pub use stretch::{MAX_STRETCH, MIN_STRETCH};

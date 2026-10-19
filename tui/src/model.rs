@@ -465,6 +465,7 @@ pub fn fx_text(fx: &Fx) -> String {
             format!("comp {threshold_db:.0} dB {ratio}:1{makeup}")
         }
         Fx::Distortion { drive, mix } => format!("drive ×{drive} mix {mix:.2}"),
+        Fx::Gain { level } => format!("gain ×{level:.2}"),
         Fx::DynEq(p) => {
             let key = p
                 .sidechain

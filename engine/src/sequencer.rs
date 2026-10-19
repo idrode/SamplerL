@@ -16,6 +16,7 @@ use crate::grain::Granular;
 use crate::instrument::Instrument;
 use crate::sample::Sample;
 use crate::slice::Slices;
+use crate::slice_fx::SliceFx;
 
 /// Pasos por compás (semicorcheas en 4/4) y longitud por defecto de un
 /// patrón.
@@ -209,6 +210,9 @@ pub struct Pattern {
     /// Formantes de los pasos con `%`: `Some(0)` los mantiene, `Some(n)`
     /// los desplaza `n` semitonos; `None`, se mueven con el pitch.
     pub(crate) formant: Option<f32>,
+    /// Efectos de cada corte (`slice_fx[i]`, los del corte `i`); vacío si
+    /// ninguno tiene.
+    slice_fx: Vec<Option<SliceFx>>,
 }
 
 impl Pattern {
@@ -273,6 +277,7 @@ impl Pattern {
             instrument: None,
             granular: None,
             formant: None,
+            slice_fx: Vec::new(),
         })
     }
 
@@ -286,6 +291,11 @@ impl Pattern {
             if self.granular.is_some() {
                 return Err(SendError::InvalidGranular(
                     "una pista con granos no puede ser instrumento",
+                ));
+            }
+            if !self.slice_fx.is_empty() {
+                return Err(SendError::InvalidFx(
+                    "un instrumento no tiene efectos por corte (usa los de la pista)",
                 ));
             }
         }
@@ -367,6 +377,35 @@ impl Pattern {
             }
         }
         Ok(self)
+    }
+
+    /// Efectos de cada corte (`chains[i]`, los del corte `i`; ver
+    /// [`crate::slice_fx`]): cada golpe de ese corte suena con ellos,
+    /// antes de los de la pista. Los cortes que falten, sin efectos. No
+    /// vale en un instrumento; con granos no se aplican (los granos no son
+    /// voces).
+    pub fn with_slice_fx(mut self, chains: &[Option<SliceFx>]) -> Result<Self, SendError> {
+        // Una cadena vacía es como no tenerla (la voz no pasa por ella).
+        let chains: Vec<Option<SliceFx>> = chains
+            .iter()
+            .map(|c| c.filter(|c| c.effects().next().is_some()))
+            .collect();
+        if self.instrument.is_some() && chains.iter().any(Option::is_some) {
+            return Err(SendError::InvalidFx(
+                "un instrumento no tiene efectos por corte (usa los de la pista)",
+            ));
+        }
+        self.slice_fx = if chains.iter().any(Option::is_some) {
+            chains
+        } else {
+            Vec::new()
+        };
+        Ok(self)
+    }
+
+    /// Efectos del corte `slice`, si tiene.
+    pub(crate) fn slice_fx(&self, slice: usize) -> Option<SliceFx> {
+        self.slice_fx.get(slice).copied().flatten()
     }
 
     /// Parámetros de efecto que cambian con el tiempo (ver

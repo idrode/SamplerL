@@ -129,7 +129,14 @@ pub enum Fx {
     /// la banda baja `1 − 1/ratio` dB por dB de más, como mucho `range_db`,
     /// con `attack_ms` y `release_ms`.
     DynEq(DynEqParams),
+    /// Volumen (lineal, de 0 a [`MAX_LEVEL`]): sobre todo para un corte
+    /// (`cortes:fx(i, "gain", { level = ... })`) o para mover el volumen
+    /// con `ramp`/`lfo`.
+    Gain { level: f32 },
 }
+
+/// Volumen máximo del efecto `gain` (el de `:gain()` y `@`).
+pub const MAX_LEVEL: f32 = crate::sequencer::MAX_GAIN;
 
 /// Parámetros del EQ dinámico ([`Fx::DynEq`]).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -211,6 +218,10 @@ impl Fx {
     }
 
     /// EQ con las bandas dadas (como mucho [`EQ_BANDS`]); las demás, planas.
+    pub fn gain(level: f32) -> Self {
+        Fx::Gain { level }
+    }
+
     pub fn eq(bands: &[EqBand]) -> Self {
         Fx::Eq {
             bands: std::array::from_fn(|i| bands.get(i).copied().unwrap_or(EqBand::flat(i))),
@@ -230,6 +241,7 @@ impl Fx {
                 "gain4", "q4",
             ],
             Fx::DynEq(_) => &["freq", "q", "threshold", "range"],
+            Fx::Gain { .. } => &["level"],
         }
     }
 
@@ -266,6 +278,7 @@ impl Fx {
             (Fx::DynEq(_), 1) => (EQ_Q_RANGE.0, EQ_Q_RANGE.1, true),
             (Fx::DynEq(_), 2) => (-60.0, 0.0, false),
             (Fx::DynEq(_), 3) => (0.0, 24.0, false),
+            (Fx::Gain { .. }, 0) => (0.0, MAX_LEVEL, false),
             _ => return None,
         })
     }
@@ -284,6 +297,7 @@ impl Fx {
                 [band.freq_hz, band.gain_db, band.q][i % 3]
             }
             (Fx::DynEq(p), i) if i < 4 => [p.freq_hz, p.q, p.threshold_db, p.range_db][i],
+            (Fx::Gain { level }, 0) => level,
             _ => return None,
         })
     }
@@ -380,6 +394,11 @@ impl Fx {
                     return Err("sidechain: esa pista no existe");
                 }
             }
+            Fx::Gain { level } => {
+                if !(0.0..=MAX_LEVEL).contains(&level) {
+                    return Err("level fuera de rango (0 a 4)");
+                }
+            }
         }
         Ok(())
     }
@@ -427,6 +446,9 @@ pub(crate) enum FxState {
         sample_rate: u32,
     },
     Dyn(DynState),
+    Gain {
+        level: f32,
+    },
 }
 
 /// Estado del EQ dinámico: el detector (paso de banda y envolvente), la
@@ -766,6 +788,7 @@ impl FxState {
                 }
             }
             (Some(Fx::Distortion { drive, mix }), _) => FxState::Drive { drive, mix },
+            (Some(Fx::Gain { level }), _) => FxState::Gain { level },
             (Some(Fx::Eq { bands }), previous) => {
                 let old = match previous {
                     FxState::Eq { bands, .. } => Some(bands),
@@ -843,6 +866,7 @@ impl FxState {
             (FxState::Comp { makeup_db, .. }, 1) => *makeup_db = value,
             (FxState::Drive { drive, .. }, 0) => *drive = value,
             (FxState::Drive { mix, .. }, 1) => *mix = value,
+            (FxState::Gain { level }, 0) => *level = value,
             // La automatización llega ya suavizada: entra tal cual.
             (FxState::Eq { bands, .. }, i) if i < MAX_PARAMS => {
                 let band = &mut bands[i / 3];
@@ -881,7 +905,7 @@ impl FxState {
                 *held = [0.0; 2];
             }
             FxState::Comp { reduction, .. } => *reduction = 0.0,
-            FxState::Drive { .. } => {}
+            FxState::Drive { .. } | FxState::Gain { .. } => {}
             // En silencio no hay nada que suavizar: los parámetros llegan ya.
             FxState::Eq { bands, sample_rate } => {
                 for band in bands {
@@ -980,6 +1004,11 @@ impl FxState {
                     let gain = 10f32.powf((*makeup_db - *reduction) / 20.0);
                     frame[0] *= gain;
                     frame[1] *= gain;
+                }
+            }
+            FxState::Gain { level } => {
+                for x in buf.iter_mut() {
+                    *x *= *level;
                 }
             }
             FxState::Drive { drive, mix } => {
