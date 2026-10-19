@@ -2249,6 +2249,29 @@ track("hats", amen:slice_at(2))
   :gain(0.3)
 ```
 
+### Ensuciar solo la caja (efectos por corte)
+
+`cortes:fx(cuál, efecto, { ... })` pone un efecto solo en un corte (o en
+varios: número, etiqueta o lista). Los demás golpes suenan exactamente
+igual; cada golpe de la caja pasa por su bitcrusher y su filtro y luego
+por los efectos de la pista. Vale para todas las pistas que usan `amen`
+y para sus pads. El panel de efectos dice `◇ 3 snare › crush 6b ÷1 · LP …`.
+
+```lua
+bpm(170)
+local amen = sample("amen.wav"):slice(8)
+amen:name(1, "kick"):name(3, "snare")
+amen:fx("snare", "bitcrush", { bits = 6, downsample = 2 })
+amen:fx("snare", "lowpass", { cutoff = lfo("2 compases", 1500, 9000) })
+amen:fx({ "kick", 5 }, "gain", { level = 0.8 })
+track("drums", amen)
+  :steps("kick . snare .  3 . 4 .  5 6 snare .  7 . 8 .")
+  :fx("highpass", { cutoff = 40 })
+```
+
+Los envíos (`send`) son de la pista entera: para una caja con reverb,
+sácala a su pista con `amen:slice_at(3)`, que se lleva sus efectos.
+
 ### Que el break deje sitio al bombo (EQ dinámico y sidechain)
 
 Un EQ fijo (`fx("eq")`) quita una zona siempre; el dinámico (`fx("dyneq")`)

@@ -161,6 +161,12 @@ fade_out })`. Detalle y decisiones en «Fase H» de
 - Resampling: grabar la salida de una pista (o del master) como un sample
   nuevo reutilizable en el proyecto, por render offline.
 - Normalizar, recortar el silencio y poner fundidos al importar un sample.
+- ✅ **Efectos por corte** (añadido después de la fase K):
+  `cortes:fx(cuál, nombre, parámetros)` pone un efecto de pista (o el nuevo
+  `gain`) solo en un corte o en varios, por número, etiqueta o lista, con
+  `ramp()`/`lfo()`; estado propio por voz y bit a bit igual sin ellos. Los
+  envíos por corte se quedaron fuera (ver «Fase H» de
+  [docs/ESTADO.md](ESTADO.md)).
 
 ## Fase I: comodidad ✅
 

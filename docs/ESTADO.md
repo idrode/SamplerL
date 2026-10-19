@@ -288,7 +288,48 @@ enorme).
 - **Remuestreo.** `Song::render_track(frecuencia, compases, pista)` renderiza en un motor aparte una copia de la canción con esa pista en solo (y sin mute): sus efectos, volumen, envíos y la cola de los buses, y el limitador; `Song::track_length_bars(pista)` = lo que tarda en repetirse (`mcm(16, ciclo·longitud)` en compases). `tui --script canción.lua --render salida.wav --track pista [--bars M]`. Interfaz: orden `remuestrear [pista|master] [compases] [archivo.wav]` (por defecto la pista seleccionada y `<pista>-remuestreo.wav` en la carpeta de samples; no sobrescribe salvo `remuestrear!`; WAV de 16 bits a la frecuencia del motor) y «Remuestrear la pista seleccionada» en la paleta, que la deja escrita. Tests en `script/tests/resample.rs` (igual que la canción con solo esa pista, también en mute; duración) y `tui/src/tests/resample.rs` (WAV escrito, no sobrescribe, master, y se vuelve a usar con `sample()`).
 - **Preparar al importar.** `engine::ImportOptions { trim_db, normalize_db, fade_in_ms, fade_out_ms }` y `Sample::processed(&opciones)` (hilo de control): recorta los extremos por debajo del umbral (si todo es silencio, nada), normaliza el pico y aplica fundidos lineales, en ese orden; sin opciones, copia exacta. Lua: `sample(ruta, { trim = true | dB, normalize = true | dB, fade_in = ms, fade_out = ms })` (`true`: -60 dB y 0 dB; claves del registro `api::SAMPLE_PARAMS`, errores con línea), con caché de los preparados entre cargas (`Imports`: mismo `Arc` si no cambian el WAV ni las opciones). Los cortes, los ajustes en ms y `stretch` van sobre el sample preparado. Autocompletado y ayuda en la tabla (`api::SAMPLE_TABLE`). Tests en `engine/tests/import.rs` (recorte exacto, umbral, todo silencio, pico normalizado y misma forma, fundidos al frame, orden, rangos), `script/tests/import.rs` y `tui/src/tests/import.rs`.
 
+- **Efectos por corte** (`engine/src/slice_fx.rs`, añadido después de la fase K): `SliceFx { fx: [Option<Fx>; 4], automation: [Option<Automation>; 8] }` (`SliceFx::new` valida cada efecto, sus curvas y que ningún EQ dinámico tenga sidechain) y `Pattern::with_slice_fx(&[Option<SliceFx>])` (una por corte; las vacías cuentan como ninguna; si no hay ninguna, `Vec` vacío; error con un instrumento, en los dos órdenes). `play_hit` copia la cadena del corte del golpe en su voz (`Voice::fx: Option<VoiceFx>`: la cadena, un `FxState` por efecto, los valores suavizados de sus parámetros y la cola que le queda; tamaño fijo, nada de memoria dinámica) y `Voice::mix_with_fx` la suma a la pista pasando por `Engine::voice_buf` (un buffer de trozo reservado al crear el motor) y por sus efectos; sin cadena, `mix_into` directo como siempre. Orden: voz (volumen del paso, envolvente y pan) → efectos del corte → efectos de la pista → volumen de la pista y mute/solo → mezcla (y envíos, que son de la pista). Cada golpe empieza sus efectos sin memoria (también cada subdisparo del retrigger); la voz cortada sigue con los suyos mientras hace su fundido, y al acabar una voz sus efectos suenan aún 100 ms (`TAIL_SECONDS`: la resonancia de un filtro) antes de soltarla (`Voice::ringing`; `fade_out` y la ranura de fundido la esperan). Las curvas (`ramp`/`lfo`) se evalúan con la posición de la canción cada 32 frames y se suavizan como las de la pista: `drive_block`, la parte de `modulate` que ahora comparten la pista y la voz (con la misma aritmética: las huellas no cambian); el primer bloque de cada voz entra ya en su valor. Pads: `Command::Play` lleva el corte (`slice`) y, si el sample es el del patrón de la pista (`Arc::ptr_eq`), suena con su cadena. Granos: la nube no usa voces, así que no pasa por ellos. Efecto nuevo `Fx::Gain { level }` (0 a 4, lineal, automatizable; también en la pista: así se puede mover su volumen con `ramp`/`lfo`). Lua: `cortes:fx(cuál, nombre, { ... })` (`cuál`: número desde 1, etiqueta o lista; los efectos y la tabla de `parse_fx`, con curvas por `fx_automations`, compartido con `pista:fx`), hasta 4 por corte; las cadenas (`SliceFxDef { fx, automation }`) se comparten entre la variable y sus pistas como las formas (`TrackDef::slice_fx`; `slice_at` copia la suya; `add`/`remove` las mueven con su corte). Errores con línea: etiqueta o corte que no existe, lista vacía o de otro tipo, efecto o parámetro desconocido, rangos y curvas fuera de rango, `sidechain`, más de 4; `instrumento:fx()` da error. Aviso en `Song::warnings` (`grains_skip_slice_fx`) si la pista tiene granos. Registro: función `fx` de `Receiver::Slices` y efecto `gain`. Interfaz: el panel de efectos dice cada corte con su cadena antes de las de la pista (`TrackView::slice_fx`, `SliceFxView`: `◇ 2 snare › crush 6b ÷1 · LP 800 Hz q0.71 ∿cutoff`); en `cortes:fx(` el autocompletado ofrece etiquetas (también dentro de la lista), luego efectos y luego sus parámetros (`Scan::slices_fx`, `fx_effect` con el tercer argumento), y la ayuda la firma y el parámetro; el diagnóstico en vivo (`diagnose::check_fx`) subraya una etiqueta que no conoce nadie (las de las pistas, del proyecto y del texto) y un efecto que no existe (también en `pista:fx`). Tests en `engine/tests/slice_fx.rs` (solo cambia el corte elegido, con bitcrusher y con filtro resonante más distorsión, y los demás golpes bit a bit; sin cadenas, con cadenas vacías o en un corte que no suena, bit a bit; dos cortes con efectos distintos y dos pistas a la vez, cada uno con los suyos; cada golpe empieza sin memoria; rampa en `level`; reverse, `^`, `%`, retrigger, gate y choke; pads; granos los ignoran e instrumento los rechaza; 8 pistas saturadas ≤ ±1; la cola suena y se calla; validación), `no_alloc.rs` (dos pistas con cadenas de todos los efectos y curvas, retrigger, reverse, pitch con y sin `%`, gate, choke, pads y cambiar y quitar patrones con colas sonando), `script/tests/slice_fx.rs` (solo cambian los cortes elegidos por número, etiqueta y lista, antes o después de la pista; la cadena y sus curvas llegan a la pista y `slice_at` la copia; `add`/`remove`; aviso con granos y error en instrumento; 8 pistas ≤ ±1; errores con línea sin dejar de sonar lo anterior; el cambio entra al compás), `script/tests/registry.rs`, `tui/src/complete.rs`, `tui/src/diagnose.rs` y `tui/src/tests/slice_fx.rs`.
+
 ### Decisiones
+
+- **Efectos por corte en la voz, no en una pista oculta.** Separar cada
+  corte con efectos en una pista interna gastaría pistas del motor (son 8)
+  y rompería lo que es de la pista (choke entre sus golpes, el golpe que
+  corta al anterior, gate, retrigger). Copiar la cadena en la voz mantiene
+  todo eso y es barato: ~2 KB más por voz (dos por pista) y, en el hilo
+  de audio, solo un buffer de trozo y una suma por voz con efectos. Estado
+  por voz y no por corte: dos golpes del mismo corte que se solapan (uno
+  haciendo su fundido) no se pisan la memoria. Sin efectos de corte, ni
+  siquiera se pasa por el buffer aparte: `golden.rs` no cambia.
+- **Orden voz → corte → pista → volumen → mezcla.** El efecto del corte ve
+  el golpe ya con su volumen, envolvente y pan (un `@0.5` satura menos), y
+  la pista sigue tratando la suma como siempre. `~` (el corte por paso)
+  sigue siendo del primer filtro de la pista: así un paso no cambia de
+  significado según su corte tenga efectos.
+- **La sintaxis va en los cortes** (`cortes:fx(cuál, ...)`), como
+  `:set` y `:name`: la forma de un corte es de la variable y vale en todas
+  sus pistas y en sus pads. `cuál` admite número, etiqueta o lista para
+  escribir `{ "kick", 7 }` de una vez. La etiqueta tiene que existir ya al
+  llamar a `fx` (si no, error con la línea): resolverla más tarde
+  escondería las erratas.
+- **Combinaciones**: reverse, pitch (`^` y `%`), retrigger, gate, choke y
+  pads funcionan (los efectos van tras la voz, lea como lea el sample).
+  Con granos se ignoran con aviso (la nube no tiene voces y no se quiere
+  romper otra pista que comparta la variable); en un instrumento, error
+  (es un solo corte: lo mismo con `pista:fx`). El EQ dinámico de un corte
+  no admite sidechain: el corte suena antes de que se mezclen las demás
+  pistas y escucharlas por voz obligaría a reordenar la mezcla.
+- **Envíos por corte, fuera.** No son baratos de hacer bien: el envío de la
+  pista sale después de sus efectos y su volumen, y la voz de un corte ya
+  no se puede separar de la suma que procesan los efectos de la pista;
+  hacerlo exigiría pasar cada voz por los efectos de la pista por separado
+  (el doble de estado y de CPU por voz). Un envío antes de los efectos de
+  la pista sí sería barato, pero sonaría distinto que el de la pista y
+  confundiría. Para un corte con reverb: `track("caja", amen:slice_at(3))`
+  con su `send`, que copia la forma y los efectos del corte.
+- **Volumen y pan por corte**: el pan ya era de la forma (`cortes:set(i,
+  { pan = ... })`); el volumen es el efecto nuevo `gain`, que por ser un
+  efecto admite `ramp()`/`lfo()`.
 
 - **Por pista o por corte**: el modo (gate/one-shot) y el grupo de choke
   son de la pista, como en un pad de una caja de ritmos; la forma
