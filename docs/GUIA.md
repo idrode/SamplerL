@@ -9,6 +9,72 @@ Todos los bloques de código Lua de esta guía se comprueban en los tests
 y deben funcionar sin errores. Las recetas están también como archivos en
 `scripts/ejemplos/`.
 
+## Qué se puede hacer
+
+Un mapa de todo, con dónde se explica. Las funciones de Lua están todas en
+la sección 4 (con sus parámetros, rangos y un ejemplo cada una).
+
+**Cortar el sample**
+- Cortar por transitorios (`sample:slice(n)`) o en partes iguales
+  (`slice_grid(n)`), y detectar el tempo del break (`detect_bpm`, o
+  «Detectar el BPM del sample» en la paleta).
+- Prepararlo al importar: recortar silencios, normalizar y fundidos
+  (`sample(ruta, { trim, normalize, fade_in, fade_out })`), y estirarlo al
+  tempo de la canción sin cambiar el tono (`sample:stretch()`).
+- Etiquetar cortes (`cortes:name`, o desde la interfaz), moverlos a oído
+  (`,` `.` en el modo tocar, o `cortes:move`), partirlos y unirlos.
+- Dar forma a cada corte (`cortes:set`: ataque, cola, pan, la parte que
+  suena, bucle o ida y vuelta) y ponerle sus propios efectos
+  (`cortes:fx`: ensuciar solo la caja, bajar solo el bombo).
+
+**Secuenciar** (sección 3 y sección 4)
+- Pasos con la mini-notación: reverse, pitch con duración (`^`) o sin ella
+  (`%`), volumen, retrigger, corte del filtro por paso (`~`), notas largas
+  (`_`) y acordes.
+- Longitud por pista (polirritmos), `every`, `chance`, `fill`, swing y
+  humanize, generadores (`euclid`, `rotate`, `mutate`, `shuffle`,
+  `reverse_pattern`), escalas y `melody`.
+- Modos gate y one-shot y grupos de choke (`pista:mode`, `pista:choke`).
+
+**Sonido**
+- Efectos de pista (`pista:fx`): filtros, bitcrusher, compresor,
+  distorsión, volumen (`gain`), EQ de 4 bandas y EQ dinámico con
+  sidechain; y los mismos por corte (`cortes:fx`).
+- Moverlos en el tiempo con `ramp()` y `lfo()`, o por paso con `~`.
+- Delay y reverb como envíos (`bus`, `pista:send`).
+- Instrumentos con polifonía y ADSR (`sample:instrument`), transponer sin
+  cambiar la duración (`%`, `keep`) y conservar los formantes
+  (`pista:formant`).
+- Texturas con granos y congelar un instante (`pista:grains`,
+  `pista:freeze`).
+- Ver dónde se pisan las pistas en frecuencia y que el EQ sugerido se
+  escriba solo («Choques de frecuencia», `priority`).
+
+**Estructura**
+- Secciones y línea de tiempo (`section`, `arrange`), saltar y repetir
+  secciones en vivo, variantes A/B (`variant`), rampas de tempo y otros
+  compases (`bpm_ramp`, `meter`).
+- Historial de versiones del script («Versiones» en la paleta).
+
+**Tocar en vivo** («Modo tocar», «MIDI»)
+- Disparar cortes y notas con el teclado o por MIDI, preescuchar, mute y
+  solo al instante, tap tempo, metrónomo.
+- Grabar lo tocado como `steps("...")`, seguir el tempo de un reloj MIDI
+  y mandar las notas por MIDI a un synth (`pista:midi`).
+
+**Editor** (sección 2)
+- Autocompletado, ayuda contextual y errores subrayados mientras escribes;
+  paleta de comandos (F1) y línea de órdenes (F2); biblioteca de bloques y
+  ranuras; el editor en su propia ventana (`--split`).
+
+**Sacarlo** («Renderizar a WAV», «Proyectos»)
+- Exportar la mezcla a WAV, remuestrear una pista para volver a cortarla y
+  guardar proyectos `.sampler` (script, carpeta de samples, tempo,
+  etiquetas y ajustes de corte).
+
+Los cambios del script entran siempre al empezar el compás siguiente y, si
+algo está mal, sigue sonando lo anterior (sección 5).
+
 ## 1. Inicio rápido
 
 ### Generar el break sintético
@@ -104,6 +170,28 @@ mueve), pero el audio se tira. Para oírlo por la tarjeta:
 ```sh
 cargo run -p tui -- --edit mi-cancion.lua --allow-audio
 ```
+
+### Leer el panel de efectos
+
+Abajo, una columna por pista. Cada una dice:
+
+| Lo que ves | Qué es |
+| --- | --- |
+| `drums` (resaltado) | La pista seleccionada (Ctrl-O cambia) |
+| `MUTE`, `SOLO`, `(solo de otra)` | Mute o solo en vivo o del script; una pista que no suena porque otra está en solo |
+| `· swing 58` | Swing de la pista |
+| `· gate` | Modo gate (cada golpe dura su paso) |
+| `· MIDI 1/36` | Manda sus golpes por MIDI (canal y nota del corte 1; en un instrumento, solo el canal) |
+| `· ♪ C3 2/4` | Instrumento: su raíz, y las voces que suenan de las que tiene |
+| `· formant 0`, `· formant -3` | Formantes al transponer con `%` |
+| `· ⁘ 80 ms · 20/s`, `· ❄ 0.4 · 120 ms · 25/s` | Granos (tamaño y densidad) o congelado (posición); `∿` si se mueve con `ramp`/`lfo` |
+| `· choke 1` | Grupo de choke |
+| `vol 0.70 ███░░` y `→ d0.30 r0.15` | Volumen de la pista (`:gain`) y sus envíos al delay y a la reverb |
+| `nivel ███░░`, `SAT` | Lo que suena ahora; `SAT` si la pista sola pasa de ±1 |
+| `◇ 3 snare › crush 6b ÷1 · LP 800 Hz` | Efectos de ese corte (`cortes:fx`), que suenan antes que los de la pista. Si no caben, una línea: `◇ efectos en 1, 3 snare` |
+| `› LP 3000 Hz q0.71` | Cada efecto de la pista, en orden |
+| `∿cutoff` | Ese parámetro se mueve (`ramp`, `lfo` o `~` por paso) |
+| `sin efectos` | Ni la pista ni sus cortes tienen efectos |
 
 ### El editor en su propia ventana
 
@@ -366,9 +454,10 @@ sobrescribir. F3 guarda antes tu texto sin guardar en
 En el modo editor, la última línea del editor (`ⓘ ...`) explica lo que hay
 bajo el cursor: sobre el nombre de una función o un método, su firma y qué
 hace; dentro de una llamada, el parámetro en el que estás (y el efecto
-elegido en `fx("...")` o `chance(p, "...")`); dentro de la tabla de
-`fx("efecto", { ... })`, los parámetros del efecto y, tras `clave =`, el
-rango y el valor por defecto de ese parámetro. Sale del mismo registro que
+elegido en `fx("...")`, en `cortes:fx(cuál, "...")` o en
+`chance(p, "...")`); dentro de la tabla de `fx("efecto", { ... })` (o de
+`cortes:fx(cuál, "efecto", { ... })`), los parámetros del efecto y, tras
+`clave =`, el rango y el valor por defecto de ese parámetro. Sale del mismo registro que
 la sección 4.
 
 ### Paleta de comandos (F1)
@@ -459,6 +548,7 @@ Qué ofrece según dónde esté el cursor:
 | Inicio de línea | Funciones globales (`bpm`, `sample`, `track`), snippets (`amen`, `fill`, `ghost`, `intro`, `euclid`, `melodia`, `polirritmo`, `barrido`, `groove`), bloques de tu biblioteca (ver «Biblioteca de bloques»), variables locales y palabras clave de Lua |
 | Tras `:` | Los métodos del objeto: de sample, de cortes, de pista o del compás de `every` (si no se sabe qué es, todos) |
 | Dentro de `fx("...")` | Los efectos; dentro de la tabla, sus parámetros, y en `type = "..."` sus valores |
+| Dentro de `cortes:fx("...")` | Primero las etiquetas de corte (también dentro de una lista `{ "...", 3 }`), luego los efectos y luego los parámetros de su tabla |
 | Dentro de `sample("...")` | Los WAV de la carpeta de muestras (la del proyecto o la del script) |
 | Dentro de `track("...")` | Las pistas ya definidas en el script |
 | Dentro de `chance(p, "...")` | Los efectos de `chance` |
@@ -878,22 +968,29 @@ cuenta (también con `%0`: otro timbre, la misma nota). En un instrumento
 va en su tabla: `sample:instrument({ keep = true, formant = 0 })`. Cada
 grano se analiza con LPC y se le cambia la envolvente; cuesta otro 2 % de
 un núcleo por voz. Con `^` no actúa (el sampler clásico lo mueve todo), y
-si la pista no tiene pasos con `%`, la carga avisa. `~` necesita un filtro en la pista
-(`:fx("lowpass", { cutoff = 3000 })`): `"1~300 . 2 .  1 . 2~8000 ."` cierra
-el filtro en el primer golpe y lo abre del todo en la segunda caja.
+si la pista no tiene pasos con `%`, la carga avisa.
 
-**Automatización.** En la tabla de `:fx`, `cutoff`, `q`, `threshold`,
-`makeup`, `drive` y `mix` admiten `ramp(desde, hasta, "4 compases")` (una
+**`~` (corte por paso).** Necesita un filtro en la pista
+(`:fx("lowpass", { cutoff = 3000 })`): `"1~300 . 2 .  1 . 2~8000 ."` cierra
+el filtro en el primer golpe y lo abre del todo en la segunda caja. Mueve
+siempre el primer filtro de la pista, aunque el corte tenga su propio
+filtro con `cortes:fx`.
+
+**Automatización.** En la tabla de `:fx` (de la pista o de un corte con
+`cortes:fx`), `cutoff`, `q`, `threshold`, `makeup`, `drive`, `mix`,
+`level`, los `freqN`, `gainN` y `qN` del EQ y los `freq`, `q`,
+`threshold` y `range` del EQ dinámico admiten `ramp(desde, hasta, "4 compases")` (una
 rampa que se repite) o `lfo(frecuencia, mín, máx)` (un seno) en lugar de un
 número (ver la sección 4). Las dos dependen solo de la posición de la
 canción: son deterministas y recargar no las desplaza. Todo lo que se
 mueve (curvas y `~`) se suaviza en unos 5 ms y el filtro recalcula sus
 coeficientes cada 32 muestras: no hay clics. El panel de efectos marca los
 parámetros que se mueven (`› LP 200 Hz q0.71 ∿cutoff`) y el tracker enseña
-el `~` de cada paso. Con etiquetas, igual: `kick^7@0.5`,
-`snare'r2`. Un `r` y un número pegados al final de la etiqueta son el
-retrigger (`kickr4` es `kick` repetido 4 veces), por eso ninguna etiqueta
-puede acabar así.
+el `~` de cada paso.
+
+**Con etiquetas**, los sufijos igual: `kick^7@0.5`, `snare'r2`. Un `r` y
+un número pegados al final de la etiqueta son el retrigger (`kickr4` es
+`kick` repetido 4 veces), por eso ninguna etiqueta puede acabar así.
 
 Mientras escribes, el editor revisa cada `steps("...")` sin esperar a
 guardar: el paso con error sale subrayado en rojo y el aviso (`⚠ línea N:
@@ -909,7 +1006,9 @@ Igual con `melody("...")`: subraya la nota que no se entiende (`h`, un
 acorde de más de 4 notas, un `^`, un sufijo roto), los `_` sin nota antes,
 los pasos de más o de menos y los rangos de volumen y retrigger; lo lejos
 que queda una nota de la raíz (±36 semitonos) depende del instrumento, así
-que lo dice la carga.
+que lo dice la carga. Y en cada `:fx(...)` subraya un efecto que no
+existe y, en `cortes:fx("...", ...)`, una etiqueta que no conoce nadie
+(los números de corte que no existen los dice la carga).
 
 Con etiquetas, el tracker muestra el nombre en vez del número (`kick^7`) y
 la vista del sample pone cada etiqueta junto al número de su corte.
@@ -2419,7 +2518,8 @@ la vista; «Reiniciar medidores» (paleta) los quita. Si se nota apretado:
 
 - baja el volumen de las pistas con `:gain()`, sobre todo cuando dos pistas
   tocan el mismo golpe a la vez (break + refuerzo de bombo);
-- baja golpes concretos con `@` (`5@0.6`);
+- baja golpes concretos con `@` (`5@0.6`), o un corte en todos sus golpes
+  con `cortes:fx(5, "gain", { level = 0.6 })`;
 - recuerda que `@` y `:gain()` llegan hasta 4: más de 1 sube el volumen;
 - el delay y la reverb (`:send()`, `bus()`) se suman al master antes del
   limitador: con mucho feedback y envíos altos, baja su `level` o los
