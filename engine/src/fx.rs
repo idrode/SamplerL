@@ -1,5 +1,5 @@
-//! Efectos de pista: filtro paso bajo/alto, bitcrusher, compresor y
-//! distorsión.
+//! Efectos de pista: filtro paso bajo/alto, bitcrusher, compresor,
+//! distorsión y EQ paramétrico.
 //!
 //! La configuración ([`Fx`]) va dentro del `Pattern` y entra con él al
 //! empezar el compás. El estado ([`FxState`]) vive en la pista, en el hilo
@@ -10,10 +10,88 @@ use std::f32::consts::TAU;
 /// Efectos por pista como máximo (se aplican en orden).
 pub const MAX_FX: usize = 4;
 
+/// Parámetros automatizables por efecto como máximo (los del EQ: frecuencia,
+/// ganancia y q de cada banda).
+pub const MAX_PARAMS: usize = 3 * EQ_BANDS;
+
+/// Bandas del EQ paramétrico.
+pub const EQ_BANDS: usize = 4;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FilterKind {
     LowPass,
     HighPass,
+}
+
+/// Forma de una banda del EQ.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EqKind {
+    /// Campana alrededor de la frecuencia (sube o baja una zona).
+    Bell,
+    /// Estante grave: todo lo que queda por debajo de la frecuencia.
+    LowShelf,
+    /// Estante agudo: todo lo que queda por encima.
+    HighShelf,
+}
+
+impl EqKind {
+    /// Nombre en el script.
+    pub fn name(self) -> &'static str {
+        match self {
+            EqKind::Bell => "bell",
+            EqKind::LowShelf => "lowshelf",
+            EqKind::HighShelf => "highshelf",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        [EqKind::Bell, EqKind::LowShelf, EqKind::HighShelf]
+            .into_iter()
+            .find(|k| k.name() == name)
+    }
+}
+
+/// Una banda del EQ. Con `gain_db` 0 no hace nada (ni gasta CPU).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EqBand {
+    pub kind: EqKind,
+    pub freq_hz: f32,
+    pub gain_db: f32,
+    pub q: f32,
+}
+
+/// Frecuencias por defecto de las bandas: una por zona (graves, medios
+/// graves, medios agudos y agudos).
+pub const EQ_DEFAULT_FREQS: [f32; EQ_BANDS] = [100.0, 500.0, 2000.0, 8000.0];
+
+/// Q por defecto de una banda: una octava y media de ancho en campana, el
+/// estante más suave sin rebote en los estantes.
+pub const EQ_DEFAULT_Q: f32 = 1.0;
+
+/// Rangos de los parámetros de una banda del EQ.
+pub const EQ_FREQ_RANGE: (f32, f32) = (20.0, 20_000.0);
+pub const EQ_GAIN_RANGE: (f32, f32) = (-24.0, 24.0);
+pub const EQ_Q_RANGE: (f32, f32) = (0.1, 18.0);
+
+impl EqBand {
+    /// Banda `i` sin efecto (ganancia 0), con su frecuencia por defecto.
+    pub fn flat(i: usize) -> Self {
+        EqBand {
+            kind: EqKind::Bell,
+            freq_hz: EQ_DEFAULT_FREQS[i],
+            gain_db: 0.0,
+            q: EQ_DEFAULT_Q,
+        }
+    }
+
+    pub fn bell(freq_hz: f32, gain_db: f32, q: f32) -> Self {
+        EqBand {
+            kind: EqKind::Bell,
+            freq_hz,
+            gain_db,
+            q,
+        }
+    }
 }
 
 /// Un efecto de pista.
@@ -41,6 +119,9 @@ pub enum Fx {
     /// Saturación con `tanh(drive · x)`, mezclada con la señal limpia
     /// (`mix` 1 = solo la saturada).
     Distortion { drive: f32, mix: f32 },
+    /// EQ paramétrico: hasta [`EQ_BANDS`] bandas en serie (biquads RBJ).
+    /// Las que tienen ganancia 0 no se procesan.
+    Eq { bands: [EqBand; EQ_BANDS] },
 }
 
 pub const DEFAULT_Q: f32 = std::f32::consts::FRAC_1_SQRT_2;
@@ -81,6 +162,13 @@ impl Fx {
         Fx::Distortion { drive, mix }
     }
 
+    /// EQ con las bandas dadas (como mucho [`EQ_BANDS`]); las demás, planas.
+    pub fn eq(bands: &[EqBand]) -> Self {
+        Fx::Eq {
+            bands: std::array::from_fn(|i| bands.get(i).copied().unwrap_or(EqBand::flat(i))),
+        }
+    }
+
     /// Parámetros que se pueden automatizar (con `ramp`, `lfo` o, el corte,
     /// por paso): su nombre en el script, en el orden de su índice.
     pub fn params(&self) -> &'static [&'static str] {
@@ -89,6 +177,10 @@ impl Fx {
             Fx::Compressor { .. } => &["threshold", "makeup"],
             Fx::Distortion { .. } => &["drive", "mix"],
             Fx::Bitcrush { .. } => &[],
+            Fx::Eq { .. } => &[
+                "freq1", "gain1", "q1", "freq2", "gain2", "q2", "freq3", "gain3", "q3", "freq4",
+                "gain4", "q4",
+            ],
         }
     }
 
@@ -107,6 +199,11 @@ impl Fx {
             (Fx::Compressor { .. }, 1) => (0.0, 24.0, false),
             (Fx::Distortion { .. }, 0) => (1.0, 50.0, true),
             (Fx::Distortion { .. }, 1) => (0.0, 1.0, false),
+            (Fx::Eq { .. }, i) if i < MAX_PARAMS => match i % 3 {
+                0 => (EQ_FREQ_RANGE.0, EQ_FREQ_RANGE.1, true),
+                1 => (EQ_GAIN_RANGE.0, EQ_GAIN_RANGE.1, false),
+                _ => (EQ_Q_RANGE.0, EQ_Q_RANGE.1, true),
+            },
             _ => return None,
         })
     }
@@ -120,6 +217,10 @@ impl Fx {
             (Fx::Compressor { makeup_db, .. }, 1) => makeup_db,
             (Fx::Distortion { drive, .. }, 0) => drive,
             (Fx::Distortion { mix, .. }, 1) => mix,
+            (Fx::Eq { bands }, i) if i < MAX_PARAMS => {
+                let band = bands[i / 3];
+                [band.freq_hz, band.gain_db, band.q][i % 3]
+            }
             _ => return None,
         })
     }
@@ -175,12 +276,29 @@ impl Fx {
                     return Err("mix fuera de rango (0 a 1)");
                 }
             }
+            Fx::Eq { bands } => {
+                let within = |v: f32, (lo, hi): (f32, f32)| (lo..=hi).contains(&v);
+                for band in bands {
+                    if !within(band.freq_hz, EQ_FREQ_RANGE) {
+                        return Err("freq fuera de rango (20 a 20000 Hz)");
+                    }
+                    if !within(band.gain_db, EQ_GAIN_RANGE) {
+                        return Err("gain fuera de rango (-24 a 24 dB)");
+                    }
+                    if !within(band.q, EQ_Q_RANGE) {
+                        return Err("q fuera de rango (0.1 a 18)");
+                    }
+                }
+            }
         }
         Ok(())
     }
 }
 
 /// Estado de un efecto en el hilo de audio.
+// El EQ ocupa más que los demás, pero en una `Box` reservaría memoria al
+// cambiar de patrón en el hilo de audio: tamaño fijo para todos.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) enum FxState {
     #[default]
@@ -214,7 +332,76 @@ pub(crate) enum FxState {
         drive: f32,
         mix: f32,
     },
+    Eq {
+        bands: [EqState; EQ_BANDS],
+        sample_rate: u32,
+    },
 }
+
+/// Estado de una banda del EQ: los parámetros a los que va (`target`, los
+/// del patrón o la automatización) y los que suenan (`current`), que los
+/// siguen suavizados (~5 ms) para que recargar con otra ganancia no haga
+/// clic.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct EqState {
+    kind: EqKind,
+    target: [f32; 3],
+    current: [f32; 3],
+    coefs: Biquad,
+    z: [[f32; 2]; 2],
+}
+
+impl EqState {
+    fn new(band: EqBand, sample_rate: u32) -> Self {
+        let params = [band.freq_hz, band.gain_db, band.q];
+        EqState {
+            kind: band.kind,
+            target: params,
+            current: params,
+            coefs: Biquad::eq(band.kind, params, sample_rate),
+            z: [[0.0; 2]; 2],
+        }
+    }
+
+    /// Sin ganancia ni camino hacia ella: no se procesa.
+    fn bypassed(&self) -> bool {
+        self.current[1] == 0.0 && self.target[1] == 0.0
+    }
+
+    fn settled(&self) -> bool {
+        self.current == self.target
+    }
+
+    /// Un paso del suavizado (`keep`: lo que se conserva del valor actual);
+    /// lo que queda a menos de una milésima llega ya a su destino.
+    fn glide(&mut self, keep: f32, sample_rate: u32) {
+        let before_bypass = self.current[1] != 0.0;
+        for i in 0..3 {
+            let (from, to) = (self.current[i], self.target[i]);
+            let next = if i == 1 {
+                to + keep * (from - to)
+            } else {
+                crate::automation::mix(to, from, keep, true)
+            };
+            let close = if i == 1 {
+                (next - to).abs() < 1e-3
+            } else {
+                (next / to - 1.0).abs() < 1e-3
+            };
+            self.current[i] = if close { to } else { next };
+        }
+        if before_bypass && self.bypassed() {
+            self.z = [[0.0; 2]; 2];
+        }
+        self.coefs = Biquad::eq(self.kind, self.current, sample_rate);
+    }
+}
+
+/// Frames entre recálculos de los coeficientes del EQ mientras se suaviza.
+const EQ_BLOCK: usize = 32;
+
+/// Constante de tiempo del suavizado del EQ (la de la automatización).
+const EQ_SMOOTHING_SECONDS: f32 = 0.005;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct Biquad {
@@ -243,6 +430,63 @@ impl Biquad {
             b2: b2 / a0,
             a1: -2.0 * cos / a0,
             a2: (1.0 - alpha) / a0,
+        }
+    }
+
+    /// Campana o estante del Audio EQ Cookbook (RBJ) con `[frecuencia,
+    /// ganancia en dB, q]`.
+    fn eq(kind: EqKind, [freq_hz, gain_db, q]: [f32; 3], sample_rate: u32) -> Self {
+        let freq = freq_hz.min(0.45 * sample_rate as f32);
+        let w0 = TAU * freq / sample_rate as f32;
+        let (sin, cos) = w0.sin_cos();
+        let a = 10f32.powf(gain_db / 40.0);
+        let alpha = sin / (2.0 * q);
+        let (b0, b1, b2, a0, a1, a2) = match kind {
+            EqKind::Bell => (
+                1.0 + alpha * a,
+                -2.0 * cos,
+                1.0 - alpha * a,
+                1.0 + alpha / a,
+                -2.0 * cos,
+                1.0 - alpha / a,
+            ),
+            EqKind::LowShelf | EqKind::HighShelf => {
+                let sq = 2.0 * a.sqrt() * alpha;
+                // El agudo es el grave con cos cambiado de signo (espejo).
+                let (c, s1) = if kind == EqKind::LowShelf {
+                    (cos, 1.0)
+                } else {
+                    (-cos, -1.0)
+                };
+                (
+                    a * ((a + 1.0) - (a - 1.0) * c + sq),
+                    s1 * 2.0 * a * ((a - 1.0) - (a + 1.0) * c),
+                    a * ((a + 1.0) - (a - 1.0) * c - sq),
+                    (a + 1.0) + (a - 1.0) * c + sq,
+                    s1 * -2.0 * ((a - 1.0) + (a + 1.0) * c),
+                    (a + 1.0) + (a - 1.0) * c - sq,
+                )
+            }
+        };
+        Biquad {
+            b0: b0 / a0,
+            b1: b1 / a0,
+            b2: b2 / a0,
+            a1: a1 / a0,
+            a2: a2 / a0,
+        }
+    }
+
+    /// Filtra `buf` (estéreo entrelazado) con la memoria `z` de cada canal.
+    fn run(self, buf: &mut [f32], z: &mut [[f32; 2]; 2]) {
+        for frame in buf.as_chunks_mut::<2>().0 {
+            for (x, z) in frame.iter_mut().zip(z.iter_mut()) {
+                // Forma directa II transpuesta.
+                let y = self.b0 * *x + z[0];
+                z[0] = self.b1 * *x - self.a1 * y + z[1];
+                z[1] = self.b2 * *x - self.a2 * y;
+                *x = y;
+            }
         }
     }
 }
@@ -292,6 +536,28 @@ impl FxState {
                 }
             }
             (Some(Fx::Distortion { drive, mix }), _) => FxState::Drive { drive, mix },
+            (Some(Fx::Eq { bands }), previous) => {
+                let old = match previous {
+                    FxState::Eq { bands, .. } => Some(bands),
+                    _ => None,
+                };
+                FxState::Eq {
+                    sample_rate,
+                    bands: std::array::from_fn(|i| {
+                        let mut state = EqState::new(bands[i], sample_rate);
+                        // Otro EQ en la ranura: sigue sonando lo de antes y
+                        // va hacia lo nuevo suavizado (con otra forma, ya).
+                        if let Some(old) = old.map(|o| o[i])
+                            && old.kind == state.kind
+                        {
+                            state.current = old.current;
+                            state.z = old.z;
+                            state.coefs = old.coefs;
+                        }
+                        state
+                    }),
+                }
+            }
             (Some(Fx::Bitcrush { bits, downsample }), previous) => {
                 let (counter, held) = match previous {
                     FxState::Crush { counter, held, .. } => (counter % downsample, held),
@@ -331,6 +597,15 @@ impl FxState {
             (FxState::Comp { makeup_db, .. }, 1) => *makeup_db = value,
             (FxState::Drive { drive, .. }, 0) => *drive = value,
             (FxState::Drive { mix, .. }, 1) => *mix = value,
+            // La automatización llega ya suavizada: entra tal cual.
+            (FxState::Eq { bands, .. }, i) if i < MAX_PARAMS => {
+                let band = &mut bands[i / 3];
+                if band.current[i % 3] != value || band.target[i % 3] != value {
+                    band.target[i % 3] = value;
+                    band.current[i % 3] = value;
+                    band.coefs = Biquad::eq(band.kind, band.current, sample_rate);
+                }
+            }
             _ => {}
         }
     }
@@ -346,6 +621,15 @@ impl FxState {
             }
             FxState::Comp { reduction, .. } => *reduction = 0.0,
             FxState::Drive { .. } => {}
+            // En silencio no hay nada que suavizar: los parámetros llegan ya.
+            FxState::Eq { bands, sample_rate } => {
+                for band in bands {
+                    band.z = [[0.0; 2]; 2];
+                    if !band.settled() {
+                        band.glide(0.0, *sample_rate);
+                    }
+                }
+            }
         }
     }
 
@@ -409,6 +693,29 @@ impl FxState {
                 for x in buf.iter_mut() {
                     let wet = (*drive * *x).tanh();
                     *x += *mix * (wet - *x);
+                }
+            }
+            FxState::Eq { bands, sample_rate } => {
+                let rate = *sample_rate;
+                let keep = (-(EQ_BLOCK as f32) / (EQ_SMOOTHING_SECONDS * rate as f32)).exp();
+                for band in bands.iter_mut() {
+                    if band.bypassed() {
+                        continue;
+                    }
+                    if band.settled() {
+                        band.coefs.run(buf, &mut band.z);
+                        continue;
+                    }
+                    // Suavizando: coeficientes nuevos cada EQ_BLOCK frames.
+                    for sub in buf.chunks_mut(2 * EQ_BLOCK) {
+                        if !band.settled() {
+                            band.glide(keep, rate);
+                        }
+                        if band.bypassed() {
+                            break;
+                        }
+                        band.coefs.run(sub, &mut band.z);
+                    }
                 }
             }
         }

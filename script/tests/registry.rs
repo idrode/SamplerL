@@ -176,13 +176,27 @@ fn every_effect_accepts_its_registered_parameters_and_values() {
                 "track(\"{name}\", amen):fx(\"{name}\", {table})\n\
                  track(\"{name}\"):fx(\"{name}\", {all})\n"
             ));
-            for p in e.params {
-                for value in p.values {
-                    source.push_str(&format!(
-                        "track(\"{name}\"):fx(\"{name}\", {{ {} = \"{value}\", cutoff = 1000 }})\n",
-                        p.name
-                    ));
-                }
+            // Cada valor de las listas cerradas, en su pista: la vuelta k da
+            // a cada parámetro de lista su valor k (y los obligatorios, el
+            // de su plantilla).
+            let listed: Vec<_> = e.params.iter().filter(|p| !p.values.is_empty()).collect();
+            let required: Vec<String> = e
+                .params
+                .iter()
+                .filter(|p| p.default.is_none())
+                .map(|p| expand_template(p.template).0)
+                .collect();
+            let rounds = listed.iter().map(|p| p.values.len()).max().unwrap_or(0);
+            for k in 0..rounds {
+                let mut table: Vec<String> = listed
+                    .iter()
+                    .map(|p| format!("{} = \"{}\"", p.name, p.values[k % p.values.len()]))
+                    .collect();
+                table.extend(required.iter().cloned());
+                source.push_str(&format!(
+                    "track(\"{name}{k}\", amen):fx(\"{name}\", {{ {} }})\n",
+                    table.join(", ")
+                ));
             }
         }
         assert!(api::effect(e.name).is_some());
@@ -242,8 +256,9 @@ fn unknown_effect_errors_list_the_registry() {
         panic!("debería fallar");
     };
     assert!(
-        err.message
-            .contains("no existe (filter, lowpass, highpass, bitcrush, compressor, distortion)"),
+        err.message.contains(
+            "no existe (filter, lowpass, highpass, bitcrush, compressor, distortion, eq)"
+        ),
         "{err}"
     );
 }

@@ -1039,7 +1039,8 @@ mod tests {
                 "highpass",
                 "bitcrush",
                 "compressor",
-                "distortion"
+                "distortion",
+                "eq"
             ]
         );
         let c = at(&format!("{SONG}track(\"d\", amen):fx(\"bit|")).unwrap();

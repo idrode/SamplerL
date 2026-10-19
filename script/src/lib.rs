@@ -33,9 +33,9 @@ use std::time::{Duration, Instant, SystemTime};
 
 use engine::notation::{check_label, parse_pattern_labeled, split_label};
 use engine::{
-    Batch, Buses, Controller, Division, FilterKind, Fx, MAX_CYCLE_BARS, MAX_FX, MAX_GAIN,
-    MAX_RETRIG, MAX_SEMITONES, MAX_STEPS, MAX_TRACKS, Pattern, STEPS, Sample, SendError,
-    SliceShape, Slices, Step, valid_bpm,
+    Batch, Buses, Controller, Division, EQ_BANDS, EqBand, EqKind, FilterKind, Fx, MAX_CYCLE_BARS,
+    MAX_FX, MAX_GAIN, MAX_RETRIG, MAX_SEMITONES, MAX_STEPS, MAX_TRACKS, Pattern, STEPS, Sample,
+    SendError, SliceShape, Slices, Step, valid_bpm,
 };
 pub mod api;
 pub mod blocks;
@@ -3645,6 +3645,37 @@ fn parse_fx(
                 drive: get("drive")?.unwrap_or(4.0),
                 mix: get("mix")?.unwrap_or(1.0),
             }
+        }
+        "eq" => {
+            fx_params(lua, name, &params)?;
+            let mut bands = [EqBand::flat(0); EQ_BANDS];
+            for (i, band) in bands.iter_mut().enumerate() {
+                let n = i + 1;
+                let kind: Option<String> = match &params {
+                    Some(p) => p.get(format!("type{n}")).map_err(|_| {
+                        fail(lua, format!("fx(\"eq\"): type{n} tiene que ser un texto"))
+                    })?,
+                    None => None,
+                };
+                let kind = match kind.as_deref() {
+                    None => EqKind::Bell,
+                    Some(k) => EqKind::from_name(k).ok_or_else(|| {
+                        fail(
+                            lua,
+                            format!(
+                                "fx(\"eq\"): type{n} \"{k}\" no existe (bell, lowshelf o highshelf)"
+                            ),
+                        )
+                    })?,
+                };
+                *band = EqBand {
+                    kind,
+                    freq_hz: get(&format!("freq{n}"))?.unwrap_or(engine::EQ_DEFAULT_FREQS[i]),
+                    gain_db: get(&format!("gain{n}"))?.unwrap_or(0.0),
+                    q: get(&format!("q{n}"))?.unwrap_or(engine::EQ_DEFAULT_Q),
+                };
+            }
+            Fx::Eq { bands }
         }
         other => {
             return Err(fail(

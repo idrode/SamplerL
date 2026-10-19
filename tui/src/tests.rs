@@ -1147,7 +1147,8 @@ fn completion_follows_the_context() {
             "highpass",
             "bitcrush",
             "compressor",
-            "distortion"
+            "distortion",
+            "eq"
         ]
     );
     type_text(&mut app, "filter\", { ");
@@ -1341,7 +1342,8 @@ fn choosing_another_effect_with_the_arrows_replaces_the_rest_of_the_name() {
             "highpass",
             "bitcrush",
             "compressor",
-            "distortion"
+            "distortion",
+            "eq"
         ]
     );
     app.handle(special(Key::Down));

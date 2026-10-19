@@ -29,7 +29,10 @@ pub use engine::{
     Batch, Controller, Engine, MAX_ATTACK_MS, MAX_CHOKE, MAX_RELEASE_MS, MAX_TRACKS, MidiNote,
     PlayMode, SendError, SliceShape, new_engine,
 };
-pub use fx::{DEFAULT_Q, FilterKind, Fx, MAX_FX};
+pub use fx::{
+    DEFAULT_Q, EQ_BANDS, EQ_DEFAULT_FREQS, EQ_DEFAULT_Q, EQ_FREQ_RANGE, EQ_GAIN_RANGE, EQ_Q_RANGE,
+    EqBand, EqKind, FilterKind, Fx, MAX_FX, MAX_PARAMS,
+};
 pub use grain::{GRAIN_PARAMS, Granular, Knob, MAX_GRAINS};
 pub use instrument::{Adsr, Instrument, MAX_VOICES};
 pub use limiter::{LIMIT_THRESHOLD, soft_limit};

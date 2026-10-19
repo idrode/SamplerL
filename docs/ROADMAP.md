@@ -189,7 +189,7 @@ las huellas de `golden.rs` idénticas si no se usa nada nuevo, código
 portable en Rust puro (x86_64 y ARM64), tests de render offline y nunca la
 salida de audio real.
 
-1. **Efecto de pista `eq`**: EQ paramétrico de hasta 4 bandas (campana,
+1. ✅ **Efecto de pista `eq`**: EQ paramétrico de hasta 4 bandas (campana,
    estante grave y agudo) con biquads; parámetros en el registro con rangos
    y valores por defecto, con `ramp` y `lfo`, suavizados y sin reservas en el
    callback. Tests de respuesta en frecuencia medida y salida idéntica bit a

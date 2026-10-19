@@ -446,6 +446,37 @@ pub fn fx_text(fx: &Fx) -> String {
             format!("comp {threshold_db:.0} dB {ratio}:1{makeup}")
         }
         Fx::Distortion { drive, mix } => format!("drive ×{drive} mix {mix:.2}"),
+        Fx::Eq { bands } => {
+            let active: Vec<String> = bands
+                .iter()
+                .filter(|b| b.gain_db != 0.0)
+                .map(|b| {
+                    let kind = match b.kind {
+                        engine::EqKind::Bell => "",
+                        engine::EqKind::LowShelf => "≤",
+                        engine::EqKind::HighShelf => "≥",
+                    };
+                    format!("{kind}{} {:+.1}", hz_label(b.freq_hz), b.gain_db)
+                })
+                .collect();
+            if active.is_empty() {
+                "eq plano".into()
+            } else {
+                format!("eq {}", active.join(" "))
+            }
+        }
+    }
+}
+
+/// Frecuencia corta: `300`, `2.5k`, `12k`.
+pub fn hz_label(hz: f32) -> String {
+    if hz >= 10_000.0 {
+        format!("{:.0}k", hz / 1000.0)
+    } else if hz >= 1000.0 {
+        let k = format!("{:.1}", hz / 1000.0);
+        format!("{}k", k.trim_end_matches(".0"))
+    } else {
+        format!("{hz:.0}")
     }
 }
 

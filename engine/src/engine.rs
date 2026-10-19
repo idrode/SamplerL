@@ -8,7 +8,7 @@ use rtrb::{Consumer, Producer, RingBuffer};
 use crate::arrangement::{Arrangement, Place, Playlist, resume};
 use crate::automation::mix;
 use crate::bus::{BUSES, Buses, Rack};
-use crate::fx::{Fx, FxState, MAX_FX};
+use crate::fx::{Fx, FxState, MAX_FX, MAX_PARAMS};
 use crate::grain::{Cloud, Position};
 use crate::instrument::{MAX_VOICES, Note, NoteOn};
 use crate::limiter::{LIMIT_THRESHOLD, soft_limit};
@@ -601,7 +601,7 @@ struct Track {
     lock: Option<f32>,
     /// Valor (suavizado) de cada parámetro automatizable de cada efecto
     /// mientras se mueve; `None`: el fijo del efecto.
-    mods: [[Option<f32>; 2]; MAX_FX],
+    mods: [[Option<f32>; MAX_PARAMS]; MAX_FX],
     /// Instrumento: las notas que suenan (una por voz) y las robadas o
     /// cortadas que hacen su fundido.
     notes: [Option<Note>; MAX_VOICES],
@@ -681,7 +681,7 @@ impl Default for Track {
             sends: [0.0; BUSES],
             midi_off: None,
             lock: None,
-            mods: [[None; 2]; MAX_FX],
+            mods: [[None; MAX_PARAMS]; MAX_FX],
             notes: std::array::from_fn(|_| None),
             tails: std::array::from_fn(|_| None),
             born: 0,
@@ -1962,7 +1962,7 @@ impl Engine {
                         }
                     }
                 }
-                track.mods = [[None; 2]; MAX_FX];
+                track.mods = [[None; MAX_PARAMS]; MAX_FX];
                 continue;
             }
             let fresh = std::mem::take(&mut track.fresh);
@@ -2340,7 +2340,7 @@ fn put_pattern(track: &mut Track, new: Option<Pattern>, sample_rate: u32) -> Opt
                 .map(|fx| std::mem::discriminant(&fx))
         };
         if kind(&old) != kind(&track.pattern) {
-            *mods = [None; 2];
+            *mods = [None; MAX_PARAMS];
         }
     }
     // Los disparos pendientes eran del patrón anterior (quizá de otro

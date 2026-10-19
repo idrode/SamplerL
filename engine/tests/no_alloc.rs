@@ -1,7 +1,7 @@
 //! El callback de audio no reserva memoria (regla 1 de CLAUDE.md): un
 //! asignador global cuenta las reservas que hace este hilo mientras corre
 //! `Engine::process`, con retrasos (swing, humanize), retrigger, pitch,
-//! instrumentos (polifonía, ADSR, bucles), cambios de
+//! instrumentos (polifonía, ADSR, bucles), el EQ (suavizado y automatizado), cambios de
 //! patrón al compás y un patrón que se suelta a la cola de basura.
 
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -188,9 +188,31 @@ fn the_audio_thread_never_allocates() {
         .collect();
     let sending = Pattern::from_steps(sample.clone(), &slices, locked)
         .unwrap()
-        .with_fx(&[Fx::lowpass(3000.0), Fx::distortion(4.0, 0.5)])
+        .with_fx(&[
+            Fx::lowpass(3000.0),
+            Fx::distortion(4.0, 0.5),
+            Fx::eq(&[
+                engine::EqBand::bell(300.0, -3.0, 2.0),
+                engine::EqBand {
+                    kind: engine::EqKind::HighShelf,
+                    freq_hz: 6000.0,
+                    gain_db: 4.0,
+                    q: 0.707,
+                },
+            ]),
+        ])
         .unwrap()
         .with_automation(&[
+            // La ganancia de la primera banda del EQ, con un LFO.
+            engine::Automation {
+                fx: 2,
+                param: 1,
+                curve: engine::Curve::Lfo {
+                    min: -6.0,
+                    max: 0.0,
+                    rate: engine::LfoRate::Steps(8.0),
+                },
+            },
             engine::Automation {
                 fx: 0,
                 param: 1,
@@ -235,6 +257,34 @@ fn the_audio_thread_never_allocates() {
         n, 0,
         "reservas con envíos, automatización y cortes por paso"
     );
+
+    // Otro EQ en la misma ranura con otras ganancias: suaviza hacia ellas.
+    let reshaped = Pattern::from_bars(sample.clone(), &slices, &bars[..1])
+        .unwrap()
+        .with_fx(&[Fx::eq(&[
+            engine::EqBand::bell(250.0, 6.0, 1.0),
+            engine::EqBand::flat(1),
+            engine::EqBand::bell(3000.0, -9.0, 4.0),
+        ])])
+        .unwrap();
+    let first_eq = Pattern::from_bars(sample.clone(), &slices, &bars[..1])
+        .unwrap()
+        .with_fx(&[Fx::eq(&[engine::EqBand::bell(250.0, -6.0, 1.0)])])
+        .unwrap();
+    controller.set_track_pattern(6, Some(first_eq)).unwrap();
+    let n = counted(|| {
+        for _ in 0..200 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas con el EQ");
+    controller.set_track_pattern(6, Some(reshaped)).unwrap();
+    let n = counted(|| {
+        for _ in 0..200 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas al suavizar el EQ");
 
     // Modo gate, forma por corte (envolvente, pan, parte, bucle e ida y
     // vuelta) y choke entre dos pistas.

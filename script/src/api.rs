@@ -1473,10 +1473,16 @@ pub const FUNCTIONS: &[Function] = &[
               más plana y valores altos resuenan en el corte. El bitcrusher reduce \
               la resolución a `bits` y repite cada muestra `downsample` veces \
               (reducción de la frecuencia de muestreo, sin filtro: suena sucio a \
-              propósito). Los parámetros `cutoff`, `q`, `threshold`, `makeup`, `drive` y `mix` \
-              admiten `ramp()` y `lfo()` en lugar de un número; el corte del primer \
-              filtro, además, puede cambiar en cada golpe con `~` en `steps` \
-              (`3~800`).",
+              propósito). El EQ tiene hasta 4 bandas en serie, cada una con su \
+              `freqN`, `gainN`, `qN` y `typeN` (`\"bell\"`, campana; \
+              `\"lowshelf\"` y `\"highshelf\"`, estantes que mueven todo lo que \
+              queda por debajo o por encima); una banda con `gainN = 0` no hace nada, \
+              y un EQ sin ganancias suena idéntico a no tenerlo. Al recargar con \
+              otras ganancias, el EQ va hacia ellas en unos 5 ms, sin clic. Los \
+              parámetros `cutoff`, `q`, `threshold`, `makeup`, `drive`, `mix` y los \
+              `freqN`, `gainN` y `qN` del EQ admiten `ramp()` y `lfo()` en lugar de \
+              un número; el corte del primer filtro, además, puede cambiar en cada \
+              golpe con `~` en `steps` (`3~800`).",
         params: &[
             Param {
                 name: "nombre",
@@ -1494,7 +1500,10 @@ pub const FUNCTIONS: &[Function] = &[
              :steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\")\n  \
              :fx(\"filter\", { type = \"lowpass\", cutoff = 3000 })\n  \
              :fx(\"highpass\", { cutoff = 80, q = 0.9 })\n  \
-             :fx(\"bitcrush\", { bits = 6, downsample = 2 })\n",
+             :fx(\"bitcrush\", { bits = 6, downsample = 2 })\n\
+             track(\"drums\")\n  \
+             :fx(\"eq\", { freq1 = 300, gain1 = -3, q1 = 2, \
+             type2 = \"highshelf\", freq2 = 8000, gain2 = 2 })\n",
         ),
     },
     Function {
@@ -1863,6 +1872,47 @@ const FILTER_PARAMS: &[FxParam] = &[
     },
 ];
 
+/// Parámetros de las bandas del EQ: frecuencia, ganancia, q y forma de cada
+/// una, con su frecuencia por defecto (la de `engine::EQ_DEFAULT_FREQS`).
+macro_rules! eq_params {
+    ($($n:literal $freq:literal),*) => {
+        &[$(
+            FxParam {
+                name: concat!("freq", $n),
+                description: concat!("frecuencia de la banda ", $n, " en Hz"),
+                default: Some($freq),
+                valid: "20–20000",
+                values: &[],
+                template: concat!("freq", $n, " = ${", $freq, "}"),
+            },
+            FxParam {
+                name: concat!("gain", $n),
+                description: concat!("dB que sube (o baja, en negativo) la banda ", $n, "; 0 la apaga"),
+                default: Some("0"),
+                valid: "-24–24",
+                values: &[],
+                template: concat!("gain", $n, " = ${-3}"),
+            },
+            FxParam {
+                name: concat!("q", $n),
+                description: concat!("ancho de la banda ", $n, " (más q, más estrecha)"),
+                default: Some("1"),
+                valid: "0.1–18",
+                values: &[],
+                template: concat!("q", $n, " = ${1}"),
+            },
+            FxParam {
+                name: concat!("type", $n),
+                description: concat!("forma de la banda ", $n),
+                default: Some("\"bell\""),
+                valid: "`\"bell\"`, `\"lowshelf\"` o `\"highshelf\"`",
+                values: &["bell", "lowshelf", "highshelf"],
+                template: concat!("type", $n, " = \"${bell}\""),
+            },
+        )*]
+    };
+}
+
 /// Efectos de `:fx`.
 pub const EFFECTS: &[Effect] = &[
     Effect {
@@ -1992,6 +2042,13 @@ pub const EFFECTS: &[Effect] = &[
             },
         ],
         template: "{ drive = ${4}, mix = ${0.7} }",
+    },
+    Effect {
+        name: "eq",
+        aliases: &[],
+        summary: "EQ paramétrico de hasta 4 bandas (campana o estante grave/agudo); una banda con gain 0 no hace nada.",
+        params: eq_params!(1 "100", 2 "500", 3 "2000", 4 "8000"),
+        template: "{ freq1 = ${300}, gain1 = ${-3}, q1 = ${1} }",
     },
 ];
 
@@ -2469,6 +2526,7 @@ pub fn automatable(effect: &str, param: &str) -> bool {
         Some("compressor") => engine::Fx::compressor(-18.0, 4.0),
         Some("distortion") => engine::Fx::distortion(4.0, 1.0),
         Some("bitcrush") => engine::Fx::bitcrush(8, 1),
+        Some("eq") => engine::Fx::eq(&[]),
         _ => return false,
     };
     fx.param_index(param).is_some()

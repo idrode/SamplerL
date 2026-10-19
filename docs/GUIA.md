@@ -1444,7 +1444,7 @@ Devuelve: pista.
 
 Añade un efecto a la cadena de la pista (hasta 4, en orden). Un parámetro desconocido da error, para pillar las erratas. Los efectos y sus parámetros están en la tabla de abajo.
 
-El filtro es un biquad de 12 dB/octava; `q = 0.707` es la respuesta más plana y valores altos resuenan en el corte. El bitcrusher reduce la resolución a `bits` y repite cada muestra `downsample` veces (reducción de la frecuencia de muestreo, sin filtro: suena sucio a propósito). Los parámetros `cutoff`, `q`, `threshold`, `makeup`, `drive` y `mix` admiten `ramp()` y `lfo()` en lugar de un número; el corte del primer filtro, además, puede cambiar en cada golpe con `~` en `steps` (`3~800`).
+El filtro es un biquad de 12 dB/octava; `q = 0.707` es la respuesta más plana y valores altos resuenan en el corte. El bitcrusher reduce la resolución a `bits` y repite cada muestra `downsample` veces (reducción de la frecuencia de muestreo, sin filtro: suena sucio a propósito). El EQ tiene hasta 4 bandas en serie, cada una con su `freqN`, `gainN`, `qN` y `typeN` (`"bell"`, campana; `"lowshelf"` y `"highshelf"`, estantes que mueven todo lo que queda por debajo o por encima); una banda con `gainN = 0` no hace nada, y un EQ sin ganancias suena idéntico a no tenerlo. Al recargar con otras ganancias, el EQ va hacia ellas en unos 5 ms, sin clic. Los parámetros `cutoff`, `q`, `threshold`, `makeup`, `drive`, `mix` y los `freqN`, `gainN` y `qN` del EQ admiten `ramp()` y `lfo()` en lugar de un número; el corte del primer filtro, además, puede cambiar en cada golpe con `~` en `steps` (`3~800`).
 
 - `nombre`: el efecto (ver la tabla)
 - `parámetros`: tabla con los parámetros del efecto
@@ -1467,6 +1467,22 @@ El filtro es un biquad de 12 dB/octava; `q = 0.707` es la respuesta más plana y
 |  | `makeup` | dB que se suben después, para compensar | `0` | 0–24 |
 | `"distortion"` (o `"drive"`) | `drive` | ganancia antes de saturar | `4` | 1–50 |
 |  | `mix` | parte saturada (1 = solo la saturada) | `1` | 0–1 |
+| `"eq"` | `freq1` | frecuencia de la banda 1 en Hz | `100` | 20–20000 |
+|  | `gain1` | dB que sube (o baja, en negativo) la banda 1; 0 la apaga | `0` | -24–24 |
+|  | `q1` | ancho de la banda 1 (más q, más estrecha) | `1` | 0.1–18 |
+|  | `type1` | forma de la banda 1 | `"bell"` | `"bell"`, `"lowshelf"` o `"highshelf"` |
+|  | `freq2` | frecuencia de la banda 2 en Hz | `500` | 20–20000 |
+|  | `gain2` | dB que sube (o baja, en negativo) la banda 2; 0 la apaga | `0` | -24–24 |
+|  | `q2` | ancho de la banda 2 (más q, más estrecha) | `1` | 0.1–18 |
+|  | `type2` | forma de la banda 2 | `"bell"` | `"bell"`, `"lowshelf"` o `"highshelf"` |
+|  | `freq3` | frecuencia de la banda 3 en Hz | `2000` | 20–20000 |
+|  | `gain3` | dB que sube (o baja, en negativo) la banda 3; 0 la apaga | `0` | -24–24 |
+|  | `q3` | ancho de la banda 3 (más q, más estrecha) | `1` | 0.1–18 |
+|  | `type3` | forma de la banda 3 | `"bell"` | `"bell"`, `"lowshelf"` o `"highshelf"` |
+|  | `freq4` | frecuencia de la banda 4 en Hz | `8000` | 20–20000 |
+|  | `gain4` | dB que sube (o baja, en negativo) la banda 4; 0 la apaga | `0` | -24–24 |
+|  | `q4` | ancho de la banda 4 (más q, más estrecha) | `1` | 0.1–18 |
+|  | `type4` | forma de la banda 4 | `"bell"` | `"bell"`, `"lowshelf"` o `"highshelf"` |
 
 ```lua
 local amen = sample("amen.wav"):slice(8)
@@ -1475,6 +1491,8 @@ track("drums", amen)
   :fx("filter", { type = "lowpass", cutoff = 3000 })
   :fx("highpass", { cutoff = 80, q = 0.9 })
   :fx("bitcrush", { bits = 6, downsample = 2 })
+track("drums")
+  :fx("eq", { freq1 = 300, gain1 = -3, q1 = 2, type2 = "highshelf", freq2 = 8000, gain2 = 2 })
 ```
 
 ### `pista:mode(modo)`
