@@ -176,6 +176,36 @@ Hecha: explorador de samples, tap tempo, `bpm_ramp()` y `meter()`,
 - Teclas y colores configurables en un archivo.
 - Ranuras 1-9 que se guardan entre sesiones.
 
+## Fase J: EQ y choques de frecuencia entre pistas
+
+Ecualizar cada pista y encontrar dónde se pisan dos pistas (masking):
+el análisis se hace offline, en el hilo de control, y nunca cambia el script
+sin confirmación. Detalle y decisiones en «Fase J» de
+[docs/ESTADO.md](ESTADO.md).
+
+Reglas de siempre: registro único de la API (autocompletado, ayuda y guía),
+nada de reservas en el hilo de audio (lo nuevo del motor en `no_alloc.rs`),
+las huellas de `golden.rs` idénticas si no se usa nada nuevo, código
+portable en Rust puro (x86_64 y ARM64), tests de render offline y nunca la
+salida de audio real.
+
+1. **Efecto de pista `eq`**: EQ paramétrico de hasta 4 bandas (campana,
+   estante grave y agudo) con biquads; parámetros en el registro con rangos
+   y valores por defecto, con `ramp` y `lfo`, suavizados y sin reservas en el
+   callback. Tests de respuesta en frecuencia medida y salida idéntica bit a
+   bit sin cambios.
+2. **Análisis offline de choques** (`rustfft`): cada pista renderizada en
+   solo, espectro en tercios de octava en ventanas de ~50 ms y, por pareja de
+   pistas y banda, una puntuación de choque ponderada por energía. Un ciclo
+   completo de la canción, con el tope de compases de la exportación.
+3. **Informe**: `tui --script x.lua --analyze-masking` y una acción de la
+   paleta con la tabla pareja × banda, sin tocar el audio.
+4. **Prioridad entre pistas**: `priority({ "kick", "snare", ... })` (por
+   defecto manda la más fuerte) y sugerencias de recorte (como mucho 4, de 2
+   a 4 dB) en la pista de menor prioridad.
+5. **Aplicar**: la paleta inserta el `fx("eq", {...})` sugerido en el
+   script, tras confirmarlo.
+
 ## Fase K: melodías con samples ✅
 
 Hechos los ocho puntos: la interpolación del pitch, el instrumento

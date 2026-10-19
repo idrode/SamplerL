@@ -4,7 +4,7 @@ Sampler + secuenciador para remixes con amen breaks, controlado por código en v
 
 Guía de uso (inicio rápido, atajos, mini-notación, API de Lua, recetas y problemas): [docs/GUIA.md](docs/GUIA.md). Sus bloques de Lua y las recetas de `scripts/ejemplos/` se comprueban en `script/tests/guide.rs`. La sección de la API se genera desde el registro `script/src/api.rs`: al cambiar la API, actualiza el registro y ejecuta `cargo run -p script --example guia`.
 
-Hoja de ruta (fases A-I y K después de los pasos 1-7, con sus reglas comunes; la F se hizo antes que la E): [docs/ROADMAP.md](docs/ROADMAP.md). Estado detallado y decisiones de cada fase: [docs/ESTADO.md](docs/ESTADO.md). Resumen abajo, en «Estado (resumen)».
+Hoja de ruta (fases A-K después de los pasos 1-7, con sus reglas comunes; la F se hizo antes que la E y la J, EQ y choques de frecuencia entre pistas, después de la K): [docs/ROADMAP.md](docs/ROADMAP.md). Estado detallado y decisiones de cada fase: [docs/ESTADO.md](docs/ESTADO.md). Resumen abajo, en «Estado (resumen)».
 
 ## Idea central
 
@@ -54,6 +54,7 @@ Un paso cada vez; probar con tests (audio sintético, renderizado offline) antes
 - Time-stretch de más calidad que el WSOLA de `sample:stretch()` para proporciones grandes o material tonal: Rubber Band tras una feature opcional.
 - Cortes: fundido en el salto de los bucles; gate y choke también por corte; remuestrear a WAV de 32 bits en coma flotante y con la cola entera.
 - Automatizar también el volumen de pista, los envíos y el pan; rampas de una sola vez (que empiecen al entrar el patrón) además de las que se repiten; `~` para otros parámetros.
+- EQ dinámico y sidechain por bandas (que una pista baje una banda solo cuando suena otra), tras la fase J.
 - Bloques (fase F): compartir la biblioteca entre máquinas (es una carpeta: git o Syncthing bastan), e insertar bloques también desde el modo tocar o por etiqueta.
 
 ## Fuera de alcance realista
@@ -91,7 +92,7 @@ El detalle de lo hecho (dónde está cada cosa en el código, cómo funciona, su
 - **Crates**: `engine` (motor, sin interfaz), `script` (Lua con `mlua`, modelo `Song`, proyectos, bloques, registro de la API) y `tui` (binario: interfaz `ratatui`, render offline, MIDI tras la feature `midi`).
 - **Pasos 1-7 hechos**: motor con cola de comandos lock-free y cola de basura, cortes por transitorios, secuenciador con lotes atómicos al compás, efectos por paso y pista, mini-notación y Lua con recarga al guardar, interfaz de paneles, exportar a WAV y proyectos `.sampler`.
 - **Fases hechas**: A (editor: paleta, deshacer, snippets, diagnóstico en vivo, autocompletado y ayuda), B (etiquetas de corte), C (generadores, escalas, swing, humanize, fill), D (mute/solo, medidores, metrónomo, detección de BPM, preescucha, ajuste de cortes), E (grabar lo tocado, secciones con línea de tiempo en el motor, historial de versiones, variantes A/B), F (biblioteca de bloques y ranuras), G (longitud variable, time-stretch, delay y reverb como envíos, compresor y distorsión, automatización), H (gate/choke, forma por corte, rejilla, remuestreo, preparar al importar), I (explorador, tap tempo, rampas de BPM y compases, configuración, MIDI de entrada y salida, ranuras que persisten) y K (melodías con samples: interpolación sinc, instrumento con `melody`, en vivo y por MIDI, pitch sin cambiar la duración con `%` y `keep`, granular y congelar, formantes).
-- **En curso**: ninguna fase; todas las de la hoja de ruta están hechas.
+- **En curso**: fase J (EQ y choques de frecuencia entre pistas, ver [docs/ROADMAP.md](docs/ROADMAP.md#fase-j-eq-y-choques-de-frecuencia-entre-pistas)).
 - **Comprobaciones que no hay que romper**:
   - `engine/tests/no_alloc.rs`: cero reservas en `Engine::process`; todo lo nuevo del motor entra ahí.
   - `script/tests/golden.rs`: huellas del audio (solo en x86_64); sin usar nada nuevo, idénticas bit a bit.
