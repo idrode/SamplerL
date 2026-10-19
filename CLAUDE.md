@@ -28,7 +28,7 @@ Hoja de ruta (fases A-K después de los pasos 1-7, con sus reglas comunes; la F 
 1. El callback de audio NO reserva memoria, NO usa mutex ni bloquea, NO hace E/S.
 2. El script y la UI nunca tocan el audio directamente: envían comandos por una cola sin bloqueos (lock-free) al hilo de audio.
 3. Motor separado de la interfaz (crate de librería + frontend TUI). No se hace GUI, pero la separación mantiene el código limpio y testeable.
-3b. Pensar la UI para terminal: rejilla de caracteres, bloques/braille para formas de onda, atajos de teclado y ratón opcional. Usar truecolor con degradación elegante.
+3b. Pensar la UI para terminal: rejilla de caracteres, barras de bloques para formas de onda, atajos de teclado y ratón opcional. Usar truecolor con degradación elegante.
 4. Los cambios evaluados entran cuantizados al final del compás.
 5. Si el código es inválido, el patrón anterior sigue sonando y el error se muestra en el editor.
 6. Los samples se decodifican a buffer en memoria y se resamplean a la frecuencia del motor al cargarlos.
@@ -42,7 +42,7 @@ Un paso cada vez; probar con tests (audio sintético, renderizado offline) antes
 3. ✅ Secuenciador de 16 pasos con BPM, loop y cuantización al compás; varias pistas y lotes atómicos.
 4. ✅ Efectos por paso (volumen, pitch, reverse, retrigger/stutter) y por pista (volumen, filtro paso bajo/alto, bitcrusher), con limitador suave al final.
 5. ✅ Mini-notación + Lua (`bpm`, `sample`, `slice`, `slice_at`, `track`, `steps`, `gain`, `fx`, `every`, `chance`) con recarga al compás y recarga automática al guardar.
-6. ✅ Interfaz de paneles en la terminal (`tui --edit`): editor, sample en braille, tracker vertical, efectos por pista y estado del motor.
+6. ✅ Interfaz de paneles en la terminal (`tui --edit`): editor, sample en barras, tracker vertical, efectos por pista y estado del motor.
 7. ✅ Exportar la mezcla a WAV (render offline: `--render` en la línea de comandos y la orden `exportar` en la interfaz) y guardar/cargar proyectos `.sampler` (script, carpeta de samples y tempo).
 
 ## Ideas para después

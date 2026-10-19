@@ -5,9 +5,7 @@ use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
-use ratatui::symbols::Marker;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::canvas::{Canvas, Line as CanvasLine};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
 
 use crate::app::App;
@@ -837,8 +835,8 @@ impl Widget for HelpLine<'_> {
     }
 }
 
-/// Forma de onda del sample de la pista seleccionada, en braille, con los
-/// cortes marcados y el que está sonando resaltado.
+/// Forma de onda del sample de la pista seleccionada, en barras (una por
+/// columna), con los cortes marcados y el que está sonando resaltado.
 pub struct SamplePanel<'a>(pub &'a ViewModel);
 
 impl Widget for SamplePanel<'_> {
@@ -877,51 +875,50 @@ impl Widget for SamplePanel<'_> {
             return;
         }
 
-        // Resolución en braille: 2 puntos por celda en horizontal.
-        let columns = inner.width as usize * 2;
+        // Una barra por columna, de lo más bajo a lo más alto de su trozo,
+        // con bloques de octavos de celda en los bordes.
+        let columns = inner.width as usize;
         let frames = track.sample_frames as f64;
         let playing = track
             .playing_slice
             .and_then(|i| track.slices.get(i))
             .map(|r| (r.start as f64 / frames, r.end as f64 / frames));
+        let marks: Vec<usize> = track
+            .slices
+            .iter()
+            .map(|slice| (slice.start as f64 / frames * columns as f64).floor() as usize)
+            .collect();
         let wave = &track.waveform;
-        Canvas::default()
-            .marker(Marker::Braille)
-            .x_bounds([0.0, columns as f64])
-            .y_bounds([-1.0, 1.0])
-            .paint(|ctx| {
-                for x in 0..columns {
-                    let from = x as f64 / columns as f64;
-                    let to = (x + 1) as f64 / columns as f64;
-                    let (lo, hi) = wave.range(from, to);
-                    let lit = playing.is_some_and(|(a, b)| from < b && to > a);
-                    ctx.draw(&CanvasLine {
-                        x1: x as f64,
-                        y1: lo as f64,
-                        x2: x as f64,
-                        y2: hi as f64,
-                        color: if lit { accent() } else { wave_color() },
-                    });
-                }
-                // Marcas de los cortes encima.
-                ctx.layer();
-                for slice in &track.slices {
-                    let x = (slice.start as f64 / frames * columns as f64).floor();
-                    ctx.draw(&CanvasLine {
-                        x1: x,
-                        y1: -1.0,
-                        x2: x,
-                        y2: 1.0,
-                        color: slice_color(),
-                    });
-                }
-            })
-            .render(inner, buf);
+        for x in 0..columns {
+            let from = x as f64 / columns as f64;
+            let to = (x + 1) as f64 / columns as f64;
+            let (lo, hi) = wave.range(from, to);
+            let lit = playing.is_some_and(|(a, b)| from < b && to > a);
+            let mark = marks.contains(&x);
+            let color = if mark {
+                slice_color()
+            } else if lit {
+                accent()
+            } else {
+                wave_color()
+            };
+            // Desde el centro hasta el pico, aunque el trozo no cruce el 0.
+            let cells = wave_bar(lo.min(0.0), hi.max(0.0), inner.height);
+            for (y, cell) in cells.into_iter().enumerate() {
+                let symbol = match cell {
+                    Some(c) => c,
+                    // La marca de un corte cruza el panel entero.
+                    None if mark => '│',
+                    None => continue,
+                };
+                buf[(inner.x + x as u16, inner.y + y as u16)]
+                    .set_char(symbol)
+                    .set_fg(color);
+            }
+        }
 
         // Número de cada corte (desde 1) en lo alto de su marca, con su
         // etiqueta si la tiene (`1 kick`; la marca siguiente la puede tapar).
-        // Se escribe en el buffer para que caiga en la misma celda que la
-        // línea braille (`ctx.print` redondea la posición de otra forma).
         for (i, slice) in track.slices.iter().enumerate() {
             let column = (slice.start as f64 / frames * inner.width as f64).floor() as u16;
             if column < inner.width {
@@ -952,6 +949,56 @@ impl Widget for SamplePanel<'_> {
             }
         }
     }
+}
+
+/// Celdas de una barra de la forma de onda que va de `lo` a `hi` (en
+/// [-1, 1], arriba el 1) en una columna de `rows` filas: `None` donde no
+/// llega. Los bordes van con octavos de celda (`▁`…`▇` por abajo de la
+/// celda; por arriba solo hay `▔` y `▀`); una barra que no llena ni un
+/// octavo (silencio) es una raya en el centro.
+pub fn wave_bar(lo: f32, hi: f32, rows: u16) -> Vec<Option<char>> {
+    const LOWER: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    let eighths = rows as f32 * 8.0;
+    // Octavos desde arriba: el 1 es 0 y el −1, `eighths`.
+    let to_eighths = |v: f32| ((1.0 - v.clamp(-1.0, 1.0)) / 2.0 * eighths).round() as i32;
+    let (top, bottom) = (to_eighths(hi.max(lo)), to_eighths(lo.min(hi)));
+    let mut cells = vec![None; rows as usize];
+    if bottom - top < 1 {
+        let centre = (rows as usize).saturating_sub(1) / 2;
+        if let Some(cell) = cells.get_mut(centre) {
+            *cell = Some('─');
+        }
+        return cells;
+    }
+    for (row, cell) in cells.iter_mut().enumerate() {
+        let (cell_top, cell_bottom) = (row as i32 * 8, row as i32 * 8 + 8);
+        let a = top.max(cell_top);
+        let b = bottom.min(cell_bottom);
+        if b <= a {
+            continue;
+        }
+        let filled = (b - a) as usize;
+        *cell = Some(if filled == 8 {
+            '█'
+        } else if b == cell_bottom {
+            // Llega al fondo de la celda: borde de arriba de la barra.
+            LOWER[filled - 1]
+        } else if a == cell_top {
+            // Sale del techo de la celda: borde de abajo.
+            if filled >= 6 {
+                '█'
+            } else if filled >= 3 {
+                '▀'
+            } else {
+                '▔'
+            }
+        } else if (a + b) / 2 >= cell_top + 4 {
+            '▄'
+        } else {
+            '▀'
+        });
+    }
+    cells
 }
 
 /// Texto de la marca de un corte en la vista del sample: `3` o `3 snare`.

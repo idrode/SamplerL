@@ -324,15 +324,43 @@ fn waveform_view(playing: Option<usize>) -> ViewModel {
     }
 }
 
-fn is_braille(symbol: &str) -> bool {
+/// Un bloque de la forma de onda en barras (`█▇…▁`, `▀`, `▔`).
+fn is_bar(symbol: &str) -> bool {
     symbol
         .chars()
         .next()
-        .is_some_and(|c| ('\u{2801}'..='\u{28FF}').contains(&c))
+        .is_some_and(|c| ('\u{2580}'..='\u{2594}').contains(&c))
 }
 
 #[test]
-fn sample_panel_draws_the_waveform_in_braille_with_slices() {
+fn wave_bars_fill_from_low_to_high_in_eighths() {
+    // 4 filas = 32 octavos; de 0 a 1 llena las dos de arriba.
+    assert_eq!(
+        ui::wave_bar(0.0, 1.0, 4),
+        [Some('█'), Some('█'), None, None]
+    );
+    // De −1 a 1, todo.
+    assert_eq!(ui::wave_bar(-1.0, 1.0, 2), [Some('█'), Some('█')]);
+    // Hasta 0,5 (8 octavos sobre el centro): justo la fila de encima.
+    assert_eq!(ui::wave_bar(0.0, 0.5, 4), [None, Some('█'), None, None]);
+    // Hasta 0,75 (12 octavos): la de arriba, medio bloque por abajo.
+    assert_eq!(
+        ui::wave_bar(0.0, 0.75, 4),
+        [Some('▄'), Some('█'), None, None]
+    );
+    // Por debajo del centro, el borde de abajo con bloques de arriba.
+    assert_eq!(
+        ui::wave_bar(-0.75, 0.0, 4),
+        [None, None, Some('█'), Some('▀')]
+    );
+    // Silencio: una raya en el centro.
+    assert_eq!(ui::wave_bar(0.0, 0.0, 3), [None, Some('─'), None]);
+    // Un borde que cae a un octavo del fondo de la celda.
+    assert_eq!(ui::wave_bar(0.0, 0.125, 2)[0], Some('▁'));
+}
+
+#[test]
+fn sample_panel_draws_the_waveform_in_bars_with_slices() {
     let view = waveform_view(Some(1));
     // 60 celdas útiles de ancho (62 con el borde).
     let buffer = draw_widget(ui::SamplePanel(&view), 62, 12);
@@ -347,30 +375,39 @@ fn sample_panel_draws_the_waveform_in_braille_with_slices() {
     assert_eq!(buffer[(1 + 30, 1)].symbol(), "2");
     assert_eq!(buffer[(31, 1)].fg, Color::Yellow);
 
-    // Forma de onda en braille: el bloque positivo arriba en el corte 1 y el
+    // Forma de onda en barras: el bloque positivo arriba en el corte 1 y el
     // negativo abajo en el corte 2.
-    let braille = |x0: u16, x1: u16, y0: u16, y1: u16| {
+    let bars = |x0: u16, x1: u16, y0: u16, y1: u16| {
         (x0..x1)
             .flat_map(|x| (y0..y1).map(move |y| (x, y)))
-            .filter(|&p| is_braille(buffer[p].symbol()))
+            .filter(|&p| is_bar(buffer[p].symbol()))
             .collect::<Vec<_>>()
     };
+    // Ni un punto de braille.
     assert!(
-        !braille(3, 8, 2, 5).is_empty(),
+        !screen
+            .chars()
+            .any(|c| ('\u{2800}'..='\u{28FF}').contains(&c)),
+        "{screen}"
+    );
+    // Las marcas de los cortes cruzan el panel.
+    assert_eq!(buffer[(31, 6)].fg, Color::Yellow, "{screen}");
+    assert!(
+        !bars(3, 8, 2, 5).is_empty(),
         "sin bloque positivo:\n{screen}"
     );
     assert!(
-        !braille(33, 38, 7, 11).is_empty(),
+        !bars(33, 38, 7, 11).is_empty(),
         "sin bloque negativo:\n{screen}"
     );
     // El corte que suena (el 2) va resaltado; el resto, en gris.
     assert!(
-        braille(33, 38, 7, 11)
+        bars(33, 38, 7, 11)
             .iter()
             .all(|&p| buffer[p].fg == Color::Cyan)
     );
     assert!(
-        braille(3, 8, 2, 5)
+        bars(3, 8, 2, 5)
             .iter()
             .all(|&p| buffer[p].fg == Color::Gray)
     );
