@@ -32,6 +32,20 @@ fn the_panel_lists_each_slice_with_its_effects() {
 }
 
 #[test]
+fn with_a_full_track_chain_the_slices_fold_into_one_line() {
+    let song = SONG_SLICE_FX.replace(
+        "track(\"drums\", amen)",
+        "track(\"drums\", amen):fx(\"lowpass\", { cutoff = 5000 }):fx(\"highpass\", { cutoff = 40 })\n  :fx(\"distortion\", {}):fx(\"eq\", {})",
+    );
+    let (_, mut app, _engine) = open("slice_fx_fold", Some(&song));
+    assert!(app.view().error.is_none(), "{:?}", app.view().error);
+    let screen = text(&draw(&mut app, 160, 44));
+    assert!(screen.contains("◇ efectos en 1, 2 snare"), "{screen}");
+    // Los cuatro de la pista se siguen viendo.
+    assert!(screen.contains("› eq plano"), "{screen}");
+}
+
+#[test]
 fn slice_fx_completes_explains_and_diagnoses_itself() {
     let (mut app, _engine) = open_at_end("slice_fx_complete");
     type_text(

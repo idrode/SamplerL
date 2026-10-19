@@ -58,7 +58,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
     let [main, fx, help] = Layout::vertical([
         Constraint::Min(8),
-        Constraint::Length(FX_PANEL_HEIGHT),
+        Constraint::Length(fx_panel_height(&view)),
         Constraint::Length(1),
     ])
     .areas(frame.area());
@@ -102,7 +102,7 @@ fn draw_main_window(frame: &mut Frame, view: &ViewModel) {
     let [top, body, fx, help] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Min(8),
-        Constraint::Length(FX_PANEL_HEIGHT),
+        Constraint::Length(fx_panel_height(view)),
         Constraint::Length(1),
     ])
     .areas(frame.area());
@@ -1577,6 +1577,12 @@ pub fn sends_text(sends: [f32; 2]) -> String {
 
 /// Alto del panel de efectos: nombre, volumen, nivel y hasta 4 efectos.
 pub const FX_PANEL_HEIGHT: u16 = 3 + engine::MAX_FX as u16 + 2;
+/// Alto del panel de efectos: una fila más si alguna pista tiene efectos
+/// por corte (así siempre cabe al menos su línea resumida).
+pub fn fx_panel_height(view: &ViewModel) -> u16 {
+    FX_PANEL_HEIGHT + u16::from(view.tracks.iter().any(|t| !t.slice_fx.is_empty()))
+}
+
 /// Ancho mínimo de cada columna del panel de efectos.
 const FX_COLUMN_MIN: u16 = 20;
 
@@ -1684,20 +1690,31 @@ impl Widget for FxPanel<'_> {
                 lines.push(Line::from("sin efectos").fg(dim()));
             }
             // Los de cada corte, que suenan antes que los de la pista:
-            // `◇ 3 snare › crush 6b ÷1 · LP 800 Hz q2.00 ∿cutoff`.
-            for chain in &track.slice_fx {
-                let mut spans =
-                    vec![Span::from(format!("◇ {} › ", chain.name(&track.labels))).fg(dim())];
-                for (i, fx) in chain.fx.iter().enumerate() {
-                    if i > 0 {
-                        spans.push(Span::from(" · ").fg(dim()));
+            // `◇ 3 snare › crush 6b ÷1 · LP 800 Hz q2.00 ∿cutoff`. Si no
+            // caben con los de la pista, una sola línea con los cortes.
+            let room = (column.height as usize).saturating_sub(lines.len() + track.fx.len());
+            if track.slice_fx.len() > room && !track.slice_fx.is_empty() {
+                let names: Vec<String> = track
+                    .slice_fx
+                    .iter()
+                    .map(|c| c.name(&track.labels))
+                    .collect();
+                lines.push(Line::from(format!("◇ efectos en {}", names.join(", "))).fg(dim()));
+            } else {
+                for chain in &track.slice_fx {
+                    let mut spans =
+                        vec![Span::from(format!("◇ {} › ", chain.name(&track.labels))).fg(dim())];
+                    for (i, fx) in chain.fx.iter().enumerate() {
+                        if i > 0 {
+                            spans.push(Span::from(" · ").fg(dim()));
+                        }
+                        spans.push(Span::raw(fx_text(fx)));
+                        for (_, p) in chain.automated.iter().filter(|(f, _)| *f == i) {
+                            spans.push(Span::from(format!(" ∿{p}")).fg(accent()));
+                        }
                     }
-                    spans.push(Span::raw(fx_text(fx)));
-                    for (_, p) in chain.automated.iter().filter(|(f, _)| *f == i) {
-                        spans.push(Span::from(format!(" ∿{p}")).fg(accent()));
-                    }
+                    lines.push(Line::from(spans));
                 }
-                lines.push(Line::from(spans));
             }
             for (i, fx) in track.fx.iter().enumerate() {
                 // Los parámetros que se mueven (ramp, lfo): `∿cutoff`.
