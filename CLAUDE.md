@@ -52,7 +52,7 @@ Un paso cada vez; probar con tests (audio sintético, renderizado offline) antes
 - MIDI: probar con dispositivos reales; enviar las notas con marca de tiempo (cola de ALSA) para quitar el jitter; reloj MIDI de salida; que los pads y las notas de entrada también se puedan grabar como `steps` (fase E).
 - Alojar plugins CLAP/LV2: solo si hiciera falta; es costoso.
 - Time-stretch de más calidad que el WSOLA de `sample:stretch()` para proporciones grandes o material tonal: Rubber Band tras una feature opcional.
-- Cortes: fundido en el salto de los bucles; gate y choke también por corte; remuestrear a WAV de 32 bits en coma flotante y con la cola entera.
+- Cortes: gate y choke también por corte; remuestrear a WAV de 32 bits en coma flotante y con la cola entera.
 - Automatizar también el volumen de pista, los envíos y el pan; rampas de una sola vez (que empiecen al entrar el patrón) además de las que se repiten; `~` para otros parámetros.
 - Bloques (fase F): compartir la biblioteca entre máquinas (es una carpeta: git o Syncthing bastan), e insertar bloques también desde el modo tocar o por etiqueta.
 
