@@ -220,3 +220,23 @@ fn priority_errors_and_warnings() {
     let e = load("section(\"x\", function() priority({ \"a\" }) end)\n").unwrap_err();
     assert!(e.contains("priority"), "{e}");
 }
+
+#[test]
+fn applying_the_suggestion_lowers_the_score() {
+    let source = two("sine300.wav", "sine300.wav");
+    let options = MaskingOptions::default();
+    let before = song(&source).analyze_masking(RATE, &options).unwrap();
+    let band = band("315");
+    let score = before.score("a", "b", band).unwrap();
+    let line = before.lua_line(&before.suggestions[0]);
+    let after = song(&format!("{source}{line}\n"))
+        .analyze_masking(RATE, &options)
+        .unwrap();
+    let lower = after.score("a", "b", band).unwrap();
+    // El recorte (−4 dB sobre los 2 que ya los separaban) la baja mucho.
+    assert!(lower < score - 0.3, "{score} → {lower}\n{line}");
+    // Y no queda nada que sugerir más fuerte que antes en ninguna banda.
+    let worst =
+        |r: &script::masking::MaskingReport| r.clashes().first().map_or(0.0, |c| c.clash.score);
+    assert!(worst(&after) < worst(&before), "{}", after.text());
+}

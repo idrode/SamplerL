@@ -176,12 +176,16 @@ Hecha: explorador de samples, tap tempo, `bpm_ramp()` y `meter()`,
 - Teclas y colores configurables en un archivo.
 - Ranuras 1-9 que se guardan entre sesiones.
 
-## Fase J: EQ y choques de frecuencia entre pistas
+## Fase J: EQ y choques de frecuencia entre pistas ✅
 
-Ecualizar cada pista y encontrar dónde se pisan dos pistas (masking):
-el análisis se hace offline, en el hilo de control, y nunca cambia el script
-sin confirmación. Detalle y decisiones en «Fase J» de
-[docs/ESTADO.md](ESTADO.md).
+Hecha: `:fx("eq")` (4 bandas, campana y estantes, con `ramp`/`lfo`), el
+análisis de choques (`--analyze-masking` y «Choques de frecuencia» en la
+paleta), `priority()` con sus sugerencias de recorte y aplicarlas desde la
+paleta tras confirmarlo. Ecualizar cada pista y encontrar dónde se pisan
+dos pistas (masking): el análisis se hace offline, en el hilo de control, y
+nunca cambia el script sin confirmación. Detalle y decisiones en «Fase J»
+de [docs/ESTADO.md](ESTADO.md); uso en «Choques de frecuencia entre
+pistas» de `docs/GUIA.md`.
 
 Reglas de siempre: registro único de la API (autocompletado, ayuda y guía),
 nada de reservas en el hilo de audio (lo nuevo del motor en `no_alloc.rs`),
@@ -203,7 +207,7 @@ salida de audio real.
 4. ✅ **Prioridad entre pistas**: `priority({ "kick", "snare", ... })` (por
    defecto manda la más fuerte) y sugerencias de recorte (como mucho 4, de 2
    a 4 dB) en la pista de menor prioridad.
-5. **Aplicar**: la paleta inserta el `fx("eq", {...})` sugerido en el
+5. ✅ **Aplicar**: la paleta inserta el `fx("eq", {...})` sugerido en el
    script, tras confirmarlo.
 
 ## Fase K: melodías con samples ✅

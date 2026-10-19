@@ -46,9 +46,18 @@ fn the_palette_shows_where_two_tracks_clash() {
         "{}",
         view.description
     );
-    // La tabla pareja × banda, debajo.
-    assert!(view.preview[0].contains("315"), "{:?}", view.preview);
-    assert!(view.preview[1].starts_with("a × b"), "{:?}", view.preview);
+    // El EQ sugerido para la que cede y la tabla pareja × banda, debajo.
+    assert_eq!(view.preview[0], "sugerencia para b (cede en este choque):");
+    assert!(
+        view.preview[1].starts_with("  track(\"b\"):fx(\"eq\", { freq1 = "),
+        "{:?}",
+        view.preview
+    );
+    assert!(
+        view.preview.iter().any(|l| l.starts_with("a × b")),
+        "{:?}",
+        view.preview
+    );
     let screen = text(&draw(&mut app, 140, 44));
     assert!(screen.contains("choques de frecuencia"), "{screen}");
     assert!(screen.contains("a × b  315 Hz"), "{screen}");
@@ -119,4 +128,130 @@ fn the_command_line_prints_the_same_report() {
             .unwrap()
             .ends_with("sin choques\n")
     );
+}
+
+#[test]
+fn enter_twice_inserts_the_suggested_eq_after_the_track() {
+    let song = format!("{}-- fin\n", two(300, 300));
+    let (path, mut app, mut engine) = sines("masking_apply", &song);
+    app.handle(ctrl('l'));
+    offline::render(&mut engine, 256, 2);
+    let before = app.editor.lines().to_vec();
+    palette(&mut app, "choques");
+    let first = app.view().masking.unwrap();
+    let line = first.preview[1].trim().to_string();
+    // El primer Enter solo propone: el texto no cambia.
+    app.handle(special(Key::Enter));
+    let view = app.view().masking.expect("sigue abierto");
+    assert!(
+        view.confirm.contains("Enter otra vez inserta el EQ de «b»"),
+        "{}",
+        view.confirm
+    );
+    assert_eq!(app.editor.lines(), before);
+    // Esc cancela la propuesta (el informe sigue abierto).
+    app.handle(esc());
+    assert!(app.view().masking.unwrap().confirm.is_empty());
+    assert_eq!(app.editor.lines(), before);
+    // Moverse también la cancela.
+    app.handle(special(Key::Enter));
+    app.handle(special(Key::Down));
+    assert!(app.view().masking.unwrap().confirm.is_empty());
+    app.handle(special(Key::Up));
+    // Enter y Enter: insertado justo después de la definición de b.
+    app.handle(special(Key::Enter));
+    app.handle(special(Key::Enter));
+    assert!(app.view().masking.is_none());
+    let lines = app.editor.lines().to_vec();
+    assert_eq!(lines.len(), before.len() + 1);
+    let b = lines
+        .iter()
+        .position(|l| l.starts_with("track(\"b\", "))
+        .unwrap();
+    assert_eq!(lines[b + 1], line);
+    assert_eq!(lines.last().unwrap(), "-- fin");
+    assert!(
+        app.view()
+            .message
+            .contains("EQ de «b» insertado en la línea 4, sin guardar"),
+        "{}",
+        app.view().message
+    );
+    // El archivo no se ha tocado y nada se ha cargado.
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), song);
+    assert!(app.view().dirty);
+    // Un Ctrl-Z lo quita entero.
+    app.handle(ctrl('z'));
+    assert_eq!(app.editor.lines(), before);
+    app.handle(ctrl('r'));
+    assert_eq!(app.editor.lines(), lines);
+
+    // Cargado, el choque en 315 Hz baja.
+    let score = |app: &mut App| {
+        palette(app, "choques");
+        let view = app.view().masking;
+        app.handle(esc());
+        view.and_then(|v| {
+            v.items
+                .iter()
+                .find(|i| i.0 == "a × b  315 Hz")
+                .map(|i| i.1.parse::<f32>().unwrap())
+        })
+        .unwrap_or(0.0)
+    };
+    app.handle(ctrl('z'));
+    app.handle(ctrl('l'));
+    offline::render(&mut engine, 256, 2);
+    let high = score(&mut app);
+    app.handle(ctrl('r'));
+    app.handle(ctrl('l'));
+    offline::render(&mut engine, 256, 2);
+    assert!(app.view().error.is_none(), "{:?}", app.view().error);
+    let low = score(&mut app);
+    assert!(low < high - 0.3, "{high} → {low}");
+}
+
+#[test]
+fn a_track_defined_over_several_lines_gets_it_after_its_chain() {
+    let song = format!(
+        "bpm(120)\n\
+         track(\"a\", sample(\"sine300.wav\"):slice_grid(1)):steps(\"{ONE}\")\n\
+         if true then\n  \
+           track(\"b\", sample(\"sine300.wav\"):slice_grid(1))\n    \
+             :steps(\"{ONE}\")\n    \
+             :gain(0.8)\n\
+         end\n"
+    );
+    let (_, mut app, mut engine) = sines("masking_chain", &song);
+    app.handle(ctrl('l'));
+    offline::render(&mut engine, 256, 2);
+    palette(&mut app, "choques");
+    app.handle(special(Key::Enter));
+    app.handle(special(Key::Enter));
+    let lines = app.editor.lines().to_vec();
+    assert!(
+        lines[6].starts_with("  track(\"b\"):fx(\"eq\""),
+        "{lines:?}"
+    );
+    assert_eq!(lines[7], "end");
+    app.handle(ctrl('l'));
+    offline::render(&mut engine, 256, 2);
+    assert!(app.view().error.is_none(), "{:?}", app.view().error);
+}
+
+/// El informe de choques en pantalla, con la propuesta de EQ:
+/// `cargo test -p tui pantalla_choques -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn pantalla_choques() {
+    let song = format!(
+        "{}track(\"c\", sample(\"sine100.wav\"):slice_grid(1)):steps(\"{ONE}\")\npriority({{ \"b\" }})\n",
+        two(300, 300)
+    );
+    let (_, mut app, mut engine) = sines("masking_screen", &song);
+    app.handle(ctrl('l'));
+    offline::render(&mut engine, 256, 2);
+    palette(&mut app, "choques");
+    app.handle(special(Key::Enter));
+    println!("{}", text(&draw(&mut app, 120, 40)));
 }

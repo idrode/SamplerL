@@ -364,7 +364,7 @@ pub const ACTIONS: &[ActionDef] = &[
     ActionDef {
         action: Action::AnalyzeMasking,
         name: "Choques de frecuencia",
-        description: "Renderiza offline cada pista en solo (un ciclo entero de la canción) y muestra en qué bandas se pisan: tabla pareja × banda con su puntuación (0 a 1) y un resumen; no toca lo que suena",
+        description: "Renderiza offline cada pista en solo (un ciclo entero de la canción) y muestra en qué bandas se pisan: tabla pareja × banda con su puntuación (0 a 1), un resumen y el EQ sugerido para la que cede; Enter lo propone y Enter otra vez lo inserta en el script sin guardar; no toca lo que suena",
         keys: "",
     },
     ActionDef {

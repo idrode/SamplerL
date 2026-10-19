@@ -153,8 +153,18 @@ cargo run -p tui -- --script canción.lua --analyze-masking
 
 En la interfaz, «Choques de frecuencia» (paleta) analiza lo último cargado
 y abre el informe: un choque por fila (pareja, banda y puntuación), el
-resumen del elegido y debajo la tabla pareja × banda (`·` sin choque, `-`
-banda vacía). Escribir filtra por pista o banda; Esc cierra.
+resumen del elegido, el EQ sugerido para la pista que cede y debajo la
+tabla pareja × banda (`·` sin choque, `-` banda en la que una de las dos
+casi no suena). Escribir filtra por pista o banda; Esc cierra.
+
+**Aplicar una sugerencia**: Enter sobre un choque propone el EQ de la pista
+que cede (sin tocar nada todavía) y Enter otra vez inserta la línea
+`track("bass"):fx("eq", {...})` en el editor, justo después de donde se
+define la pista (y de su cadena de `:steps`, `:fx`...). No se guarda ni se
+carga: Ctrl-S lo guarda y lo carga, Ctrl-Z lo quita de una vez y Esc antes
+del segundo Enter lo cancela. Si la pista ya tiene 4 efectos, lo avisa (al
+cargar, el EQ no cabría; sigue sonando lo anterior). Vuelve a analizar
+después para ver cuánto ha bajado el choque.
 
 Cómo se mide: cada pista se renderiza offline en solo (con sus efectos,
 envíos y el limitador, como al remuestrear) durante un ciclo entero de la
@@ -325,7 +335,7 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Volver a la línea de tiempo | Deja de repetir la sección: al acabar, sigue la siguiente | — |
 | Alternar variante A/B | Con variant(): pasa a la otra variante; entra entera al empezar el compás siguiente (con secciones, por la misma sección y compás) | v (modo tocar) |
 | Versiones | El historial del script (una versión por carga buena): lista con fecha y vista previa; Enter la restaura en el editor sin guardar (Ctrl-Z lo deshace) | — |
-| Choques de frecuencia | Renderiza offline cada pista en solo (un ciclo entero de la canción) y muestra en qué bandas se pisan: tabla pareja × banda con su puntuación (0 a 1) y un resumen; no toca lo que suena | — |
+| Choques de frecuencia | Renderiza offline cada pista en solo (un ciclo entero de la canción) y muestra en qué bandas se pisan: tabla pareja × banda con su puntuación (0 a 1), un resumen y el EQ sugerido para la que cede; Enter lo propone y Enter otra vez lo inserta en el script sin guardar; no toca lo que suena | — |
 | Salir | Sale (pide confirmación si hay cambios sin guardar) | Ctrl-Q |
 | Snippet: `amen`, `fill`, `ghost`, `intro`, `euclid`, `melodia`, `polirritmo`, `barrido`, `groove`, `instrumento` | Inserta el snippet en el cursor (ver «Snippets» en la sección 4) | — |
 

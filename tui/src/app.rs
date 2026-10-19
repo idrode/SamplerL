@@ -148,6 +148,8 @@ struct MaskingPicker {
     selected: usize,
     report: script::masking::MaskingReport,
     clashes: Vec<script::masking::Clash>,
+    /// Pista cuya sugerencia espera el segundo Enter para insertarse.
+    confirm: Option<usize>,
 }
 
 /// Explorador de samples abierto.
@@ -2292,6 +2294,7 @@ impl App {
             selected: 0,
             report,
             clashes,
+            confirm: None,
         });
     }
 
@@ -2313,27 +2316,127 @@ impl App {
     }
 
     /// Tecla con el informe de choques abierto: escribir filtra, flechas
-    /// eligen y Esc cierra.
+    /// eligen, Enter propone el EQ de la pista que cede en el elegido y
+    /// Enter otra vez lo inserta en el script; Esc cancela la propuesta o
+    /// cierra.
     fn handle_masking(&mut self, input: Input) -> Flow {
-        let count = self.masking_matches().len();
+        let matches = self.masking_matches();
+        let count = matches.len();
         let Some(picker) = &mut self.masking else {
             return Flow::Continue;
         };
         match input.key {
-            Key::Esc | Key::Enter => self.masking = None,
-            Key::Up if count > 0 => picker.selected = (picker.selected + count - 1) % count,
-            Key::Down if count > 0 => picker.selected = (picker.selected + 1) % count,
+            Key::Esc if picker.confirm.is_some() => picker.confirm = None,
+            Key::Esc => self.masking = None,
+            Key::Enter => {
+                let Some(&index) = matches.get(picker.selected) else {
+                    return Flow::Continue;
+                };
+                let loser = picker.report.loser(&picker.clashes[index]);
+                if picker.confirm == Some(loser) {
+                    let picker = self.masking.take().unwrap();
+                    self.apply_suggestion(&picker.report, loser);
+                } else {
+                    picker.confirm = Some(loser);
+                }
+            }
+            Key::Up if count > 0 => {
+                picker.selected = (picker.selected + count - 1) % count;
+                picker.confirm = None;
+            }
+            Key::Down if count > 0 => {
+                picker.selected = (picker.selected + 1) % count;
+                picker.confirm = None;
+            }
             Key::Backspace => {
                 picker.query.pop();
                 picker.selected = 0;
+                picker.confirm = None;
             }
             Key::Char(c) if !input.ctrl && !input.alt => {
                 picker.query.push(c);
                 picker.selected = 0;
+                picker.confirm = None;
             }
             _ => {}
         }
         Flow::Continue
+    }
+
+    /// Efectos que ya tiene la pista `name` en lo último cargado (en la
+    /// canción o en la sección que más tenga).
+    fn fx_count(&self, name: &str) -> usize {
+        let Some(song) = self.host.song() else {
+            return 0;
+        };
+        song.tracks
+            .iter()
+            .chain(song.sections.iter().flat_map(|s| s.tracks.iter()))
+            .filter(|t| t.name == name)
+            .map(|t| t.fx.len())
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Inserta en el editor la línea del EQ sugerido para la pista `track`
+    /// del informe, justo después de donde se define la pista (y de las
+    /// líneas de su cadena, las que empiezan por `:`), con su sangría; si no
+    /// se encuentra, al final. Es un cambio más (Ctrl-Z lo deshace de una
+    /// vez); no se guarda ni se carga.
+    fn apply_suggestion(&mut self, report: &script::masking::MaskingReport, track: usize) {
+        let Some(suggestion) = report.suggestions.iter().find(|s| s.track == track) else {
+            return;
+        };
+        let name = &report.tracks[track];
+        let line = report.lua_line(suggestion);
+        let lines = self.editor.lines().to_vec();
+        let code = |l: &str| l.split("--").next().unwrap_or("").to_string();
+        let head = format!("track(\"{name}\"");
+        let defined = lines
+            .iter()
+            .position(|l| code(l).contains(&format!("{head},")))
+            .or_else(|| lines.iter().position(|l| code(l).contains(&head)));
+        self.completion = None;
+        self.marks.clear();
+        let row = match defined {
+            Some(start) => {
+                let mut end = start;
+                while lines
+                    .get(end + 1)
+                    .is_some_and(|l| l.trim_start().starts_with(':'))
+                {
+                    end += 1;
+                }
+                let indent: String = lines[start]
+                    .chars()
+                    .take_while(|c| c.is_whitespace())
+                    .collect();
+                self.grouped(|editor| {
+                    editor.move_cursor(CursorMove::Jump(end as u16, 0));
+                    editor.move_cursor(CursorMove::End);
+                    editor.insert_newline();
+                    editor.insert_str(format!("{indent}{line}"));
+                });
+                end + 1
+            }
+            None => {
+                let last = lines.len() - 1;
+                let blank = lines[last].trim().is_empty();
+                self.grouped(|editor| {
+                    editor.move_cursor(CursorMove::Bottom);
+                    editor.move_cursor(CursorMove::End);
+                    if !blank {
+                        editor.insert_newline();
+                    }
+                    editor.insert_str(&line);
+                });
+                if blank { last } else { last + 1 }
+            }
+        };
+        self.message = format!(
+            "EQ de «{name}» insertado en la línea {}, sin guardar (Ctrl-Z lo deshace; Ctrl-S lo guarda y lo carga)",
+            row + 1
+        );
     }
 
     /// Pone una versión en el editor como un cambio más (Ctrl-Z lo deshace
@@ -3382,13 +3485,45 @@ impl App {
             masking: self.masking.as_ref().map(|p| {
                 let matches = self.masking_matches();
                 let selected = matches.get(p.selected).map(|&i| &p.clashes[i]);
+                let suggestion = selected.and_then(|c| {
+                    let loser = p.report.loser(c);
+                    p.report.suggestions.iter().find(|s| s.track == loser)
+                });
+                let mut preview = Vec::new();
+                if let Some(s) = suggestion {
+                    preview.push(format!(
+                        "sugerencia para {} (cede en este choque):",
+                        p.report.tracks[s.track]
+                    ));
+                    preview.push(format!("  {}", p.report.lua_line(s)));
+                    preview.extend(p.report.cut_lines(s).iter().map(|l| format!("    {l}")));
+                    preview.push(String::new());
+                }
+                preview.extend(p.report.table().lines().map(String::from));
+                let confirm = match p.confirm {
+                    None => String::new(),
+                    Some(t) => {
+                        let name = &p.report.tracks[t];
+                        let count = self.fx_count(name);
+                        if count >= engine::MAX_FX {
+                            format!(
+                                "«{name}» ya tiene {count} efectos (máximo {}): el EQ no cabrá al cargar · Enter lo inserta igual · Esc cancela",
+                                engine::MAX_FX
+                            )
+                        } else {
+                            format!(
+                                "Enter otra vez inserta el EQ de «{name}» en el script (sin guardar) · Esc cancela"
+                            )
+                        }
+                    }
+                };
                 BlockPickerView {
                     title: format!(
-                        "choques de frecuencia · {} compases · {} pistas",
+                        "choques de frecuencia · {} compases · {} pistas · Enter propone el EQ",
                         p.report.bars,
                         p.report.tracks.len()
                     ),
-                    confirm: String::new(),
+                    confirm,
                     query: p.query.clone(),
                     items: matches
                         .iter()
@@ -3404,7 +3539,7 @@ impl App {
                         .collect(),
                     selected: p.selected,
                     description: selected.map_or(String::new(), |c| p.report.summary(c)),
-                    preview: p.report.table().lines().map(String::from).collect(),
+                    preview,
                 }
             }),
             completion: self.completion.as_ref().map(|c| {
