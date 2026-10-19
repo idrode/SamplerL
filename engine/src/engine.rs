@@ -198,6 +198,9 @@ pub struct SliceShape {
     /// Parte del corte que suena, desde su inicio: de 0,01 a 1 (entero).
     pub length: f32,
     pub play: PlayMode,
+    /// En bucle (`PlayMode::Loop`), fundido cruzado en el salto, en ms (0:
+    /// salto seco). Ver [`Voice::new`].
+    pub crossfade_ms: f32,
 }
 
 impl SliceShape {
@@ -207,6 +210,7 @@ impl SliceShape {
         pan: 0.0,
         length: 1.0,
         play: PlayMode::Once,
+        crossfade_ms: 0.0,
     };
 
     pub fn validate(&self) -> Result<(), &'static str> {
@@ -221,6 +225,9 @@ impl SliceShape {
         }
         if !(0.01..=1.0).contains(&self.length) {
             return Err("length fuera de rango (0.01 a 1: la parte del corte que suena)");
+        }
+        if !(0.0..=MAX_CROSSFADE_MS).contains(&self.crossfade_ms) {
+            return Err("crossfade fuera de rango (0 a 1000 ms)");
         }
         Ok(())
     }
@@ -243,6 +250,8 @@ impl Default for SliceShape {
 
 /// Ataque y cola máximos de un corte.
 pub const MAX_ATTACK_MS: f32 = 2000.0;
+/// Fundido máximo en el salto de un bucle de corte.
+pub const MAX_CROSSFADE_MS: f32 = 1000.0;
 pub const MAX_RELEASE_MS: f32 = 5000.0;
 /// Grupos de choke: de 1 a este.
 pub const MAX_CHOKE: u8 = 16;
@@ -269,6 +278,63 @@ struct Voice {
     shift: Option<Shift>,
     /// Efectos de su corte, con su estado (sin ellos, ninguno).
     fx: Option<VoiceFx>,
+    /// En bucle: el fundido del salto (ver [`Voice::new`]).
+    seam: Option<Seam>,
+}
+
+/// Fundido cruzado en el salto de un bucle de corte: `frames` frames del
+/// sample, con lo que hay antes del inicio (`before`, como el bucle del
+/// instrumento) o, si no hay sitio, con lo que sigue al final.
+#[derive(Clone, Copy)]
+struct Seam {
+    frames: usize,
+    before: bool,
+}
+
+impl Seam {
+    /// El fundido de un bucle `start..end` de `sample` así reproducido, si
+    /// lo hay: `crossfade_ms` (como mucho el corte entero) con lo de antes
+    /// del inicio en el sentido de lectura; si no cabe, con lo de después
+    /// del final; si no cabe ninguno entero, con el que más sitio tenga.
+    fn new(sample: &Sample, start: usize, end: usize, playback: &Playback) -> Option<Seam> {
+        let shape = playback.shape;
+        if shape.play != PlayMode::Loop || shape.crossfade_ms <= 0.0 {
+            return None;
+        }
+        let wanted =
+            ((shape.crossfade_ms / 1000.0 * sample.sample_rate() as f32) as usize).min(end - start);
+        let (head, tail) = (start, sample.frames() - end);
+        // Antes del inicio y después del final, en el sentido de lectura.
+        let (before, after) = if playback.reverse {
+            (tail, head)
+        } else {
+            (head, tail)
+        };
+        let seam = if before >= wanted {
+            Seam {
+                frames: wanted,
+                before: true,
+            }
+        } else if after >= wanted {
+            Seam {
+                frames: wanted,
+                before: false,
+            }
+        } else {
+            Seam {
+                frames: before.max(after),
+                before: before >= after,
+            }
+        };
+        (seam.frames > 0).then_some(seam)
+    }
+}
+
+/// Lo que se puede fundir en el salto del bucle del corte `start..end` de un
+/// sample de `frames` frames (lo de antes del inicio o lo de después del
+/// final, lo que más haya), en frames.
+pub fn loop_seam_room(start: usize, end: usize, frames: usize) -> usize {
+    start.max(frames.saturating_sub(end))
 }
 
 impl Voice {
@@ -287,6 +353,7 @@ impl Voice {
             (_, PlayMode::Loop | PlayMode::PingPong) => usize::MAX,
             (frames, PlayMode::Once) => ((frames - 1) as f64 / speed).floor() as usize + 1,
         };
+        let seam = Seam::new(&sample, start, end, &playback);
         Voice {
             sample,
             start,
@@ -301,6 +368,7 @@ impl Voice {
             gate_at: None,
             shift,
             fx: None,
+            seam,
         }
     }
 
@@ -381,11 +449,15 @@ impl Voice {
     /// Con el pitch que conserva la duración, la suma de sus dos granos
     /// (con la corrección de formantes, si la hay).
     fn read(&mut self) -> (f32, f32) {
-        let (start, end, playback) = (self.start, self.end, self.playback);
+        let (start, end, playback, seam) = (self.start, self.end, self.playback, self.seam);
         let sample = &self.sample;
         let read_at = |offset: f64| {
             let pos = voice_position(start, end, &playback, offset);
-            crate::interp::read(sample, pos, start, end, playback.rate)
+            let main = crate::interp::read(sample, pos, start, end, playback.rate);
+            match seam {
+                Some(seam) => seam_mix(sample, start, end, &playback, seam, offset, main),
+                None => main,
+            }
         };
         let Some(shift) = self.shift.as_mut() else {
             return read_at(self.rendered as f64 * playback.rate);
@@ -435,6 +507,47 @@ impl Voice {
             }
         }
     }
+}
+
+/// En el fundido del salto de un bucle de corte, `main` (lo que lee la voz
+/// en `offset`) mezclado con lo que hay fuera del corte. Con `before`: en
+/// los últimos `frames` de cada vuelta, va hacia lo que hay justo antes del
+/// inicio, de modo que al saltar ya suena lo que sigue (el inicio). Si no,
+/// en los primeros `frames` de cada vuelta salvo la primera, viene de lo
+/// que seguiría tras el final. Fuera del fundido, `main` tal cual.
+fn seam_mix(
+    sample: &Sample,
+    start: usize,
+    end: usize,
+    playback: &Playback,
+    seam: Seam,
+    offset: f64,
+    main: (f32, f32),
+) -> (f32, f32) {
+    let span = (end - start) as f64;
+    let x = seam.frames as f64;
+    let q = offset.rem_euclid(span);
+    // `t`: lo que pesa lo de fuera; `outside`: dónde se lee (desplazamiento
+    // desde el inicio, negativo antes de él).
+    let (t, outside) = if seam.before {
+        if q < span - x {
+            return main;
+        }
+        ((q - (span - x)) / x, q - span)
+    } else {
+        if q >= x || offset < span {
+            return main;
+        }
+        (1.0 - q / x, q + span)
+    };
+    let pos = if playback.reverse {
+        (end - 1) as f64 - outside
+    } else {
+        start as f64 + outside
+    };
+    let (ol, or) = crate::interp::read(sample, pos, 0, sample.frames(), playback.rate);
+    let t = t as f32;
+    (main.0 + t * (ol - main.0), main.1 + t * (or - main.1))
 }
 
 /// Posición en el sample del desplazamiento `offset` desde el inicio de

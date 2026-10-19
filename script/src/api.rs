@@ -2269,6 +2269,14 @@ pub const SLICE_PARAMS: &[FxParam] = &[
         values: &["normal", "loop", "pingpong"],
         template: "play = \"${loop}\"",
     },
+    FxParam {
+        name: "crossfade",
+        description: "con play = \"loop\", fundido en el salto del bucle en ms (0: salto seco); funde con lo que suena justo antes del corte o, si no hay, con lo que sigue tras él, y el bucle dura lo mismo",
+        default: Some("10"),
+        valid: "0–1000",
+        values: &[],
+        template: "crossfade = ${10}",
+    },
 ];
 
 /// Opciones de `sample(ruta, { ... })`: cómo se prepara el sample al

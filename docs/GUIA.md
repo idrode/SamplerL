@@ -24,7 +24,7 @@ la sección 4 (con sus parámetros, rangos y un ejemplo cada una).
 - Etiquetar cortes (`cortes:name`, o desde la interfaz), moverlos a oído
   (`,` `.` en el modo tocar, o `cortes:move`), partirlos y unirlos.
 - Dar forma a cada corte (`cortes:set`: ataque, cola, pan, la parte que
-  suena, bucle o ida y vuelta) y ponerle sus propios efectos
+  suena, bucle sin clic en el salto o ida y vuelta) y ponerle sus propios efectos
   (`cortes:fx`: ensuciar solo la caja, bajar solo el bombo).
 
 **Secuenciar** (sección 3 y sección 4)
@@ -1516,6 +1516,7 @@ Forma de un corte (o de todos, sin i): ataque, cola, pan, parte que suena y bucl
 | `pan` | panorama: -1 izquierda, 0 centro, 1 derecha (el lado contrario baja) | `0` | -1–1 |
 | `length` | parte del corte que suena, desde su inicio (0.5: la primera mitad) | `1` | 0.01–1 |
 | `play` | cómo se lee: una vez, en bucle o de ida y vuelta (los bucles suenan hasta el siguiente golpe, la puerta o el choke) | `"normal"` | `"normal"`, `"loop"` o `"pingpong"` |
+| `crossfade` | con play = "loop", fundido en el salto del bucle en ms (0: salto seco); funde con lo que suena justo antes del corte o, si no hay, con lo que sigue tras él, y el bucle dura lo mismo | `10` | 0–1000 |
 
 ```lua
 local amen = sample("amen.wav"):slice(8)

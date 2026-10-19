@@ -926,6 +926,7 @@ impl ScriptHost {
                 .filter_map(far_kept_pitch)
                 .chain(all().filter_map(idle_formant))
                 .chain(all().filter_map(grains_skip_slice_fx))
+                .chain(all().filter_map(dry_loop_seam))
             {
                 if !warnings.contains(&warning) {
                     warnings.push(warning);
@@ -2181,7 +2182,7 @@ fn track_source(lua: &Lua, name: &str, source: &AnyUserData) -> mlua::Result<Tra
             def,
             labels: Rc::new(RefCell::new(vec![None])),
             stale: Rc::new(Vec::new()),
-            shapes: Rc::new(RefCell::new(vec![SliceShape::DEFAULT])),
+            shapes: Rc::new(RefCell::new(vec![DEFAULT_SHAPE])),
             slice_fx: Rc::default(),
             transforms: Vec::new(),
             steps_set: false,
@@ -3010,6 +3011,55 @@ fn idle_formant(track: &TrackDef) -> Option<String> {
     })
 }
 
+/// Forma de un corte desde el script: la del motor, con el fundido del
+/// salto de los bucles ([`DEFAULT_SLICE_CROSSFADE_MS`]; solo actúa con
+/// `play = "loop"`).
+pub const DEFAULT_SHAPE: SliceShape = SliceShape {
+    crossfade_ms: DEFAULT_SLICE_CROSSFADE_MS,
+    ..SliceShape::DEFAULT
+};
+
+/// Fundido por defecto en el salto de un bucle de corte, en ms (el del
+/// bucle de un instrumento).
+pub const DEFAULT_SLICE_CROSSFADE_MS: f32 = 10.0;
+
+/// Aviso si una pista toca en bucle con fundido un corte sin nada antes ni
+/// después en el sample (un corte con el sample entero): el salto queda
+/// seco.
+fn dry_loop_seam(track: &TrackDef) -> Option<String> {
+    let frames = track.sample.frames();
+    let played: Vec<usize> = track
+        .bars
+        .iter()
+        .flatten()
+        .flatten()
+        .map(|step| step.slice)
+        .collect();
+    let dry: Vec<String> = track
+        .shapes
+        .iter()
+        .enumerate()
+        .filter(|(i, shape)| {
+            shape.play == engine::PlayMode::Loop
+                && shape.crossfade_ms > 0.0
+                && played.contains(i)
+                && track.slices.get(*i).is_some_and(|r| {
+                    let r = shape.range(r);
+                    engine::loop_seam_room(r.start, r.end, frames) == 0
+                })
+        })
+        .map(|(i, _)| (i + 1).to_string())
+        .collect();
+    (!dry.is_empty()).then(|| {
+        format!(
+            "pista \"{}\": el bucle del corte {} no tiene sonido antes ni después en el sample \
+             para el fundido (crossfade): el salto queda seco",
+            track.name,
+            dry.join(", ")
+        )
+    })
+}
+
 /// Aviso si una pista con granos tiene cortes con efectos: los granos no
 /// son voces y no pasan por ellos.
 fn grains_skip_slice_fx(track: &TrackDef) -> Option<String> {
@@ -3182,7 +3232,7 @@ fn cut_sample(
         stale: Rc::new(stale),
         adjusted,
         stretch: this.stretch,
-        shapes: Rc::new(RefCell::new(vec![SliceShape::DEFAULT; count])),
+        shapes: Rc::new(RefCell::new(vec![DEFAULT_SHAPE; count])),
         slice_fx: Rc::new(RefCell::new(vec![SliceFxDef::default(); count])),
     })
 }
@@ -3291,6 +3341,7 @@ fn apply_slice_table(
             "release" => shape.release_ms = number(&value)?,
             "pan" => shape.pan = number(&value)?,
             "length" => shape.length = number(&value)?,
+            "crossfade" => shape.crossfade_ms = number(&value)?,
             "play" => {
                 let text = match &value {
                     Value::String(s) => s.to_str()?.to_string(),
@@ -3553,7 +3604,7 @@ impl UserData for SlicedHandle {
             labels.insert(k, None);
             this.labels = Rc::new(RefCell::new(labels));
             let mut shapes = this.shapes.borrow().clone();
-            shapes.insert(k, SliceShape::DEFAULT);
+            shapes.insert(k, DEFAULT_SHAPE);
             this.shapes = Rc::new(RefCell::new(shapes));
             let mut chains = this.slice_fx.borrow().clone();
             chains.insert(k, SliceFxDef::default());

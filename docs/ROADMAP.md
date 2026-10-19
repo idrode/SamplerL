@@ -157,7 +157,8 @@ fade_out })`. Detalle y decisiones en «Fase H» de
   y cola).
 - Cortar por rejilla (8 o 16 divisiones iguales) y añadir o borrar cortes a
   mano, además de moverlos.
-- Pan y duración por corte, ping-pong y bucle dentro de un corte.
+- Pan y duración por corte, ping-pong y bucle dentro de un corte (con
+  fundido en el salto, añadido después: ver «Mejoras sueltas»).
 - Resampling: grabar la salida de una pista (o del master) como un sample
   nuevo reutilizable en el proyecto, por render offline.
 - Normalizar, recortar el silencio y poner fundidos al importar un sample.
@@ -340,3 +341,7 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
    pegar con `wl-paste` o, si no, el interno.
 3. ✅ **Tracker con sus 16 filas** sin desplazarse en cuanto caben dejando
    al sample lo mínimo; si no, como antes.
+4. ✅ **Diagnóstico de `steps()` con `:length(n)`**: ya estaba; verificado
+   con 12, 16 y 24, sin cambios.
+5. ✅ **Fundido en el salto de los bucles de corte**: `crossfade` en
+   `cortes:set` (10 ms por defecto; con 0, el salto seco de siempre).

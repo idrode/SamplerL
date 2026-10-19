@@ -61,12 +61,12 @@ fn shapes_gate_and_choke_sound_like_the_engine() {
         SliceShape {
             attack_ms: 0.0,
             release_ms: 10.0,
-            ..SliceShape::DEFAULT
+            ..script::DEFAULT_SHAPE
         },
         SliceShape {
             attack_ms: 4.0,
             release_ms: 10.0,
-            ..SliceShape::DEFAULT
+            ..script::DEFAULT_SHAPE
         },
     ];
     assert_eq!(song.tracks[0].shapes, shapes);
@@ -109,12 +109,16 @@ fn set_after_track_still_applies() {
 fn shape_errors_point_at_the_line() {
     let error = |source: &str| song(source).err().expect("debería fallar");
     assert_eq!(
+        error("b:set(1, { crossfade = 1001 })"),
+        "song.lua:3: set(1): crossfade fuera de rango (0 a 1000 ms)"
+    );
+    assert_eq!(
         error("b:set(3, { attack = 5 })"),
         "song.lua:3: set(3): el corte no existe (hay 2)"
     );
     assert_eq!(
         error("b:set({ ataque = 5 })"),
-        "song.lua:3: set: parámetro desconocido \"ataque\" (admite: attack, release, pan, length, play)"
+        "song.lua:3: set: parámetro desconocido \"ataque\" (admite: attack, release, pan, length, play, crossfade)"
     );
     assert!(error("b:set({ release = 9000 })").contains("cola fuera de rango"));
     assert!(error("b:set(1)").contains("set(i, { ... })"));
@@ -140,12 +144,12 @@ fn pan_length_and_play_sound_like_the_engine() {
             pan: -1.0,
             length: 0.25,
             play: engine::PlayMode::Loop,
-            ..SliceShape::DEFAULT
+            ..script::DEFAULT_SHAPE
         },
         SliceShape {
             pan: 0.5,
             play: engine::PlayMode::PingPong,
-            ..SliceShape::DEFAULT
+            ..script::DEFAULT_SHAPE
         },
     ];
     assert_eq!(song.tracks[0].shapes, shapes);

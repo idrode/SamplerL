@@ -17,7 +17,7 @@ fn the_panel_marks_gate_and_choke_and_set_completes_its_keys() {
     app.handle(f(4));
     assert_eq!(
         completion_items(&app),
-        ["attack", "release", "pan", "length", "play"]
+        ["attack", "release", "pan", "length", "play", "crossfade"]
     );
     app.handle(esc());
     // Los valores de play.

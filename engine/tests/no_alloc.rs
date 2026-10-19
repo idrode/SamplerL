@@ -2,7 +2,7 @@
 //! asignador global cuenta las reservas que hace este hilo mientras corre
 //! `Engine::process`, con retrasos (swing, humanize), retrigger, pitch,
 //! instrumentos (polifonía, ADSR, bucles), el EQ (suavizado y automatizado),
-//! el EQ dinámico con sidechain, efectos por corte (con sus colas), cambios de
+//! el EQ dinámico con sidechain, efectos por corte (con sus colas), bucles de corte con fundido, cambios de
 //! patrón al compás y un patrón que se suelta a la cola de basura.
 
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -331,6 +331,7 @@ fn the_audio_thread_never_allocates() {
                     pan: -0.5,
                     length: 1.0,
                     play: engine::PlayMode::Loop,
+                    crossfade_ms: 0.0,
                 },
                 engine::SliceShape {
                     pan: 0.7,
@@ -745,6 +746,66 @@ fn the_audio_thread_never_allocates() {
         }
     });
     assert_eq!(n, 0, "reservas al quitar los efectos por corte");
+    controller.collect_garbage();
+
+    // Bucles de corte con fundido en el salto (con lo de antes del inicio
+    // y con lo de después del final), con pitch, al revés, con `%` y desde
+    // un pad.
+    let looped = |seed: usize| {
+        let shapes: Vec<engine::SliceShape> = (0..2)
+            .map(|i| engine::SliceShape {
+                play: engine::PlayMode::Loop,
+                crossfade_ms: [5.0, 40.0][(i + seed) % 2],
+                ..engine::SliceShape::DEFAULT
+            })
+            .collect();
+        let steps: Vec<Option<Step>> = (0..STEPS)
+            .map(|k| {
+                (k % 4 == 0).then(|| {
+                    let step = Step::new((k / 4 + seed) % 2);
+                    match k / 4 {
+                        0 => step,
+                        1 => step.reversed(),
+                        2 => step.with_pitch(7.0),
+                        _ => step.with_kept_pitch(-5.0),
+                    }
+                })
+            })
+            .collect();
+        Pattern::from_steps(sample.clone(), &slices, steps)
+            .unwrap()
+            .with_shapes(&shapes)
+            .unwrap()
+    };
+    controller.set_track_pattern(0, Some(looped(0))).unwrap();
+    let n = counted(|| {
+        for _ in 0..400 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas con bucles fundidos");
+    let shape = engine::SliceShape {
+        play: engine::PlayMode::Loop,
+        crossfade_ms: 20.0,
+        ..engine::SliceShape::DEFAULT
+    };
+    controller
+        .play_slice_with_gain(0, &sample, &slices, 1, shape, 1.0)
+        .unwrap();
+    controller.set_track_pattern(0, Some(looped(1))).unwrap();
+    let n = counted(|| {
+        for _ in 0..300 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas con un pad en bucle fundido y otro patrón");
+    controller.set_track_pattern(0, None).unwrap();
+    let n = counted(|| {
+        for _ in 0..200 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas al quitar los bucles");
     controller.collect_garbage();
 
     // Rampa de tempo y cambio de compás.
