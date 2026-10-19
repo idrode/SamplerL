@@ -200,7 +200,7 @@ salida de audio real.
    completo de la canción, con el tope de compases de la exportación.
 3. ✅ **Informe**: `tui --script x.lua --analyze-masking` y una acción de la
    paleta con la tabla pareja × banda, sin tocar el audio.
-4. **Prioridad entre pistas**: `priority({ "kick", "snare", ... })` (por
+4. ✅ **Prioridad entre pistas**: `priority({ "kick", "snare", ... })` (por
    defecto manda la más fuerte) y sugerencias de recorte (como mucho 4, de 2
    a 4 dB) en la pista de menor prioridad.
 5. **Aplicar**: la paleta inserta el `fx("eq", {...})` sugerido en el

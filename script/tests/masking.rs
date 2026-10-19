@@ -1,6 +1,7 @@
 //! Análisis de choques de frecuencia de una canción (`Song::analyze_masking`)
 //! con pistas sintéticas: dos senos a 300 Hz chocan en esa banda; uno a
-//! 100 Hz y otro a 5 kHz, no; y se analiza el ciclo entero de la canción.
+//! 100 Hz y otro a 5 kHz, no; se analiza el ciclo entero de la canción; y
+//! las sugerencias de recorte van a la pista que cede, con `priority()`.
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -23,6 +24,17 @@ fn dir() -> PathBuf {
                 .collect();
             offline::write_wav(dir.join(format!("sine{freq}.wav")), &mono, 1, RATE).unwrap();
         }
+        // Cinco senos en zonas separadas (de grave a agudo).
+        let mono: Vec<f32> = (0..2 * RATE as usize)
+            .map(|i| {
+                let t = i as f32 / RATE as f32;
+                [63.0, 250.0, 1000.0, 4000.0, 12500.0]
+                    .iter()
+                    .map(|f| 0.1 * (std::f32::consts::TAU * f * t).sin())
+                    .sum::<f32>()
+            })
+            .collect();
+        offline::write_wav(dir.join("multi.wav"), &mono, 1, RATE).unwrap();
         dir
     })
     .clone()
@@ -103,4 +115,108 @@ fn the_whole_cycle_is_analysed() {
     assert_eq!(report.bars, 3);
     let score = report.score("a", "b", band("315")).unwrap();
     assert!((score - 0.5).abs() < 0.08, "{score}");
+}
+
+#[test]
+fn the_quieter_track_gets_the_cut_unless_priority_says_otherwise() {
+    // b suena 2 dB más bajo: sin priority(), cede b.
+    let source = two("sine300.wav", "sine300.wav");
+    let report = song(&source)
+        .analyze_masking(RATE, &MaskingOptions::default())
+        .unwrap();
+    assert!(report.priority.is_empty());
+    assert_eq!(report.suggestions.len(), 1, "{}", report.text());
+    let s = &report.suggestions[0];
+    assert_eq!(report.tracks[s.track], "b");
+    assert!(report.suggestion("a").is_none());
+    let text = report.text();
+    assert!(text.contains("cede b"), "{text}");
+    assert!(
+        text.contains("track(\"b\"):fx(\"eq\", { freq1 = "),
+        "{text}"
+    );
+    // Un recorte alrededor de 315 Hz, de 2 a 4 dB y con su Q.
+    assert_eq!(s.cuts.len(), 1, "{text}");
+    let cut = &s.cuts[0];
+    assert!((250.0..=400.0).contains(&cut.freq_hz), "{cut:?}");
+    assert!((-4.0..=-2.0).contains(&cut.gain_db), "{cut:?}");
+    assert!((0.7..=4.4).contains(&cut.q), "{cut:?}");
+    assert_eq!(cut.against, [0]);
+
+    // Con priority, manda b aunque suene menos: el recorte va a a.
+    let report = song(&format!("{source}priority({{ \"b\", \"a\" }})\n"))
+        .analyze_masking(RATE, &MaskingOptions::default())
+        .unwrap();
+    assert_eq!(report.suggestions.len(), 1);
+    assert_eq!(report.tracks[report.suggestions[0].track], "a");
+    assert!(
+        report.text().contains("priority: b, a"),
+        "{}",
+        report.text()
+    );
+    // Basta con nombrar una: la de la lista manda sobre las demás.
+    let report = song(&format!("{source}priority({{ \"b\" }})\n"))
+        .analyze_masking(RATE, &MaskingOptions::default())
+        .unwrap();
+    assert_eq!(report.tracks[report.suggestions[0].track], "a");
+}
+
+#[test]
+fn at_most_four_cuts_from_two_to_four_db() {
+    let report = song(&two("multi.wav", "multi.wav"))
+        .analyze_masking(RATE, &MaskingOptions::default())
+        .unwrap();
+    // Cinco zonas que chocan, cuatro recortes (los más fuertes), de grave
+    // a agudo.
+    let zones: std::collections::BTreeSet<usize> =
+        report.clashes().iter().map(|c| c.band / 4).collect();
+    assert!(zones.len() >= 5, "{}", report.text());
+    let cuts = &report.suggestions[0].cuts;
+    assert_eq!(cuts.len(), 4, "{}", report.text());
+    assert!(cuts.windows(2).all(|w| w[0].freq_hz < w[1].freq_hz));
+    for cut in cuts {
+        assert!((-4.0..=-2.0).contains(&cut.gain_db), "{cut:?}");
+        assert_eq!(cut.gain_db * 2.0, (cut.gain_db * 2.0).round());
+    }
+    // La línea de Lua tiene las cuatro bandas y carga.
+    let line = report.lua_line(&report.suggestions[0]);
+    assert!(
+        line.contains("freq4 = ") && !line.contains("freq5"),
+        "{line}"
+    );
+    song(&format!("{}{line}\n", two("multi.wav", "multi.wav")));
+}
+
+#[test]
+fn priority_errors_and_warnings() {
+    let (mut controller, _engine) = new_engine(RATE);
+    let mut host = ScriptHost::new(RATE);
+    let mut load = |extra: &str| {
+        host.load(
+            &mut controller,
+            &format!("{}{extra}", two("sine300.wav", "sine300.wav")),
+            "song.lua",
+            &dir(),
+        )
+        .map(|s| s.warnings.clone())
+        .map_err(|e| e.to_string())
+    };
+    let warnings = load("priority({ \"a\", \"bajo\" })\n").unwrap();
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.contains("priority: no hay ninguna pista \"bajo\"")),
+        "{warnings:?}"
+    );
+    let e = load("priority({ \"a\", \"a\" })\n").unwrap_err();
+    assert!(
+        e.contains("song.lua:4: priority: \"a\" está dos veces"),
+        "{e}"
+    );
+    let e = load("priority({ 1 })\n").unwrap_err();
+    assert!(e.contains("entre comillas"), "{e}");
+    let e = load("priority({})\n").unwrap_err();
+    assert!(e.contains("falta la lista"), "{e}");
+    let e = load("section(\"x\", function() priority({ \"a\" }) end)\n").unwrap_err();
+    assert!(e.contains("priority"), "{e}");
 }

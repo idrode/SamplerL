@@ -507,6 +507,32 @@ pub const FUNCTIONS: &[Function] = &[
         example: Some("bpm(170)\nmetronome(true)\n"),
     },
     Function {
+        name: "priority",
+        receiver: Receiver::Global,
+        signature: "priority(pistas)",
+        returns: None,
+        summary: "Qué pista manda cuando dos chocan en frecuencia: la primera de la lista, la que más.",
+        doc: "Solo la usa el análisis de choques de frecuencia («Choques de \
+              frecuencia» en la paleta, `--analyze-masking`): en cada choque, la \
+              sugerencia de recorte va a la pista que cede. Una pista de la lista \
+              manda sobre las que van detrás y sobre las que no están; entre dos \
+              que no están, manda la que suena más fuerte en esa banda (y, si \
+              suenan igual, la que se definió antes). Sin llamarla, siempre manda \
+              la más fuerte. Un nombre que no es de ninguna pista da un aviso. No \
+              cambia cómo suena nada.",
+        params: &[Param {
+            name: "pistas",
+            description: "lista de nombres, de la que más manda a la que menos",
+        }],
+        template: "priority({ \"${kick}\", \"${bass}\" })",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             track(\"kick\", amen:slice_at(1)):steps(\"x . . .  x . . .  x . . .  x . . .\")\n\
+             track(\"drums\", amen):steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\")\n\
+             priority({ \"kick\", \"drums\" })\n",
+        ),
+    },
+    Function {
         name: "section",
         receiver: Receiver::Global,
         signature: "section(nombre, función)",

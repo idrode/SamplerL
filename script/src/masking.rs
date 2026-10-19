@@ -4,7 +4,9 @@
 //! de cada pareja en cada banda ([`engine::masking`]). Todo en el hilo que
 //! lo pide; el motor que suena no se toca.
 
-use engine::masking::{BAND_NAMES, BANDS, BandClash, BandSpectrum, MaskingOptions, clashes};
+use engine::masking::{
+    BAND_NAMES, BANDS, BandClash, BandSpectrum, MaskingOptions, band_center, band_edges, clashes,
+};
 
 use crate::{MAX_SONG_BARS, ScriptError, Song};
 
@@ -20,6 +22,45 @@ pub struct MaskingReport {
     pub options: MaskingOptions,
     /// Cada pareja de pistas (`a` < `b`, índices de `tracks`).
     pub pairs: Vec<PairClashes>,
+    /// `priority()` de la canción: la primera manda.
+    pub priority: Vec<String>,
+    /// Recortes sugeridos: un EQ por pista que cede, en el orden de las
+    /// pistas.
+    pub suggestions: Vec<Suggestion>,
+}
+
+/// Recortes como mucho por pista: las bandas de un EQ.
+pub const MAX_CUTS: usize = engine::EQ_BANDS;
+/// Profundidad de un recorte: de 2 dB (un choque en el umbral de informe)
+/// a 4 dB (desde [`FULL_CUT_SCORE`]).
+pub const MIN_CUT_DB: f32 = 2.0;
+pub const MAX_CUT_DB: f32 = 4.0;
+pub const FULL_CUT_SCORE: f32 = 0.75;
+/// Q de un recorte: una banda de tercio de octava da 4,3; varias seguidas,
+/// menos (más ancho), sin bajar de 0,7.
+pub const MIN_CUT_Q: f32 = 0.7;
+
+/// El EQ sugerido para una pista que cede en uno o más choques.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Suggestion {
+    pub track: usize,
+    /// Como mucho [`MAX_CUTS`], de grave a agudo.
+    pub cuts: Vec<Cut>,
+}
+
+/// Un recorte en campana sobre una o varias bandas seguidas.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Cut {
+    /// Bandas que cubre (primera y última).
+    pub bands: (usize, usize),
+    pub freq_hz: f32,
+    pub q: f32,
+    /// Negativa: de −[`MIN_CUT_DB`] a −[`MAX_CUT_DB`], en medios dB.
+    pub gain_db: f32,
+    /// La puntuación más alta de los choques que lo piden.
+    pub score: f32,
+    /// Las pistas que mandan en esas bandas.
+    pub against: Vec<usize>,
 }
 
 /// Choques de una pareja de pistas, banda a banda.
@@ -68,16 +109,191 @@ impl Song {
                 });
             }
         }
-        Ok(MaskingReport {
+        let mut report = MaskingReport {
             bars,
             tracks,
             options: *options,
             pairs,
-        })
+            priority: self.priority.clone(),
+            suggestions: Vec::new(),
+        };
+        report.suggestions = report.suggest();
+        Ok(report)
     }
 }
 
 impl MaskingReport {
+    /// La pista que se queda la banda en un choque: la de más prioridad
+    /// (`priority()`); si ninguna está o solo una, la de la lista; sin
+    /// lista, la que suena más en la banda (y con menos de medio dB de
+    /// diferencia, la que se definió antes).
+    pub fn winner(&self, clash: &Clash) -> usize {
+        let rank = |t: usize| self.priority.iter().position(|n| *n == self.tracks[t]);
+        match (rank(clash.a), rank(clash.b)) {
+            (Some(x), Some(y)) => {
+                if x < y {
+                    clash.a
+                } else {
+                    clash.b
+                }
+            }
+            (Some(_), None) => clash.a,
+            (None, Some(_)) => clash.b,
+            (None, None) => {
+                let [la, lb] = clash.clash.level_db;
+                if (la - lb).abs() < 0.5 || la > lb {
+                    clash.a
+                } else {
+                    clash.b
+                }
+            }
+        }
+    }
+
+    /// La pista que cede en un choque (la otra).
+    pub fn loser(&self, clash: &Clash) -> usize {
+        if self.winner(clash) == clash.a {
+            clash.b
+        } else {
+            clash.a
+        }
+    }
+
+    /// Los recortes de cada pista que cede: por banda, el choque más
+    /// fuerte; las bandas seguidas, un solo recorte más ancho; como mucho
+    /// [`MAX_CUTS`] por pista (los de más puntuación).
+    fn suggest(&self) -> Vec<Suggestion> {
+        let mut out = Vec::new();
+        let clashes = self.clashes();
+        for track in 0..self.tracks.len() {
+            let mut bands: [Option<(f32, Vec<usize>)>; BANDS] = std::array::from_fn(|_| None);
+            for clash in clashes.iter().filter(|c| self.loser(c) == track) {
+                let winner = self.winner(clash);
+                let entry = bands[clash.band].get_or_insert((0.0, Vec::new()));
+                entry.0 = entry.0.max(clash.clash.score);
+                if !entry.1.contains(&winner) {
+                    entry.1.push(winner);
+                }
+            }
+            let mut cuts = Vec::new();
+            let mut band = 0;
+            while band < BANDS {
+                if bands[band].is_none() {
+                    band += 1;
+                    continue;
+                }
+                let first = band;
+                let (mut score, mut against) = (0.0f32, Vec::new());
+                while let Some(Some((s, w))) = bands.get(band) {
+                    score = score.max(*s);
+                    for t in w {
+                        if !against.contains(t) {
+                            against.push(*t);
+                        }
+                    }
+                    band += 1;
+                }
+                against.sort_unstable();
+                cuts.push(self.cut(first, band - 1, score, against));
+            }
+            if cuts.is_empty() {
+                continue;
+            }
+            // Los más fuertes (y, a igual puntuación, los más anchos).
+            cuts.sort_by(|x, y| {
+                y.score
+                    .total_cmp(&x.score)
+                    .then((y.bands.1 - y.bands.0).cmp(&(x.bands.1 - x.bands.0)))
+            });
+            cuts.truncate(MAX_CUTS);
+            cuts.sort_by(|x, y| x.freq_hz.total_cmp(&y.freq_hz));
+            out.push(Suggestion { track, cuts });
+        }
+        out
+    }
+
+    /// Recorte en campana de la banda `first` a la `last`.
+    fn cut(&self, first: usize, last: usize, score: f32, against: Vec<usize>) -> Cut {
+        let (lo, hi) = (band_edges(first).0, band_edges(last).1);
+        // Una sola banda: su frecuencia nominal (250, no 251,2).
+        let centre = if first == last {
+            nominal(first)
+        } else {
+            (lo * hi).sqrt()
+        };
+        let q = ((lo * hi).sqrt() / (hi - lo)).max(MIN_CUT_Q);
+        let report = self.options.report_score;
+        let t = ((score - report) / (FULL_CUT_SCORE - report)).clamp(0.0, 1.0);
+        let depth = MIN_CUT_DB + t * (MAX_CUT_DB - MIN_CUT_DB);
+        Cut {
+            bands: (first, last),
+            freq_hz: round_freq(centre),
+            q: (q * 10.0).round() / 10.0,
+            gain_db: -(depth * 2.0).round() / 2.0,
+            score,
+            against,
+        }
+    }
+
+    /// La sugerencia para la pista `name`, si cede en algún choque.
+    pub fn suggestion(&self, name: &str) -> Option<&Suggestion> {
+        self.suggestions
+            .iter()
+            .find(|s| self.tracks[s.track] == name)
+    }
+
+    /// El `fx("eq", {...})` de una sugerencia, como se escribe en Lua.
+    pub fn eq_table(&self, suggestion: &Suggestion) -> String {
+        let fields: Vec<String> = suggestion
+            .cuts
+            .iter()
+            .enumerate()
+            .map(|(i, c)| {
+                let n = i + 1;
+                format!(
+                    "freq{n} = {}, gain{n} = {}, q{n} = {}",
+                    number(c.freq_hz),
+                    number(c.gain_db),
+                    number(c.q)
+                )
+            })
+            .collect();
+        format!("fx(\"eq\", {{ {} }})", fields.join(", "))
+    }
+
+    /// La línea de Lua que aplica una sugerencia:
+    /// `track("b"):fx("eq", { ... })`.
+    pub fn lua_line(&self, suggestion: &Suggestion) -> String {
+        format!(
+            "track(\"{}\"):{}",
+            self.tracks[suggestion.track],
+            self.eq_table(suggestion)
+        )
+    }
+
+    /// Una línea por recorte: dónde, cuánto y frente a qué.
+    pub fn cut_lines(&self, suggestion: &Suggestion) -> Vec<String> {
+        suggestion
+            .cuts
+            .iter()
+            .map(|c| {
+                let range = if c.bands.0 == c.bands.1 {
+                    format!("{} Hz", BAND_NAMES[c.bands.0])
+                } else {
+                    format!("{}-{} Hz", BAND_NAMES[c.bands.0], BAND_NAMES[c.bands.1])
+                };
+                let against: Vec<&str> =
+                    c.against.iter().map(|&t| self.tracks[t].as_str()).collect();
+                format!(
+                    "{range}: {} dB, q {} (frente a {}, {})",
+                    number(c.gain_db),
+                    number(c.q),
+                    against.join(", "),
+                    score_text(c.score)
+                )
+            })
+            .collect()
+    }
     /// Puntuación de la pareja (por nombre, en cualquier orden) en la banda
     /// `band`; `None` si no existe o la banda está vacía.
     pub fn score(&self, a: &str, b: &str, band: usize) -> Option<f32> {
@@ -139,9 +355,10 @@ impl MaskingReport {
             format!("{} {gap:.0} dB más fuerte", self.tracks[name])
         };
         format!(
-            "{} {strength}: a la vez el {:.0} % del tiempo, {louder}",
+            "{} {strength}: a la vez el {:.0} % del tiempo, {louder}; cede {}",
             score_text(c.score),
-            100.0 * c.overlap
+            100.0 * c.overlap,
+            self.tracks[self.loser(clash)]
         )
     }
 
@@ -177,6 +394,28 @@ impl MaskingReport {
         }
         out.push('\n');
         out.push_str(&self.table());
+        out.push('\n');
+        out.push_str(&self.suggestions_text());
+        out
+    }
+
+    /// Las sugerencias en texto: con qué prioridad, y por cada pista que
+    /// cede, su línea de Lua y sus recortes.
+    pub fn suggestions_text(&self) -> String {
+        let mut out = if self.priority.is_empty() {
+            "sugerencias (sin priority(): en cada banda manda la pista más fuerte):\n".to_string()
+        } else {
+            format!(
+                "sugerencias (priority: {}; las demás, por su nivel):\n",
+                self.priority.join(", ")
+            )
+        };
+        for suggestion in &self.suggestions {
+            out.push_str(&format!("  {}\n", self.lua_line(suggestion)));
+            for line in self.cut_lines(suggestion) {
+                out.push_str(&format!("    -- {line}\n"));
+            }
+        }
         out
     }
 
@@ -215,6 +454,37 @@ impl MaskingReport {
             out.push('\n');
         }
         out
+    }
+}
+
+/// Frecuencia nominal de la banda `band` (la de su nombre: `1.25k` →
+/// 1250).
+fn nominal(band: usize) -> f32 {
+    let name = BAND_NAMES[band];
+    match name.strip_suffix('k') {
+        Some(k) => k.parse::<f32>().map_or(band_center(band), |k| k * 1000.0),
+        None => name.parse().unwrap_or(band_center(band)),
+    }
+}
+
+/// Frecuencia redondeada para escribirla: al hercio por debajo de 1 kHz y
+/// a la decena por encima.
+fn round_freq(hz: f32) -> f32 {
+    if hz < 1000.0 {
+        hz.round()
+    } else {
+        (hz / 10.0).round() * 10.0
+    }
+}
+
+/// Número para Lua, sin decimales de más: `-4`, `-3.5`, `4.3`.
+fn number(x: f32) -> String {
+    let text = format!("{x:.2}");
+    let text = text.trim_end_matches('0').trim_end_matches('.');
+    if text == "-0" {
+        "0".into()
+    } else {
+        text.into()
     }
 }
 

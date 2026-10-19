@@ -81,6 +81,7 @@ const GLOBAL_ONLY: &[&str] = &[
     "section",
     "arrange",
     "variant",
+    "priority",
 ];
 
 /// Compases que se tiran los dados de `chance` antes de repetirse.
@@ -126,6 +127,9 @@ pub struct Song {
     /// La otra variante (la B, en la A que devuelve la evaluación; el
     /// anfitrión guarda las dos y alterna).
     pub alternate: Option<Box<Song>>,
+    /// Prioridad entre pistas para los choques de frecuencia
+    /// (`priority()`): la primera manda. Vacía, manda la más fuerte.
+    pub priority: Vec<String>,
 }
 
 /// Una sección: su nombre y sus pistas (las de fuera de las secciones con
@@ -770,6 +774,7 @@ impl ScriptHost {
             in_section: Rc::new(Cell::new(false)),
             names: Vec::new(),
             variants: Vec::new(),
+            priority: Vec::new(),
         }));
         // La caché pasa al estado de Lua durante la evaluación y vuelve después.
         let cache = Rc::new(RefCell::new(std::mem::take(&mut self.samples)));
@@ -792,6 +797,7 @@ impl ScriptHost {
         self.imported = std::mem::take(&mut imports.borrow_mut().used);
         let versions = result.map_err(|e| ScriptError::from_lua(&e))?;
 
+        let priority = std::mem::take(&mut state.borrow_mut().priority);
         let (bpm, metronome, buses, tempo_ramp, meter, tracks, expanding, arrange) = {
             let mut builder = state.borrow_mut();
             (
@@ -910,6 +916,13 @@ impl ScriptHost {
                     warnings.push(warning);
                 }
             }
+            for name in &priority {
+                if !all().any(|t| &t.name == name) {
+                    warnings.push(format!(
+                        "priority: no hay ninguna pista \"{name}\" (no cuenta)"
+                    ));
+                }
+            }
             songs.push(Song {
                 bpm,
                 tracks,
@@ -922,6 +935,7 @@ impl ScriptHost {
                 timeline,
                 variant: version.letter,
                 alternate: None,
+                priority: priority.clone(),
             });
         }
         self.stretched = used;
@@ -1236,6 +1250,42 @@ impl ScriptHost {
                         )
                     })?;
                 st.borrow_mut().meter = Some(meter);
+                Ok(())
+            })?,
+        )?;
+
+        let st = state.clone();
+        let g = guard.clone();
+        globals.set(
+            "priority",
+            lua.create_function(move |lua, names: Table| {
+                g(lua, "priority")?;
+                let mut list: Vec<String> = Vec::new();
+                for value in names.sequence_values::<Value>() {
+                    let name = match value? {
+                        Value::String(s) => s.to_str()?.to_string(),
+                        other => {
+                            return Err(fail(
+                                lua,
+                                format!(
+                                    "priority: cada pista va por su nombre, entre comillas (no {})",
+                                    other.type_name()
+                                ),
+                            ));
+                        }
+                    };
+                    if list.contains(&name) {
+                        return Err(fail(lua, format!("priority: \"{name}\" está dos veces")));
+                    }
+                    list.push(name);
+                }
+                if list.is_empty() {
+                    return Err(fail(
+                        lua,
+                        "priority: falta la lista de pistas, de la que más manda a la que menos ({ \"kick\", \"bass\" })",
+                    ));
+                }
+                st.borrow_mut().priority = list;
                 Ok(())
             })?,
         )?;
@@ -2066,6 +2116,8 @@ struct Builder {
     names: Vec<String>,
     /// Variantes por evaluar (`variant()`).
     variants: Vec<VariantBuild>,
+    /// `priority()`: las pistas de la que más manda a la que menos.
+    priority: Vec<String>,
 }
 
 /// `variant(nombre, letra, función)`: lo que cambia una sección o una

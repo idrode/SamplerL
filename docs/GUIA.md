@@ -177,6 +177,21 @@ ventana:
   banda más fuerte) no se puntúa. Se informa desde **0,25**; el resumen dice
   «leve» hasta 0,4, «medio» hasta 0,6 y «fuerte» desde ahí.
 
+**Sugerencias.** En cada choque, una pista manda y la otra cede: la
+primera de `priority({ "kick", "bass", ... })` (una de la lista manda sobre
+las que no están) y, sin lista o entre dos que no están, la que suena más
+fuerte en esa banda. La que cede recibe un `fx("eq", {...})` con como mucho
+4 recortes en campana: uno por zona que choca (bandas seguidas, un recorte
+más ancho, con menos Q; una sola banda, Q 4,3), de 2 dB en un choque de
+0,25 a 4 dB desde 0,75, y si hay más de 4 zonas, las 4 que más chocan. El
+informe los escribe como una línea de Lua lista para pegar:
+
+```
+sugerencias (priority: kick; las demás, por su nivel):
+  track("bass"):fx("eq", { freq1 = 63, gain1 = -3.5, q1 = 1.4 })
+    -- 50-80 Hz: -3.5 dB, q 1.4 (frente a kick, 0.68)
+```
+
 Por debajo de unos 60 Hz la ventana de 50 ms no separa bien los tercios de
 octava: un choque allí sale también en las bandas vecinas. Analizar una
 canción larga tarda (cada pista se renderiza entera).
@@ -906,6 +921,19 @@ Enciende (o, con false, apaga) el metrónomo: un clic en cada pulso. El primer p
 ```lua
 bpm(170)
 metronome(true)
+```
+
+### `priority(pistas)`
+
+Qué pista manda cuando dos chocan en frecuencia: la primera de la lista, la que más. Solo la usa el análisis de choques de frecuencia («Choques de frecuencia» en la paleta, `--analyze-masking`): en cada choque, la sugerencia de recorte va a la pista que cede. Una pista de la lista manda sobre las que van detrás y sobre las que no están; entre dos que no están, manda la que suena más fuerte en esa banda (y, si suenan igual, la que se definió antes). Sin llamarla, siempre manda la más fuerte. Un nombre que no es de ninguna pista da un aviso. No cambia cómo suena nada.
+
+- `pistas`: lista de nombres, de la que más manda a la que menos
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+track("kick", amen:slice_at(1)):steps("x . . .  x . . .  x . . .  x . . .")
+track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+priority({ "kick", "drums" })
 ```
 
 ### `section(nombre, función)`
