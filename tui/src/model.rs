@@ -70,6 +70,9 @@ pub struct ViewModel {
     /// Con el editor en su propia ventana: cómo está el enlace (y, en el
     /// editor, por dónde va la principal).
     pub link: Option<String>,
+    /// Esta es la ventana principal con el editor en la suya: las vistas
+    /// ocupan toda la ventana.
+    pub editor_outside: bool,
 }
 
 /// Medidor del master.

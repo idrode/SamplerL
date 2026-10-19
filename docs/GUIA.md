@@ -155,8 +155,11 @@ anterior.
   grabar, saltar a una sección o remuestrear se abren en la principal:
   hay que ir a esa ventana. `etiquetar` pregunta en el editor.
 - **El modo tocar** es de la principal, que con el editor fuera está
-  siempre en él (Esc no vuelve al editor). El texto se ve allí, sin
-  poder escribirlo.
+  siempre en él (Esc no vuelve al editor). Sin el editor, sus vistas
+  ocupan toda la ventana: arriba el transporte; la forma de onda grande de
+  la pista seleccionada, con los cortes numerados en una fila aparte (el
+  que suena y el elegido, resaltados) y al pie dónde empieza cada uno en
+  ms; debajo, el tracker, y abajo los efectos.
 - **Lo que cambia la principal en el texto** (etiquetar, `bpm`, el EQ
   sugerido, lo grabado, restaurar una versión) llega al editor como un
   solo cambio (Ctrl-Z lo deshace), sin guardar. Si en ese momento estás

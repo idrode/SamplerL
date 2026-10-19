@@ -748,6 +748,7 @@ impl App {
                     "editor fuera, sin conectar · F1 «Abrir el editor en su ventana»".into()
                 });
                 view.dirty = self.text() != main.synced;
+                view.editor_outside = true;
             }
             Some(Link::Editor(editor)) => {
                 view.link = Some(match (&editor.remote, editor.client.connected()) {

@@ -52,6 +52,10 @@ fn meter_color() -> Color {
 /// Dibuja toda la interfaz.
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let view = app.view();
+    if view.editor_outside {
+        draw_main_window(frame, &view);
+        return;
+    }
     let [main, fx, help] = Layout::vertical([
         Constraint::Min(8),
         Constraint::Length(FX_PANEL_HEIGHT),
@@ -89,6 +93,67 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     frame.render_widget(FxPanel(&view), fx);
     frame.render_widget(HelpLine(&view), help);
     draw_popups(frame, &view, popup);
+}
+
+/// La ventana principal con el editor en la suya (fase L): las vistas
+/// ocupan toda la ventana. Arriba, el transporte y el enlace; la forma de
+/// onda grande; debajo, el motor y el tracker; abajo, los efectos.
+fn draw_main_window(frame: &mut Frame, view: &ViewModel) {
+    let [top, body, fx, help] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Min(8),
+        Constraint::Length(FX_PANEL_HEIGHT),
+        Constraint::Length(1),
+    ])
+    .areas(frame.area());
+    frame.render_widget(StatusLine(view), top);
+    // Con línea de tiempo, una fila con las secciones.
+    let body = match &view.timeline {
+        Some(timeline) if body.height > 1 => {
+            let [row, rest] =
+                Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(body);
+            frame.render_widget(TimelineBar(timeline), row);
+            rest
+        }
+        _ => body,
+    };
+    // El tracker pide sus 16 filas; el sample se queda con lo demás (y
+    // al menos un tercio).
+    let [sample_area, lower] = Layout::vertical([
+        Constraint::Min(body.height / 3),
+        Constraint::Length(engine::STEPS as u16 + 3),
+    ])
+    .areas(body);
+    frame.render_widget(BigSamplePanel(view), sample_area);
+    let [engine_area, tracker_area] =
+        Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(lower);
+    frame.render_widget(EnginePanel(view), engine_area);
+    frame.render_widget(TrackerPanel(view), tracker_area);
+    frame.render_widget(FxPanel(view), fx);
+    frame.render_widget(HelpLine(view), help);
+    draw_popups(frame, view, None);
+}
+
+/// Línea de arriba de la ventana principal sin editor: el transporte (como
+/// en el panel del motor) y, a la derecha, el archivo y el enlace.
+pub struct StatusLine<'a>(pub &'a ViewModel);
+
+impl Widget for StatusLine<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let view = self.0;
+        transport_line(view).render(area, buf);
+        let dirty = if view.dirty { " ●" } else { "" };
+        let right = format!(
+            "{}{dirty} · {} ",
+            view.file,
+            view.link.as_deref().unwrap_or_default()
+        );
+        let width = right.chars().count() as u16;
+        if width < area.width {
+            let x = area.x + area.width - width;
+            buf.set_string(x, area.y, right, Style::new().fg(dim()));
+        }
+    }
 }
 
 /// Dibuja el editor en su propia ventana (`tui --window-editor`): el
@@ -679,6 +744,40 @@ fn master_line(master: &crate::model::MasterView) -> Line<'static> {
     Line::from(spans)
 }
 
+/// Transporte: marcha, tempo, compás y paso, metrónomo, grabación y
+/// variante.
+fn transport_line(view: &ViewModel) -> Line<'static> {
+    let t = view.transport;
+    let state = if t.running {
+        Span::from("▶ en marcha").fg(meter_color())
+    } else {
+        Span::from("■ parado").fg(dim())
+    };
+    let step = t.step.map_or("--".into(), |s| format!("{s:02}"));
+    Line::from(vec![
+        state,
+        Span::raw(format!(
+            "   {:.1} BPM   compás {}   paso {step}",
+            t.bpm, t.bar
+        )),
+        if view.metronome {
+            Span::from("   ♩ clic").fg(Color::Yellow)
+        } else {
+            Span::raw("")
+        },
+        match &view.recording {
+            Some(rec) => Span::from(format!("   ● {rec}")).fg(error_color()).bold(),
+            None => Span::raw(""),
+        },
+        match view.variant {
+            Some(letter) => Span::from(format!("   variante {letter}"))
+                .fg(Color::Black)
+                .bg(accent()),
+            None => Span::raw(""),
+        },
+    ])
+}
+
 /// Estado del motor: transporte y pistas.
 /// La línea de tiempo en una fila: cada entrada con su nombre y sus
 /// compases (la que suena, resaltada y con el compás por el que va: `drop
@@ -747,38 +846,7 @@ pub struct EnginePanel<'a>(pub &'a ViewModel);
 impl Widget for EnginePanel<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let view = self.0;
-        let t = view.transport;
-        let state = if t.running {
-            Span::from("▶ en marcha").fg(meter_color())
-        } else {
-            Span::from("■ parado").fg(dim())
-        };
-        let step = t.step.map_or("--".into(), |s| format!("{s:02}"));
-        let mut lines = vec![
-            Line::from(vec![
-                state,
-                Span::raw(format!(
-                    "   {:.1} BPM   compás {}   paso {step}",
-                    t.bpm, t.bar
-                )),
-                if view.metronome {
-                    Span::from("   ♩ clic").fg(Color::Yellow)
-                } else {
-                    Span::raw("")
-                },
-                match &view.recording {
-                    Some(rec) => Span::from(format!("   ● {rec}")).fg(error_color()).bold(),
-                    None => Span::raw(""),
-                },
-                match view.variant {
-                    Some(letter) => Span::from(format!("   variante {letter}"))
-                        .fg(Color::Black)
-                        .bg(accent()),
-                    None => Span::raw(""),
-                },
-            ]),
-            master_line(&view.master),
-        ];
+        let mut lines = vec![transport_line(view), master_line(&view.master)];
         if view.tracks.is_empty() {
             lines.push(Line::from("sin pistas").fg(dim()));
         }
@@ -882,105 +950,195 @@ impl Widget for SamplePanel<'_> {
                 .render(area, buf);
             return;
         };
-        let seconds = track.sample_frames as f64 / track.sample_rate.max(1) as f64;
-        let selected = view.selected_slice;
-        // Con stretch, la posición va en ms del sample original (la de los
-        // ajustes y del proyecto) y se dice de qué tempo a cuál.
-        let ratio = track.stretch.map_or(1.0, |(_, r)| r);
-        let chosen = selected.map_or(String::new(), |i| {
-            let at = track.slices.get(i).map_or(0.0, |r| {
-                r.start as f64 * 1000.0 / track.sample_rate.max(1) as f64 / ratio
-            });
-            format!(" · corte {} {at:.1} ms", slice_mark(track, i))
-        });
-        let stretch = track.stretch.map_or(String::new(), |(source, ratio)| {
-            let round = |b: f64| ((b * 10.0).round() / 10.0).to_string();
-            format!(" · {}→{} BPM", round(source), round(source / ratio))
-        });
-        let block = Block::bordered().title(format!(
-            " sample · {} · {}{stretch} · {seconds:.2} s · {} cortes{chosen} ",
-            track.name,
-            track.sample_name,
-            track.slices.len()
-        ));
+        let block = Block::bordered().title(sample_title(view, track));
         let inner = block.inner(area);
         block.render(area, buf);
         if inner.width < 2 || inner.height < 2 || track.sample_frames == 0 {
             return;
         }
+        draw_wave(track, inner, buf);
+        // Los números, en lo alto de las marcas (encima de la onda).
+        slice_numbers(track, view.selected_slice, false, inner, buf);
+    }
+}
 
-        // Una barra por columna, de lo más bajo a lo más alto de su trozo,
-        // con bloques de octavos de celda en los bordes.
-        let columns = inner.width as usize;
-        let frames = track.sample_frames as f64;
-        let playing = track
-            .playing_slice
-            .and_then(|i| track.slices.get(i))
-            .map(|r| (r.start as f64 / frames, r.end as f64 / frames));
-        let marks: Vec<usize> = track
-            .slices
-            .iter()
-            .map(|slice| (slice.start as f64 / frames * columns as f64).floor() as usize)
-            .collect();
-        let wave = &track.waveform;
-        for x in 0..columns {
-            let from = x as f64 / columns as f64;
-            let to = (x + 1) as f64 / columns as f64;
-            let (lo, hi) = wave.range(from, to);
-            let lit = playing.is_some_and(|(a, b)| from < b && to > a);
-            let mark = marks.contains(&x);
-            let color = if mark {
-                slice_color()
-            } else if lit {
-                accent()
-            } else {
-                wave_color()
+/// Título del panel del sample: pista, archivo, duración, cortes y el
+/// corte elegido.
+fn sample_title(view: &ViewModel, track: &crate::model::TrackView) -> String {
+    let seconds = track.sample_frames as f64 / track.sample_rate.max(1) as f64;
+    // Con stretch, la posición va en ms del sample original (la de los
+    // ajustes y del proyecto) y se dice de qué tempo a cuál.
+    let chosen = view.selected_slice.map_or(String::new(), |i| {
+        format!(
+            " · corte {} {:.1} ms",
+            slice_mark(track, i),
+            slice_ms(track, i)
+        )
+    });
+    let stretch = track.stretch.map_or(String::new(), |(source, ratio)| {
+        let round = |b: f64| ((b * 10.0).round() / 10.0).to_string();
+        format!(" · {}→{} BPM", round(source), round(source / ratio))
+    });
+    format!(
+        " sample · {} · {}{stretch} · {seconds:.2} s · {} cortes{chosen} ",
+        track.name,
+        track.sample_name,
+        track.slices.len()
+    )
+}
+
+/// Dónde empieza el corte `i`, en ms del sample original.
+fn slice_ms(track: &crate::model::TrackView, i: usize) -> f64 {
+    let ratio = track.stretch.map_or(1.0, |(_, r)| r);
+    track.slices.get(i).map_or(0.0, |r| {
+        r.start as f64 * 1000.0 / track.sample_rate.max(1) as f64 / ratio
+    })
+}
+
+/// Columna (desde 0, dentro de `width`) donde empieza el corte `i`.
+fn slice_column(track: &crate::model::TrackView, i: usize, width: u16) -> u16 {
+    let frames = track.sample_frames.max(1) as f64;
+    let start = track.slices.get(i).map_or(0, |r| r.start);
+    (start as f64 / frames * width as f64).floor() as u16
+}
+
+/// La forma de onda en barras (una por columna, de lo más bajo a lo más
+/// alto de su trozo, con octavos de celda en los bordes), las marcas de
+/// los cortes y el corte que suena resaltado.
+fn draw_wave(track: &crate::model::TrackView, inner: Rect, buf: &mut Buffer) {
+    let columns = inner.width as usize;
+    let frames = track.sample_frames as f64;
+    let playing = track
+        .playing_slice
+        .and_then(|i| track.slices.get(i))
+        .map(|r| (r.start as f64 / frames, r.end as f64 / frames));
+    let marks: Vec<usize> = track
+        .slices
+        .iter()
+        .map(|slice| (slice.start as f64 / frames * columns as f64).floor() as usize)
+        .collect();
+    let wave = &track.waveform;
+    for x in 0..columns {
+        let from = x as f64 / columns as f64;
+        let to = (x + 1) as f64 / columns as f64;
+        let (lo, hi) = wave.range(from, to);
+        let lit = playing.is_some_and(|(a, b)| from < b && to > a);
+        let mark = marks.contains(&x);
+        let color = if mark {
+            slice_color()
+        } else if lit {
+            accent()
+        } else {
+            wave_color()
+        };
+        // Desde el centro hasta el pico, aunque el trozo no cruce el 0.
+        let cells = wave_bar(lo.min(0.0), hi.max(0.0), inner.height);
+        for (y, cell) in cells.into_iter().enumerate() {
+            let symbol = match cell {
+                Some(c) => c,
+                // La marca de un corte cruza el panel entero.
+                None if mark => '│',
+                None => continue,
             };
-            // Desde el centro hasta el pico, aunque el trozo no cruce el 0.
-            let cells = wave_bar(lo.min(0.0), hi.max(0.0), inner.height);
-            for (y, cell) in cells.into_iter().enumerate() {
-                let symbol = match cell {
-                    Some(c) => c,
-                    // La marca de un corte cruza el panel entero.
-                    None if mark => '│',
-                    None => continue,
-                };
-                buf[(inner.x + x as u16, inner.y + y as u16)]
-                    .set_char(symbol)
-                    .set_fg(color);
-            }
+            buf[(inner.x + x as u16, inner.y + y as u16)]
+                .set_char(symbol)
+                .set_fg(color);
         }
+    }
+}
 
-        // Número de cada corte (desde 1) en lo alto de su marca, con su
-        // etiqueta si la tiene (`1 kick`; la marca siguiente la puede tapar).
-        for (i, slice) in track.slices.iter().enumerate() {
-            let column = (slice.start as f64 / frames * inner.width as f64).floor() as u16;
-            if column < inner.width {
-                let text = slice_mark(track, i);
-                let room = (inner.width - column) as usize;
-                buf.set_string(
-                    inner.x + column,
-                    inner.y,
-                    text.chars().take(room).collect::<String>(),
-                    Style::new().fg(slice_color()).bold(),
-                );
-            }
+/// Número de cada corte (desde 1) en la primera fila de `area`, en la
+/// columna de su marca, con su etiqueta si la tiene (`1 kick`; la marca
+/// siguiente la puede tapar). El seleccionado, encima y resaltado; con
+/// `playing`, el que suena también.
+fn slice_numbers(
+    track: &crate::model::TrackView,
+    selected: Option<usize>,
+    playing: bool,
+    area: Rect,
+    buf: &mut Buffer,
+) {
+    let put = |i: usize, style: Style, buf: &mut Buffer| {
+        let column = slice_column(track, i, area.width);
+        if column < area.width {
+            let text = slice_mark(track, i);
+            let room = (area.width - column) as usize;
+            buf.set_string(
+                area.x + column,
+                area.y,
+                text.chars().take(room).collect::<String>(),
+                style,
+            );
         }
-        // El corte seleccionado, encima y resaltado.
-        if let Some(i) = selected
-            && let Some(slice) = track.slices.get(i)
-        {
-            let column = (slice.start as f64 / frames * inner.width as f64).floor() as u16;
-            if column < inner.width {
-                let text = slice_mark(track, i);
-                let room = (inner.width - column) as usize;
-                buf.set_string(
-                    inner.x + column,
-                    inner.y,
-                    text.chars().take(room).collect::<String>(),
-                    Style::new().fg(Color::Black).bg(slice_color()).bold(),
-                );
+    };
+    for i in 0..track.slices.len() {
+        put(i, Style::new().fg(slice_color()).bold(), buf);
+    }
+    if playing && let Some(i) = track.playing_slice.filter(|&i| i < track.slices.len()) {
+        put(i, Style::new().fg(Color::Black).bg(accent()).bold(), buf);
+    }
+    if let Some(i) = selected.filter(|&i| i < track.slices.len()) {
+        put(
+            i,
+            Style::new().fg(Color::Black).bg(slice_color()).bold(),
+            buf,
+        );
+    }
+}
+
+/// La forma de onda grande de la ventana principal sin editor: una fila
+/// con los números de los cortes (el que suena y el elegido resaltados),
+/// la onda debajo, sin números encima, y al pie dónde empieza cada corte
+/// (en ms, los que quepan sin pisarse).
+pub struct BigSamplePanel<'a>(pub &'a ViewModel);
+
+impl Widget for BigSamplePanel<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let view = self.0;
+        let Some(track) = view.selected.and_then(|i| view.tracks.get(i)) else {
+            Paragraph::new(Line::from("sin pistas").fg(dim()))
+                .block(Block::bordered().title(" sample "))
+                .render(area, buf);
+            return;
+        };
+        let block = Block::bordered().title(sample_title(view, track));
+        let inner = block.inner(area);
+        block.render(area, buf);
+        if inner.width < 2 || track.sample_frames == 0 {
+            return;
+        }
+        // Poco alto: como el panel pequeño.
+        if inner.height < 5 {
+            if inner.height >= 2 {
+                draw_wave(track, inner, buf);
+                slice_numbers(track, view.selected_slice, true, inner, buf);
             }
+            return;
+        }
+        let [numbers, wave, times] = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
+        .areas(inner);
+        slice_numbers(track, view.selected_slice, true, numbers, buf);
+        draw_wave(track, wave, buf);
+        // Al pie, los ms de cada corte que quepan (sin pisar al anterior).
+        let mut free = 0u16;
+        for i in 0..track.slices.len() {
+            let column = slice_column(track, i, times.width);
+            let text = format!("{:.0}", slice_ms(track, i));
+            let width = text.chars().count() as u16;
+            if column < free || column + width > times.width {
+                continue;
+            }
+            let style = if view.selected_slice == Some(i) {
+                Style::new().fg(slice_color()).bold()
+            } else {
+                Style::new().fg(dim())
+            };
+            buf.set_string(times.x + column, times.y, text, style);
+            free = column + width + 1;
         }
     }
 }

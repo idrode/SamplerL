@@ -3633,6 +3633,7 @@ impl App {
                 clipping: self.clipping_until.is_some_and(|u| Instant::now() < u),
             },
             link: None,
+            editor_outside: false,
         };
         self.link_view(&mut view);
         view

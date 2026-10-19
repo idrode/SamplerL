@@ -27,14 +27,14 @@ track("kick", amen:slice_at(1)):steps("x . . .  x . . .  x . . .  x . . .")
 "#;
 
 /// Carpeta de los sockets del test (privada, como la de verdad).
-fn socket_dir(script: &Path) -> PathBuf {
+pub(super) fn socket_dir(script: &Path) -> PathBuf {
     let dir = script.parent().unwrap().join("run");
     link::private_dir(&dir).unwrap();
     dir
 }
 
 /// La principal de un script, ya escuchando.
-fn main_window(path: &Path, terminal: Option<Vec<String>>) -> (App, Engine) {
+pub(super) fn main_window(path: &Path, terminal: Option<Vec<String>>) -> (App, Engine) {
     let (controller, engine) = new_engine(RATE);
     let mut app = App::open(path, controller, RATE).unwrap();
     let socket = link::socket_path(&socket_dir(path), path);
@@ -44,14 +44,14 @@ fn main_window(path: &Path, terminal: Option<Vec<String>>) -> (App, Engine) {
 
 /// El editor de ese script (su motor se devuelve para que siga vivo, pero
 /// no se mueve).
-fn editor_window(path: &Path) -> (App, Engine) {
+pub(super) fn editor_window(path: &Path) -> (App, Engine) {
     let (controller, engine) = new_engine(RATE);
     let app = App::open_editor(path, controller, RATE, &socket_dir(path)).unwrap();
     (app, engine)
 }
 
 /// Unas vueltas del bucle de las dos ventanas.
-fn pump(main: &mut App, editor: &mut App) {
+pub(super) fn pump(main: &mut App, editor: &mut App) {
     for _ in 0..4 {
         main.tick();
         editor.tick();
@@ -60,7 +60,7 @@ fn pump(main: &mut App, editor: &mut App) {
 
 /// Espera (con vueltas) a que se cumpla algo; lo bastante para que el
 /// editor envíe lo escrito (lo manda como mucho cada 100 ms).
-fn pump_until(main: &mut App, editor: &mut App, what: impl Fn(&App, &App) -> bool) {
+pub(super) fn pump_until(main: &mut App, editor: &mut App, what: impl Fn(&App, &App) -> bool) {
     let deadline = Instant::now() + Duration::from_secs(3);
     while !what(main, editor) {
         assert!(Instant::now() < deadline, "no llegó a pasar");
@@ -106,8 +106,7 @@ fn the_editor_takes_the_text_and_follows_the_main_window() {
     assert!(screen.contains("track(\"drums\", amen)"), "{screen}");
     let screen = text(&draw(&mut main, 140, 44));
     assert!(screen.contains("⇄ editor en su ventana"), "{screen}");
-    assert!(screen.contains("TOCAR · 1-0 q-i "), "{screen}");
-    assert!(!screen.contains("q-i · Esc"), "{screen}");
+    assert!(!screen.contains("track(\"drums\""), "{screen}");
 }
 
 fn ui_editor(app: &mut App, width: u16, height: u16) -> ratatui::buffer::Buffer {

@@ -310,9 +310,10 @@ propia ventana» en [docs/GUIA.md](GUIA.md).
 
 ### Parte 2: vistas en el hueco del editor
 
-1. **Layout sin editor en la principal**: con el editor fuera, su panel lo
+1. ✅ **Layout sin editor en la principal**: con el editor fuera, su panel lo
    ocupan las vistas; con el editor dentro, el layout de siempre.
-2. **Forma de onda grande** con los cortes, el loop y más resolución.
+2. ✅ **Forma de onda grande** con los cortes numerados en su propia fila y
+   dónde empieza cada uno (el loop, todavía no).
 3. **Tracker con todas las pistas** a la vez, en columnas.
 4. **Mezclador** con medidores, volumen, mute/solo y envíos por pista.
 5. **Tabla de choques de frecuencia** (la de `--analyze-masking`), si se

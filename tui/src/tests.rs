@@ -2387,6 +2387,7 @@ mod history;
 mod import;
 mod instrument;
 mod length;
+mod main_window;
 mod masking;
 mod midi_in;
 mod midi_out;
