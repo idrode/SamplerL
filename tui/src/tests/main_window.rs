@@ -4,7 +4,7 @@
 use ratatui::style::Color;
 
 use super::split::{editor_window, main_window, pump};
-use super::{SONG, draw, draw_widget, find, fixture, open, text, waveform_view};
+use super::{SONG, draw, draw_widget, find, fixture, open, text, tracker_view, waveform_view};
 use crate::ui;
 
 #[test]
@@ -79,4 +79,97 @@ fn the_big_waveform_numbers_the_slices_on_their_own_row() {
     // Muy bajo, como el panel pequeño (números encima de la onda).
     let buffer = draw_widget(ui::BigSamplePanel(&waveform_view(None)), 82, 5);
     assert_eq!(buffer[(41, 1)].symbol(), "2");
+}
+
+/// Una vista de tracker con `n` pistas de 16 pasos (golpe en el paso 0).
+fn many_tracks(n: usize) -> crate::model::ViewModel {
+    let mut view = tracker_view(Some(4), true);
+    let template = view.tracks[0].clone();
+    view.tracks = (0..n)
+        .map(|i| crate::model::TrackView {
+            name: format!("pista{}", i + 1),
+            ..template.clone()
+        })
+        .collect();
+    view.selected = Some(0);
+    view
+}
+
+#[test]
+fn the_full_tracker_fits_every_track_widening_or_narrowing_the_columns() {
+    // Dos pistas en 100 de ancho: columnas de 16, el máximo.
+    assert_eq!(ui::FullTrackerPanel::columns(2, 100), (16, 2));
+    // Ocho en 70: se estrechan a 8 y caben todas.
+    assert_eq!(ui::FullTrackerPanel::columns(8, 70), (8, 8));
+    // Ocho en 40: 6 como mucho, caben 6.
+    assert_eq!(ui::FullTrackerPanel::columns(8, 40), (6, 6));
+    assert_eq!(ui::FullTrackerPanel::columns(0, 40).1, 0);
+
+    let view = many_tracks(8);
+    let buffer = draw_widget(ui::FullTrackerPanel(&view), 72, 20);
+    let screen = text(&buffer);
+    assert!(
+        screen.contains("tracker · compás 3 · 8 pistas "),
+        "{screen}"
+    );
+    // Las ocho cabeceras, cada una en su columna de 8 (tras los 3 del
+    // número de paso).
+    let header = screen.lines().nth(1).unwrap();
+    for i in 0..8 {
+        let at = 1 + 3 + i * 8;
+        let name: String = header.chars().skip(at).take(6).collect();
+        assert_eq!(name, format!("pista{}", i + 1), "{header}");
+    }
+    // El paso 0 con su golpe en todas, y la fila del paso 4 resaltada
+    // entera (todas van por ahí).
+    let row0 = row(&screen, "00 ");
+    assert_eq!(row0.matches("01").count(), 8, "{row0}");
+    let y = screen
+        .lines()
+        .position(|l| l[3..].starts_with("04 "))
+        .unwrap() as u16;
+    assert_eq!(buffer[(30, y)].bg, Color::Blue);
+    assert_ne!(buffer[(30, y + 1)].bg, Color::Blue);
+
+    // Sin sitio para todas, el título dice cuántas se ven.
+    let buffer = draw_widget(ui::FullTrackerPanel(&many_tracks(8)), 42, 20);
+    let screen = text(&buffer);
+    assert!(screen.contains("compás 3 · 6 de 8 pistas"), "{screen}");
+    // Seis columnas de 6 (los nombres, recortados).
+    assert_eq!(
+        screen.lines().nth(1).unwrap().matches("pista ").count(),
+        6,
+        "{screen}"
+    );
+
+    // El tracker de una sola ventana no cambia: columnas de 11.
+    let buffer = draw_widget(ui::TrackerPanel(&tracker_view(None, false)), 40, 20);
+    let header = text(&buffer).lines().nth(1).unwrap().to_string();
+    assert_eq!(
+        header.chars().skip(4 + 11).take(4).collect::<String>(),
+        "kick"
+    );
+}
+
+/// La línea que empieza (tras el borde) por `prefix`.
+fn row(screen: &str, prefix: &str) -> String {
+    screen
+        .lines()
+        .find(|l| l.chars().skip(1).collect::<String>().starts_with(prefix))
+        .unwrap()
+        .to_string()
+}
+
+#[test]
+fn the_main_window_shows_the_full_tracker() {
+    let path = fixture("main_window_tracker", Some(SONG));
+    let (mut main, _engine) = main_window(&path, None);
+    let (mut editor, _idle) = editor_window(&path);
+    pump(&mut main, &mut editor);
+    let screen = text(&draw(&mut main, 120, 40));
+    assert!(screen.contains("tracker · compás 0 · 2 pistas"), "{screen}");
+    // En una sola ventana, el título de siempre.
+    let (_, mut single, _engine) = open("main_window_tracker_single", Some(SONG));
+    let screen = text(&draw(&mut single, 120, 40));
+    assert!(screen.contains("tracker · compás 0 ─"), "{screen}");
 }

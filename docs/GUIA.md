@@ -159,7 +159,9 @@ anterior.
   ocupan toda la ventana: arriba el transporte; la forma de onda grande de
   la pista seleccionada, con los cortes numerados en una fila aparte (el
   que suena y el elegido, resaltados) y al pie dónde empieza cada uno en
-  ms; debajo, el tracker, y abajo los efectos.
+  ms; debajo, el tracker con todas las pistas a la vez (las columnas se
+  estrechan para que quepan; si ni así, el título dice cuántas se ven), y
+  abajo los efectos.
 - **Lo que cambia la principal en el texto** (etiquetar, `bpm`, el EQ
   sugerido, lo grabado, restaurar una versión) llega al editor como un
   solo cambio (Ctrl-Z lo deshace), sin guardar. Si en ese momento estás

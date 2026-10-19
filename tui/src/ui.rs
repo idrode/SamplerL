@@ -126,9 +126,9 @@ fn draw_main_window(frame: &mut Frame, view: &ViewModel) {
     .areas(body);
     frame.render_widget(BigSamplePanel(view), sample_area);
     let [engine_area, tracker_area] =
-        Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(lower);
+        Layout::horizontal([Constraint::Percentage(40), Constraint::Percentage(60)]).areas(lower);
     frame.render_widget(EnginePanel(view), engine_area);
-    frame.render_widget(TrackerPanel(view), tracker_area);
+    frame.render_widget(FullTrackerPanel(view), tracker_area);
     frame.render_widget(FxPanel(view), fx);
     frame.render_widget(HelpLine(view), help);
     draw_popups(frame, view, None);
@@ -1219,118 +1219,167 @@ pub struct TrackerPanel<'a>(pub &'a ViewModel);
 impl Widget for TrackerPanel<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let view = self.0;
-        let t = view.transport;
-        let block = Block::bordered().title(format!(" tracker · compás {} ", t.bar));
+        let block = Block::bordered().title(format!(" tracker · compás {} ", view.transport.bar));
         let inner = block.inner(area);
         block.render(area, buf);
-        if inner.height < 2 {
-            return;
-        }
-        // Paso de cada pista; la fila que se sigue al desplazarse es la de la
-        // pista seleccionada (o la primera que suene).
-        let positions: Vec<Option<usize>> = view.tracks.iter().map(|t| t.position).collect();
-        let current = view
-            .selected
-            .and_then(|i| positions.get(i).copied().flatten())
-            .or_else(|| positions.iter().flatten().next().copied())
-            .or(t.step.filter(|_| t.running && view.tracks.is_empty()));
-        let rows = view
-            .tracks
-            .iter()
-            .map(|t| t.steps.len())
-            .max()
-            .unwrap_or(engine::STEPS)
-            .max(1);
+        render_tracker(view, inner, buf, TRACKER_COLUMN, view.tracks.len());
+    }
+}
 
-        // Cabecera con los nombres de las pistas.
-        let mut header = vec![Span::raw("   ")];
-        for (i, track) in view.tracks.iter().enumerate() {
-            // Con mute o solo, la marca al final del nombre.
-            let mark = match (track.mute, track.solo) {
-                (true, _) => " M",
-                (false, true) => " S",
-                _ => "",
-            };
-            let name: String = track
-                .name
+/// Ancho mínimo y máximo de cada columna del tracker con todas las pistas.
+const FULL_TRACKER_MIN: usize = 6;
+const FULL_TRACKER_MAX: usize = 16;
+
+/// Tracker de la ventana principal sin editor: todas las pistas a la vez,
+/// con las columnas tan anchas como quepan (de 6 a 16). Si aun así no
+/// caben, el título dice cuántas se ven.
+pub struct FullTrackerPanel<'a>(pub &'a ViewModel);
+
+impl FullTrackerPanel<'_> {
+    /// Ancho de cada columna y cuántas pistas caben en `width` celdas
+    /// (sin el borde).
+    pub fn columns(tracks: usize, width: u16) -> (usize, usize) {
+        let room = (width as usize).saturating_sub(3);
+        if tracks == 0 {
+            return (FULL_TRACKER_MAX, 0);
+        }
+        let column = (room / tracks).clamp(FULL_TRACKER_MIN, FULL_TRACKER_MAX);
+        (column, tracks.min(room / column))
+    }
+}
+
+impl Widget for FullTrackerPanel<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let view = self.0;
+        let count = view.tracks.len();
+        let (column, shown) = Self::columns(count, area.width.saturating_sub(2));
+        // Si no caben todas, cuántas se ven.
+        let tracks = if shown < count {
+            format!("{shown} de {count} pistas")
+        } else {
+            format!("{count} pistas")
+        };
+        let block = Block::bordered().title(format!(
+            " tracker · compás {} · {tracks} ",
+            view.transport.bar
+        ));
+        let inner = block.inner(area);
+        block.render(area, buf);
+        render_tracker(view, inner, buf, column, shown);
+    }
+}
+
+/// Las filas del tracker: un paso por fila, `shown` pistas en columnas de
+/// `column` celdas.
+fn render_tracker(view: &ViewModel, inner: Rect, buf: &mut Buffer, column: usize, shown: usize) {
+    let t = view.transport;
+    if inner.height < 2 {
+        return;
+    }
+    // Paso de cada pista; la fila que se sigue al desplazarse es la de la
+    // pista seleccionada (o la primera que suene).
+    let positions: Vec<Option<usize>> = view.tracks.iter().map(|t| t.position).collect();
+    let current = view
+        .selected
+        .and_then(|i| positions.get(i).copied().flatten())
+        .or_else(|| positions.iter().flatten().next().copied())
+        .or(t.step.filter(|_| t.running && view.tracks.is_empty()));
+    let rows = view
+        .tracks
+        .iter()
+        .map(|t| t.steps.len())
+        .max()
+        .unwrap_or(engine::STEPS)
+        .max(1);
+
+    // Cabecera con los nombres de las pistas.
+    let mut header = vec![Span::raw("   ")];
+    for (i, track) in view.tracks.iter().enumerate().take(shown) {
+        // Con mute o solo, la marca al final del nombre.
+        let mark = match (track.mute, track.solo) {
+            (true, _) => " M",
+            (false, true) => " S",
+            _ => "",
+        };
+        let name: String = track.name.chars().take(column - 1 - mark.len()).collect();
+        let span = Span::from(format!(
+            "{:<column$}",
+            format!("{name}{mark}"),
+            column = column
+        ));
+        header.push(if !view.audible(i) {
+            span.fg(dim())
+        } else if view.selected == Some(i) {
+            span.fg(accent()).bold()
+        } else {
+            span.bold()
+        });
+    }
+    Line::from(header).render(Rect { height: 1, ..inner }, buf);
+
+    // Si no caben todas las filas, se desplaza para ver la que suena.
+    let visible = (inner.height - 1) as usize;
+    let first = if visible >= rows {
+        0
+    } else {
+        current
+            .map_or(0, |s| s.saturating_sub(visible / 2))
+            .min(rows - visible)
+    };
+    let playing = Style::new().bg(playing_color()).fg(Color::White).bold();
+    for (row, step) in (first..rows).take(visible).enumerate() {
+        let here: Vec<bool> = positions.iter().map(|p| *p == Some(step)).collect();
+        // Todas las pistas que suenan, en esta fila: la fila entera.
+        let whole =
+            here.iter().any(|h| *h) && positions.iter().zip(&here).all(|(p, h)| p.is_none() || *h);
+        let number = Span::from(format!("{step:02} "));
+        let mut spans = vec![if here.iter().any(|h| *h) && !whole {
+            number.style(playing)
+        } else {
+            number.fg(dim())
+        }];
+        for (i, track) in view.tracks.iter().enumerate().take(shown) {
+            let cell = track.steps.get(step);
+            // Una fila que alarga (`_`) la nota de antes: `│`.
+            let held = cell.is_some_and(Option::is_none) && track.held(step);
+            let cell_text: String = cell
+                .map_or(String::new(), |c| {
+                    if held {
+                        " │".into()
+                    } else {
+                        track.cell_text(c)
+                    }
+                })
                 .chars()
-                .take(TRACKER_COLUMN - 1 - mark.len())
+                .take(column - 1)
                 .collect();
-            let span = Span::from(format!("{:<TRACKER_COLUMN$}", format!("{name}{mark}")));
-            header.push(if !view.audible(i) {
-                span.fg(dim())
-            } else if view.selected == Some(i) {
-                span.fg(accent()).bold()
+            let text = format!("{cell_text:<column$}", column = column);
+            // Las pistas que no se oyen (mute, o solo de otra), atenuadas.
+            let span = if (held || cell.is_some_and(Option::is_some)) && view.audible(i) {
+                Span::raw(text)
             } else {
-                span.bold()
+                Span::from(text).fg(dim())
+            };
+            spans.push(if here[i] && !whole {
+                span.style(playing)
+            } else {
+                span
             });
         }
-        Line::from(header).render(Rect { height: 1, ..inner }, buf);
-
-        // Si no caben todas las filas, se desplaza para ver la que suena.
-        let visible = (inner.height - 1) as usize;
-        let first = if visible >= rows {
-            0
-        } else {
-            current
-                .map_or(0, |s| s.saturating_sub(visible / 2))
-                .min(rows - visible)
-        };
-        let playing = Style::new().bg(playing_color()).fg(Color::White).bold();
-        for (row, step) in (first..rows).take(visible).enumerate() {
-            let here: Vec<bool> = positions.iter().map(|p| *p == Some(step)).collect();
-            // Todas las pistas que suenan, en esta fila: la fila entera.
-            let whole = here.iter().any(|h| *h)
-                && positions.iter().zip(&here).all(|(p, h)| p.is_none() || *h);
-            let number = Span::from(format!("{step:02} "));
-            let mut spans = vec![if here.iter().any(|h| *h) && !whole {
-                number.style(playing)
-            } else {
-                number.fg(dim())
-            }];
-            for (i, track) in view.tracks.iter().enumerate() {
-                let cell = track.steps.get(step);
-                // Una fila que alarga (`_`) la nota de antes: `│`.
-                let held = cell.is_some_and(Option::is_none) && track.held(step);
-                let cell_text: String = cell
-                    .map_or(String::new(), |c| {
-                        if held {
-                            " │".into()
-                        } else {
-                            track.cell_text(c)
-                        }
-                    })
-                    .chars()
-                    .take(TRACKER_COLUMN - 1)
-                    .collect();
-                let text = format!("{cell_text:<TRACKER_COLUMN$}");
-                // Las pistas que no se oyen (mute, o solo de otra), atenuadas.
-                let span = if (held || cell.is_some_and(Option::is_some)) && view.audible(i) {
-                    Span::raw(text)
-                } else {
-                    Span::from(text).fg(dim())
-                };
-                spans.push(if here[i] && !whole {
-                    span.style(playing)
-                } else {
-                    span
-                });
-            }
-            let mut line = Line::from(spans);
-            if whole {
-                line = line.style(playing);
-            }
-            let y = inner.y + 1 + row as u16;
-            let row_area = Rect {
-                y,
-                height: 1,
-                ..inner
-            };
-            if whole {
-                buf.set_style(row_area, Style::new().bg(playing_color()));
-            }
-            line.render(row_area, buf);
+        let mut line = Line::from(spans);
+        if whole {
+            line = line.style(playing);
         }
+        let y = inner.y + 1 + row as u16;
+        let row_area = Rect {
+            y,
+            height: 1,
+            ..inner
+        };
+        if whole {
+            buf.set_style(row_area, Style::new().bg(playing_color()));
+        }
+        line.render(row_area, buf);
     }
 }
 

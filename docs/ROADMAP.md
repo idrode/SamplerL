@@ -314,7 +314,8 @@ propia ventana» en [docs/GUIA.md](GUIA.md).
    ocupan las vistas; con el editor dentro, el layout de siempre.
 2. ✅ **Forma de onda grande** con los cortes numerados en su propia fila y
    dónde empieza cada uno (el loop, todavía no).
-3. **Tracker con todas las pistas** a la vez, en columnas.
+3. ✅ **Tracker con todas las pistas** a la vez, con las columnas al ancho
+   que quepa.
 4. **Mezclador** con medidores, volumen, mute/solo y envíos por pista.
 5. **Tabla de choques de frecuencia** (la de `--analyze-masking`), si se
    ha calculado.
