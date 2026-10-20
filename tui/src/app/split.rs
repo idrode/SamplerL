@@ -90,6 +90,9 @@ fn editor_side(action: Action) -> bool {
             | Action::TextStart
             | Action::TextEnd
             | Action::GotoLine
+            | Action::Find
+            | Action::FindNext
+            | Action::FindPrevious
             | Action::Complete
             | Action::SaveAndLoad
             | Action::Load
@@ -121,6 +124,9 @@ fn needs_the_editor(action: Action) -> bool {
             | Action::TextStart
             | Action::TextEnd
             | Action::GotoLine
+            | Action::Find
+            | Action::FindNext
+            | Action::FindPrevious
             | Action::Complete
             | Action::SaveAndLoad
             | Action::ReloadExternal
@@ -134,7 +140,7 @@ fn needs_the_editor(action: Action) -> bool {
 
 /// Órdenes de F2 que mueven el cursor del editor: se hacen donde esté.
 fn moves_the_cursor(command: &str) -> bool {
-    matches!(command, "linea" | "línea" | "line")
+    matches!(command, "linea" | "línea" | "line" | "buscar" | "find")
 }
 
 /// Acciones que abren algo en la ventana principal (hay que ir a ella).
@@ -305,10 +311,10 @@ impl App {
         }
     }
 
-    /// Una orden de F2: en el editor separado, solo `bloque` y `linea` se
-    /// hacen aquí; las demás van a la principal. En la principal, `abrir` no
-    /// (el editor seguiría con el script de antes), ni `linea` (no hay
-    /// cursor que mover).
+    /// Una orden de F2: en el editor separado, solo `bloque`, `linea` y
+    /// `buscar` se hacen aquí; las demás van a la principal. En la
+    /// principal, `abrir` no (el editor seguiría con el script de antes),
+    /// ni `linea` ni `buscar` (no hay cursor que mover).
     pub(super) fn link_command(&mut self, line: &str) -> bool {
         let command = line.split_whitespace().next().unwrap_or_default();
         match &mut self.link {

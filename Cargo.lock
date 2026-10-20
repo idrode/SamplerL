@@ -1688,6 +1688,7 @@ dependencies = [
  "ratatui-core",
  "ratatui-crossterm",
  "ratatui-widgets",
+ "regex",
  "unicode-segmentation",
  "unicode-width",
 ]
@@ -2278,6 +2279,7 @@ dependencies = [
  "midir",
  "ratatui",
  "ratatui-textarea",
+ "regex",
  "rtrb",
  "script",
  "toml",

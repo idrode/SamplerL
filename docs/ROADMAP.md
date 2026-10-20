@@ -354,4 +354,4 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
 7. ✅ **Navegación del editor**: lo que ya daba el widget (palabras,
    línea, párrafos, páginas y selección con Shift), verificado, y
    Ctrl-Inicio/Ctrl-Fin al principio y al final del texto; ir a la
-   línea N con Alt-G.
+   línea N con Alt-G; buscar con Ctrl-F y F6/F7 siguiente y anterior.

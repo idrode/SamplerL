@@ -291,6 +291,8 @@ pub struct App {
     slot_prompt: Option<SlotOp>,
     /// Atajos de teclado (los de la configuración o los de siempre).
     keys: Keymap,
+    /// Lo último buscado (F6 y F7 lo repiten).
+    search: Option<String>,
     /// Entrada MIDI: qué se hace con ella, el tempo del reloj y la cola
     /// por la que llegan los mensajes del puerto (sin bloqueos).
     midi: crate::midi::MidiConfig,
@@ -376,6 +378,7 @@ impl App {
             slots_dir: None,
             slot_prompt: None,
             keys: Keymap::default(),
+            search: None,
             midi: crate::midi::MidiConfig::default(),
             clock: crate::midi::ClockTempo::default(),
             midi_in: None,
@@ -494,6 +497,7 @@ impl App {
             "grabar" | "record" => self.start_recording(args.first().copied()),
             "seccion" | "sección" | "section" => self.jump_to_section(rest),
             "linea" | "línea" | "line" => self.goto_line(rest),
+            "buscar" | "find" => self.find(rest),
             "remuestrear" | "remuestrear!" | "resample" => {
                 self.resample(&args, command.ends_with('!'))
             }
@@ -503,7 +507,7 @@ impl App {
             other => {
                 self.message = format!(
                     "orden desconocida «{other}» (exportar, guardar, abrir, muestras, etiquetar, \
-                     bpm, bloque, remuestrear, seccion, linea)"
+                     bpm, bloque, remuestrear, seccion, linea, buscar)"
                 );
             }
         }
@@ -1500,6 +1504,61 @@ impl App {
         } else {
             String::new()
         };
+    }
+
+    /// `buscar TEXTO`: resalta todas las veces que sale y va a la primera
+    /// desde el cursor. Sin texto, quita el resaltado.
+    fn find(&mut self, text: &str) {
+        self.editor.cancel_selection();
+        if text.is_empty() {
+            let _ = self.editor.set_search_pattern("");
+            self.message = "búsqueda quitada".into();
+            return;
+        }
+        if self
+            .editor
+            .set_search_pattern(editing::search_pattern(text))
+            .is_err()
+        {
+            self.message = format!("no se puede buscar «{text}»");
+            return;
+        }
+        self.search = Some(text.to_string());
+        if self.editor.search_forward(true) {
+            self.search_message(text);
+        } else {
+            let _ = self.editor.set_search_pattern("");
+            self.message = format!("«{text}» no sale en el script");
+        }
+    }
+
+    /// La siguiente o la anterior de la última búsqueda.
+    fn find_again(&mut self, forward: bool) {
+        let Some(text) = self.search.clone() else {
+            self.message = "no hay nada buscado: Ctrl-F busca".into();
+            return;
+        };
+        if self.editor.search_pattern().is_none() {
+            let _ = self
+                .editor
+                .set_search_pattern(editing::search_pattern(&text));
+        }
+        self.editor.cancel_selection();
+        let found = if forward {
+            self.editor.search_forward(false)
+        } else {
+            self.editor.search_back(false)
+        };
+        if found {
+            self.search_message(&text);
+        } else {
+            self.message = format!("«{text}» ya no sale en el script");
+        }
+    }
+
+    fn search_message(&mut self, text: &str) {
+        let (total, current) = editing::search_count(&self.editor);
+        self.message = format!("«{text}»: {current} de {total} (F6 siguiente, F7 anterior)");
     }
 
     /// La cola por la que llegan los mensajes del puerto MIDI de entrada.
@@ -2818,6 +2877,14 @@ impl App {
                 let lines = self.editor.lines().len();
                 self.message = format!("linea N: lleva el cursor a la línea N (1 a {lines})");
             }
+            Action::Find => {
+                self.prompt = Some("buscar ".into());
+                self.message =
+                    "buscar TEXTO: va al primero desde el cursor (sin texto, quita el resaltado)"
+                        .into();
+            }
+            Action::FindNext => self.find_again(true),
+            Action::FindPrevious => self.find_again(false),
             Action::Complete => self.open_completion(),
             Action::SaveAndLoad => self.save(),
             Action::Load => self.load(),

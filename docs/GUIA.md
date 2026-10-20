@@ -257,7 +257,7 @@ anterior.
   marcha, el compás y el paso, y la pista y el corte seleccionados en la
   principal.
 - **Las acciones del motor** (marcha/paro, mute, solo, metrónomo, cortes,
-  secciones, variantes, exportar, las órdenes de F2 menos `bloque` y `linea`) se
+  secciones, variantes, exportar, las órdenes de F2 menos `bloque`, `linea` y `buscar`) se
   pueden lanzar desde la paleta del editor y se hacen en la principal.
   El explorador, el tap tempo, el informe de choques y las preguntas de
   grabar, saltar a una sección o remuestrear se abren en la principal:
@@ -466,6 +466,8 @@ cortado en rejilla (`slice_grid(16)`), el número de cortes se escribe
 | Ctrl-T o F8 | Marcha / paro del secuenciador |
 | Ctrl-G | Ir a la línea del error |
 | Alt-G | Ir a una línea (escribe el número y Enter) |
+| Ctrl-F | Buscar en el script (escribe el texto y Enter) |
+| F6 / F7 | Siguiente / anterior de lo buscado |
 | Ctrl-O | Siguiente pista (la de la vista del sample y del modo tocar) |
 | Esc | Entrar / salir del modo tocar (con el autocompletado o la paleta abiertos, solo los cierra) |
 | F1 | Paleta de comandos (ver más abajo) |
@@ -510,6 +512,9 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Ir al principio del texto | Lleva el cursor a la primera línea del script (con Shift, selecciona hasta allí) | Ctrl-Inicio |
 | Ir al final del texto | Lleva el cursor al final de la última línea (con Shift, selecciona hasta allí) | Ctrl-Fin |
 | Ir a la línea | Abre «linea » para escribir el número de línea; Enter lleva el cursor a su principio | Alt-G |
+| Buscar | Abre «buscar » para escribir el texto (tal cual; sin mayúsculas, no las distingue); Enter va al primero desde el cursor y los resalta todos; «buscar» sin texto quita el resaltado | Ctrl-F |
+| Buscar el siguiente | Va a la siguiente vez que sale lo buscado (al final, vuelve al principio) | F6 |
+| Buscar el anterior | Va a la vez anterior que sale lo buscado (al principio, vuelve al final) | F7 |
 | Autocompletar | Abre el autocompletado en el cursor | F4 |
 | Guardar y cargar | Guarda el script y lo carga (entra en el siguiente compás) | Ctrl-S |
 | Cargar sin guardar | Carga el texto del editor sin guardarlo | Ctrl-L o F5 |
@@ -722,6 +727,7 @@ proyecto o, si no hay, a la del script.
 | `remuestrear [pista\|master] [compases] [archivo.wav]` | Graba por render offline la salida de la pista (por defecto la seleccionada, en solo) o del master como un WAV en la carpeta de samples (`<pista>-remuestreo.wav`; con `!`, sustituye uno que ya exista). Sin compases, lo que tarda en repetirse |
 | `seccion nombre` | Con `arrange()`: salta a la primera entrada de esa sección en la línea de tiempo, en el compás siguiente (y sigue desde ahí) |
 | `linea N` | Lleva el cursor al principio de la línea N (más allá del final, a la última). Es lo que abre Alt-G |
+| `buscar texto` | Busca el texto tal cual (sin mayúsculas, no las distingue), resalta todas las veces que sale y va a la primera desde el cursor; sin texto, quita el resaltado. Es lo que abre Ctrl-F; F6 y F7, la siguiente y la anterior |
 | `bloque nombre [etiquetas] [-- descripción]` | Guarda el texto seleccionado como bloque en la biblioteca global (`bloque-proyecto`: en la del proyecto; con `!`, sustituye uno que se llame igual). Ver «Biblioteca de bloques» |
 
 ### Biblioteca de bloques
@@ -850,6 +856,9 @@ paleta de 256.
 | `marcha` | Marcha / paro | `ctrl-t`, `f8` |
 | `ir_al_error` | Ir al error | `ctrl-g` |
 | `ir_a_linea` | Ir a la línea | `alt-g` |
+| `buscar` | Buscar | `ctrl-f` |
+| `buscar_siguiente` | Buscar el siguiente | `f6` |
+| `buscar_anterior` | Buscar el anterior | `f7` |
 | `siguiente_pista` | Siguiente pista | `ctrl-o` |
 | `recargar` | Recargar del disco | `f3` |
 | `ordenes` | Línea de órdenes | `f2` |
@@ -951,6 +960,17 @@ anterior.
 | Inicio / Fin (o Ctrl-A / Ctrl-E) | Principio / final de la línea |
 | Ctrl-Inicio / Ctrl-Fin | Principio / final del texto |
 | Alt-G | Ir a la línea N (abre `linea ` en la línea de órdenes; Ctrl-G sigue siendo ir al error) |
+
+**Buscar.** Ctrl-F abre `buscar ` en la línea de órdenes: escribe el
+texto y Enter lleva el cursor a la primera vez que sale desde donde está y
+resalta todas; el mensaje dice cuál es y cuántas hay (`«track»: 2 de 5`).
+F6 va a la siguiente y F7 a la anterior (dan la vuelta al llegar al final
+o al principio). El texto se busca tal cual, no es una expresión regular
+(`fx("` vale), y si no tiene mayúsculas no las distingue (`track` encuentra
+`Track`; `Track`, solo `Track`). `buscar` sin texto quita el resaltado.
+Ctrl-F era en el widget un sinónimo de → (al estilo de emacs); → sigue
+igual. Las tres teclas se cambian en `[teclas]` (`buscar`,
+`buscar_siguiente`, `buscar_anterior`).
 | Ctrl-↑ / Ctrl-↓ | Párrafo anterior / siguiente (hasta la línea en blanco) |
 | RePág / AvPág (o Alt-V / Ctrl-V) | Una pantalla arriba / abajo |
 

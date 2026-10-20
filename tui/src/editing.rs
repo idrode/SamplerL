@@ -398,6 +398,36 @@ pub fn jump_to_edge(editor: &mut TextArea, end: bool, select: bool) {
     }
 }
 
+/// Patrón de una búsqueda: el texto tal cual (no es una expresión
+/// regular) y, si no tiene mayúsculas, sin distinguirlas.
+pub fn search_pattern(text: &str) -> String {
+    let literal = regex::escape(text);
+    if text.chars().any(char::is_uppercase) {
+        literal
+    } else {
+        format!("(?i){literal}")
+    }
+}
+
+/// Cuántas veces sale la búsqueda del editor en el texto y cuál es la del
+/// cursor (desde 1; 0 si el cursor no está en ninguna).
+pub fn search_count(editor: &TextArea) -> (usize, usize) {
+    let Some(pattern) = editor.search_pattern() else {
+        return (0, 0);
+    };
+    let (row, col) = (editor.cursor().0, editor.cursor().1);
+    let (mut total, mut current) = (0, 0);
+    for (r, line) in editor.lines().iter().enumerate() {
+        for m in pattern.find_iter(line) {
+            total += 1;
+            if r == row && line[..m.start()].chars().count() == col {
+                current = total;
+            }
+        }
+    }
+    (total, current)
+}
+
 /// Duplica las líneas seleccionadas o la del cursor debajo de sí mismas;
 /// el cursor pasa a la copia.
 pub fn duplicate_lines(editor: &mut TextArea) {

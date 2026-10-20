@@ -164,3 +164,120 @@ fn the_line_is_found_in_the_editor_window() {
     command(&mut main, "linea 2");
     assert_eq!(main.view().message, "eso se hace en la ventana del editor");
 }
+
+/// Solo comentarios: carga sin error (la línea del error lleva su fondo).
+const SEARCH: &str = "-- track(\"a\")\n-- Track b\n-- track(\"c\"):fx(\"lowpass\") .";
+
+/// Celdas del editor con el fondo del resaltado de la búsqueda (con el
+/// cursor al final, fuera de lo buscado: su celda va en inverso).
+fn highlighted(app: &mut App) -> Vec<String> {
+    let cursor = app.editor.cursor();
+    app.editor.move_cursor(ratatui_textarea::CursorMove::Bottom);
+    app.editor.move_cursor(ratatui_textarea::CursorMove::End);
+    let buffer = draw(app, 130, 40);
+    app.editor.move_cursor(ratatui_textarea::CursorMove::Jump(
+        cursor.0 as u16,
+        cursor.1 as u16,
+    ));
+    let bg = crate::ui::warning_color();
+    (0..buffer.area.height)
+        .filter_map(|y| {
+            let cells: String = (0..buffer.area.width)
+                .filter(|&x| buffer[(x, y)].bg == bg)
+                .map(|x| buffer[(x, y)].symbol().to_string())
+                .collect();
+            (!cells.is_empty()).then_some(cells)
+        })
+        .collect()
+}
+
+#[test]
+fn ctrl_f_finds_text_and_f6_f7_go_to_the_next_and_previous() {
+    let (mut app, _engine) = open_text("nav_find", SEARCH);
+    app.editor
+        .move_cursor(ratatui_textarea::CursorMove::Jump(0, 2));
+    app.handle(ctrl('f'));
+    assert_eq!(app.view().prompt.as_deref(), Some("buscar "));
+    assert_eq!(app.editor.cursor(), (0, 2), "Ctrl-F ya no mueve el cursor");
+    // Sin mayúsculas no las distingue; va al primero desde el cursor.
+    type_text(&mut app, "track\n");
+    assert_eq!(app.editor.cursor(), (0, 3));
+    assert_eq!(
+        app.view().message,
+        "«track»: 1 de 3 (F6 siguiente, F7 anterior)"
+    );
+    assert_eq!(highlighted(&mut app), ["track", "Track", "track"]);
+    app.handle(f(6));
+    assert_eq!(app.editor.cursor(), (1, 3));
+    app.handle(f(6));
+    assert_eq!(app.editor.cursor(), (2, 3));
+    app.handle(f(6));
+    assert_eq!(app.editor.cursor(), (0, 3), "al final vuelve al principio");
+    assert!(app.view().message.starts_with("«track»: 1 de 3"));
+    app.handle(f(7));
+    assert_eq!(app.editor.cursor(), (2, 3), "y al revés");
+    // Con mayúsculas, las distingue; el texto va tal cual (paréntesis y
+    // comillas no son una expresión regular).
+    command(&mut app, "buscar Track");
+    assert_eq!(app.editor.cursor(), (1, 3));
+    assert!(app.view().message.contains("1 de 1"));
+    command(&mut app, "buscar (\"c\")");
+    assert_eq!(app.editor.cursor(), (2, 8));
+    assert_eq!(highlighted(&mut app), ["(\"c\")"]);
+    // Lo que no sale no mueve nada ni deja resaltado.
+    command(&mut app, "buscar nada");
+    assert_eq!(app.editor.cursor(), (2, 8));
+    assert_eq!(app.view().message, "«nada» no sale en el script");
+    assert!(highlighted(&mut app).is_empty());
+    // «buscar» sin texto quita el resaltado; F6 repite lo último buscado.
+    command(&mut app, "buscar lowpass");
+    command(&mut app, "buscar");
+    assert!(highlighted(&mut app).is_empty());
+    app.editor
+        .move_cursor(ratatui_textarea::CursorMove::Jump(0, 0));
+    app.handle(f(6));
+    assert_eq!(app.editor.cursor(), (2, 18));
+    // En la paleta, con sus atajos.
+    app.open_palette();
+    type_text(&mut app, "buscar");
+    let screen = text_of(&mut app);
+    for item in [
+        "Buscar",
+        "Ctrl-F",
+        "Buscar el siguiente",
+        "F6",
+        "Buscar el anterior",
+        "F7",
+    ] {
+        assert!(screen.contains(item), "{item}: {screen}");
+    }
+}
+
+#[test]
+fn f6_without_a_search_says_how_to_search() {
+    let (mut app, _engine) = open_text("nav_find_none", SEARCH);
+    app.handle(f(6));
+    assert_eq!(app.editor.cursor(), (0, 0));
+    assert_eq!(app.view().message, "no hay nada buscado: Ctrl-F busca");
+}
+
+#[test]
+fn searching_happens_in_the_editor_window() {
+    use super::split::{editor_window, main_window, pump};
+    let path = fixture("nav_find_split", Some(SONG));
+    let (mut main, _engine) = main_window(&path, None);
+    let (mut editor, _idle) = editor_window(&path);
+    pump(&mut main, &mut editor);
+    command(&mut editor, "buscar kick");
+    assert_eq!(editor.editor.cursor(), (3, 7));
+    editor.handle(f(7));
+    assert_eq!(editor.editor.cursor(), (3, 7), "solo sale una vez");
+    // En la principal no hay cursor que mover.
+    for input in [ctrl('f'), f(6)] {
+        main.handle(input);
+        assert_eq!(main.view().prompt, None);
+        assert_eq!(main.view().message, "eso se hace en la ventana del editor");
+    }
+    command(&mut main, "buscar kick");
+    assert_eq!(main.view().message, "eso se hace en la ventana del editor");
+}

@@ -790,6 +790,8 @@ fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rect) -
     app.editor.set_line_number_style(Style::new().fg(dim()));
     app.editor
         .set_cursor_line_style(Style::new().add_modifier(Modifier::UNDERLINED));
+    app.editor
+        .set_search_style(Style::new().fg(Color::Black).bg(warning_color()));
     frame.render_widget(&app.editor, editor_area);
 
     // Subrayar los pasos con error de `steps("...")` que estén a la vista.
