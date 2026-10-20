@@ -15,6 +15,8 @@ pub enum Action {
     DuplicateLines,
     MoveLinesUp,
     MoveLinesDown,
+    TextStart,
+    TextEnd,
     Complete,
     SaveAndLoad,
     Load,
@@ -110,6 +112,18 @@ pub const ACTIONS: &[ActionDef] = &[
         name: "Bajar líneas",
         description: "Mueve la línea del cursor (o las seleccionadas) una abajo",
         keys: "",
+    },
+    ActionDef {
+        action: Action::TextStart,
+        name: "Ir al principio del texto",
+        description: "Lleva el cursor a la primera línea del script (con Shift, selecciona hasta allí)",
+        keys: "Ctrl-Inicio",
+    },
+    ActionDef {
+        action: Action::TextEnd,
+        name: "Ir al final del texto",
+        description: "Lleva el cursor al final de la última línea (con Shift, selecciona hasta allí)",
+        keys: "Ctrl-Fin",
     },
     ActionDef {
         action: Action::Complete,

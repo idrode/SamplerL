@@ -2395,6 +2395,7 @@ mod main_window;
 mod masking;
 mod midi_in;
 mod midi_out;
+mod navigation;
 mod record;
 mod resample;
 mod sections;

@@ -2791,6 +2791,8 @@ impl App {
                     self.message = "ya está abajo del todo".into();
                 }
             }
+            Action::TextStart => editing::jump_to_edge(&mut self.editor, false, false),
+            Action::TextEnd => editing::jump_to_edge(&mut self.editor, true, false),
             Action::Complete => self.open_completion(),
             Action::SaveAndLoad => self.save(),
             Action::Load => self.load(),
@@ -3308,6 +3310,11 @@ impl App {
             (Key::Right, _) if self.mode == Mode::Play => self.browse_slice(true),
             // En modo tocar el texto no se toca.
             _ if self.mode == Mode::Play => {}
+            // Ctrl-Inicio y Ctrl-Fin: principio y final del texto (el widget
+            // los tomaría por Inicio y Fin de la línea).
+            (Key::Home | Key::End, true) if !input.alt => {
+                editing::jump_to_edge(&mut self.editor, input.key == Key::End, input.shift);
+            }
             // Copiar y cortar: también al portapapeles del sistema.
             (Key::Char('c' | 'x'), true) if !input.alt => {
                 let selected = self.editor.selection_range().is_some();

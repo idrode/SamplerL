@@ -87,6 +87,8 @@ fn editor_side(action: Action) -> bool {
             | Action::DuplicateLines
             | Action::MoveLinesUp
             | Action::MoveLinesDown
+            | Action::TextStart
+            | Action::TextEnd
             | Action::Complete
             | Action::SaveAndLoad
             | Action::Load
@@ -115,6 +117,8 @@ fn needs_the_editor(action: Action) -> bool {
             | Action::DuplicateLines
             | Action::MoveLinesUp
             | Action::MoveLinesDown
+            | Action::TextStart
+            | Action::TextEnd
             | Action::Complete
             | Action::SaveAndLoad
             | Action::ReloadExternal

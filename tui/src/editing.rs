@@ -380,6 +380,24 @@ pub fn burst_text(inputs: &[Input]) -> Option<String> {
     breaks.then_some(text)
 }
 
+/// Lleva el cursor al principio del texto o a su final (Ctrl-Inicio y
+/// Ctrl-Fin). Con `select`, extiende la selección (o la empieza); sin él,
+/// la quita.
+pub fn jump_to_edge(editor: &mut TextArea, end: bool, select: bool) {
+    if !select {
+        editor.cancel_selection();
+    } else if editor.selection_range().is_none() {
+        editor.start_selection();
+    }
+    if end {
+        editor.move_cursor(CursorMove::Bottom);
+        editor.move_cursor(CursorMove::End);
+    } else {
+        editor.move_cursor(CursorMove::Top);
+        editor.move_cursor(CursorMove::Head);
+    }
+}
+
 /// Duplica las líneas seleccionadas o la del cursor debajo de sí mismas;
 /// el cursor pasa a la copia.
 pub fn duplicate_lines(editor: &mut TextArea) {

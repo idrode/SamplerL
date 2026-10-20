@@ -506,6 +506,8 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Duplicar líneas | Copia la línea del cursor (o las seleccionadas) debajo | — |
 | Subir líneas | Mueve la línea del cursor (o las seleccionadas) una arriba | — |
 | Bajar líneas | Mueve la línea del cursor (o las seleccionadas) una abajo | — |
+| Ir al principio del texto | Lleva el cursor a la primera línea del script (con Shift, selecciona hasta allí) | Ctrl-Inicio |
+| Ir al final del texto | Lleva el cursor al final de la última línea (con Shift, selecciona hasta allí) | Ctrl-Fin |
 | Autocompletar | Abre el autocompletado en el cursor | F4 |
 | Guardar y cargar | Guarda el script y lo carga (entra en el siguiente compás) | Ctrl-S |
 | Cargar sin guardar | Carga el texto del editor sin guardarlo | Ctrl-L o F5 |
@@ -935,8 +937,17 @@ Los del widget de texto (`ratatui-textarea`): flechas para moverse, Tab
 indentar (salvo con el autocompletado o un parámetro pendiente), Ctrl-Z o
 Ctrl-U deshacer, Ctrl-R rehacer, Ctrl-C copiar, Ctrl-X cortar, Ctrl-Y pegar,
 Ctrl-K borrar hasta el final de la línea, Ctrl-W borrar la palabra
-anterior, Ctrl-A / Ctrl-E inicio y final de línea, Ctrl-V / Alt-V página
-abajo y arriba.
+anterior.
+
+**Moverse.** Con Shift, todas seleccionan desde donde estaba el cursor:
+
+| Tecla | Qué hace |
+| --- | --- |
+| Ctrl-← / Ctrl-→ | Palabra anterior / siguiente (con Shift, selecciona por palabras) |
+| Inicio / Fin (o Ctrl-A / Ctrl-E) | Principio / final de la línea |
+| Ctrl-Inicio / Ctrl-Fin | Principio / final del texto |
+| Ctrl-↑ / Ctrl-↓ | Párrafo anterior / siguiente (hasta la línea en blanco) |
+| RePág / AvPág (o Alt-V / Ctrl-V) | Una pantalla arriba / abajo |
 
 **Portapapeles del sistema.** Ctrl-C y Ctrl-X mandan la selección
 también al portapapeles del sistema: por OSC 52 (la terminal lo guarda;

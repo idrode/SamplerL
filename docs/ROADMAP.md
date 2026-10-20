@@ -351,3 +351,6 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
    `cortes:set` (10 ms por defecto; con 0, el salto seco de siempre).
 6. ✅ **Ayuda del modo tocar** sin «Esc editor» en la principal con el
    editor en su ventana.
+7. ✅ **Navegación del editor**: lo que ya daba el widget (palabras,
+   línea, párrafos, páginas y selección con Shift), verificado, y
+   Ctrl-Inicio/Ctrl-Fin al principio y al final del texto.
