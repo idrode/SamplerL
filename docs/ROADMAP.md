@@ -326,7 +326,7 @@ propia ventana» en [docs/GUIA.md](GUIA.md).
 3. ✅ **Tracker con todas las pistas** a la vez, con las columnas al ancho
    que quepa.
 4. ✅ **Mezclador** con medidores, volumen, mute/solo y envíos por pista.
-5. **Tabla de choques de frecuencia** (la de `--analyze-masking`), si se
+5. ✅ **Tabla de choques de frecuencia** (la de `--analyze-masking`), si se
    ha calculado.
 6. **Cambiar en caliente**: sacar el editor a su ventana y volver a
    meterlo desde la paleta sin perder el texto, el cursor ni el historial

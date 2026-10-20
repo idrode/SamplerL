@@ -15,9 +15,9 @@ use crate::config::{Bound, Config, Keymap};
 use crate::diagnose;
 use crate::editing;
 use crate::model::{
-    BlockPickerView, BrowserView, CompletionView, ErrorView, InstrumentView, MasterView,
-    PaletteView, SlotsView, TimelineView, TrackView, TransportView, ViewModel, Waveform,
-    error_line,
+    BlockPickerView, BrowserView, ClashRow, ClashTableView, CompletionView, ErrorView,
+    InstrumentView, MasterView, PaletteView, SlotsView, TimelineView, TrackView, TransportView,
+    ViewModel, Waveform, error_line,
 };
 use crate::palette::{self, Action, Item};
 
@@ -266,6 +266,12 @@ pub struct App {
     versions: Option<VersionPicker>,
     /// Informe de choques de frecuencia abierto.
     masking: Option<MaskingPicker>,
+    /// El último análisis de choques (también sin choques) y cuántas
+    /// cargas se llevaban al hacerlo.
+    last_masking: Option<(script::masking::MaskingReport, u64)>,
+    /// Cargas que han entrado bien (y cambios de variante): lo que sabe si
+    /// el último análisis es de lo que suena.
+    loads: u64,
     /// Explorador de samples abierto.
     browser: Option<Browser>,
     /// Grabación de lo tocado en curso.
@@ -352,6 +358,8 @@ impl App {
             history_root: None,
             versions: None,
             masking: None,
+            last_masking: None,
+            loads: 0,
             browser: None,
             tapping: None,
             recording: None,
@@ -1384,6 +1392,7 @@ impl App {
         let text = self.text();
         match self.host.load(&mut self.controller, &text, &name, &base) {
             Ok(song) => {
+                self.loads += 1;
                 self.error = None;
                 self.message = "cargado: entra en el siguiente compás".into();
                 for warning in &song.warnings {
@@ -1723,6 +1732,7 @@ impl App {
     pub fn toggle_variant(&mut self) {
         match self.host.toggle_variant(&mut self.controller) {
             Ok(song) => {
+                self.loads += 1;
                 let letter = song.variant.unwrap_or('A');
                 self.message = format!("variante {letter}: entra en el compás siguiente");
                 let count = self.tracks().len();
@@ -2407,6 +2417,7 @@ impl App {
             ""
         };
         let clashes = report.clashes();
+        self.last_masking = Some((report.clone(), self.loads));
         if clashes.is_empty() {
             self.message = format!(
                 "sin choques de frecuencia entre {} pistas en {} compases{note}",
@@ -3717,6 +3728,39 @@ impl App {
                     selected: p.selected,
                     description: selected.map_or(String::new(), |c| p.report.summary(c)),
                     preview,
+                }
+            }),
+            clash_table: self.last_masking.as_ref().map(|(report, loads)| {
+                let (bands, rows) = report.grid();
+                let name = |t: usize| report.tracks[t].clone();
+                ClashTableView {
+                    bars: report.bars,
+                    tracks: report.tracks.len(),
+                    stale: *loads != self.loads,
+                    bands: bands
+                        .iter()
+                        .map(|&b| engine::masking::BAND_NAMES[b].to_string())
+                        .collect(),
+                    rows: rows
+                        .into_iter()
+                        .map(|((a, b), cells)| ClashRow {
+                            a: name(a),
+                            b: name(b),
+                            cells,
+                        })
+                        .collect(),
+                    clashes: report
+                        .clashes()
+                        .iter()
+                        .map(|c| {
+                            (
+                                name(c.a),
+                                name(c.b),
+                                engine::masking::BAND_NAMES[c.band].to_string(),
+                                c.clash.score,
+                            )
+                        })
+                        .collect(),
                 }
             }),
             completion: self.completion.as_ref().map(|c| {

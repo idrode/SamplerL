@@ -32,6 +32,9 @@ pub struct ViewModel {
     pub versions: Option<BlockPickerView>,
     /// Informe de choques de frecuencia abierto.
     pub masking: Option<BlockPickerView>,
+    /// Tabla del último análisis de choques, si se ha hecho (la ventana
+    /// principal sin editor la muestra junto al sample).
+    pub clash_table: Option<ClashTableView>,
     /// Explorador de samples abierto.
     pub browser: Option<BrowserView>,
     /// Esperando el número de una ranura rápida.
@@ -73,6 +76,32 @@ pub struct ViewModel {
     /// Esta es la ventana principal con el editor en la suya: las vistas
     /// ocupan toda la ventana.
     pub editor_outside: bool,
+}
+
+/// Tabla de choques de frecuencia del último análisis.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ClashTableView {
+    /// Compases y pistas analizados.
+    pub bars: u64,
+    pub tracks: usize,
+    /// Se ha cargado otra cosa después de analizar.
+    pub stale: bool,
+    /// Bandas que chocan en alguna pareja (`315`, `1.25k`), de grave a
+    /// agudo.
+    pub bands: Vec<String>,
+    /// Una fila por pareja con algún choque: las dos pistas y una celda por
+    /// banda.
+    pub rows: Vec<ClashRow>,
+    /// Los choques, del más fuerte al más débil: las dos pistas, la banda
+    /// y la puntuación.
+    pub clashes: Vec<(String, String, String, f32)>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClashRow {
+    pub a: String,
+    pub b: String,
+    pub cells: Vec<script::masking::Cell>,
 }
 
 /// Medidor del master.

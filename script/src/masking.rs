@@ -347,13 +347,7 @@ impl MaskingReport {
     /// coinciden y cuál suena más en la banda.
     pub fn summary(&self, clash: &Clash) -> String {
         let c = clash.clash;
-        let strength = if c.score >= 0.6 {
-            "fuerte"
-        } else if c.score >= 0.4 {
-            "medio"
-        } else {
-            "leve"
-        };
+        let strength = strength(c.score);
         let [la, lb] = c.level_db;
         let gap = (la - lb).abs();
         let louder = if gap < 1.0 {
@@ -427,10 +421,10 @@ impl MaskingReport {
         out
     }
 
-    /// Tabla pareja × banda: una fila por pareja con algún choque y una
-    /// columna por banda que choca en alguna pareja (`·` sin choque, `-`
-    /// banda vacía).
-    pub fn table(&self) -> String {
+    /// Tabla pareja × banda: las bandas que chocan en alguna pareja (de
+    /// grave a agudo) y una fila por pareja con algún choque, con una celda
+    /// por cada una de esas bandas.
+    pub fn grid(&self) -> (Vec<usize>, Vec<GridRow>) {
         let clashes = self.clashes();
         let mut bands: Vec<usize> = clashes.iter().map(|c| c.band).collect();
         bands.sort_unstable();
@@ -438,9 +432,31 @@ impl MaskingReport {
         let mut pairs: Vec<(usize, usize)> = clashes.iter().map(|c| (c.a, c.b)).collect();
         pairs.sort_unstable();
         pairs.dedup();
-        let names: Vec<String> = pairs
+        let rows = pairs
+            .into_iter()
+            .map(|(a, b)| {
+                let pair = self.pairs.iter().find(|p| (p.a, p.b) == (a, b)).unwrap();
+                let cells = bands
+                    .iter()
+                    .map(|&band| match pair.bands[band] {
+                        None => Cell::Empty,
+                        Some(c) if c.score < self.options.report_score => Cell::Quiet,
+                        Some(c) => Cell::Clash(c.score),
+                    })
+                    .collect();
+                ((a, b), cells)
+            })
+            .collect();
+        (bands, rows)
+    }
+
+    /// La tabla de [`MaskingReport::grid`] en texto (`·` sin choque, `-`
+    /// banda vacía).
+    pub fn table(&self) -> String {
+        let (bands, rows) = self.grid();
+        let names: Vec<String> = rows
             .iter()
-            .map(|&(a, b)| format!("{} × {}", self.tracks[a], self.tracks[b]))
+            .map(|&((a, b), _)| format!("{} × {}", self.tracks[a], self.tracks[b]))
             .collect();
         let width = names.iter().map(|n| n.chars().count()).max().unwrap_or(0);
         let mut out = format!("{:width$}", "");
@@ -448,20 +464,52 @@ impl MaskingReport {
             out.push_str(&format!(" {:>5}", BAND_NAMES[band]));
         }
         out.push('\n');
-        for (name, &(a, b)) in names.iter().zip(&pairs) {
-            let pair = self.pairs.iter().find(|p| (p.a, p.b) == (a, b)).unwrap();
+        for (name, (_, cells)) in names.iter().zip(&rows) {
             out.push_str(&format!("{name:<width$}"));
-            for &band in &bands {
-                let cell = match pair.bands[band] {
-                    None => "-".to_string(),
-                    Some(c) if c.score < self.options.report_score => "·".to_string(),
-                    Some(c) => score_text(c.score),
-                };
-                out.push_str(&format!(" {cell:>5}"));
+            for cell in cells {
+                out.push_str(&format!(" {:>5}", cell.text()));
             }
             out.push('\n');
         }
         out
+    }
+}
+
+/// Fila de [`MaskingReport::grid`]: la pareja (índices de pistas) y sus
+/// celdas.
+pub type GridRow = ((usize, usize), Vec<Cell>);
+
+/// Celda de la tabla pareja × banda.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Cell {
+    /// Banda casi vacía para la pareja.
+    Empty,
+    /// Suenan las dos, pero por debajo del umbral de informe.
+    Quiet,
+    /// Choque con su puntuación.
+    Clash(f32),
+}
+
+impl Cell {
+    /// `-`, `·` o la puntuación.
+    pub fn text(&self) -> String {
+        match self {
+            Cell::Empty => "-".into(),
+            Cell::Quiet => "·".into(),
+            Cell::Clash(score) => score_text(*score),
+        }
+    }
+}
+
+/// Lo fuerte que es un choque: «fuerte» desde 0,6, «medio» desde 0,4 y
+/// «leve» por debajo.
+pub fn strength(score: f32) -> &'static str {
+    if score >= 0.6 {
+        "fuerte"
+    } else if score >= 0.4 {
+        "medio"
+    } else {
+        "leve"
     }
 }
 

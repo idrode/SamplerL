@@ -256,7 +256,14 @@ anterior.
   si satura y los envíos, y la del master con `LIM` y `SAT`) y a la
   derecha el tracker con todas las pistas a la vez (las columnas se
   estrechan para que quepan; si ni así, el título dice cuántas se ven); y
-  abajo los efectos.
+  abajo los efectos. Tras analizar los choques de frecuencia (F1
+  «Choques de frecuencia»), su tabla se queda a la derecha de la forma de
+  onda al cerrar el informe: una fila por pareja de pistas y una columna
+  por banda, con la puntuación en rojo si el choque es fuerte y en
+  amarillo si es medio (`·`: suenan las dos sin chocar; `-`: banda vacía)
+  y resaltadas las parejas de la pista seleccionada; si no cabe, la lista
+  de choques del más fuerte al más débil. Al cargar otra cosa, avisa de
+  que es de una carga anterior hasta que se vuelve a analizar.
 - **Lo que cambia la principal en el texto** (etiquetar, `bpm`, el EQ
   sugerido, lo grabado, restaurar una versión) llega al editor como un
   solo cambio (Ctrl-Z lo deshace), sin guardar. Si en ese momento estás

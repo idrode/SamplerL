@@ -7,14 +7,18 @@ use super::*;
 /// La carpeta del test con senos de 2 s a 100, 300 y 5000 Hz y `song.lua`.
 fn sines(test: &str, song: &str) -> (PathBuf, App, Engine) {
     let (path, app, engine) = open(test, Some(song));
-    let dir = path.parent().unwrap();
+    write_sines(path.parent().unwrap());
+    (path, app, engine)
+}
+
+/// Senos de 2 s a 100, 300 y 5000 Hz en `dir`.
+pub fn write_sines(dir: &Path) {
     for freq in [100, 300, 5000] {
         let mono: Vec<f32> = (0..2 * RATE as usize)
             .map(|i| 0.3 * (std::f32::consts::TAU * freq as f32 * i as f32 / RATE as f32).sin())
             .collect();
         offline::write_wav(dir.join(format!("sine{freq}.wav")), &mono, 1, RATE).unwrap();
     }
-    (path, app, engine)
 }
 
 pub const ONE: &str = "1 . . .  . . . .  . . . .  . . . .";

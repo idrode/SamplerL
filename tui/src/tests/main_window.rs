@@ -3,8 +3,15 @@
 
 use ratatui::style::Color;
 
+use script::masking::Cell;
+
+use super::masking::{two, write_sines};
 use super::split::{editor_window, main_window, pump};
-use super::{SONG, draw, draw_widget, find, fixture, open, text, tracker_view, waveform_view};
+use super::{
+    SONG, draw, draw_widget, esc, f, find, fixture, open, text, tracker_view, type_query,
+    waveform_view,
+};
+use crate::model::{ClashRow, ClashTableView};
 use crate::ui;
 
 #[test]
@@ -307,4 +314,159 @@ fn the_play_help_says_esc_editor_only_with_an_editor() {
     assert!(help.starts_with("TOCAR: 1-0 q-i cortes"), "{help}");
     assert!(help.ends_with("Esc editor"), "{help}");
     assert!(!main.view().key_help.contains("Esc"));
+}
+
+/// Un análisis de choques con dos parejas (drums × kick y drums × bajo) en
+/// tres bandas, en una vista con drums y kick (seleccionada kick).
+fn clash_view() -> crate::model::ViewModel {
+    let mut view = tracker_view(None, false);
+    view.clash_table = Some(ClashTableView {
+        bars: 4,
+        tracks: 3,
+        stale: false,
+        bands: vec!["63".into(), "315".into(), "1.25k".into()],
+        rows: vec![
+            ClashRow {
+                a: "drums".into(),
+                b: "kick".into(),
+                cells: vec![Cell::Clash(0.82), Cell::Quiet, Cell::Empty],
+            },
+            ClashRow {
+                a: "drums".into(),
+                b: "bajo".into(),
+                cells: vec![Cell::Quiet, Cell::Clash(0.45), Cell::Clash(0.31)],
+            },
+        ],
+        clashes: vec![
+            ("drums".into(), "kick".into(), "63".into(), 0.82),
+            ("drums".into(), "bajo".into(), "315".into(), 0.45),
+            ("drums".into(), "bajo".into(), "1.25k".into(), 0.31),
+        ],
+    });
+    view
+}
+
+#[test]
+fn the_clash_panel_draws_the_pair_by_band_table() {
+    let view = clash_view();
+    let table = view.clash_table.as_ref().unwrap();
+    // Tabla: «drums × kick» (12) y tres columnas de 6, con el borde: 32;
+    // en 100 de ancho caben dos quintos (40).
+    assert_eq!(ui::ClashPanel::width(table, 100), 32);
+    // Sin sitio para la tabla, la lista (pareja, banda y puntuación): 31,
+    // y nunca menos que el mínimo ni más de dos quintos.
+    assert_eq!(ui::ClashPanel::width(table, 75), 30);
+    // Sin sitio para el panel y el sample, nada.
+    assert_eq!(ui::ClashPanel::width(table, 60), 0);
+
+    let buffer = draw_widget(ui::ClashPanel(&view), 32, 6);
+    let screen = text(&buffer);
+    let line = |y: usize| screen.lines().nth(y).unwrap().to_string();
+    assert!(line(0).starts_with("┌ choques · 4 compases "), "{screen}");
+    assert_eq!(line(1), "│                63   315 1.25k│", "{screen}");
+    assert_eq!(line(2), "│drums × kick  0.82     ·     -│", "{screen}");
+    assert_eq!(line(3), "│drums × bajo     ·  0.45  0.31│", "{screen}");
+    // Fuerte en rojo, medio en amarillo, leve sin color; las parejas de la
+    // pista seleccionada (kick), con el acento.
+    assert_eq!(buffer[(16, 2)].fg, Color::Red);
+    assert_eq!(buffer[(22, 3)].fg, Color::Yellow);
+    assert_eq!(buffer[(28, 3)].fg, Color::Reset);
+    assert_eq!(buffer[(1, 2)].fg, Color::Cyan);
+    assert_eq!(buffer[(1, 3)].fg, Color::Reset);
+}
+
+#[test]
+fn a_narrow_clash_panel_lists_the_clashes_strongest_first() {
+    let view = clash_view();
+    let buffer = draw_widget(ui::ClashPanel(&view), 30, 6);
+    let screen = text(&buffer);
+    let line = |y: usize| screen.lines().nth(y).unwrap().to_string();
+    assert_eq!(line(1), "│drums × kick     63 Hz  0.82│", "{screen}");
+    assert_eq!(line(2), "│drums × bajo    315 Hz  0.45│", "{screen}");
+    assert_eq!(line(3), "│drums × bajo  1.25k Hz  0.31│", "{screen}");
+    assert_eq!(buffer[(25, 1)].fg, Color::Red);
+    // Sin sitio para todos, cuántos faltan.
+    let buffer = draw_widget(ui::ClashPanel(&view), 30, 4);
+    let screen = text(&buffer);
+    assert!(
+        screen.contains("│drums × kick     63 Hz  0.82│"),
+        "{screen}"
+    );
+    assert!(screen.contains("│… y 2 más"), "{screen}");
+}
+
+#[test]
+fn the_clash_panel_warns_when_stale_and_says_when_there_are_none() {
+    let mut view = clash_view();
+    view.clash_table.as_mut().unwrap().stale = true;
+    let buffer = draw_widget(ui::ClashPanel(&view), 32, 7);
+    let screen = text(&buffer);
+    assert!(
+        screen
+            .lines()
+            .nth(5)
+            .unwrap()
+            .starts_with("│⚠ de una carga anterior"),
+        "{screen}"
+    );
+    assert_eq!(buffer[(0, 0)].fg, Color::Yellow, "borde de aviso");
+    // La tabla, igual encima.
+    assert!(
+        screen.contains("│drums × bajo     ·  0.45  0.31│"),
+        "{screen}"
+    );
+
+    let mut view = clash_view();
+    let table = view.clash_table.as_mut().unwrap();
+    table.rows.clear();
+    table.clashes.clear();
+    table.bands.clear();
+    let screen = text(&draw_widget(ui::ClashPanel(&view), 32, 4));
+    assert!(screen.contains("│sin choques entre 3 pistas"), "{screen}");
+}
+
+#[test]
+fn the_main_window_shows_the_last_clash_analysis_beside_the_sample() {
+    let path = fixture("main_window_clashes", Some(&two(300, 300)));
+    write_sines(path.parent().unwrap());
+    let (mut main, _engine) = main_window(&path, None);
+    main.load();
+    let (mut editor, _idle) = editor_window(&path);
+    pump(&mut main, &mut editor);
+    // Sin analizar, nada.
+    let screen = text(&draw(&mut main, 120, 40));
+    assert!(!screen.contains("choques"), "{screen}");
+    // Se analiza desde la paleta y se cierra el informe: la tabla se queda
+    // a la derecha del sample.
+    main.handle(f(1));
+    type_query(&mut main, "choques");
+    main.handle(super::special(ratatui_textarea::Key::Enter));
+    assert!(main.view().masking.is_some(), "{}", main.view().message);
+    main.handle(esc());
+    let buffer = draw(&mut main, 120, 40);
+    let screen = text(&buffer);
+    let (x, y) = find(&buffer, "┌ choques · ").expect(&screen);
+    assert_eq!(y, 1, "{screen}");
+    assert!(x > 60, "{screen}");
+    assert_eq!(
+        buffer[(x - 1, 1)].symbol(),
+        "┐",
+        "el sample, a su izquierda"
+    );
+    assert!(screen.contains("a × b"), "{screen}");
+    assert!(!screen.contains("de una carga anterior"), "{screen}");
+    // Otra carga: la tabla sigue, pero avisa de que es de antes.
+    main.load();
+    let screen = text(&draw(&mut main, 120, 40));
+    assert!(screen.contains("de una carga anterior"), "{screen}");
+
+    // Con una sola ventana, el layout de siempre (el informe, en su popup).
+    let (path, mut single, _engine) = open("main_window_clashes_single", Some(&two(300, 300)));
+    write_sines(path.parent().unwrap());
+    single.load();
+    single.open_masking();
+    single.handle(esc());
+    assert!(single.view().clash_table.is_some());
+    let screen = text(&draw(&mut single, 120, 40));
+    assert!(!screen.contains("┌ choques"), "{screen}");
 }

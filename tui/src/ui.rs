@@ -10,8 +10,8 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
 
 use crate::app::App;
 use crate::model::{
-    BlockPickerView, BrowserView, CompletionView, PaletteView, SlotsView, TimelineView, ViewModel,
-    fx_text, fx_text_named,
+    BlockPickerView, BrowserView, ClashTableView, CompletionView, PaletteView, SlotsView,
+    TimelineView, ViewModel, fx_text, fx_text_named,
 };
 use crate::theme;
 
@@ -153,7 +153,17 @@ fn draw_main_window(frame: &mut Frame, view: &ViewModel) {
         Constraint::Length(TRACKER_HEIGHT),
     ])
     .areas(body);
+    // Con un análisis de choques hecho, su tabla a la derecha del sample.
+    let width = view
+        .clash_table
+        .as_ref()
+        .map_or(0, |table| ClashPanel::width(table, sample_area.width));
+    let [sample_area, clash_area] =
+        Layout::horizontal([Constraint::Min(0), Constraint::Length(width)]).areas(sample_area);
     frame.render_widget(BigSamplePanel(view), sample_area);
+    if width > 0 {
+        frame.render_widget(ClashPanel(view), clash_area);
+    }
     // El mezclador, lo que pidan sus tiras (hasta la mitad); el tracker,
     // lo demás.
     let mixer_width = MixerPanel::width(view.tracks.len()).min(lower.width / 2);
@@ -164,6 +174,189 @@ fn draw_main_window(frame: &mut Frame, view: &ViewModel) {
     frame.render_widget(FxPanel(view), fx);
     frame.render_widget(HelpLine(view), help);
     draw_popups(frame, view, None);
+}
+
+/// Tabla de choques de frecuencia del último análisis (la de
+/// `--analyze-masking`), en la ventana principal sin editor: una fila por
+/// pareja y una columna por banda que choca, con la puntuación en rojo si
+/// es fuerte, en amarillo si es media y normal si es leve (`·` suenan las
+/// dos sin chocar, `-` banda vacía), y en el acento las parejas de la
+/// pista seleccionada. Si la tabla no cabe, la lista de choques del más
+/// fuerte al más débil. Si se ha cargado otra cosa después, lo avisa.
+pub struct ClashPanel<'a>(pub &'a ViewModel);
+
+/// Ancho de una columna de banda (` 1.25k`).
+const CLASH_COLUMN: u16 = 6;
+/// Ancho mínimo del panel de choques y lo que se deja como mínimo al
+/// sample a su izquierda.
+const CLASH_MIN: u16 = 28;
+const SAMPLE_BESIDE_CLASHES: u16 = 40;
+
+impl ClashPanel<'_> {
+    /// Ancho que pide la tabla (con el borde) en una fila de `room` de
+    /// ancho: la tabla entera si cabe en dos quintos, si no la lista; 0 si
+    /// no queda sitio para ella y el sample.
+    pub fn width(table: &ClashTableView, room: u16) -> u16 {
+        let most = room * 2 / 5;
+        if most < CLASH_MIN || room - most < SAMPLE_BESIDE_CLASHES {
+            return 0;
+        }
+        let grid = Self::names_width(table) + CLASH_COLUMN * table.bands.len() as u16 + 2;
+        let wanted = if grid <= most {
+            grid
+        } else {
+            Self::list_width(table) + 2
+        };
+        wanted.clamp(CLASH_MIN, most)
+    }
+
+    fn pair(a: &str, b: &str) -> String {
+        format!("{a} × {b}")
+    }
+
+    fn names_width(table: &ClashTableView) -> u16 {
+        table
+            .rows
+            .iter()
+            .map(|r| Self::pair(&r.a, &r.b).chars().count() as u16)
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Ancho de una línea de la lista: pareja, banda y puntuación.
+    fn list_width(table: &ClashTableView) -> u16 {
+        table
+            .clashes
+            .iter()
+            .map(|(a, b, band, _)| {
+                (Self::pair(a, b).chars().count() + 2 + band.chars().count() + 3 + 2 + 4) as u16
+            })
+            .max()
+            .unwrap_or(0)
+    }
+}
+
+/// Color de la puntuación de un choque según lo fuerte que es.
+fn clash_style(score: f32) -> Style {
+    match script::masking::strength(score) {
+        "fuerte" => Style::new().fg(error_color()).bold(),
+        "medio" => Style::new().fg(Color::Yellow),
+        _ => Style::new(),
+    }
+}
+
+impl Widget for ClashPanel<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let view = self.0;
+        let Some(table) = &view.clash_table else {
+            return;
+        };
+        let border = if table.stale {
+            Style::new().fg(warning_color())
+        } else {
+            Style::new()
+        };
+        let block = Block::bordered()
+            .border_style(border)
+            .title(format!(" choques · {} compases ", table.bars));
+        let mut inner = block.inner(area);
+        block.render(area, buf);
+        if inner.height == 0 || inner.width == 0 {
+            return;
+        }
+        // Abajo, el aviso de que es de antes de la última carga.
+        if table.stale {
+            let y = inner.y + inner.height - 1;
+            buf.set_stringn(
+                inner.x,
+                y,
+                "⚠ de una carga anterior",
+                inner.width as usize,
+                Style::new().fg(warning_color()),
+            );
+            inner.height -= 1;
+        }
+        if table.rows.is_empty() {
+            buf.set_stringn(
+                inner.x,
+                inner.y,
+                format!("sin choques entre {} pistas", table.tracks),
+                inner.width as usize,
+                Style::new().fg(dim()),
+            );
+            return;
+        }
+        let selected = view
+            .selected
+            .and_then(|i| view.tracks.get(i))
+            .map(|t| t.name.as_str());
+        let name_style = |a: &str, b: &str| {
+            if selected.is_some_and(|s| s == a || s == b) {
+                Style::new().fg(accent()).bold()
+            } else {
+                Style::new()
+            }
+        };
+        let names = ClashPanel::names_width(table);
+        let grid = names + CLASH_COLUMN * table.bands.len() as u16;
+        let width = inner.width as usize;
+        if grid <= inner.width && table.rows.len() < inner.height as usize {
+            // La tabla: cabecera con las bandas y una fila por pareja.
+            for (i, band) in table.bands.iter().enumerate() {
+                let x = inner.x + names + i as u16 * CLASH_COLUMN;
+                buf.set_string(x, inner.y, format!(" {band:>5}"), Style::new().fg(dim()));
+            }
+            for (row, y) in table.rows.iter().zip(inner.y + 1..) {
+                buf.set_string(
+                    inner.x,
+                    y,
+                    ClashPanel::pair(&row.a, &row.b),
+                    name_style(&row.a, &row.b),
+                );
+                for (i, cell) in row.cells.iter().enumerate() {
+                    let x = inner.x + names + i as u16 * CLASH_COLUMN;
+                    let style = match cell {
+                        script::masking::Cell::Clash(score) => clash_style(*score),
+                        _ => Style::new().fg(dim()),
+                    };
+                    buf.set_string(x, y, format!(" {:>5}", cell.text()), style);
+                }
+            }
+            return;
+        }
+        // La lista, del más fuerte al más débil; si no caben, cuántos
+        // faltan en la última fila.
+        let rows = inner.height as usize;
+        let shown = if table.clashes.len() > rows {
+            rows.saturating_sub(1)
+        } else {
+            table.clashes.len()
+        };
+        let pair_width = table
+            .clashes
+            .iter()
+            .map(|(a, b, _, _)| ClashPanel::pair(a, b).chars().count())
+            .max()
+            .unwrap_or(0);
+        for ((a, b, band, score), y) in table.clashes.iter().take(shown).zip(inner.y..) {
+            let pair = ClashPanel::pair(a, b);
+            let line = Line::from(vec![
+                Span::styled(format!("{pair:<pair_width$}"), name_style(a, b)),
+                Span::styled(format!("  {band:>5} Hz  "), Style::new().fg(dim())),
+                Span::styled(script::masking::score_text(*score), clash_style(*score)),
+            ]);
+            buf.set_line(inner.x, y, &line, inner.width);
+        }
+        if shown < table.clashes.len() && rows > 0 {
+            buf.set_stringn(
+                inner.x,
+                inner.y + shown as u16,
+                format!("… y {} más", table.clashes.len() - shown),
+                width,
+                Style::new().fg(dim()),
+            );
+        }
+    }
 }
 
 /// Línea de arriba de la ventana principal sin editor: el transporte (como
