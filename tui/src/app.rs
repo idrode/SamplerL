@@ -493,6 +493,7 @@ impl App {
             "bpm" => self.set_bpm_line(args.first().copied()),
             "grabar" | "record" => self.start_recording(args.first().copied()),
             "seccion" | "sección" | "section" => self.jump_to_section(rest),
+            "linea" | "línea" | "line" => self.goto_line(rest),
             "remuestrear" | "remuestrear!" | "resample" => {
                 self.resample(&args, command.ends_with('!'))
             }
@@ -502,7 +503,7 @@ impl App {
             other => {
                 self.message = format!(
                     "orden desconocida «{other}» (exportar, guardar, abrir, muestras, etiquetar, \
-                     bpm, bloque, remuestrear, seccion)"
+                     bpm, bloque, remuestrear, seccion, linea)"
                 );
             }
         }
@@ -1480,6 +1481,25 @@ impl App {
             let row = (line.saturating_sub(1)).min(u16::MAX as usize) as u16;
             self.editor.move_cursor(CursorMove::Jump(row, 0));
         }
+    }
+
+    /// `linea N`: lleva el cursor al principio de la línea N (desde 1). Más
+    /// allá del final, a la última.
+    fn goto_line(&mut self, number: &str) {
+        let Ok(line) = number.parse::<usize>() else {
+            self.message = format!("linea N: «{number}» no es un número de línea");
+            return;
+        };
+        let lines = self.editor.lines().len();
+        let row = line.clamp(1, lines) - 1;
+        self.editor.cancel_selection();
+        self.editor
+            .move_cursor(CursorMove::Jump(row.min(u16::MAX as usize) as u16, 0));
+        self.message = if line > lines {
+            format!("el script tiene {lines} líneas: a la última")
+        } else {
+            String::new()
+        };
     }
 
     /// La cola por la que llegan los mensajes del puerto MIDI de entrada.
@@ -2793,6 +2813,11 @@ impl App {
             }
             Action::TextStart => editing::jump_to_edge(&mut self.editor, false, false),
             Action::TextEnd => editing::jump_to_edge(&mut self.editor, true, false),
+            Action::GotoLine => {
+                self.prompt = Some("linea ".into());
+                let lines = self.editor.lines().len();
+                self.message = format!("linea N: lleva el cursor a la línea N (1 a {lines})");
+            }
             Action::Complete => self.open_completion(),
             Action::SaveAndLoad => self.save(),
             Action::Load => self.load(),

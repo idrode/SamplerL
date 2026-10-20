@@ -17,6 +17,7 @@ pub enum Action {
     MoveLinesDown,
     TextStart,
     TextEnd,
+    GotoLine,
     Complete,
     SaveAndLoad,
     Load,
@@ -124,6 +125,12 @@ pub const ACTIONS: &[ActionDef] = &[
         name: "Ir al final del texto",
         description: "Lleva el cursor al final de la última línea (con Shift, selecciona hasta allí)",
         keys: "Ctrl-Fin",
+    },
+    ActionDef {
+        action: Action::GotoLine,
+        name: "Ir a la línea",
+        description: "Abre «linea » para escribir el número de línea; Enter lleva el cursor a su principio",
+        keys: "Alt-G",
     },
     ActionDef {
         action: Action::Complete,

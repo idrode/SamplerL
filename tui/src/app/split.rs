@@ -89,6 +89,7 @@ fn editor_side(action: Action) -> bool {
             | Action::MoveLinesDown
             | Action::TextStart
             | Action::TextEnd
+            | Action::GotoLine
             | Action::Complete
             | Action::SaveAndLoad
             | Action::Load
@@ -119,6 +120,7 @@ fn needs_the_editor(action: Action) -> bool {
             | Action::MoveLinesDown
             | Action::TextStart
             | Action::TextEnd
+            | Action::GotoLine
             | Action::Complete
             | Action::SaveAndLoad
             | Action::ReloadExternal
@@ -128,6 +130,11 @@ fn needs_the_editor(action: Action) -> bool {
             | Action::YankSlot
             | Action::PasteSlot
     )
+}
+
+/// Órdenes de F2 que mueven el cursor del editor: se hacen donde esté.
+fn moves_the_cursor(command: &str) -> bool {
+    matches!(command, "linea" | "línea" | "line")
 }
 
 /// Acciones que abren algo en la ventana principal (hay que ir a ella).
@@ -298,9 +305,10 @@ impl App {
         }
     }
 
-    /// Una orden de F2: en el editor separado, solo `bloque` se hace aquí;
-    /// las demás van a la principal. En la principal, `abrir` no (el
-    /// editor seguiría con el script de antes).
+    /// Una orden de F2: en el editor separado, solo `bloque` y `linea` se
+    /// hacen aquí; las demás van a la principal. En la principal, `abrir` no
+    /// (el editor seguiría con el script de antes), ni `linea` (no hay
+    /// cursor que mover).
     pub(super) fn link_command(&mut self, line: &str) -> bool {
         let command = line.split_whitespace().next().unwrap_or_default();
         match &mut self.link {
@@ -310,7 +318,13 @@ impl App {
                         .into();
                 true
             }
-            Some(Link::Editor(editor)) if !command.starts_with("bloque") => {
+            Some(Link::Main(_)) if moves_the_cursor(command) => {
+                self.message = "eso se hace en la ventana del editor".into();
+                true
+            }
+            Some(Link::Editor(editor))
+                if !command.starts_with("bloque") && !moves_the_cursor(command) =>
+            {
                 let sent = editor
                     .client
                     .conn()

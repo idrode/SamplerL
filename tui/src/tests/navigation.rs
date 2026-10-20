@@ -109,3 +109,58 @@ fn ctrl_home_and_ctrl_end_go_to_the_ends_of_the_text() {
     assert!(screen.contains("Ir al principio del texto"), "{screen}");
     assert!(screen.contains("Ctrl-Inicio"), "{screen}");
 }
+
+#[test]
+fn alt_g_goes_to_a_line() {
+    let (mut app, _engine) = open_text("nav_line", TEXT);
+    app.editor
+        .move_cursor(ratatui_textarea::CursorMove::Jump(0, 3));
+    app.handle(with(Key::Char('g'), false, true, false));
+    assert_eq!(app.view().prompt.as_deref(), Some("linea "));
+    assert!(
+        app.view().message.contains("1 a 3"),
+        "{}",
+        app.view().message
+    );
+    type_text(&mut app, "2\n");
+    assert_eq!(app.editor.cursor(), (1, 0));
+    assert_eq!(app.view().prompt, None);
+    // Más allá del final, a la última; lo que no es un número, nada.
+    command(&mut app, "linea 40");
+    assert_eq!(app.editor.cursor(), (2, 0));
+    assert!(app.view().message.contains("3 líneas"));
+    command(&mut app, "linea dos");
+    assert_eq!(app.editor.cursor(), (2, 0));
+    assert!(app.view().message.contains("no es un número"));
+    // Ctrl-G sigue siendo ir al error.
+    assert_eq!(
+        crate::config::Keymap::default().lookup(&ctrl('g')),
+        Some(crate::config::Bound::Action(
+            crate::palette::Action::GotoError
+        ))
+    );
+    // En la paleta, con su atajo.
+    app.open_palette();
+    type_text(&mut app, "ir a la linea");
+    let screen = text_of(&mut app);
+    assert!(screen.contains("Ir a la línea"), "{screen}");
+    assert!(screen.contains("Alt-G"), "{screen}");
+}
+
+#[test]
+fn the_line_is_found_in_the_editor_window() {
+    use super::split::{editor_window, main_window, pump};
+    let path = fixture("nav_line_split", Some(SONG));
+    let (mut main, _engine) = main_window(&path, None);
+    let (mut editor, _idle) = editor_window(&path);
+    pump(&mut main, &mut editor);
+    command(&mut editor, "linea 3");
+    assert_eq!(editor.editor.cursor(), (2, 0));
+    assert_eq!(editor.view().message, "");
+    // En la principal no hay cursor que mover.
+    main.handle(with(Key::Char('g'), false, true, false));
+    assert_eq!(main.view().prompt, None);
+    assert_eq!(main.view().message, "eso se hace en la ventana del editor");
+    command(&mut main, "linea 2");
+    assert_eq!(main.view().message, "eso se hace en la ventana del editor");
+}

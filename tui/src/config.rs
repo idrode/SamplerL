@@ -46,6 +46,7 @@ pub const BINDABLE: &[(&str, Bound, &[&str])] = &[
         &["ctrl-t", "f8"],
     ),
     ("ir_al_error", Bound::Action(Action::GotoError), &["ctrl-g"]),
+    ("ir_a_linea", Bound::Action(Action::GotoLine), &["alt-g"]),
     (
         "siguiente_pista",
         Bound::Action(Action::NextTrack),
@@ -616,7 +617,7 @@ brillo = "red"
             [
                 "[teclas] cargar: F1 es siempre la paleta de comandos",
                 "[teclas] explorador: Alt-S ya es de guardar; no se usa",
-                "[teclas] «inventada» no existe (hay: paleta, guardar, cargar, marcha, ir_al_error, siguiente_pista, recargar, ordenes, completar, salir, modo_tocar, deshacer, rehacer, explorador, tap_tempo, metronomo, exportar, seccion_siguiente, seccion_anterior, repetir_seccion, variante)",
+                "[teclas] «inventada» no existe (hay: paleta, guardar, cargar, marcha, ir_al_error, ir_a_linea, siguiente_pista, recargar, ordenes, completar, salir, modo_tocar, deshacer, rehacer, explorador, tap_tempo, metronomo, exportar, seccion_siguiente, seccion_anterior, repetir_seccion, variante)",
                 "[teclas] salir: «q»: una letra sin ctrl- ni alt- escribiría texto",
                 "[teclas] Ctrl-G era de ir_al_error; ahora es de marcha",
                 "[colores] tenue: color no válido",
