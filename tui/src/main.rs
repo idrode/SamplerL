@@ -639,6 +639,10 @@ fn run_terminal(
         loop {
             app.poll_midi();
             app.tick();
+            // El editor separado volvió a la principal (se lo pidió ella).
+            if app.leaving() {
+                return Ok(());
+            }
             terminal.draw(|frame| draw(frame, app))?;
             // Lo copiado, al portapapeles de la terminal (OSC 52).
             let osc = app.clipboard.take_osc();

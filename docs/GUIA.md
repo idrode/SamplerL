@@ -233,6 +233,23 @@ principal lo vuelve a abrir; el nuevo recupera el texto, también lo que
 estaba sin guardar. Solo hay un editor a la vez: uno nuevo sustituye al
 anterior.
 
+**Cambiar en caliente**, sin volver a arrancar y sin que deje de sonar:
+
+- Con una sola ventana (`tui --edit`, sin `--split`), F1 «Abrir el editor
+  en su ventana» lo saca a una terminal nueva, como `--split`: el editor
+  de allí se lleva el texto (también sin guardar), el cursor y el
+  historial de deshacer y rehacer, y esta ventana se queda con las vistas.
+  Sin `[editor] terminal` en `config.toml`, dice el comando para abrirlo a
+  mano; el primer editor que se conecte se lo lleva todo.
+- F1 «Volver a meter el editor en la principal», desde cualquiera de las
+  dos ventanas, cierra el editor de fuera y lo vuelve a poner en la
+  principal con su texto, su cursor y su historial (Ctrl-Z sigue
+  deshaciendo lo que se escribió allí), sin guardar nada. Sin editor
+  conectado, la principal vuelve con el último texto que recibió.
+- El historial que se lleva es el del editor: como mucho los últimos 200
+  pasos (lo tecleado cuenta letra a letra; un cambio compuesto, como
+  duplicar líneas o insertar un bloque, es uno).
+
 - **Cargar** (Ctrl-L o F5) y **guardar y cargar** (Ctrl-S) mandan el
   texto a la principal, que lo carga como siempre: entra en el compás
   siguiente, y si tiene errores sigue sonando lo anterior y el error sale
@@ -532,7 +549,8 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Alternar variante A/B | Con variant(): pasa a la otra variante; entra entera al empezar el compás siguiente (con secciones, por la misma sección y compás) | v (modo tocar) |
 | Versiones | El historial del script (una versión por carga buena): lista con fecha y vista previa; Enter la restaura en el editor sin guardar (Ctrl-Z lo deshace) | — |
 | Choques de frecuencia | Renderiza offline cada pista en solo (un ciclo entero de la canción) y muestra en qué bandas se pisan: tabla pareja × banda con su puntuación (0 a 1), un resumen y el EQ sugerido para la que cede; Enter lo propone y Enter otra vez lo inserta en el script sin guardar; no toca lo que suena | — |
-| Abrir el editor en su ventana | Con tui --edit … --split: abre el editor en una terminal nueva ([editor] terminal en config.toml) si no está conectado | — |
+| Abrir el editor en su ventana | Saca el editor a una terminal nueva ([editor] terminal en config.toml) con su texto, cursor e historial de deshacer; con el editor ya fuera, lo vuelve a abrir si no está conectado | — |
+| Volver a meter el editor en la principal | Con el editor en su ventana: lo cierra y vuelve a la principal con su texto, cursor e historial de deshacer (sin guardar) | — |
 | Salir | Sale (pide confirmación si hay cambios sin guardar) | Ctrl-Q |
 | Snippet: `amen`, `fill`, `ghost`, `intro`, `euclid`, `melodia`, `polirritmo`, `barrido`, `groove`, `instrumento` | Inserta el snippet en el cursor (ver «Snippets» en la sección 4) | — |
 

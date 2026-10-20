@@ -497,10 +497,11 @@ fn the_main_window_opens_the_editor_with_the_configured_terminal() {
         "{}",
         main.view().message
     );
-    // Y en una sola ventana, que hace falta --split.
-    let (_, mut single, _engine) = super::open("split_single", Some(SONG));
+    // En una sola ventana, lo saca a la suya (ver `tests/swap.rs`).
+    let (path, mut single, _engine) = super::open("split_single", Some(SONG));
+    single.set_socket_dir(socket_dir(&path));
     single.run_action(Action::EditorWindow);
-    assert!(single.view().message.contains("--split"));
+    assert!(single.view().editor_outside);
 }
 
 /// Para ver las dos ventanas sin terminal:

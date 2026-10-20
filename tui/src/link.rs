@@ -13,8 +13,9 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-/// Versión del protocolo: los dos extremos tienen que tener la misma.
-pub const VERSION: u32 = 1;
+/// Versión del protocolo: los dos extremos tienen que tener la misma (la
+/// 2 añade el traspaso del editor: `historial`, `devuelve` y `vuelvo`).
+pub const VERSION: u32 = 2;
 
 /// Lo que se deja pendiente de escribir antes de dar el otro extremo por
 /// perdido (no lee).
@@ -37,6 +38,50 @@ pub enum ToMain {
     Action(String),
     /// Una orden de la línea de órdenes (F2).
     Command(String),
+    /// El editor vuelve a la ventana principal con su estado (y se
+    /// cierra).
+    Return(Handover),
+}
+
+/// Lo que se lleva el editor al cambiar de ventana: el texto, el cursor y
+/// el historial de deshacer como textos enteros.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Handover {
+    pub text: String,
+    /// Fila y columna (en caracteres).
+    pub cursor: (usize, usize),
+    /// Lo que deshace Ctrl-Z, del más antiguo al anterior al actual.
+    pub undo: Vec<String>,
+    /// Lo que rehace Ctrl-Y, del siguiente al más lejano.
+    pub redo: Vec<String>,
+}
+
+impl Handover {
+    fn fields(&self) -> Vec<String> {
+        let mut out = vec![
+            self.cursor.0.to_string(),
+            self.cursor.1.to_string(),
+            self.undo.len().to_string(),
+            self.text.clone(),
+        ];
+        out.extend(self.undo.iter().cloned());
+        out.extend(self.redo.iter().cloned());
+        out
+    }
+
+    fn from_fields(f: &[String], v: &str) -> Result<Handover, String> {
+        let undo: usize = number(field(f, 2, v)?, v)?;
+        let history = f.get(4..).unwrap_or_default();
+        if undo > history.len() {
+            return Err(format!("«{v}»: faltan textos del historial"));
+        }
+        Ok(Handover {
+            cursor: (number(field(f, 0, v)?, v)?, number(field(f, 1, v)?, v)?),
+            text: field(f, 3, v)?.into(),
+            undo: history[..undo].to_vec(),
+            redo: history[undo..].to_vec(),
+        })
+    }
 }
 
 /// De la principal al editor.
@@ -65,6 +110,13 @@ pub enum ToEditor {
     Labels(Vec<String>),
     /// La principal cierra esta conexión (y por qué): no se reintenta.
     Bye(String),
+    /// El estado del editor de la principal, que acaba de sacarlo a esta
+    /// ventana: si el texto es el mismo, se queda con su cursor e
+    /// historial.
+    History(Handover),
+    /// La principal pide el editor de vuelta: el editor contesta con
+    /// [`ToMain::Return`] y se cierra.
+    GiveBack,
 }
 
 /// Estado de la reproducción que ve el editor.
@@ -122,6 +174,11 @@ fn line(verb: &str, fields: &[&str]) -> String {
     out
 }
 
+fn fields_line(verb: &str, fields: &[String]) -> String {
+    let fields: Vec<&str> = fields.iter().map(String::as_str).collect();
+    line(verb, &fields)
+}
+
 /// Separa una línea (sin el salto) en verbo y campos.
 fn split(line: &str) -> Result<(String, Vec<String>), String> {
     let mut parts = line.split('\t');
@@ -156,6 +213,7 @@ impl Message for ToMain {
             ToMain::Load { rev, text } => line("cargar", &[&rev.to_string(), text]),
             ToMain::Action(name) => line("accion", &[name]),
             ToMain::Command(command) => line("orden", &[command]),
+            ToMain::Return(handover) => fields_line("vuelvo", &handover.fields()),
         }
     }
 
@@ -176,6 +234,7 @@ impl Message for ToMain {
             },
             "accion" => ToMain::Action(field(&f, 0, v)?.into()),
             "orden" => ToMain::Command(field(&f, 0, v)?.into()),
+            "vuelvo" => ToMain::Return(Handover::from_fields(&f, v)?),
             other => return Err(format!("mensaje desconocido «{other}»")),
         })
     }
@@ -219,6 +278,8 @@ impl Message for ToEditor {
                 line("etiquetas", &fields)
             }
             ToEditor::Bye(reason) => line("adios", &[reason]),
+            ToEditor::History(handover) => fields_line("historial", &handover.fields()),
+            ToEditor::GiveBack => line("devuelve", &[]),
         }
     }
 
@@ -259,6 +320,8 @@ impl Message for ToEditor {
             }
             "etiquetas" => ToEditor::Labels(f),
             "adios" => ToEditor::Bye(field(&f, 0, v)?.into()),
+            "historial" => ToEditor::History(Handover::from_fields(&f, v)?),
+            "devuelve" => ToEditor::GiveBack,
             other => return Err(format!("mensaje desconocido «{other}»")),
         })
     }
@@ -306,6 +369,22 @@ impl Conn {
             return Err(io::Error::other("el otro extremo no lee"));
         }
         Ok(())
+    }
+
+    /// Escribe todo lo pendiente, esperando como mucho `timeout` (para
+    /// mandar lo último antes de cerrarse).
+    pub fn drain(&mut self, timeout: Duration) -> io::Result<()> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            self.flush()?;
+            if self.output.is_empty() {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err(ErrorKind::TimedOut.into());
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 
     /// Lee lo que haya y devuelve los mensajes enteros. Error si el otro
@@ -634,7 +713,10 @@ mod tests {
             rev: 3,
             text: text.clone(),
         });
-        roundtrip(ToEditor::Text { base: 3, text });
+        roundtrip(ToEditor::Text {
+            base: 3,
+            text: text.clone(),
+        });
         roundtrip(ToEditor::Error(Some("song.lua:3: algo\nmás".into())));
         roundtrip(ToEditor::Error(None));
         roundtrip(ToEditor::Notice("cargado".into()));
@@ -650,6 +732,16 @@ mod tests {
         roundtrip(ToEditor::Labels(vec!["kick".into(), "caja\tgorda".into()]));
         roundtrip(ToEditor::Labels(vec![]));
         roundtrip(ToEditor::Bye("otro editor".into()));
+        let handover = Handover {
+            text: text.clone(),
+            cursor: (2, 7),
+            undo: vec![String::new(), "a\tb".into(), "a\n".into()],
+            redo: vec!["ñ\\".into()],
+        };
+        roundtrip(ToEditor::History(handover.clone()));
+        roundtrip(ToMain::Return(handover));
+        roundtrip(ToMain::Return(Handover::default()));
+        roundtrip(ToEditor::GiveBack);
     }
 
     #[test]
@@ -658,6 +750,7 @@ mod tests {
         assert!(ToMain::decode("nada\t1").is_err());
         assert!(ToMain::decode("texto\tsiete\thola").is_err());
         assert!(ToMain::decode("texto\t1").is_err());
+        assert!(ToMain::decode("vuelvo\t0\t0\t3\ttexto\tuno").is_err());
         assert!(ToEditor::decode("aviso\tmal \\x").is_err());
         assert!(ToEditor::decode("estado\t1\t120").is_err());
     }

@@ -59,6 +59,7 @@ pub enum Action {
     AnalyzeMasking,
     ToggleVariant,
     EditorWindow,
+    EditorBack,
     Quit,
 }
 
@@ -371,7 +372,13 @@ pub const ACTIONS: &[ActionDef] = &[
     ActionDef {
         action: Action::EditorWindow,
         name: "Abrir el editor en su ventana",
-        description: "Con tui --edit … --split: abre el editor en una terminal nueva ([editor] terminal en config.toml) si no está conectado",
+        description: "Saca el editor a una terminal nueva ([editor] terminal en config.toml) con su texto, cursor e historial de deshacer; con el editor ya fuera, lo vuelve a abrir si no está conectado",
+        keys: "",
+    },
+    ActionDef {
+        action: Action::EditorBack,
+        name: "Volver a meter el editor en la principal",
+        description: "Con el editor en su ventana: lo cierra y vuelve a la principal con su texto, cursor e historial de deshacer (sin guardar)",
         keys: "",
     },
     ActionDef {

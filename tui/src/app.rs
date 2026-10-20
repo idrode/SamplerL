@@ -301,6 +301,11 @@ pub struct App {
     /// Con el editor en su propia ventana: de qué lado está esta (ver
     /// `split`). Sin él, una sola ventana como siempre.
     link: Option<split::Link>,
+    /// Comando que abre una terminal (`[editor] terminal`), para sacar el
+    /// editor a su ventana, y la carpeta de los sockets (`None`: la de
+    /// siempre, `link::runtime_dir`).
+    editor_terminal: Option<Vec<String>>,
+    socket_dir: Option<PathBuf>,
 }
 
 impl App {
@@ -360,6 +365,8 @@ impl App {
             masking: None,
             last_masking: None,
             loads: 0,
+            editor_terminal: None,
+            socket_dir: None,
             browser: None,
             tapping: None,
             recording: None,
@@ -438,6 +445,7 @@ impl App {
     /// Aplica la configuración del usuario (atajos; el tema lo pone `main`
     /// en el hilo que dibuja). Sus avisos van al mensaje.
     pub fn set_config(&mut self, config: &Config) {
+        self.editor_terminal = config.editor_terminal.clone();
         self.keys = config.keys.clone();
         self.midi = config.midi;
         if !config.warnings.is_empty() {
@@ -2839,6 +2847,7 @@ impl App {
             Action::ToggleVariant => self.toggle_variant(),
             Action::PreviousSlice => self.select_slice(false),
             Action::EditorWindow => self.launch_editor(),
+            Action::EditorBack => self.reclaim_editor(),
             Action::Quit => {
                 let armed = std::mem::replace(&mut self.quit_armed, false);
                 return self.request_quit(armed);
@@ -2863,28 +2872,20 @@ impl App {
     /// Deshace un cambio. Si el texto es el resultado de una acción
     /// compuesta, la deshace entera.
     fn undo(&mut self) -> bool {
-        if let Some(group) = self.undo_groups.pop() {
-            if self.editor.lines() == group.after {
-                while self.editor.lines() != group.before && self.editor.undo() {}
-                self.redo_groups.push(group);
-                return true;
-            }
-            self.undo_groups.push(group);
-        }
-        self.editor.undo()
+        undo_in(
+            &mut self.editor,
+            &mut self.undo_groups,
+            &mut self.redo_groups,
+        )
     }
 
     /// Rehace un cambio (una acción compuesta, entera).
     fn redo(&mut self) -> bool {
-        if let Some(group) = self.redo_groups.pop() {
-            if self.editor.lines() == group.before {
-                while self.editor.lines() != group.after && self.editor.redo() {}
-                self.undo_groups.push(group);
-                return true;
-            }
-            self.redo_groups.push(group);
-        }
-        self.editor.redo()
+        redo_in(
+            &mut self.editor,
+            &mut self.undo_groups,
+            &mut self.redo_groups,
+        )
     }
 
     /// Salir: si hay cambios sin guardar, la primera vez solo avisa.
@@ -3817,6 +3818,41 @@ impl App {
         self.link_view(&mut view);
         view
     }
+}
+
+/// Deshace un cambio de `editor`; si su texto es el resultado de una
+/// acción compuesta (`undo`), la deshace entera y la pasa a `redo`.
+fn undo_in(
+    editor: &mut TextArea<'static>,
+    undo: &mut Vec<EditGroup>,
+    redo: &mut Vec<EditGroup>,
+) -> bool {
+    if let Some(group) = undo.pop() {
+        if editor.lines() == group.after {
+            while editor.lines() != group.before && editor.undo() {}
+            redo.push(group);
+            return true;
+        }
+        undo.push(group);
+    }
+    editor.undo()
+}
+
+/// Rehace un cambio de `editor` (una acción compuesta, entera).
+fn redo_in(
+    editor: &mut TextArea<'static>,
+    undo: &mut Vec<EditGroup>,
+    redo: &mut Vec<EditGroup>,
+) -> bool {
+    if let Some(group) = redo.pop() {
+        if editor.lines() == group.before {
+            while editor.lines() != group.after && editor.redo() {}
+            undo.push(group);
+            return true;
+        }
+        redo.push(group);
+    }
+    editor.redo()
 }
 
 /// Archivos WAV de una carpeta, ordenados.

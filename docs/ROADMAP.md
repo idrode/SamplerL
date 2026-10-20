@@ -267,7 +267,7 @@ huellas de `golden.rs` idénticas si no se usa nada nuevo, código portable
    pasos con `%` y `formant = n` en un instrumento con `keep`; LPC por
    grano, elegido midiendo una vocal y una caja sintéticas.
 
-## Fase L: editor en ventana propia
+## Fase L: editor en ventana propia ✅
 
 Objetivo: poder abrir el editor de código en una ventana de terminal
 independiente, para que el gestor de ventanas (Hyprland, por ejemplo) la
@@ -317,7 +317,9 @@ propia ventana» en [docs/GUIA.md](GUIA.md).
    al entrar y quitado al salir (también con error o pánico), varias
    líneas con sangría tal cual y un solo Ctrl-Z para deshacer el pegado.
 
-### Parte 2: vistas en el hueco del editor
+### Parte 2: vistas en el hueco del editor ✅
+
+Hecha: ver «Parte 2» en «Fase L» de [docs/ESTADO.md](ESTADO.md).
 
 1. ✅ **Layout sin editor en la principal**: con el editor fuera, su panel lo
    ocupan las vistas; con el editor dentro, el layout de siempre.
@@ -328,7 +330,7 @@ propia ventana» en [docs/GUIA.md](GUIA.md).
 4. ✅ **Mezclador** con medidores, volumen, mute/solo y envíos por pista.
 5. ✅ **Tabla de choques de frecuencia** (la de `--analyze-masking`), si se
    ha calculado.
-6. **Cambiar en caliente**: sacar el editor a su ventana y volver a
+6. ✅ **Cambiar en caliente**: sacar el editor a su ventana y volver a
    meterlo desde la paleta sin perder el texto, el cursor ni el historial
    de deshacer.
 

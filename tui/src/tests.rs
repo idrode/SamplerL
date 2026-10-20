@@ -2403,6 +2403,7 @@ mod shapes;
 mod slice_fx;
 mod split;
 mod stretch;
+mod swap;
 mod tempo;
 mod tracker_rows;
 mod variants;

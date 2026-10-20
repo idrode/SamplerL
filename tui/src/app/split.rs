@@ -15,11 +15,18 @@ use ratatui_textarea::{CursorMove, TextArea};
 use script::ScriptError;
 
 use super::{App, Flow, Mode};
-use crate::link::{self, Client, Conn, RemoteState, Server, ToEditor, ToMain};
+use crate::link::{self, Client, Conn, Handover, RemoteState, Server, ToEditor, ToMain};
 use crate::palette::{ACTIONS, Action};
 
 /// Cada cuánto, como mucho, manda el editor su texto mientras se escribe.
 const TEXT_SYNC: Duration = Duration::from_millis(100);
+/// Pasos del historial de deshacer que se llevan como mucho al cambiar el
+/// editor de ventana, y cuánto texto en total (el resto se pierde, como al
+/// pasar del máximo de la propia `TextArea`).
+const HANDOVER_STEPS: usize = 200;
+const HANDOVER_BYTES: usize = 4 << 20;
+/// Lo que espera el editor a que salga su estado antes de cerrarse.
+const HANDOVER_SEND: Duration = Duration::from_secs(2);
 
 /// De qué lado está esta ventana.
 pub enum Link {
@@ -45,6 +52,9 @@ pub struct MainLink {
     exe: PathBuf,
     /// Editor lanzado desde aquí (para recogerlo al salir).
     child: Option<Child>,
+    /// Estado del editor de aquí al sacarlo a su ventana: para el primer
+    /// editor que se conecte.
+    pending: Option<Handover>,
 }
 
 /// El editor, con el motor en la ventana principal.
@@ -62,6 +72,8 @@ pub struct EditorLink {
     opened: String,
     remote: Option<RemoteState>,
     labels: Vec<String>,
+    /// Ya mandó su estado a la principal: la ventana se cierra.
+    leaving: bool,
 }
 
 /// Acciones que se hacen en el editor separado; las demás van a la
@@ -197,6 +209,7 @@ impl App {
             terminal,
             exe,
             child: None,
+            pending: None,
         }));
         self.message = "editor en su ventana: F1 «Abrir el editor en su ventana» si no está".into();
     }
@@ -213,6 +226,7 @@ impl App {
             opened: self.text(),
             remote: None,
             labels: Vec::new(),
+            leaving: false,
         }));
         self.message = "buscando la ventana principal…".into();
         self.poll_link();
@@ -250,6 +264,7 @@ impl App {
                 self.message = "el modo tocar está en la ventana principal".into();
                 Some(Flow::Continue)
             }
+            Some(Link::Editor(_)) if action == Action::EditorBack => Some(self.return_to_main()),
             Some(Link::Editor(_)) if action == Action::LabelSlice => {
                 let slice = self.remote_state().map_or(1, |s| s.slice.max(1));
                 self.prompt = Some(format!("etiquetar {slice} "));
@@ -380,9 +395,11 @@ impl App {
     /// comando de `[editor] terminal`.
     pub fn launch_editor(&mut self) {
         let target = self.project.clone().unwrap_or_else(|| self.path.clone());
+        if self.link.is_none() {
+            self.detach_editor();
+            return;
+        }
         let Some(Link::Main(main)) = &mut self.link else {
-            self.message =
-                "para tener el editor en su ventana, arranca con tui --edit … --split".into();
             return;
         };
         if main.server.connected() {
@@ -452,8 +469,12 @@ impl App {
             main.sent_message = None;
             main.sent_state = None;
             main.sent_labels = None;
+            let pending = main.pending.take();
             if let Some(conn) = main.server.client() {
                 let _ = conn.send(&welcome);
+                if let Some(handover) = pending {
+                    let _ = conn.send(&ToEditor::History(handover));
+                }
             }
             // (El aviso es para esta ventana: el editor ya dice lo suyo.)
             self.message = "editor conectado".into();
@@ -506,6 +527,10 @@ impl App {
                     None => self.message = format!("acción desconocida del editor: {name}"),
                 },
                 ToMain::Command(line) => self.run_command(&line),
+                ToMain::Return(handover) => {
+                    self.take_editor_back(handover);
+                    return;
+                }
             }
         }
         if loaded && let Some(Link::Main(main)) = &mut self.link {
@@ -715,6 +740,18 @@ impl App {
                 editor.remote = None;
                 self.message = format!("la ventana principal cerró la conexión: {reason}");
             }
+            ToEditor::History(handover) => {
+                // Solo si el texto es el que tenía la principal (recién
+                // abierto con su texto).
+                if handover.text == text {
+                    self.take_handover(handover);
+                    self.message =
+                        "el editor, en su ventana: con su cursor y su historial de deshacer".into();
+                }
+            }
+            ToEditor::GiveBack => {
+                self.return_to_main();
+            }
         }
     }
 
@@ -734,6 +771,194 @@ impl App {
                 col.min(u16::MAX as usize) as u16,
             ));
         });
+    }
+
+    /// El estado del editor para llevarlo a otra ventana: el texto, el
+    /// cursor y lo que deshacen y rehacen Ctrl-Z y Ctrl-Y (sacado de una
+    /// copia, deshaciendo y rehaciendo como lo haría el editor).
+    pub(super) fn handover(&self) -> Handover {
+        let text_of = |e: &TextArea| {
+            let mut text = e.lines().join("\n");
+            text.push('\n');
+            text
+        };
+        let walk = |forward: bool| {
+            let mut editor = self.editor.clone();
+            let (mut undo, mut redo) = (self.undo_groups.clone(), self.redo_groups.clone());
+            let (mut texts, mut bytes) = (Vec::new(), 0);
+            while texts.len() < HANDOVER_STEPS && bytes < HANDOVER_BYTES {
+                let moved = if forward {
+                    super::redo_in(&mut editor, &mut undo, &mut redo)
+                } else {
+                    super::undo_in(&mut editor, &mut undo, &mut redo)
+                };
+                if !moved {
+                    break;
+                }
+                let text = text_of(&editor);
+                bytes += text.len();
+                texts.push(text);
+            }
+            texts
+        };
+        let mut undo = walk(false);
+        undo.reverse();
+        let cursor = self.editor.cursor();
+        Handover {
+            text: text_of(&self.editor),
+            cursor: (cursor.0, cursor.1),
+            undo,
+            redo: walk(true),
+        }
+    }
+
+    /// Se queda con el estado de un editor de otra ventana: rehace su
+    /// historial paso a paso (cada uno, un cambio que Ctrl-Z deshace de una
+    /// vez) desde el más antiguo, deshace los que eran para rehacer y pone
+    /// el cursor donde estaba. El portapapeles interno se queda.
+    pub(super) fn take_handover(&mut self, handover: Handover) {
+        let lines = |text: &str| -> Vec<String> {
+            text.strip_suffix('\n')
+                .unwrap_or(text)
+                .split('\n')
+                .map(String::from)
+                .collect()
+        };
+        let yank = self.editor.yank_text();
+        let first = handover.undo.first().unwrap_or(&handover.text);
+        self.editor = TextArea::new(lines(first));
+        self.undo_groups.clear();
+        self.redo_groups.clear();
+        let steps = handover
+            .undo
+            .iter()
+            .skip(1)
+            .chain([&handover.text])
+            .chain(&handover.redo);
+        for text in steps {
+            let target = lines(text);
+            self.grouped(|e| change_lines(e, &target));
+        }
+        for _ in &handover.redo {
+            self.undo();
+        }
+        self.editor.set_yank_text(yank);
+        let (row, col) = handover.cursor;
+        self.editor.move_cursor(CursorMove::Jump(
+            row.min(u16::MAX as usize) as u16,
+            col.min(u16::MAX as usize) as u16,
+        ));
+        self.completion = None;
+        self.marks.clear();
+    }
+
+    /// En una sola ventana: saca el editor a la suya. Esta pasa a ser la
+    /// principal (escucha en el socket del script y se queda en el modo
+    /// tocar) y abre el editor como `--split`; el primer editor que se
+    /// conecte se lleva el texto, el cursor y el historial.
+    fn detach_editor(&mut self) {
+        let dir = match self.socket_dir.clone() {
+            Some(dir) => Ok(dir),
+            None => link::runtime_dir(),
+        };
+        let server = dir.and_then(|dir| Server::bind(&link::socket_path(&dir, &self.path)));
+        let server = match server {
+            Ok(server) => server,
+            Err(e) => {
+                self.message = format!("no se pudo sacar el editor: {e}");
+                return;
+            }
+        };
+        let handover = self.handover();
+        let exe = std::env::current_exe().unwrap_or_else(|_| "tui".into());
+        self.serve(server, self.editor_terminal.clone(), exe);
+        if let Some(Link::Main(main)) = &mut self.link {
+            main.pending = Some(handover);
+        }
+        self.launch_editor();
+    }
+
+    /// Carpeta de los sockets (para los tests; si no, la de siempre).
+    #[cfg(test)]
+    pub fn set_socket_dir(&mut self, dir: PathBuf) {
+        self.socket_dir = Some(dir);
+    }
+
+    /// «Volver a meter el editor en la principal» en la principal: se lo
+    /// pide al editor conectado (que contesta con su estado y se cierra);
+    /// sin editor, vuelve con el texto que tiene.
+    pub(super) fn reclaim_editor(&mut self) {
+        let Some(Link::Main(main)) = &mut self.link else {
+            self.message = "el editor ya está en esta ventana".into();
+            return;
+        };
+        if let Some(conn) = main.server.client() {
+            if conn.send(&ToEditor::GiveBack).is_ok() {
+                self.message = "pidiendo el editor a su ventana…".into();
+                return;
+            }
+            main.server.drop_client();
+        }
+        let handover = Handover {
+            text: self.text(),
+            cursor: (self.editor.cursor().0, self.editor.cursor().1),
+            ..Handover::default()
+        };
+        self.take_editor_back(handover);
+    }
+
+    /// En el editor separado: manda su estado a la principal y se cierra.
+    /// Si no hay principal o no le llega, se queda.
+    fn return_to_main(&mut self) -> Flow {
+        let handover = self.handover();
+        let Some(Link::Editor(editor)) = &mut self.link else {
+            return Flow::Continue;
+        };
+        let sent = editor.client.conn().map(|c| {
+            c.send(&ToMain::Return(handover))
+                .and_then(|()| c.drain(HANDOVER_SEND))
+        });
+        match sent {
+            Some(Ok(())) => {
+                editor.leaving = true;
+                Flow::Quit
+            }
+            Some(Err(e)) => {
+                editor.client.disconnect();
+                self.message = format!("no se pudo volver a la principal: {e}");
+                Flow::Continue
+            }
+            None => {
+                self.message = "sin ventana principal: no hay a dónde volver".into();
+                Flow::Continue
+            }
+        }
+    }
+
+    /// El editor separado ya volvió a la principal: esta ventana se cierra.
+    pub fn leaving(&self) -> bool {
+        matches!(&self.link, Some(Link::Editor(e)) if e.leaving)
+    }
+
+    /// En la principal: el editor vuelve a esta ventana. Se deja de
+    /// escuchar (el socket se borra), se coge su estado y se vuelve al
+    /// layout de una sola ventana, en el editor. Lo guardado es lo que haya
+    /// en el disco (lo guardó el editor).
+    fn take_editor_back(&mut self, handover: Handover) {
+        if let Some(Link::Main(main)) = self.link.take()
+            && let Some(mut child) = main.child
+        {
+            // La terminal del editor se cierra sola; se recoge aparte para
+            // no esperar aquí.
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+        }
+        self.take_handover(handover);
+        self.saved = std::fs::read_to_string(&self.path).unwrap_or_default();
+        self.external = None;
+        self.mode = Mode::Edit;
+        self.message = "el editor vuelve a estar en esta ventana".into();
     }
 
     /// La línea del enlace para las vistas, y el transporte del editor
@@ -783,6 +1008,38 @@ impl App {
             }
         }
     }
+}
+
+/// Cambia el texto de `editor` por `target` tocando solo lo que cambia
+/// (lo de en medio entre lo común del principio y del final), para que el
+/// cursor quede ahí al deshacerlo.
+fn change_lines(editor: &mut TextArea<'static>, target: &[String]) {
+    let before: Vec<char> = editor.lines().join("\n").chars().collect();
+    let after: Vec<char> = target.join("\n").chars().collect();
+    let prefix = before
+        .iter()
+        .zip(&after)
+        .take_while(|(a, b)| a == b)
+        .count();
+    let room = before.len().min(after.len()) - prefix;
+    let suffix = before
+        .iter()
+        .rev()
+        .zip(after.iter().rev())
+        .take(room)
+        .take_while(|(a, b)| a == b)
+        .count();
+    // Fila y columna del primer carácter distinto.
+    let head = &before[..prefix];
+    let row = head.iter().filter(|&&c| c == '\n').count();
+    let col = head.iter().rev().take_while(|&&c| c != '\n').count();
+    editor.move_cursor(CursorMove::Jump(
+        row.min(u16::MAX as usize) as u16,
+        col.min(u16::MAX as usize) as u16,
+    ));
+    editor.delete_str(before.len() - prefix - suffix);
+    let middle: String = after[prefix..after.len() - suffix].iter().collect();
+    editor.insert_str(middle);
 }
 
 fn text_area(text: &str) -> TextArea<'static> {
