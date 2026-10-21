@@ -969,6 +969,8 @@ anterior.
 | Inicio / Fin (o Ctrl-A / Ctrl-E) | Principio / final de la línea |
 | Ctrl-Inicio / Ctrl-Fin | Principio / final del texto |
 | Alt-G | Ir a la línea N (abre `linea ` en la línea de órdenes; Ctrl-G sigue siendo ir al error) |
+| Ctrl-↑ / Ctrl-↓ | Párrafo anterior / siguiente (hasta la línea en blanco) |
+| RePág / AvPág (o Alt-V / Ctrl-V) | Una pantalla arriba / abajo |
 
 **Buscar.** Ctrl-F abre `buscar ` en la línea de órdenes: escribe el
 texto y Enter lleva el cursor a la primera vez que sale desde donde está y
@@ -980,8 +982,6 @@ o al principio). El texto se busca tal cual, no es una expresión regular
 Ctrl-F era en el widget un sinónimo de → (al estilo de emacs); → sigue
 igual. Las tres teclas se cambian en `[teclas]` (`buscar`,
 `buscar_siguiente`, `buscar_anterior`).
-| Ctrl-↑ / Ctrl-↓ | Párrafo anterior / siguiente (hasta la línea en blanco) |
-| RePág / AvPág (o Alt-V / Ctrl-V) | Una pantalla arriba / abajo |
 
 **Portapapeles del sistema.** Ctrl-C y Ctrl-X mandan la selección
 también al portapapeles del sistema: por OSC 52 (la terminal lo guarda;
