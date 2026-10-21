@@ -504,6 +504,74 @@ fn the_main_window_opens_the_editor_with_the_configured_terminal() {
     assert!(single.view().editor_outside);
 }
 
+#[test]
+fn what_sounds_is_highlighted_in_the_editor_window() {
+    let path = fixture("split_highlight", Some(SONG));
+    let (mut main, mut engine) = main_window(&path, None);
+    let (mut editor, _idle) = editor_window(&path);
+    pump(&mut main, &mut editor);
+    // Paso 0: el «1» de drums y la «x» de kick, calculados en la principal.
+    offline::render(&mut engine, 100, 2);
+    pump_until(&mut main, &mut editor, |_, e| {
+        e.view().highlights.len() == 2
+    });
+    let marks = editor.view().highlights;
+    assert_eq!(marks, main.view().highlights);
+    assert_eq!(
+        marks
+            .iter()
+            .map(|h| (h.row, h.selected))
+            .collect::<Vec<_>>(),
+        [(3, false), (2, true)]
+    );
+    // Dibujado en la ventana del editor, con el color de drums.
+    let buffer = ui_editor(&mut editor, 100, 16);
+    let (x, y) = super::find(&buffer, "track(\"drums\"").unwrap();
+    let col = SONG.lines().nth(2).unwrap().find("\"1").unwrap() + 1;
+    assert_eq!(
+        buffer[(x + col as u16, y)].bg,
+        crate::theme::get().highlight[0]
+    );
+
+    // Paso 2: solo el «2» de drums.
+    offline::render(&mut engine, 2 * STEP, 2);
+    pump_until(&mut main, &mut editor, |_, e| {
+        e.view().highlights.len() == 1
+    });
+
+    // Lo escrito en el editor (aún sin mandar): ya no se resalta, y
+    // tampoco cuando la principal lo tiene.
+    type_text(&mut editor, "-- ");
+    assert!(editor.view().highlights.is_empty());
+    pump_until(&mut main, &mut editor, |m, e| {
+        m.text_for_test() == e.text_for_test()
+    });
+    assert!(editor.view().highlights.is_empty());
+    assert!(main.view().highlights.is_empty());
+    // Deshecho: vuelve cuando la principal tiene otra vez el texto cargado.
+    while editor.text_for_test() != SONG {
+        editor.handle(ctrl('z'));
+    }
+    pump_until(&mut main, &mut editor, |_, e| {
+        !e.view().highlights.is_empty()
+    });
+
+    // Sin principal, nada.
+    drop(main);
+    pump_until_alone(&mut editor);
+    assert!(editor.view().highlights.is_empty());
+}
+
+/// Unas vueltas del editor solo, hasta que note que no hay principal.
+fn pump_until_alone(editor: &mut App) {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while link_line(editor).starts_with("⇄") {
+        assert!(Instant::now() < deadline, "no notó la caída");
+        editor.tick();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 /// Para ver las dos ventanas sin terminal:
 /// `cargo test -p tui pantalla_ventanas -- --ignored --nocapture`.
 #[test]

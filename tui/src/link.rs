@@ -13,9 +13,12 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use crate::highlight::Highlight;
+
 /// Versión del protocolo: los dos extremos tienen que tener la misma (la
-/// 2 añade el traspaso del editor: `historial`, `devuelve` y `vuelvo`).
-pub const VERSION: u32 = 2;
+/// 2 añade el traspaso del editor: `historial`, `devuelve` y `vuelvo`; la
+/// 3, lo que suena para resaltarlo en el código: `suena`).
+pub const VERSION: u32 = 3;
 
 /// Lo que se deja pendiente de escribir antes de dar el otro extremo por
 /// perdido (no lee).
@@ -117,6 +120,10 @@ pub enum ToEditor {
     /// La principal pide el editor de vuelta: el editor contesta con
     /// [`ToMain::Return`] y se cierra.
     GiveBack,
+    /// Los tokens que se oyen ahora (resaltado en vivo), en el orden en que
+    /// se dibujan, sobre el texto de la revisión `base` del editor (vacío
+    /// si no suena nada o el texto no es el cargado).
+    Sounding { base: u64, marks: Vec<Highlight> },
 }
 
 /// Estado de la reproducción que ve el editor.
@@ -280,6 +287,21 @@ impl Message for ToEditor {
             ToEditor::Bye(reason) => line("adios", &[reason]),
             ToEditor::History(handover) => fields_line("historial", &handover.fields()),
             ToEditor::GiveBack => line("devuelve", &[]),
+            ToEditor::Sounding { base, marks } => {
+                // Cada token: fila, columnas, color y si es de la seleccionada.
+                let mut fields = vec![base.to_string()];
+                fields.extend(marks.iter().map(|h| {
+                    format!(
+                        "{},{},{},{},{}",
+                        h.row,
+                        h.cols.start,
+                        h.cols.end,
+                        h.color,
+                        u8::from(h.selected)
+                    )
+                }));
+                fields_line("suena", &fields)
+            }
         }
     }
 
@@ -322,6 +344,24 @@ impl Message for ToEditor {
             "adios" => ToEditor::Bye(field(&f, 0, v)?.into()),
             "historial" => ToEditor::History(Handover::from_fields(&f, v)?),
             "devuelve" => ToEditor::GiveBack,
+            "suena" => ToEditor::Sounding {
+                base: number(field(&f, 0, v)?, v)?,
+                marks: f[1..]
+                    .iter()
+                    .map(|mark| {
+                        let n: Vec<&str> = mark.split(',').collect();
+                        let [row, start, end, color, selected] = n[..] else {
+                            return Err(format!("«{v}»: token no válido «{mark}»"));
+                        };
+                        Ok(Highlight {
+                            row: number(row, v)?,
+                            cols: number(start, v)?..number(end, v)?,
+                            color: number(color, v)?,
+                            selected: selected == "1",
+                        })
+                    })
+                    .collect::<Result<_, String>>()?,
+            },
             other => return Err(format!("mensaje desconocido «{other}»")),
         })
     }
@@ -742,6 +782,27 @@ mod tests {
         roundtrip(ToMain::Return(handover));
         roundtrip(ToMain::Return(Handover::default()));
         roundtrip(ToEditor::GiveBack);
+        roundtrip(ToEditor::Sounding {
+            base: 9,
+            marks: vec![
+                Highlight {
+                    row: 3,
+                    cols: 20..23,
+                    color: 1,
+                    selected: false,
+                },
+                Highlight {
+                    row: 2,
+                    cols: 0..1,
+                    color: 0,
+                    selected: true,
+                },
+            ],
+        });
+        roundtrip(ToEditor::Sounding {
+            base: 0,
+            marks: vec![],
+        });
     }
 
     #[test]
@@ -753,6 +814,9 @@ mod tests {
         assert!(ToMain::decode("vuelvo\t0\t0\t3\ttexto\tuno").is_err());
         assert!(ToEditor::decode("aviso\tmal \\x").is_err());
         assert!(ToEditor::decode("estado\t1\t120").is_err());
+        assert!(ToEditor::decode("suena\t1\t2,3,4").is_err());
+        assert!(ToEditor::decode("suena\t1\t2,3,x,0,1").is_err());
+        assert!(ToEditor::decode("suena").is_err());
     }
 
     #[test]

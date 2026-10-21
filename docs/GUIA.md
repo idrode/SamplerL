@@ -1018,6 +1018,9 @@ resaltan enteros todo su paso. Los silencios (`.`) no se resaltan.
 - Varias pistas en la misma línea, cada una con su color; si dos marcan
   el mismo texto (una cadena compartida), manda la seleccionada y, si no,
   la definida antes.
+- Con el editor en su propia ventana (`--split`) también se ve: lo calcula
+  la principal y se lo manda al editor. Las dos ventanas tienen que ser de
+  la misma versión del programa.
 
 ## 3. Mini-notación
 

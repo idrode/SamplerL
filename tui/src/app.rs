@@ -1742,6 +1742,10 @@ impl App {
     /// [`crate::highlight`]): nada si el texto del editor no es el de la
     /// última carga buena (marcaría mal) o con el secuenciador parado.
     fn highlights(&self) -> Vec<crate::highlight::Highlight> {
+        // En el editor separado, lo que manda la principal.
+        if let Some(remote) = self.remote_highlights() {
+            return remote;
+        }
         let (Some(song), Some(status)) = (self.host.song(), self.status) else {
             return Vec::new();
         };

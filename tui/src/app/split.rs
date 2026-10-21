@@ -15,6 +15,7 @@ use ratatui_textarea::{CursorMove, TextArea};
 use script::ScriptError;
 
 use super::{App, Flow, Mode};
+use crate::highlight::Highlight;
 use crate::link::{self, Client, Conn, Handover, RemoteState, Server, ToEditor, ToMain};
 use crate::palette::{ACTIONS, Action};
 
@@ -46,6 +47,8 @@ pub struct MainLink {
     sent_message: Option<String>,
     sent_state: Option<RemoteState>,
     sent_labels: Option<Vec<String>>,
+    /// Lo último que se mandó de lo que suena, con la revisión del editor.
+    sent_sounding: Option<(u64, Vec<Highlight>)>,
     /// Comando que abre una terminal (`[editor] terminal`), el binario
     /// propio y lo que abre el editor (script o proyecto).
     terminal: Option<Vec<String>>,
@@ -72,6 +75,9 @@ pub struct EditorLink {
     opened: String,
     remote: Option<RemoteState>,
     labels: Vec<String>,
+    /// Lo que suena según la principal y la revisión del texto a la que se
+    /// refiere.
+    sounding: (u64, Vec<Highlight>),
     /// Ya mandó su estado a la principal: la ventana se cierra.
     leaving: bool,
 }
@@ -223,6 +229,7 @@ impl App {
             sent_message: None,
             sent_state: None,
             sent_labels: None,
+            sent_sounding: None,
             terminal,
             exe,
             child: None,
@@ -243,6 +250,7 @@ impl App {
             opened: self.text(),
             remote: None,
             labels: Vec::new(),
+            sounding: (0, Vec::new()),
             leaving: false,
         }));
         self.message = "buscando la ventana principal…".into();
@@ -493,6 +501,7 @@ impl App {
             main.sent_message = None;
             main.sent_state = None;
             main.sent_labels = None;
+            main.sent_sounding = None;
             let pending = main.pending.take();
             if let Some(conn) = main.server.client() {
                 let _ = conn.send(&welcome);
@@ -582,6 +591,7 @@ impl App {
         let error = self.error.as_ref().map(|e| e.message.clone());
         let message = self.message.clone();
         let labels = self.known_labels();
+        let sounding = self.highlights();
         let state = self.status.map(|s| RemoteState {
             running: s.running,
             bpm: s.bpm,
@@ -618,6 +628,16 @@ impl App {
             out.push(ToEditor::Labels(labels.clone()));
             main.sent_labels = Some(labels);
         }
+        // Lo que suena, sobre el texto de la última revisión del editor (la
+        // que tiene aquí).
+        let sounding = (main.editor_rev, sounding);
+        if main.sent_sounding.as_ref() != Some(&sounding) {
+            out.push(ToEditor::Sounding {
+                base: sounding.0,
+                marks: sounding.1.clone(),
+            });
+            main.sent_sounding = Some(sounding);
+        }
         // El texto, lo último: si choca con lo que se escribe allí, su aviso
         // no lo tapa el mensaje de aquí.
         if text != main.synced {
@@ -651,6 +671,7 @@ impl App {
             Some(Err(_)) => {
                 editor.client.disconnect();
                 editor.remote = None;
+                editor.sounding.1.clear();
                 self.message =
                     "se perdió la ventana principal: sigue editando; se reconecta sola".into();
                 return;
@@ -757,11 +778,13 @@ impl App {
                 }
             }
             ToEditor::State(state) => editor.remote = Some(state),
+            ToEditor::Sounding { base, marks } => editor.sounding = (base, marks),
             ToEditor::Labels(labels) => editor.labels = labels,
             ToEditor::Bye(reason) => {
                 editor.client.disconnect();
                 editor.client.stopped = true;
                 editor.remote = None;
+                editor.sounding.1.clear();
                 self.message = format!("la ventana principal cerró la conexión: {reason}");
             }
             ToEditor::History(handover) => {
@@ -983,6 +1006,20 @@ impl App {
         self.external = None;
         self.mode = Mode::Edit;
         self.message = "el editor vuelve a estar en esta ventana".into();
+    }
+
+    /// En el editor separado, lo que suena según la principal: solo si el
+    /// texto de aquí es el de la revisión a la que se refiere (si se ha
+    /// escrito algo desde entonces, nada). `None` fuera del editor
+    /// separado (lo calcula esta ventana).
+    pub(super) fn remote_highlights(&self) -> Option<Vec<Highlight>> {
+        let Some(Link::Editor(editor)) = &self.link else {
+            return None;
+        };
+        let (base, marks) = &editor.sounding;
+        let current =
+            editor.client.connected() && *base == editor.rev && self.text() == editor.sent;
+        Some(if current { marks.clone() } else { Vec::new() })
     }
 
     /// La línea del enlace para las vistas, y el transporte del editor
