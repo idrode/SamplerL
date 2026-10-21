@@ -43,10 +43,12 @@ pub mod masking;
 pub mod patterns;
 pub mod project;
 mod watch;
+mod written;
 
 use patterns::Rng;
 pub use project::{Cut, EditKind, Project, SliceEdit, SliceLabel, SlicePosition};
 pub use watch::{ScriptWatcher, WatchEvent};
+pub use written::TokenSpan;
 
 use mlua::{
     AnyUserData, Function, HookTriggers, Lua, LuaOptions, StdLib, Table, UserData, UserDataMethods,
@@ -203,6 +205,10 @@ pub struct TrackDef {
     pub sidechains: Vec<(usize, String)>,
     /// Efectos de cada corte (`cortes:fx()`), uno por corte (o ninguno).
     pub slice_fx: Vec<SliceFxDef>,
+    /// Dónde está escrito el token de cada paso en el texto cargado, por
+    /// vuelta del ciclo (como `bars`); `None` donde no se sabe (un patrón
+    /// generado con `euclid`, `rotate`...). Ver [`TrackDef::sounding_span`].
+    pub spans: Vec<Vec<Option<TokenSpan>>>,
 }
 
 /// Efectos de un corte (`cortes:fx(i, ...)`): su cadena, en orden, y los
@@ -242,6 +248,22 @@ impl TrackDef {
     pub fn lap(&self, global: u64) -> (u64, usize) {
         let length = self.length.max(1) as u64;
         (global / length, (global % length) as usize)
+    }
+
+    /// El token que se resalta mientras suena el paso `index` del ciclo
+    /// (`vuelta · length + paso`, el índice de `bars` aplanado): el de
+    /// ese paso si dispara algo; en un paso que alarga un golpe (`_`), el
+    /// del golpe; en un silencio, nada.
+    pub fn sounding_span(&self, index: usize) -> Option<TokenSpan> {
+        let length = self.length.max(1);
+        let (lap, step) = (index / length, index % length);
+        let bar = self.bars.get(lap)?;
+        let spans = self.spans.get(lap)?;
+        let head = (0..=step)
+            .rev()
+            .find(|&k| bar.get(k).is_some_and(Option::is_some))?;
+        let hold = bar[head].map_or(0, |s| s.hold as usize);
+        (step - head <= hold).then(|| spans.get(head).copied().flatten())?
     }
 
     /// Pasos de la vuelta `lap` (la variante del ciclo que le toca).
@@ -805,7 +827,11 @@ impl ScriptHost {
                 &pattern_rng,
                 base_dir,
             )
-            .and_then(|()| lua.load(source).set_name(format!("={name}")).exec())
+            .and_then(|()| {
+                // Para saber dónde está escrito cada patrón.
+                lua.set_app_data(written::ScriptText::new(source, format!("={name}")));
+                lua.load(source).set_name(format!("={name}")).exec()
+            })
             .and_then(|()| run_bodies(&state));
         self.samples = std::mem::take(&mut *cache.borrow_mut());
         self.imported = std::mem::take(&mut imports.borrow_mut().used);
@@ -2144,6 +2170,7 @@ fn track_source(lua: &Lua, name: &str, source: &AnyUserData) -> mlua::Result<Tra
         formant: None,
         sidechains: Vec::new(),
         slice_fx: Vec::new(),
+        spans: Vec::new(),
     };
     if let Ok(source) = source.borrow::<SlicedHandle>() {
         let mut def = def(
@@ -2165,6 +2192,7 @@ fn track_source(lua: &Lua, name: &str, source: &AnyUserData) -> mlua::Result<Tra
             slice_fx: source.slice_fx.clone(),
             transforms: Vec::new(),
             steps_set: false,
+            written: Vec::new(),
         });
     }
     if let Ok(source) = source.borrow::<InstrumentHandle>() {
@@ -2186,6 +2214,7 @@ fn track_source(lua: &Lua, name: &str, source: &AnyUserData) -> mlua::Result<Tra
             slice_fx: Rc::default(),
             transforms: Vec::new(),
             steps_set: false,
+            written: Vec::new(),
         });
     }
     Err(fail(
@@ -2264,6 +2293,8 @@ struct TrackBuild {
     /// Ya se llamó a `:steps()` (luego `:length()` no puede cambiar la
     /// longitud).
     steps_set: bool,
+    /// Dónde está escrito cada paso de `:steps()` (ver [`written`]).
+    written: Vec<Option<TokenSpan>>,
 }
 
 #[derive(Clone)]
@@ -2349,6 +2380,7 @@ fn expand(track: TrackBuild, rng: &mut Rng, timing: Timing) -> Result<TrackDef, 
         slice_fx,
         transforms,
         steps_set: _,
+        written,
     } = track;
     def.labels = labels.borrow().clone();
     def.shapes = shapes.borrow().clone();
@@ -2381,8 +2413,10 @@ fn expand(track: TrackBuild, rng: &mut Rng, timing: Timing) -> Result<TrackDef, 
     }
 
     let mut bars = Vec::with_capacity(cycle as usize);
+    let mut spans = Vec::with_capacity(cycle as usize);
     for b in 0..cycle {
         let mut steps = def.steps.clone();
+        let mut lap_spans = written.clone();
         for transform in &transforms {
             match transform {
                 Transform::Every { n, func } if b % n == 0 => {
@@ -2395,11 +2429,13 @@ fn expand(track: TrackBuild, rng: &mut Rng, timing: Timing) -> Result<TrackDef, 
                         track: def.name.clone(),
                         root: def.instrument.map_or(60, |i| i.root),
                         instrument: def.instrument.is_some(),
+                        written: Rc::new(RefCell::new(lap_spans.clone())),
                     };
-                    let shared = bar.steps.clone();
+                    let (shared, shared_spans) = (bar.steps.clone(), bar.written.clone());
                     func.call::<()>(bar)
                         .map_err(|e| ScriptError::from_lua(&e))?;
                     steps = shared.borrow().clone();
+                    lap_spans = shared_spans.borrow().clone();
                 }
                 Transform::Every { .. } => {}
                 Transform::Fill {
@@ -2420,6 +2456,7 @@ fn expand(track: TrackBuild, rng: &mut Rng, timing: Timing) -> Result<TrackDef, 
             }
         }
         bars.push(steps);
+        spans.push(lap_spans);
     }
     // Swing: los contratiempos de semicorchea de la canción (pasos 2, 4,
     // 6... desde 1 en cada compás) se retrasan.
@@ -2448,6 +2485,7 @@ fn expand(track: TrackBuild, rng: &mut Rng, timing: Timing) -> Result<TrackDef, 
         )));
     }
     def.bars = bars;
+    def.spans = spans;
     Ok(def)
 }
 
@@ -3778,8 +3816,9 @@ struct TrackHandle {
 }
 
 impl TrackHandle {
-    /// `:steps(texto)` (y `:melody()`, que lo traduce a pasos).
-    fn set_steps(&self, lua: &Lua, text: &str) -> mlua::Result<()> {
+    /// `:steps(texto)` (y `:melody()`, que lo traduce a pasos: `written` es
+    /// el texto tal como se escribió, para saber dónde está cada paso).
+    fn set_steps(&self, lua: &Lua, text: &str, written: &str) -> mlua::Result<()> {
         let (labels, stale, count, length, instrument) = self.with_track(|t| {
             (
                 t.labels.borrow().clone(),
@@ -3794,9 +3833,11 @@ impl TrackHandle {
             count,
         };
         let steps = checked_steps(lua, &self.name, &labels, &stale, text, length, instrument)?;
+        let spans = written::spans(lua, written, length);
         self.with_track(|t| {
             t.def.steps = steps;
             t.steps_set = true;
+            t.written = spans;
         });
         Ok(())
     }
@@ -4152,7 +4193,7 @@ impl UserData for TrackHandle {
 
         // `:steps("1 . 3' ...")`: patrón base en mini-notación.
         methods.add_method("steps", |lua, this, text: String| {
-            this.set_steps(lua, &text)?;
+            this.set_steps(lua, &text, &text)?;
             Ok(this.clone())
         });
 
@@ -4161,7 +4202,7 @@ impl UserData for TrackHandle {
         methods.add_method("melody", |lua, this, text: String| {
             let root = this.with_track(|t| t.def.instrument.map_or(60, |i| i.root));
             let steps = patterns::notes(&text, root).map_err(|e| fail(lua, e))?;
-            this.set_steps(lua, &steps)?;
+            this.set_steps(lua, &steps, &text)?;
             Ok(this.clone())
         });
 
@@ -4534,6 +4575,9 @@ struct BarHandle {
     /// instrumento (acordes).
     root: i32,
     instrument: bool,
+    /// Dónde está escrito cada paso de esta vuelta: el de la pista hasta
+    /// que un `:steps()` lo sustituye.
+    written: Rc<RefCell<Vec<Option<TokenSpan>>>>,
 }
 
 impl BarHandle {
@@ -4553,10 +4597,11 @@ impl BarHandle {
             track: self.track.clone(),
             root: self.root,
             instrument: self.instrument,
+            written: self.written.clone(),
         }
     }
 
-    fn set_steps(&self, lua: &Lua, text: &str) -> mlua::Result<()> {
+    fn set_steps(&self, lua: &Lua, text: &str, written: &str) -> mlua::Result<()> {
         let stale = StaleLabels {
             labels: &self.stale,
             count: self.count,
@@ -4571,6 +4616,7 @@ impl BarHandle {
             self.instrument,
         )?;
         *self.steps.borrow_mut() = steps;
+        *self.written.borrow_mut() = written::spans(lua, written, self.length);
         Ok(())
     }
 }
@@ -4579,13 +4625,13 @@ impl UserData for BarHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         // Sustituye los pasos de este compás.
         methods.add_method("steps", |lua, this, text: String| {
-            this.set_steps(lua, &text)?;
+            this.set_steps(lua, &text, &text)?;
             Ok(this.handle())
         });
         // Sustituye los pasos por notas (como `pista:melody`).
         methods.add_method("melody", |lua, this, text: String| {
             let steps = patterns::notes(&text, this.root).map_err(|e| fail(lua, e))?;
-            this.set_steps(lua, &steps)?;
+            this.set_steps(lua, &steps, &text)?;
             Ok(this.handle())
         });
         // Invierte el sentido de cada golpe del compás.
