@@ -993,6 +993,32 @@ ráfaga de teclas con saltos de línea también se toma como un pegado. En la
 línea de órdenes (F2) solo entra la primera línea, y en el modo tocar no
 se pega nada.
 
+### Resaltado en vivo
+
+Con el secuenciador en marcha, el paso de cada `steps("...")` que se oye
+se resalta en el propio código, con el color de fondo de su pista (como en
+Strudel). La pista seleccionada (Ctrl-O) va con el color entero y el texto
+en negro y negrita; las demás, con su color apagado. Un `_` deja resaltado
+el golpe que alarga mientras dura, y un retrigger (`2r4`) o un acorde se
+resaltan enteros todo su paso. Los silencios (`.`) no se resaltan.
+
+- Sigue a lo que se oye, no a lo que calcula el motor: descuenta la
+  latencia de la salida de audio.
+- Solo mientras el texto del editor es el de la última carga buena: al
+  escribir algo deja de resaltar hasta que se carga (o se deshace el
+  cambio). Tras cargar, empieza en el compás siguiente, cuando entra lo
+  nuevo.
+- Se resalta lo escrito tal cual en el código: la cadena de `steps`,
+  `melody` o `c:steps` dentro de `every` (también en una variable:
+  `local p = "..."` con `:steps(p)`, si no hay otra cadena igual). Con
+  `every`, `fill` y `chance`, el paso del patrón escrito en esa posición.
+  Lo que sale de una función (`euclid`, `rotate`, `mutate`, `shuffle`,
+  `reverse_pattern`) o de juntar cadenas no está escrito: esa pista no se
+  resalta.
+- Varias pistas en la misma línea, cada una con su color; si dos marcan
+  el mismo texto (una cadena compartida), manda la seleccionada y, si no,
+  la definida antes.
+
 ## 3. Mini-notación
 
 Un patrón son **16 pasos** (semicorcheas de un compás de 4/4) separados por

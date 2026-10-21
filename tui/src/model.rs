@@ -51,6 +51,9 @@ pub struct ViewModel {
     /// Problemas de la notación de `steps("...")` en el texto actual (en
     /// vivo, sin cargar).
     pub diagnostics: Vec<Diagnostic>,
+    /// Tokens de la mini-notación que se oyen ahora, en el orden en que se
+    /// dibujan (resaltado en vivo, fase M).
+    pub highlights: Vec<crate::highlight::Highlight>,
     /// Ayuda de la función bajo el cursor (en el modo editor).
     pub help: Option<Help>,
     pub transport: TransportView,

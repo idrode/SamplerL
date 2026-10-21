@@ -794,28 +794,45 @@ fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rect) -
         .set_search_style(Style::new().fg(Color::Black).bg(warning_color()));
     frame.render_widget(&app.editor, editor_area);
 
-    // Subrayar los pasos con error de `steps("...")` que estén a la vista.
+    // Celdas de unas columnas de una fila del texto, si están a la vista.
     let (top, left) = app.editor.scroll_offset();
     let text_x = editor_area.x + app.editor.line_number_width();
-    for d in &view.diagnostics {
-        let Some(y) = d
-            .row
+    let cells = |row: usize, cols: &std::ops::Range<usize>| {
+        let y = row
             .checked_sub(top as usize)
-            .filter(|r| *r < editor_area.height as usize)
-        else {
-            continue;
-        };
-        let from = d.cols.start.saturating_sub(left as usize) as u16;
-        let to = d.cols.end.saturating_sub(left as usize) as u16;
-        let x = (text_x + from).min(editor_area.right());
-        let width = (text_x + to).min(editor_area.right()).saturating_sub(x);
-        frame.buffer_mut().set_style(
-            Rect::new(x, editor_area.y + y as u16, width, 1),
-            Style::new()
-                .fg(diagnostic())
-                .underline_color(diagnostic())
-                .add_modifier(Modifier::UNDERLINED),
-        );
+            .filter(|r| *r < editor_area.height as usize)?;
+        let from = cols
+            .start
+            .saturating_sub(left as usize)
+            .min(u16::MAX as usize) as u16;
+        let to = cols
+            .end
+            .saturating_sub(left as usize)
+            .min(u16::MAX as usize) as u16;
+        let x = text_x.saturating_add(from).min(editor_area.right());
+        let width = text_x
+            .saturating_add(to)
+            .min(editor_area.right())
+            .saturating_sub(x);
+        (width > 0).then(|| Rect::new(x, editor_area.y + y as u16, width, 1))
+    };
+    // Lo que suena, sobre el propio texto (en orden: el último manda).
+    for h in &view.highlights {
+        if let Some(area) = cells(h.row, &h.cols) {
+            frame.buffer_mut().set_style(area, highlight_style(h));
+        }
+    }
+    // Subrayar los pasos con error de `steps("...")` que estén a la vista.
+    for d in &view.diagnostics {
+        if let Some(area) = cells(d.row, &d.cols) {
+            frame.buffer_mut().set_style(
+                area,
+                Style::new()
+                    .fg(diagnostic())
+                    .underline_color(diagnostic())
+                    .add_modifier(Modifier::UNDERLINED),
+            );
+        }
     }
 
     let popup = view.completion.as_ref().map(|completion| {
@@ -850,6 +867,22 @@ fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rect) -
         }
     }
     popup
+}
+
+/// Estilo de un token que suena: el fondo con el color de su pista; la
+/// pista seleccionada, con el color entero, el texto en negro y en
+/// negrita; las demás, con el color apagado.
+pub fn highlight_style(h: &crate::highlight::Highlight) -> Style {
+    let theme = theme::get();
+    let color = h.color % theme::HIGHLIGHT_COLORS;
+    if h.selected {
+        Style::new()
+            .bg(theme.highlight[color])
+            .fg(Color::Black)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::new().bg(theme.highlight_dim[color])
+    }
 }
 
 /// Opciones visibles a la vez en el autocompletado.

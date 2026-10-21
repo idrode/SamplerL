@@ -30,7 +30,28 @@ pub struct Theme {
     pub playing: Color,
     /// Medidores de nivel.
     pub meter: Color,
+    /// Resaltado en vivo del código al sonar: un color por pista (en el
+    /// orden del script, y vuelta a empezar) y su versión apagada, para
+    /// las pistas que no están seleccionadas.
+    pub highlight: [Color; HIGHLIGHT_COLORS],
+    pub highlight_dim: [Color; HIGHLIGHT_COLORS],
 }
+
+/// Colores del resaltado en vivo (uno por pista del motor).
+pub const HIGHLIGHT_COLORS: usize = engine::MAX_TRACKS;
+
+/// Los de siempre: rosa, celeste, amarillo, verde, lila, naranja, azul y
+/// rojo de la paleta de 256 (se ven en cualquier terminal).
+const HIGHLIGHT: [Color; HIGHLIGHT_COLORS] = [
+    Color::Indexed(205),
+    Color::Indexed(81),
+    Color::Indexed(221),
+    Color::Indexed(120),
+    Color::Indexed(141),
+    Color::Indexed(209),
+    Color::Indexed(75),
+    Color::Indexed(167),
+];
 
 impl Default for Theme {
     fn default() -> Self {
@@ -45,6 +66,8 @@ impl Default for Theme {
             slice: Color::Yellow,
             playing: Color::Blue,
             meter: Color::Green,
+            highlight: HIGHLIGHT,
+            highlight_dim: HIGHLIGHT.map(|c| dimmed(c, false)),
         }
     }
 }
@@ -124,6 +147,78 @@ pub fn parse(text: &str, truecolor: bool) -> Option<Color> {
     Some(if truecolor { color } else { downgrade(color) })
 }
 
+/// Un color más apagado (a menos de la mitad de luz), para el fondo de lo
+/// que suena en las pistas que no están seleccionadas. Sin `truecolor`,
+/// el más cercano de la paleta de 256.
+pub fn dimmed(color: Color, truecolor: bool) -> Color {
+    let Some((r, g, b)) = rgb(color) else {
+        return color;
+    };
+    let scale = |v: u8| (v as f32 * 0.45).round() as u8;
+    let dim = Color::Rgb(scale(r), scale(g), scale(b));
+    if truecolor { dim } else { downgrade(dim) }
+}
+
+/// El RGB de un color: los de la paleta de 256 (los 16 básicos con los
+/// valores de xterm) y los `#rrggbb`; `None` para el de la terminal.
+fn rgb(color: Color) -> Option<(u8, u8, u8)> {
+    const BASIC: [(u8, u8, u8); 16] = [
+        (0, 0, 0),
+        (205, 0, 0),
+        (0, 205, 0),
+        (205, 205, 0),
+        (0, 0, 238),
+        (205, 0, 205),
+        (0, 205, 205),
+        (229, 229, 229),
+        (127, 127, 127),
+        (255, 0, 0),
+        (0, 255, 0),
+        (255, 255, 0),
+        (92, 92, 255),
+        (255, 0, 255),
+        (0, 255, 255),
+        (255, 255, 255),
+    ];
+    const LEVELS: [u8; 6] = [0, 95, 135, 175, 215, 255];
+    let index = match color {
+        Color::Rgb(r, g, b) => return Some((r, g, b)),
+        Color::Indexed(i) => i,
+        Color::Black => 0,
+        Color::Red => 1,
+        Color::Green => 2,
+        Color::Yellow => 3,
+        Color::Blue => 4,
+        Color::Magenta => 5,
+        Color::Cyan => 6,
+        Color::Gray => 7,
+        Color::DarkGray => 8,
+        Color::LightRed => 9,
+        Color::LightGreen => 10,
+        Color::LightYellow => 11,
+        Color::LightBlue => 12,
+        Color::LightMagenta => 13,
+        Color::LightCyan => 14,
+        Color::White => 15,
+        Color::Reset => return None,
+    };
+    Some(match index {
+        0..=15 => BASIC[index as usize],
+        16..=231 => {
+            let i = index - 16;
+            (
+                LEVELS[(i / 36) as usize],
+                LEVELS[(i / 6 % 6) as usize],
+                LEVELS[(i % 6) as usize],
+            )
+        }
+        _ => {
+            let level = 8 + 10 * (index - 232);
+            (level, level, level)
+        }
+    })
+}
+
 /// El color de la paleta de 256 más cercano a un RGB (el cubo 6×6×6 o la
 /// escala de grises); los demás, igual.
 pub fn downgrade(color: Color) -> Color {
@@ -168,5 +263,16 @@ mod tests {
         assert_eq!(downgrade(Color::Rgb(128, 128, 128)), Color::Indexed(244));
         assert_eq!(downgrade(Color::Rgb(255, 0, 0)), Color::Indexed(196));
         assert_eq!(parse("rosa chicle", false), None);
+    }
+
+    #[test]
+    fn dimmed_colors_keep_their_hue_with_less_light() {
+        assert_eq!(dimmed(Color::Rgb(200, 100, 0), true), Color::Rgb(90, 45, 0));
+        // 205 es (255, 95, 175): apagado, (115, 43, 79) → el 53 del cubo
+        // (95, 0, 95).
+        assert_eq!(dimmed(Color::Indexed(205), false), Color::Indexed(53));
+        assert_eq!(rgb(Color::Indexed(244)), Some((128, 128, 128)));
+        assert_eq!(rgb(Color::Cyan), Some((0, 205, 205)));
+        assert_eq!(dimmed(Color::Reset, false), Color::Reset);
     }
 }

@@ -2387,6 +2387,7 @@ mod formant;
 mod grains;
 mod grains_live;
 mod grid;
+mod highlight;
 mod history;
 mod import;
 mod instrument;

@@ -5,6 +5,7 @@ mod complete;
 mod config;
 mod diagnose;
 mod editing;
+mod highlight;
 mod history;
 mod link;
 mod midi;

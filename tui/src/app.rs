@@ -308,6 +308,11 @@ pub struct App {
     /// siempre, `link::runtime_dir`).
     editor_terminal: Option<Vec<String>>,
     socket_dir: Option<PathBuf>,
+    /// Resaltado en vivo del código al sonar: el texto de la última carga
+    /// buena (solo se resalta si el editor tiene ese mismo texto) y los
+    /// últimos pasos de cada pista que ha publicado el motor.
+    loaded_text: Option<String>,
+    cursors: crate::highlight::Cursors,
 }
 
 impl App {
@@ -384,6 +389,8 @@ impl App {
             midi_in: None,
             midi_out: None,
             link: None,
+            loaded_text: None,
+            cursors: Default::default(),
         };
         app.reload_blocks();
         Ok(app)
@@ -1407,6 +1414,7 @@ impl App {
             Ok(song) => {
                 self.loads += 1;
                 self.error = None;
+                self.loaded_text = Some(text.clone());
                 self.message = "cargado: entra en el siguiente compás".into();
                 for warning in &song.warnings {
                     self.message.push_str(&format!(" · ⚠ {warning}"));
@@ -1730,6 +1738,26 @@ impl App {
 
     /// Las pistas que suenan: las de la sección en curso (sin secciones o
     /// sin línea de tiempo, las de la canción). Vacío sin nada cargado.
+    /// Los tokens de la mini-notación que se oyen ahora (ver
+    /// [`crate::highlight`]): nada si el texto del editor no es el de la
+    /// última carga buena (marcaría mal) o con el secuenciador parado.
+    fn highlights(&self) -> Vec<crate::highlight::Highlight> {
+        let (Some(song), Some(status)) = (self.host.song(), self.status) else {
+            return Vec::new();
+        };
+        if !status.running || self.loaded_text.as_deref() != Some(self.text().as_str()) {
+            return Vec::new();
+        }
+        let selected = self.tracks().get(self.selected).map(|t| t.name.as_str());
+        crate::highlight::highlights(
+            song,
+            &self.cursors,
+            status.heard,
+            |name| self.host.track_slot(name),
+            selected,
+        )
+    }
+
     pub fn tracks(&self) -> &[script::TrackDef] {
         let Some(song) = self.host.song() else {
             return &[];
@@ -3506,6 +3534,7 @@ impl App {
         self.release_expired_pads(Instant::now());
         self.watch_recording();
         let status = self.controller.status();
+        self.cursors.observe(&status);
         let now = Instant::now();
         let hold = Some(now + WARNING_HOLD);
         for (t, track) in status.tracks.iter().enumerate() {
@@ -3657,6 +3686,7 @@ impl App {
                 message: e.message.clone(),
             }),
             diagnostics: diagnose::steps_diagnostics(self.editor.lines(), &self.known_labels()),
+            highlights: self.highlights(),
             help: (self.mode == Mode::Edit
                 && self.palette.is_none()
                 && self.block_picker.is_none()
