@@ -3,7 +3,8 @@
 //! `Engine::process`, con retrasos (swing, humanize), retrigger, pitch,
 //! instrumentos (polifonía, ADSR, bucles), el EQ (suavizado y automatizado),
 //! el EQ dinámico con sidechain, efectos por corte (con sus colas), bucles de corte con fundido, nubes de granos en vivo, cambios de
-//! patrón al compás y un patrón que se suelta a la cola de basura.
+//! patrón al compás, un patrón que se suelta a la cola de basura y el paso
+//! de cada pista y el retardo de salida que se publican para la interfaz.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -93,6 +94,8 @@ fn the_audio_thread_never_allocates() {
             Fx::compressor(-20.0, 6.0),
             Fx::distortion(6.0, 0.5),
         ])
+        .unwrap()
+        .with_tag(engine::MAX_TAG)
         .unwrap();
     let second = Pattern::from_bars(sample.clone(), &slices, &bars[..2]).unwrap();
 
@@ -104,10 +107,14 @@ fn the_audio_thread_never_allocates() {
 
     let n = counted(|| {
         for _ in 0..400 {
+            // Como el callback de la salida: el retardo y el bloque. El
+            // paso de cada pista (su cursor) se publica en cada paso.
+            engine.set_output_delay(1024);
             engine.process(&mut out, 2);
         }
     });
     assert_eq!(n, 0, "reservas en process");
+    assert!(controller.status().tracks[0].cursor.is_some());
 
     // Un patrón nuevo entra al compás y el viejo se va a la cola de basura.
     controller.set_track_pattern(1, Some(second)).unwrap();

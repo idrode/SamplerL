@@ -205,6 +205,11 @@ pub struct TrackDef {
     pub sidechains: Vec<(usize, String)>,
     /// Efectos de cada corte (`cortes:fx()`), uno por corte (o ninguno).
     pub slice_fx: Vec<SliceFxDef>,
+    /// Etiqueta de esta definición de pista, única entre cargas (de 1 a
+    /// [`engine::MAX_TAG`]; 0, sin etiqueta). Va al motor con su patrón y
+    /// vuelve con el paso que suena ([`engine::TrackStatus::cursor`]): así
+    /// se sabe de qué carga es lo que suena.
+    pub tag: u32,
     /// Dónde está escrito el token de cada paso en el texto cargado, por
     /// vuelta del ciclo (como `bars`); `None` donde no se sabe (un patrón
     /// generado con `euclid`, `rotate`...). Ver [`TrackDef::sounding_span`].
@@ -251,7 +256,7 @@ impl TrackDef {
     }
 
     /// El token que se resalta mientras suena el paso `index` del ciclo
-    /// (`vuelta · length + paso`, el índice de `bars` aplanado): el de
+    /// (`vuelta · length + paso`, el de [`engine::Cursor::index`]): el de
     /// ese paso si dispara algo; en un paso que alarga un golpe (`_`), el
     /// del golpe; en un silencio, nada.
     pub fn sounding_span(&self, index: usize) -> Option<TokenSpan> {
@@ -449,6 +454,8 @@ pub struct ScriptHost {
     /// Samples estirados con `:stretch()` en la última carga (se reutilizan
     /// si no cambian el sample, la proporción ni los cortes).
     stretched: Vec<Stretched>,
+    /// Última etiqueta dada a una pista ([`TrackDef::tag`]).
+    last_tag: u32,
 }
 
 impl ScriptHost {
@@ -469,6 +476,7 @@ impl ScriptHost {
             edits: Vec::new(),
             imported: Vec::new(),
             stretched: Vec::new(),
+            last_tag: 0,
         }
     }
 
@@ -876,6 +884,7 @@ impl ScriptHost {
         let tempo = bpm.unwrap_or(engine::DEFAULT_BPM);
         let timing = Timing { bpm: tempo, seed };
         let mut used = Vec::new();
+        let tags = Cell::new(self.last_tag);
         let base_warnings = warnings.borrow().clone();
         let mut songs = Vec::with_capacity(versions.len());
         for version in versions {
@@ -888,7 +897,14 @@ impl ScriptHost {
                     .map(|track| expand(track, &mut rng, timing))
                     .collect::<Result<Vec<_>, _>>();
                 expanding.set(false);
-                expanded
+                expanded.map(|mut tracks| {
+                    for track in &mut tracks {
+                        let tag = tags.get() % engine::MAX_TAG + 1;
+                        tags.set(tag);
+                        track.tag = tag;
+                    }
+                    tracks
+                })
             };
             let mut warnings = base_warnings.clone();
             let (tracks, sections, timeline) = match version.sections {
@@ -982,6 +998,7 @@ impl ScriptHost {
             });
         }
         self.stretched = used;
+        self.last_tag = tags.get();
         // Con variantes, la A lleva a la B.
         let mut songs = songs.into_iter();
         let mut song = songs.next().expect("al menos una versión");
@@ -1837,6 +1854,7 @@ fn track_pattern(
         .and_then(|p| p.with_formant(track.formant))
         .map(|p| p.with_gate(track.gate))
         .map(|p| p.with_mute(track.mute).with_solo(track.solo))
+        .and_then(|p| p.with_tag(track.tag))
         .map_err(|e| ScriptError::new(format!("pista \"{}\": {e}", track.name)))
 }
 
@@ -1900,6 +1918,20 @@ impl Song {
 
     /// Nombres de todas las pistas, de todas las secciones, sin repetir
     /// (cada uno ocupa una pista del motor).
+    /// La definición de pista con esa etiqueta ([`TrackDef::tag`]): de las
+    /// pistas, de las secciones o de la otra variante; `None` si es de
+    /// otra carga (o 0).
+    pub fn track_by_tag(&self, tag: u32) -> Option<&TrackDef> {
+        if tag == 0 {
+            return None;
+        }
+        self.tracks
+            .iter()
+            .chain(self.sections.iter().flat_map(|s| s.tracks.iter()))
+            .find(|t| t.tag == tag)
+            .or_else(|| self.alternate.as_ref()?.track_by_tag(tag))
+    }
+
     pub fn track_names(&self) -> Vec<&str> {
         let mut names: Vec<&str> = Vec::new();
         let all = self
@@ -2170,6 +2202,7 @@ fn track_source(lua: &Lua, name: &str, source: &AnyUserData) -> mlua::Result<Tra
         formant: None,
         sidechains: Vec::new(),
         slice_fx: Vec::new(),
+        tag: 0,
         spans: Vec::new(),
     };
     if let Ok(source) = source.borrow::<SlicedHandle>() {

@@ -616,6 +616,8 @@ pub enum SendError {
     InvalidGranular(&'static str),
     /// Arreglo (secciones y línea de tiempo) no válido.
     InvalidArrangement(&'static str),
+    /// Etiqueta de patrón por encima de `MAX_TAG`.
+    InvalidTag(u32),
 }
 
 impl fmt::Display for SendError {
@@ -630,6 +632,13 @@ impl fmt::Display for SendError {
             SendError::InvalidInstrument(reason) => write!(f, "instrumento: {reason}"),
             SendError::InvalidGranular(reason) => write!(f, "granos: {reason}"),
             SendError::InvalidArrangement(reason) => write!(f, "arreglo: {reason}"),
+            SendError::InvalidTag(tag) => {
+                write!(
+                    f,
+                    "etiqueta de patrón {tag} fuera de rango (0 a {})",
+                    crate::MAX_TAG
+                )
+            }
             SendError::InvalidCycle(bars) => write!(
                 f,
                 "ciclo de {bars} compases fuera de rango (1 a {})",
@@ -983,7 +992,10 @@ pub fn new_engine(sample_rate: u32) -> (Controller, Engine) {
     let (garbage_tx, garbage_rx) = RingBuffer::new(GARBAGE_CAPACITY);
     let (midi_tx, midi_rx) = RingBuffer::new(MIDI_CAPACITY);
     let playing = Arc::new(AtomicBool::new(false));
-    let status = Arc::new(SharedStatus::new(crate::sequencer::DEFAULT_BPM));
+    let status = Arc::new(SharedStatus::new(
+        crate::sequencer::DEFAULT_BPM,
+        sample_rate,
+    ));
     (
         Controller {
             commands: cmd_tx,
@@ -1497,9 +1509,18 @@ impl Engine {
     /// arrancar la salida): los buffers de los buses se vuelven a reservar.
     pub(crate) fn set_sample_rate(&mut self, sample_rate: u32) {
         self.sample_rate = sample_rate;
+        self.status.set_sample_rate(sample_rate);
         let params = self.rack.params;
         self.rack = Rack::new(sample_rate);
         self.rack.params = params;
+    }
+
+    /// Frames que tarda en oírse el final del bloque que se acaba de
+    /// calcular (la latencia de la salida más el bloque): para que la
+    /// interfaz siga lo que se oye ([`crate::Status::heard`]). Solo un
+    /// atómico: se puede llamar desde el callback de audio.
+    pub fn set_output_delay(&self, frames: u64) {
+        self.status.set_output_delay(frames);
     }
 
     /// Rellena `out` (entrelazado, `channels` canales) con el siguiente bloque.
@@ -1834,6 +1855,13 @@ impl Engine {
                     self.discard_pattern(old);
                 }
             }
+            // El paso que pasa por la pista, aunque sea un silencio (para
+            // resaltar lo que suena en el código).
+            let cursor = self.tracks[t]
+                .pattern
+                .as_ref()
+                .map(|p| (p.tag, p.index(global - origin)));
+            self.status.set_cursor(t, cursor, global);
             let hit = self.tracks[t]
                 .pattern
                 .as_ref()

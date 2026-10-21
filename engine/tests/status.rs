@@ -127,3 +127,87 @@ fn the_position_follows_the_song_in_steps() {
     engine::offline::render(&mut engine, 100, 2);
     assert_eq!(controller.position(), None);
 }
+
+/// Patrón de 4 pasos con dos vueltas distintas y su etiqueta.
+fn tagged(tag: u32) -> Pattern {
+    let mut mono = vec![0.0f32; 6000];
+    mono[..800].fill(0.5);
+    mono[3000..3800].fill(0.25);
+    let sample = Arc::new(Sample::from_interleaved(&mono, 1, RATE, RATE).unwrap());
+    let slices = Slices::detect(&sample, 2);
+    let lap = |text: &str| engine::notation::parse_pattern_labeled(text, 4, &[]).unwrap();
+    Pattern::from_bars(sample, &slices, &[lap("1 . 2 ."), lap(". 2 . 1")])
+        .unwrap()
+        .with_tag(tag)
+        .unwrap()
+}
+
+#[test]
+fn each_track_publishes_the_step_it_is_on_with_its_tag() {
+    let (mut controller, mut engine) = new_engine(RATE);
+    controller.set_bpm(120.0).unwrap();
+    controller.set_track_pattern(0, Some(tagged(7))).unwrap();
+    controller.start().unwrap();
+    // Antes del primer paso, nada.
+    assert_eq!(controller.status().tracks[0].cursor, None);
+    for global in 0..20u64 {
+        offline::render(&mut engine, STEP, 2);
+        let status = controller.status();
+        let cursor = status.tracks[0].cursor.unwrap();
+        // Ciclo de 2 vueltas de 4: el índice cuenta las dos (silencios
+        // incluidos).
+        assert_eq!(
+            (cursor.tag, cursor.index, cursor.global),
+            (7, (global % 8) as usize, global),
+            "paso {global}"
+        );
+        assert_eq!(status.global, global);
+        // Sin patrón, sin cursor.
+        assert_eq!(status.tracks[1].cursor, None);
+    }
+    // Otro patrón: su etiqueta, desde el compás siguiente (el paso 32).
+    controller.set_track_pattern(0, Some(tagged(9))).unwrap();
+    offline::render(&mut engine, 12 * STEP, 2);
+    assert_eq!(controller.status().tracks[0].cursor.unwrap().tag, 7);
+    offline::render(&mut engine, 1, 2);
+    let cursor = controller.status().tracks[0].cursor.unwrap();
+    assert_eq!((cursor.tag, cursor.index, cursor.global), (9, 0, 32));
+    // Arrancar otra vez: desde el paso 0 de la vuelta 0.
+    controller.stop().unwrap();
+    offline::render(&mut engine, 100, 2);
+    controller.start().unwrap();
+    offline::render(&mut engine, 1, 2);
+    let cursor = controller.status().tracks[0].cursor.unwrap();
+    assert_eq!((cursor.tag, cursor.index, cursor.global), (9, 0, 0));
+}
+
+#[test]
+fn tags_have_a_ceiling() {
+    let p = |tag| pattern().with_tag(tag);
+    assert!(p(engine::MAX_TAG).is_ok());
+    assert!(matches!(
+        p(engine::MAX_TAG + 1),
+        Err(engine::SendError::InvalidTag(_))
+    ));
+}
+
+#[test]
+fn heard_is_the_position_minus_the_output_delay() {
+    let (mut controller, mut engine) = new_engine(RATE);
+    controller.set_bpm(120.0).unwrap();
+    controller.set_pattern(pattern()).unwrap();
+    assert_eq!(controller.status().heard, None);
+    controller.start().unwrap();
+    offline::render(&mut engine, 3 * STEP, 2);
+    // Sin retardo (render offline), lo que se oye es la posición.
+    let status = controller.status();
+    assert_eq!(status.heard, controller.position());
+    assert!((status.heard.unwrap() - 3.0).abs() < 1e-9);
+    // Con un paso y medio de retardo, un paso y medio antes.
+    engine.set_output_delay(STEP as u64 * 3 / 2);
+    let heard = controller.status().heard.unwrap();
+    assert!((heard - 1.5).abs() < 1e-9, "{heard}");
+    controller.stop().unwrap();
+    offline::render(&mut engine, 100, 2);
+    assert_eq!(controller.status().heard, None);
+}

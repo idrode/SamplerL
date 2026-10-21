@@ -10,6 +10,11 @@
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering::Relaxed};
 
 use crate::engine::MAX_TRACKS;
+use crate::sequencer::frames_per_step;
+
+/// Etiqueta de patrón más alta ([`crate::Pattern::with_tag`]): va en 20
+/// bits del cursor (sin llegar a todos unos, que es «sin cursor»).
+pub const MAX_TAG: u32 = (1 << 20) - 2;
 
 /// Instantánea del estado del motor.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -33,6 +38,24 @@ pub struct Status {
     /// Al entrar el último arreglo, la sección que sonaba ya no estaba y
     /// se volvió al principio (se pone a `false` al leerlo).
     pub section_lost: bool,
+    /// Lo que suena por los altavoces ahora, en pasos con decimales como
+    /// [`crate::Controller::position`]: la posición al acabar el último
+    /// bloque menos el retardo de la salida (lo que tarda en oírse); `None`
+    /// con el secuenciador parado. Para seguir lo que se oye, no lo que se
+    /// calcula.
+    pub heard: Option<f64>,
+}
+
+/// Paso que disparó una pista: de qué patrón ([`crate::Pattern::with_tag`]),
+/// cuál del ciclo y en qué semicorchea de la canción.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Cursor {
+    /// Etiqueta del patrón que sonaba.
+    pub tag: u32,
+    /// Paso del ciclo aplanado: `vuelta · longitud + paso`.
+    pub index: usize,
+    /// Semicorchea de la canción en que empezó (como [`Status::global`]).
+    pub global: u64,
 }
 
 /// Posición en la línea de tiempo de un arreglo.
@@ -69,6 +92,9 @@ pub struct TrackStatus {
     pub voices: usize,
     /// Granos que han nacido desde la lectura anterior.
     pub grains: u32,
+    /// Último paso que pasó por la pista con un patrón (aunque fuera un
+    /// silencio); `None` sin patrón o antes del primero desde que arrancó.
+    pub cursor: Option<Cursor>,
 }
 
 const NONE: u64 = u64::MAX;
@@ -87,6 +113,13 @@ pub(crate) struct SharedStatus {
     peak: [AtomicU32; MAX_TRACKS],
     voices: [AtomicU32; MAX_TRACKS],
     grains: [AtomicU32; MAX_TRACKS],
+    /// Cursor de cada pista empaquetado en un solo atómico (se lee entero):
+    /// etiqueta (20 bits), paso del ciclo (12) y semicorchea (los 32 bajos).
+    cursor: [AtomicU64; MAX_TRACKS],
+    /// Frames entre el final del último bloque y su salida por los
+    /// altavoces, y la frecuencia del motor (para pasarlos a pasos).
+    output_delay: AtomicU64,
+    sample_rate: AtomicU32,
     master_peak: AtomicU32,
     limited: AtomicU64,
     section_entry: AtomicU64,
@@ -96,7 +129,7 @@ pub(crate) struct SharedStatus {
 }
 
 impl SharedStatus {
-    pub fn new(bpm: f64) -> Self {
+    pub fn new(bpm: f64, sample_rate: u32) -> Self {
         SharedStatus {
             running: AtomicBool::new(false),
             bpm: AtomicU64::new(bpm.to_bits()),
@@ -109,6 +142,9 @@ impl SharedStatus {
             peak: std::array::from_fn(|_| AtomicU32::new(0)),
             voices: std::array::from_fn(|_| AtomicU32::new(0)),
             grains: std::array::from_fn(|_| AtomicU32::new(0)),
+            cursor: std::array::from_fn(|_| AtomicU64::new(NONE)),
+            output_delay: AtomicU64::new(0),
+            sample_rate: AtomicU32::new(sample_rate),
             master_peak: AtomicU32::new(0),
             limited: AtomicU64::new(0),
             section_entry: AtomicU64::new(NONE),
@@ -144,8 +180,31 @@ impl SharedStatus {
         self.bar_steps.store(bar_steps as u64, Relaxed);
     }
 
+    /// Sin paso ni cursores (al arrancar).
     pub fn clear_step(&self) {
         self.step.store(NONE, Relaxed);
+        for cursor in &self.cursor {
+            cursor.store(NONE, Relaxed);
+        }
+    }
+
+    /// El paso que pasa por la pista: (etiqueta, paso del ciclo) y su
+    /// semicorchea; `None` sin patrón.
+    pub fn set_cursor(&self, track: usize, cursor: Option<(u32, usize)>, global: u64) {
+        let packed = cursor.map_or(NONE, |(tag, index)| {
+            ((tag as u64) << 44) | (((index as u64) & 0xfff) << 32) | (global & 0xffff_ffff)
+        });
+        self.cursor[track].store(packed, Relaxed);
+    }
+
+    /// Frames que tarda en oírse el final del bloque (latencia de la
+    /// salida más el propio bloque).
+    pub fn set_output_delay(&self, frames: u64) {
+        self.output_delay.store(frames, Relaxed);
+    }
+
+    pub fn set_sample_rate(&self, sample_rate: u32) {
+        self.sample_rate.store(sample_rate, Relaxed);
     }
 
     pub fn set_hit(&self, track: usize, start: usize) {
@@ -214,18 +273,36 @@ impl SharedStatus {
     /// Instantánea; los picos se ponen a cero al leerlos.
     pub fn snapshot(&self) -> Status {
         let opt = |v: u64| (v != NONE).then_some(v);
+        let global = self.global.load(Relaxed);
+        let bpm = f64::from_bits(self.bpm.load(Relaxed));
+        let cursor = |packed: u64| {
+            opt(packed).map(|p| {
+                // La semicorchea, por su diferencia con la global (con signo:
+                // puede ser de un paso después si llegó entre las lecturas).
+                let low = (p & 0xffff_ffff) as u32;
+                let back = low.wrapping_sub(global as u32) as i32 as i64;
+                Cursor {
+                    tag: (p >> 44) as u32,
+                    index: ((p >> 32) & 0xfff) as usize,
+                    global: (global as i64 + back).max(0) as u64,
+                }
+            })
+        };
+        let delay = self.output_delay.load(Relaxed) as f64
+            / frames_per_step(bpm, self.sample_rate.load(Relaxed).max(1));
         Status {
             running: self.running.load(Relaxed),
-            bpm: f64::from_bits(self.bpm.load(Relaxed)),
+            bpm,
             bar: self.bar.load(Relaxed),
             step: opt(self.step.load(Relaxed)).map(|s| s as usize),
-            global: self.global.load(Relaxed),
+            global,
             bar_steps: self.bar_steps.load(Relaxed) as usize,
             tracks: std::array::from_fn(|t| TrackStatus {
                 hit_start: opt(self.hit_start[t].load(Relaxed)).map(|s| s as usize),
                 peak: f32::from_bits(self.peak[t].swap(0, Relaxed)),
                 voices: self.voices[t].swap(0, Relaxed) as usize,
                 grains: self.grains[t].swap(0, Relaxed),
+                cursor: cursor(self.cursor[t].load(Relaxed)),
             }),
             master: MasterStatus {
                 peak: f32::from_bits(self.master_peak.swap(0, Relaxed)),
@@ -237,6 +314,7 @@ impl SharedStatus {
                 looping: self.section_looping.load(Relaxed),
             }),
             section_lost: self.section_lost.swap(false, Relaxed),
+            heard: self.position().map(|p| p - delay),
         }
     }
 }

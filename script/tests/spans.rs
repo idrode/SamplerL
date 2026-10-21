@@ -140,3 +140,40 @@ fn melody_and_sections_point_at_their_own_text() {
     assert_eq!(marks, strings(&["c", "c", "-", "c"]));
     assert_eq!(t.sounding_span(3).unwrap().row, 3);
 }
+
+#[test]
+fn each_load_tags_its_tracks_and_the_engine_reports_the_tag_that_sounds() {
+    let (mut controller, mut engine) = new_engine(RATE);
+    let mut host = ScriptHost::new(RATE);
+    let source = "bpm(120)\nlocal b = sample(\"break.wav\"):slice(2)\n\
+                  track(\"d\", b):steps(\"1 . 2 .  1 . 2 .  1 . 2 .  1 . 2 .\")\n\
+                  track(\"k\", b):steps(\"x . . .  x . . .  x . . .  x . . .\")";
+    let first = host
+        .load(&mut controller, source, "song.lua", &dir())
+        .unwrap()
+        .clone();
+    let tags: Vec<u32> = first.tracks.iter().map(|t| t.tag).collect();
+    assert!(
+        tags.iter().all(|&t| t > 0) && tags[0] != tags[1],
+        "{tags:?}"
+    );
+    controller.start().unwrap();
+    offline::render(&mut engine, 3 * 6000, 2);
+    let cursor = controller.status().tracks[host.track_slot("d").unwrap()]
+        .cursor
+        .unwrap();
+    assert_eq!(cursor.tag, tags[0]);
+    let track = first.track_by_tag(cursor.tag).unwrap();
+    assert_eq!(track.name, "d");
+    // Paso 2: el corte 2.
+    assert_eq!(cursor.index, 2);
+    assert!(track.sounding_span(cursor.index).is_some());
+
+    // Otra carga del mismo texto: etiquetas nuevas; la vieja no está.
+    let second = host
+        .load(&mut controller, source, "song.lua", &dir())
+        .unwrap()
+        .clone();
+    assert!(second.tracks.iter().all(|t| !tags.contains(&t.tag)));
+    assert!(second.track_by_tag(tags[0]).is_none());
+}

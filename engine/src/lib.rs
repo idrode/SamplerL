@@ -48,5 +48,5 @@ pub use sequencer::{
 pub use shift::MAX_FORMANT;
 pub use slice::{DEFAULT_MIN_GAP_SECONDS, DetectOptions, Detector, Slices};
 pub use slice_fx::SliceFx;
-pub use status::{MasterStatus, SectionStatus, Status, TrackStatus};
+pub use status::{Cursor, MAX_TAG, MasterStatus, SectionStatus, Status, TrackStatus};
 pub use stretch::{MAX_STRETCH, MIN_STRETCH};

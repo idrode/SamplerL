@@ -213,6 +213,9 @@ pub struct Pattern {
     /// Efectos de cada corte (`slice_fx[i]`, los del corte `i`); vacío si
     /// ninguno tiene.
     slice_fx: Vec<Option<SliceFx>>,
+    /// Etiqueta de quien lo hizo (de 0 a [`crate::MAX_TAG`]): vuelve con
+    /// el paso que suena ([`crate::Cursor`]).
+    pub(crate) tag: u32,
 }
 
 impl Pattern {
@@ -278,6 +281,7 @@ impl Pattern {
             granular: None,
             formant: None,
             slice_fx: Vec::new(),
+            tag: 0,
         })
     }
 
@@ -484,9 +488,25 @@ impl Pattern {
     /// que arrancó el transporte): el paso `global % length` de la vuelta
     /// `global / length`.
     pub(crate) fn hit(&self, global: u64) -> Option<Trigger> {
+        self.steps[self.index(global)]
+    }
+
+    /// Paso del ciclo aplanado (`vuelta · length + paso`) que suena en la
+    /// semicorchea `global`.
+    pub(crate) fn index(&self, global: u64) -> usize {
         let length = self.length as u64;
         let lap = (global / length) % self.cycle() as u64;
-        self.steps[(lap * length + global % length) as usize]
+        (lap * length + global % length) as usize
+    }
+
+    /// Etiqueta de quien hizo el patrón (de 0 a [`crate::MAX_TAG`]; el
+    /// script da una por definición de pista): el motor la publica con el
+    /// paso que suena ([`crate::TrackStatus::cursor`]). No cambia el audio.
+    pub fn with_tag(self, tag: u32) -> Result<Self, SendError> {
+        if tag > crate::MAX_TAG {
+            return Err(SendError::InvalidTag(tag));
+        }
+        Ok(Pattern { tag, ..self })
     }
 
     /// Volumen de la pista que toca este patrón (lineal, de 0 a `MAX_GAIN`).
