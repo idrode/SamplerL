@@ -313,6 +313,10 @@ pub struct App {
     /// últimos pasos de cada pista que ha publicado el motor.
     loaded_text: Option<String>,
     cursors: crate::highlight::Cursors,
+    /// El resaltado está encendido (`[resaltado] activo` y la paleta) y lo
+    /// que se le suma al retardo de la salida (`retardo_ms`).
+    highlighting: bool,
+    highlight_delay_ms: f64,
 }
 
 impl App {
@@ -391,6 +395,8 @@ impl App {
             link: None,
             loaded_text: None,
             cursors: Default::default(),
+            highlighting: true,
+            highlight_delay_ms: 0.0,
         };
         app.reload_blocks();
         Ok(app)
@@ -458,6 +464,8 @@ impl App {
         self.editor_terminal = config.editor_terminal.clone();
         self.keys = config.keys.clone();
         self.midi = config.midi;
+        self.highlighting = config.highlight.enabled;
+        self.highlight_delay_ms = config.highlight.delay_ms;
         if !config.warnings.is_empty() {
             self.message = config
                 .warnings
@@ -1742,6 +1750,9 @@ impl App {
     /// [`crate::highlight`]): nada si el texto del editor no es el de la
     /// última carga buena (marcaría mal) o con el secuenciador parado.
     fn highlights(&self) -> Vec<crate::highlight::Highlight> {
+        if !self.highlighting {
+            return Vec::new();
+        }
         // En el editor separado, lo que manda la principal.
         if let Some(remote) = self.remote_highlights() {
             return remote;
@@ -1753,10 +1764,12 @@ impl App {
             return Vec::new();
         }
         let selected = self.tracks().get(self.selected).map(|t| t.name.as_str());
+        // Lo que se suma a mano al retardo de la salida, en pasos.
+        let extra = self.highlight_delay_ms * status.bpm * 4.0 / 60_000.0;
         crate::highlight::highlights(
             song,
             &self.cursors,
-            status.heard,
+            status.heard.map(|h| h - extra),
             |name| self.host.track_slot(name),
             selected,
         )
@@ -2939,6 +2952,7 @@ impl App {
             Action::ClearMuteSolo => self.clear_live(),
             Action::ResetMeters => self.reset_meters(),
             Action::Metronome => self.toggle_metronome(),
+            Action::Highlight => self.toggle_highlight(),
             Action::DetectBpm => self.detect_bpm(),
             Action::Preview => self.preview_selected(),
             Action::SliceEarlier => self.adjust_slice(Some(-5.0)),
@@ -3108,6 +3122,17 @@ impl App {
         if on != self.metronome && self.controller.set_metronome(on).is_ok() {
             self.metronome = on;
         }
+    }
+
+    /// «Resaltado en vivo»: lo enciende o lo apaga.
+    pub fn toggle_highlight(&mut self) {
+        self.highlighting = !self.highlighting;
+        self.message = if self.highlighting {
+            "resaltado en vivo: encendido"
+        } else {
+            "resaltado en vivo: apagado"
+        }
+        .into();
     }
 
     pub fn toggle_metronome(&mut self) {

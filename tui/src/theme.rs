@@ -35,6 +35,30 @@ pub struct Theme {
     /// las pistas que no están seleccionadas.
     pub highlight: [Color; HIGHLIGHT_COLORS],
     pub highlight_dim: [Color; HIGHLIGHT_COLORS],
+    /// Cómo se marca lo que suena (`[resaltado] estilo`).
+    pub highlight_mode: HighlightMode,
+}
+
+/// Cómo se marca en el código lo que suena.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HighlightMode {
+    /// El fondo del color de la pista (`"fondo"`).
+    #[default]
+    Background,
+    /// El texto subrayado en el color de la pista (`"subrayado"`).
+    Underline,
+    /// Los colores invertidos: el texto en el color de la pista hace de
+    /// fondo (`"invertido"`).
+    Reversed,
+}
+
+impl HighlightMode {
+    /// Los nombres de `[resaltado] estilo`.
+    pub const NAMES: [(&str, HighlightMode); 3] = [
+        ("fondo", HighlightMode::Background),
+        ("subrayado", HighlightMode::Underline),
+        ("invertido", HighlightMode::Reversed),
+    ];
 }
 
 /// Colores del resaltado en vivo (uno por pista del motor).
@@ -68,6 +92,7 @@ impl Default for Theme {
             meter: Color::Green,
             highlight: HIGHLIGHT,
             highlight_dim: HIGHLIGHT.map(|c| dimmed(c, false)),
+            highlight_mode: HighlightMode::Background,
         }
     }
 }
@@ -145,6 +170,20 @@ pub fn truecolor() -> bool {
 pub fn parse(text: &str, truecolor: bool) -> Option<Color> {
     let color = Color::from_str(text.trim()).ok()?;
     Some(if truecolor { color } else { downgrade(color) })
+}
+
+impl Theme {
+    /// Los colores del resaltado (uno o más; si son menos que las pistas,
+    /// se repiten) y sus versiones apagadas.
+    pub fn set_highlight(&mut self, colors: &[Color], truecolor: bool) {
+        if colors.is_empty() {
+            return;
+        }
+        for i in 0..HIGHLIGHT_COLORS {
+            self.highlight[i] = colors[i % colors.len()];
+            self.highlight_dim[i] = dimmed(self.highlight[i], truecolor);
+        }
+    }
 }
 
 /// Un color más apagado (a menos de la mitad de luz), para el fondo de lo

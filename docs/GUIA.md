@@ -555,6 +555,7 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Saltar a una sección | Abre «seccion » para escribir su nombre: su primera entrada en la línea de tiempo empieza en el compás siguiente | — |
 | Repetir la sección | La sección que suena se repite en vez de pasar a la siguiente; otra vez, vuelve a la línea de tiempo | l (modo tocar) |
 | Volver a la línea de tiempo | Deja de repetir la sección: al acabar, sigue la siguiente | — |
+| Resaltado en vivo | Enciende o apaga el resaltado en el código de los pasos que suenan (al arrancar, el de [resaltado] activo) | — |
 | Alternar variante A/B | Con variant(): pasa a la otra variante; entra entera al empezar el compás siguiente (con secciones, por la misma sección y compás) | v (modo tocar) |
 | Versiones | El historial del script (una versión por carga buena): lista con fecha y vista previa; Enter la restaura en el editor sin guardar (Ctrl-Z lo deshace) | — |
 | Choques de frecuencia | Renderiza offline cada pista en solo (un ciclo entero de la canción) y muestra en qué bandas se pisan: tabla pareja × banda con su puntuación (0 a 1), un resumen y el EQ sugerido para la que cede; Enter lo propone y Enter otra vez lo inserta en el script sin guardar; no toca lo que suena | — |
@@ -875,6 +876,7 @@ paleta de 256.
 | `seccion_anterior` | Saltar a la sección anterior | — |
 | `repetir_seccion` | Repetir la sección | — |
 | `variante` | Alternar variante A/B | — |
+| `resaltado` | Resaltado en vivo | — |
 
 | En `[colores]` | Para |
 | --- | --- |
@@ -888,6 +890,13 @@ paleta de 256.
 | `cortes` | marcas de los cortes |
 | `sonando` | fondo del paso que suena en el tracker |
 | `nivel` | medidores de nivel |
+
+| En `[resaltado]` | Para | Por defecto |
+| --- | --- | --- |
+| `activo` | resaltar lo que suena al arrancar (`true`/`false`; la paleta lo cambia en vivo) | `true` |
+| `estilo` | `"fondo"`, `"subrayado"` o `"invertido"` | `"fondo"` |
+| `colores` | un color o una lista, uno por pista en el orden del script (si hay menos, se repiten) | 8 de la paleta de 256 |
+| `retardo_ms` | ms que se suman a la latencia que dice la salida de audio (de 0 a 1000) | `0` |
 
 <!-- config:fin -->
 
@@ -1021,6 +1030,27 @@ resaltan enteros todo su paso. Los silencios (`.`) no se resaltan.
 - Con el editor en su propia ventana (`--split`) también se ve: lo calcula
   la principal y se lo manda al editor. Las dos ventanas tienen que ser de
   la misma versión del programa.
+
+«Resaltado en vivo» en la paleta (F1) lo apaga y lo enciende. En
+`config.toml` (ver «Configuración»), la sección `[resaltado]`:
+
+```toml
+[resaltado]
+activo = true                      # encendido al arrancar
+estilo = "fondo"                   # o "subrayado", o "invertido"
+colores = ["#ff5faf", "#5fd7ff"]   # uno por pista (si hay menos, se repiten)
+retardo_ms = 0                     # ms de más si se ve antes de oírse
+```
+
+Con `subrayado`, el token se subraya en el color de su pista (y la
+seleccionada lleva también el texto de ese color, en negrita); con
+`invertido`, el color de la pista hace de fondo y el del fondo, de texto.
+Un recuadro alrededor del token no se puede dibujar en una terminal (cada
+celda es un carácter), así que no hay ese estilo. `retardo_ms` sirve si
+la salida de audio dice menos latencia de la que tiene (Bluetooth, una
+tarjeta externa): el resaltado se adelanta a lo que se oye. Con el editor
+en su ventana, cuentan el `retardo_ms` de la principal y el «Resaltado en
+vivo» de cada ventana.
 
 ## 3. Mini-notación
 

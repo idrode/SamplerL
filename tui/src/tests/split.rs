@@ -538,6 +538,13 @@ fn what_sounds_is_highlighted_in_the_editor_window() {
     pump_until(&mut main, &mut editor, |_, e| {
         e.view().highlights.len() == 1
     });
+    // Apagado en la ventana del editor: solo allí.
+    editor.run_action(Action::Highlight);
+    pump(&mut main, &mut editor);
+    assert!(editor.view().highlights.is_empty());
+    assert_eq!(main.view().highlights.len(), 1);
+    editor.run_action(Action::Highlight);
+    assert_eq!(editor.view().highlights.len(), 1);
 
     // Lo escrito en el editor (aún sin mandar): ya no se resalta, y
     // tampoco cuando la principal lo tiene.

@@ -112,6 +112,7 @@ fn editor_side(action: Action) -> bool {
             | Action::YankSlot
             | Action::PasteSlot
             | Action::Versions
+            | Action::Highlight
             | Action::Quit
     )
 }

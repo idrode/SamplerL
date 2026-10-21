@@ -64,6 +64,7 @@ pub enum Action {
     Versions,
     AnalyzeMasking,
     ToggleVariant,
+    Highlight,
     EditorWindow,
     EditorBack,
     Quit,
@@ -391,6 +392,12 @@ pub const ACTIONS: &[ActionDef] = &[
         action: Action::FollowTimeline,
         name: "Volver a la línea de tiempo",
         description: "Deja de repetir la sección: al acabar, sigue la siguiente",
+        keys: "",
+    },
+    ActionDef {
+        action: Action::Highlight,
+        name: "Resaltado en vivo",
+        description: "Enciende o apaga el resaltado en el código de los pasos que suenan (al arrancar, el de [resaltado] activo)",
         keys: "",
     },
     ActionDef {

@@ -334,7 +334,14 @@ Hecha: ver «Parte 2» en «Fase L» de [docs/ESTADO.md](ESTADO.md).
    meterlo desde la paleta sin perder el texto, el cursor ni el historial
    de deshacer.
 
-## Fase M: resaltado en vivo del código al sonar (pendiente)
+## Fase M: resaltado en vivo del código al sonar ✅
+
+Hechos los diez puntos, en cinco partes: posiciones de los tokens, paso
+publicado por el motor, dibujado en el editor, protocolo del socket
+(versión 3) y configuración y paleta. Detalle y decisiones (qué se
+resalta en los patrones generados, la prioridad entre pistas, por qué
+no hay recuadro) en «Fase M» de [docs/ESTADO.md](ESTADO.md); el uso, en
+«Resaltado en vivo» de [docs/GUIA.md](GUIA.md).
 
 Objetivo: como en Strudel, que en el editor se resalten, sobre el propio
 código Lua, los trozos de la mini-notación de `steps()` que están sonando
@@ -347,30 +354,30 @@ todo con test (backend de test de ratatui y render offline); las huellas
 de `golden.rs` idénticas; `no_alloc.rs` sin cambios, o ampliado si se toca
 el motor; nunca la salida de audio real.
 
-1. **Posición de cada token**: al cargar el script, cada token de la
+1. ✅ **Posición de cada token**: al cargar el script, cada token de la
    mini-notación guarda su posición en el texto (línea y columna de inicio
    y de fin). El motor ya sabe qué paso suena en cada pista; la interfaz
    une las dos cosas.
-2. **El hilo de audio no cambia**: solo publica el paso actual por pista
+2. ✅ **El hilo de audio no cambia**: solo publica el paso actual por pista
    con atómicos (como el resto de `engine/src/status.rs`: sin reservas,
    mutex ni E/S). La interfaz lo lee a su ritmo.
-3. **Sincronía**: usar la posición real del audio, no el reloj de la
+3. ✅ **Sincronía**: usar la posición real del audio, no el reloj de la
    interfaz, y compensar la latencia de salida.
-4. **Texto que ya no coincide con lo cargado** (cambios sin cargar): no
+4. ✅ **Texto que ya no coincide con lo cargado** (cambios sin cargar): no
    resaltar, o resaltar solo lo que siga siendo seguro, para no marcar mal.
-5. **Patrones sin texto literal** (`euclid`, `rotate`, `mutate`, `shuffle`,
+5. ✅ **Patrones sin texto literal** (`euclid`, `rotate`, `mutate`, `shuffle`,
    `fill`, `chance`, `every`): decidir qué se resalta (la llamada entera o
    nada) y documentarlo.
-6. **Varias pistas a la vez**: un color por pista y la seleccionada, más
+6. ✅ **Varias pistas a la vez**: un color por pista y la seleccionada, más
    intensa. Definir la prioridad si dos pistas coinciden en una línea.
-7. **Retrigger (`rN`), notas alargadas (`_`) y acordes**: el token entero
+7. ✅ **Retrigger (`rN`), notas alargadas (`_`) y acordes**: el token entero
    resaltado mientras dure.
-8. **Configurable**: colores y estilo (fondo, subrayado, invertido) en
+8. ✅ **Configurable**: colores y estilo (fondo, subrayado, invertido) en
    `config.toml`; se activa y desactiva desde la paleta (F1).
-9. **Editor en ventana propia**: el protocolo del socket (hoy versión 2,
+9. ✅ **Editor en ventana propia**: el protocolo del socket (era la versión 2,
    `link::VERSION`) envía el paso actual a la ventana del editor; sube la
    versión del protocolo.
-10. **Tests** con `TestBackend` y render offline; `golden.rs` intacto;
+10. ✅ **Tests** con `TestBackend` y render offline; `golden.rs` intacto;
     `no_alloc.rs` sin cambios, o ampliado si se toca el motor.
 
 ## Mejoras sueltas

@@ -869,19 +869,36 @@ fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rect) -
     popup
 }
 
-/// Estilo de un token que suena: el fondo con el color de su pista; la
-/// pista seleccionada, con el color entero, el texto en negro y en
-/// negrita; las demás, con el color apagado.
+/// Estilo de un token que suena, según `[resaltado] estilo`, con el color
+/// de su pista. Con fondo: la pista seleccionada, con el color entero, el
+/// texto en negro y en negrita; las demás, con el color apagado. Subrayado:
+/// la seleccionada, también con el texto de su color y en negrita.
+/// Invertido: el texto de la seleccionada en su color (de fondo al
+/// invertirse) y en negrita; el de las demás, apagado.
 pub fn highlight_style(h: &crate::highlight::Highlight) -> Style {
+    use theme::HighlightMode;
     let theme = theme::get();
-    let color = h.color % theme::HIGHLIGHT_COLORS;
-    if h.selected {
-        Style::new()
-            .bg(theme.highlight[color])
-            .fg(Color::Black)
-            .add_modifier(Modifier::BOLD)
+    let full = theme.highlight[h.color % theme::HIGHLIGHT_COLORS];
+    let dim = theme.highlight_dim[h.color % theme::HIGHLIGHT_COLORS];
+    let bold = if h.selected {
+        Modifier::BOLD
     } else {
-        Style::new().bg(theme.highlight_dim[color])
+        Modifier::empty()
+    };
+    match theme.highlight_mode {
+        HighlightMode::Background if h.selected => {
+            Style::new().bg(full).fg(Color::Black).add_modifier(bold)
+        }
+        HighlightMode::Background => Style::new().bg(dim),
+        HighlightMode::Underline => {
+            let style = Style::new()
+                .underline_color(full)
+                .add_modifier(Modifier::UNDERLINED | bold);
+            if h.selected { style.fg(full) } else { style }
+        }
+        HighlightMode::Reversed => Style::new()
+            .fg(if h.selected { full } else { dim })
+            .add_modifier(Modifier::REVERSED | bold),
     }
 }
 

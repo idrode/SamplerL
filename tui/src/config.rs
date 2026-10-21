@@ -1,6 +1,7 @@
 //! Configuración del usuario: `~/.config/sampler/config.toml` (o
 //! `$XDG_CONFIG_HOME/sampler/config.toml`), con los atajos de teclado
-//! (`[teclas]`) y los colores (`[colores]`).
+//! (`[teclas]`), los colores (`[colores]`) y el resaltado en vivo del
+//! código (`[resaltado]`).
 //!
 //! ```toml
 //! [teclas]
@@ -82,6 +83,55 @@ pub const BINDABLE: &[(&str, Bound, &[&str])] = &[
     ),
     ("repetir_seccion", Bound::Action(Action::LoopSection), &[]),
     ("variante", Bound::Action(Action::ToggleVariant), &[]),
+    ("resaltado", Bound::Action(Action::Highlight), &[]),
+];
+
+/// `[resaltado]`: el resaltado en vivo del código al sonar.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HighlightConfig {
+    /// Encendido al arrancar (`activo`).
+    pub enabled: bool,
+    /// Milisegundos que se suman a la latencia que dice la salida de audio
+    /// (`retardo_ms`): para salidas que la dicen de menos (Bluetooth...).
+    pub delay_ms: f64,
+}
+
+impl Default for HighlightConfig {
+    fn default() -> Self {
+        HighlightConfig {
+            enabled: true,
+            delay_ms: 0.0,
+        }
+    }
+}
+
+/// Retardo a mano más largo del resaltado, en ms.
+const MAX_HIGHLIGHT_DELAY_MS: f64 = 1000.0;
+
+/// Claves de `[resaltado]`, qué hacen y su valor por defecto (para la
+/// guía).
+#[cfg(test)]
+const HIGHLIGHT_KEYS: &[(&str, &str, &str)] = &[
+    (
+        "activo",
+        "resaltar lo que suena al arrancar (`true`/`false`; la paleta lo cambia en vivo)",
+        "`true`",
+    ),
+    (
+        "estilo",
+        "`\"fondo\"`, `\"subrayado\"` o `\"invertido\"`",
+        "`\"fondo\"`",
+    ),
+    (
+        "colores",
+        "un color o una lista, uno por pista en el orden del script (si hay menos, se repiten)",
+        "8 de la paleta de 256",
+    ),
+    (
+        "retardo_ms",
+        "ms que se suman a la latencia que dice la salida de audio (de 0 a 1000)",
+        "`0`",
+    ),
 ];
 
 /// Una combinación de teclas: `ctrl-s`, `alt-x`, `f5`, `esc`.
@@ -354,6 +404,9 @@ pub struct Config {
     /// editor en su ventana (`tui --edit … --split`); detrás va
     /// `tui --window-editor <script>`.
     pub editor_terminal: Option<Vec<String>>,
+    /// `[resaltado]`: encendido y retardo (los colores y el estilo van en
+    /// `theme`).
+    pub highlight: HighlightConfig,
     /// Avisos (archivo que falta o roto, claves desconocidas, choques...).
     pub warnings: Vec<String>,
 }
@@ -470,12 +523,81 @@ impl Config {
                         }
                     }
                 }
+                "resaltado" => config.apply_highlight(inner, truecolor),
                 other => config.warnings.push(format!(
-                    "{name}: sección [{other}] desconocida (hay: teclas, colores, midi, editor)"
+                    "{name}: sección [{other}] desconocida (hay: teclas, colores, midi, editor, resaltado)"
                 )),
             }
         }
         config
+    }
+}
+
+impl Config {
+    /// Aplica `[resaltado]`; lo que no vale se avisa y se queda como está.
+    fn apply_highlight(&mut self, table: &toml::Table, truecolor: bool) {
+        for (key, value) in table {
+            match key.as_str() {
+                "activo" => match value.as_bool() {
+                    Some(on) => self.highlight.enabled = on,
+                    None => self
+                        .warnings
+                        .push("[resaltado] activo: true o false".into()),
+                },
+                "estilo" => {
+                    let mode = value.as_str().and_then(|text| {
+                        theme::HighlightMode::NAMES
+                            .iter()
+                            .find(|(name, _)| *name == text)
+                    });
+                    match mode {
+                        Some((_, mode)) => self.theme.highlight_mode = *mode,
+                        None => self.warnings.push(
+                            "[resaltado] estilo: \"fondo\", \"subrayado\" o \"invertido\"".into(),
+                        ),
+                    }
+                }
+                "colores" => {
+                    let list = match value {
+                        toml::Value::Array(list) => list.clone(),
+                        other => vec![other.clone()],
+                    };
+                    let colors: Option<Vec<_>> = list
+                        .iter()
+                        .map(|v| {
+                            let text = v
+                                .as_str()
+                                .map(String::from)
+                                .or_else(|| v.as_integer().map(|n| n.to_string()))?;
+                            theme::parse(&text, truecolor)
+                        })
+                        .collect();
+                    match colors {
+                        Some(colors) if !colors.is_empty() => {
+                            self.theme.set_highlight(&colors, truecolor)
+                        }
+                        _ => self.warnings.push(
+                            "[resaltado] colores: una lista de colores (nombre, #rrggbb o un número de la paleta de 256)".into(),
+                        ),
+                    }
+                }
+                "retardo_ms" => {
+                    let ms = value
+                        .as_float()
+                        .or_else(|| value.as_integer().map(|n| n as f64))
+                        .filter(|ms| (0.0..=MAX_HIGHLIGHT_DELAY_MS).contains(ms));
+                    match ms {
+                        Some(ms) => self.highlight.delay_ms = ms,
+                        None => self
+                            .warnings
+                            .push("[resaltado] retardo_ms: de 0 a 1000".into()),
+                    }
+                }
+                _ => self.warnings.push(format!(
+                    "[resaltado] «{key}» no existe (hay: activo, estilo, colores, retardo_ms)"
+                )),
+            }
+        }
     }
 }
 
@@ -509,6 +631,10 @@ fn guide_markdown() -> String {
     for (name, what) in theme::NAMES.iter().zip(theme::DESCRIPTIONS) {
         out.push_str(&format!("| `{name}` | {what} |\n"));
     }
+    out.push_str("\n| En `[resaltado]` | Para | Por defecto |\n| --- | --- | --- |\n");
+    for (name, what, default) in HIGHLIGHT_KEYS {
+        out.push_str(&format!("| `{name}` | {what} | {default} |\n"));
+    }
     out
 }
 
@@ -541,6 +667,47 @@ mod tests {
             "docs/GUIA.md no coincide con tui/src/config.rs: \
              ACTUALIZAR_GUIA=1 cargo test -p tui the_guide_lists_the_config"
         );
+    }
+
+    #[test]
+    fn the_highlight_section_sets_its_switch_style_colors_and_delay() {
+        let config = Config::parse(
+            "[resaltado]\nactivo = false\nestilo = \"subrayado\"\n\
+             colores = [\"#ff0000\", \"45\"]\nretardo_ms = 40\n",
+            true,
+            "c",
+        );
+        assert!(config.warnings.is_empty(), "{:?}", config.warnings);
+        assert!(!config.highlight.enabled);
+        assert_eq!(config.highlight.delay_ms, 40.0);
+        assert_eq!(config.theme.highlight_mode, theme::HighlightMode::Underline);
+        // Dos colores para ocho pistas: se repiten; los apagados, en RGB.
+        assert_eq!(config.theme.highlight[0], Color::Rgb(255, 0, 0));
+        assert_eq!(config.theme.highlight[1], Color::Indexed(45));
+        assert_eq!(config.theme.highlight[6], Color::Rgb(255, 0, 0));
+        assert_eq!(config.theme.highlight_dim[0], Color::Rgb(115, 0, 0));
+        // Sin truecolor, los apagados también de la paleta de 256.
+        let config = Config::parse("[resaltado]\ncolores = \"#ff0000\"\n", false, "c");
+        assert_eq!(config.theme.highlight[3], Color::Indexed(196));
+        assert!(matches!(config.theme.highlight_dim[3], Color::Indexed(_)));
+        // Por defecto: encendido, fondo, sin retardo.
+        let config = Config::parse("", false, "c");
+        assert_eq!(config.highlight, HighlightConfig::default());
+        assert!(config.highlight.enabled);
+        assert_eq!(
+            config.theme.highlight_mode,
+            theme::HighlightMode::Background
+        );
+        // Lo que no vale se avisa y no cambia nada.
+        let config = Config::parse(
+            "[resaltado]\nactivo = 1\nestilo = \"recuadro\"\ncolores = [\"rosa chicle\"]\n\
+             retardo_ms = 5000\notra = 1\n",
+            false,
+            "c",
+        );
+        assert_eq!(config.warnings.len(), 5, "{:?}", config.warnings);
+        assert_eq!(config.highlight, HighlightConfig::default());
+        assert_eq!(config.theme, Theme::default());
     }
 
     fn input(key: Key, ctrl: bool, alt: bool) -> Input {
@@ -624,7 +791,7 @@ brillo = "red"
             [
                 "[teclas] cargar: F1 es siempre la paleta de comandos",
                 "[teclas] explorador: Alt-S ya es de guardar; no se usa",
-                "[teclas] «inventada» no existe (hay: paleta, guardar, cargar, marcha, ir_al_error, ir_a_linea, buscar, buscar_siguiente, buscar_anterior, siguiente_pista, recargar, ordenes, completar, salir, modo_tocar, deshacer, rehacer, explorador, tap_tempo, metronomo, exportar, seccion_siguiente, seccion_anterior, repetir_seccion, variante)",
+                "[teclas] «inventada» no existe (hay: paleta, guardar, cargar, marcha, ir_al_error, ir_a_linea, buscar, buscar_siguiente, buscar_anterior, siguiente_pista, recargar, ordenes, completar, salir, modo_tocar, deshacer, rehacer, explorador, tap_tempo, metronomo, exportar, seccion_siguiente, seccion_anterior, repetir_seccion, variante, resaltado)",
                 "[teclas] salir: «q»: una letra sin ctrl- ni alt- escribiría texto",
                 "[teclas] Ctrl-G era de ir_al_error; ahora es de marcha",
                 "[colores] tenue: color no válido",

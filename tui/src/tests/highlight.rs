@@ -3,6 +3,9 @@
 //! movido offline.
 
 use super::*;
+use crate::config::Config;
+use crate::highlight::Highlight;
+use crate::palette::Action;
 use crate::theme;
 
 const LIVE: &str = r#"bpm(120)
@@ -174,4 +177,77 @@ fn several_tracks_on_a_line_keep_their_own_colors() {
         .map(|h| (h.row, h.color, h.selected))
         .collect();
     assert_eq!(lit, [(2, 2, false), (2, 0, true)]);
+}
+
+#[test]
+fn the_palette_switches_it_off_and_on() {
+    let (_, mut app, mut engine) = open("highlight_palette", Some(LIVE));
+    offline::render(&mut engine, 100, 2);
+    app.tick();
+    assert_eq!(app.view().highlights.len(), 2);
+    app.run_action(Action::Highlight);
+    assert!(app.view().highlights.is_empty());
+    assert_eq!(app.view().message, "resaltado en vivo: apagado");
+    app.run_action(Action::Highlight);
+    assert_eq!(app.view().highlights.len(), 2);
+    // Y desde la configuración, apagado al arrancar.
+    app.set_config(&Config::parse("[resaltado]\nactivo = false\n", false, "c"));
+    assert!(app.view().highlights.is_empty());
+}
+
+#[test]
+fn the_configured_delay_adds_to_the_output_one() {
+    let (_, mut app, mut engine) = open("highlight_config_delay", Some(LIVE));
+    // A 120 BPM un paso son 125 ms: con 125 ms, se oye el paso anterior.
+    app.set_config(&Config::parse(
+        "[resaltado]\nretardo_ms = 125\n",
+        false,
+        "c",
+    ));
+    offline::render(&mut engine, 4 * STEP + 100, 2);
+    app.tick();
+    assert!(app.view().highlights.is_empty());
+    offline::render(&mut engine, STEP, 2);
+    app.tick();
+    assert_eq!(app.view().highlights.len(), 2);
+}
+
+#[test]
+fn the_three_styles() {
+    use theme::HighlightMode;
+    let mark = |selected| Highlight {
+        row: 0,
+        cols: 0..1,
+        color: 2,
+        selected,
+    };
+    let mut t = theme::Theme::default();
+    let (full, dim) = (t.highlight[2], t.highlight_dim[2]);
+    let style = |t: theme::Theme, selected| {
+        theme::set(t);
+        ui::highlight_style(&mark(selected))
+    };
+    // Fondo.
+    let s = style(t, true);
+    assert_eq!((s.bg, s.fg), (Some(full), Some(Color::Black)));
+    assert!(s.add_modifier.contains(Modifier::BOLD));
+    assert_eq!(style(t, false).bg, Some(dim));
+    // Subrayado, en el color de la pista; la seleccionada, también el texto.
+    t.highlight_mode = HighlightMode::Underline;
+    let s = style(t, true);
+    assert_eq!((s.fg, s.underline_color), (Some(full), Some(full)));
+    assert!(
+        s.add_modifier
+            .contains(Modifier::UNDERLINED | Modifier::BOLD)
+    );
+    let s = style(t, false);
+    assert_eq!((s.fg, s.bg), (None, None));
+    assert!(s.add_modifier.contains(Modifier::UNDERLINED));
+    // Invertido.
+    t.highlight_mode = HighlightMode::Reversed;
+    let s = style(t, true);
+    assert_eq!(s.fg, Some(full));
+    assert!(s.add_modifier.contains(Modifier::REVERSED | Modifier::BOLD));
+    assert_eq!(style(t, false).fg, Some(dim));
+    theme::set(theme::Theme::default());
 }
