@@ -2936,6 +2936,10 @@ en otra sección de la guía no se repite aquí: hay un enlace.
 5. [Otro sample en otra pista](#paso-5-otro-sample-en-otra-pista)
 6. [Efectos en un solo corte](#paso-6-efectos-en-un-solo-corte)
 7. [Efectos de pista y automatización](#paso-7-efectos-de-pista-y-automatización)
+8. [Abrir un instrumento](#paso-8-abrir-un-instrumento)
+9. [Líneas melódicas](#paso-9-líneas-melódicas)
+10. [Efectos sobre la melodía](#paso-10-efectos-sobre-la-melodía)
+11. [Un bajo que no choque con el bombo](#paso-11-un-bajo-que-no-choque-con-el-bombo)
 
 **Cómo crece el script.** El script de la canción se escribe entero una
 vez, en el paso 3. Después, cada bloque de código dice qué hacer con él:
@@ -3517,4 +3521,332 @@ track("perc", perc)
   :pan(lfo("2 compases", -0.5, 0.5))
   :send("delay", 0.25)
   :gain(0.6)
+```
+
+### Paso 8. Abrir un instrumento
+
+Hasta aquí, cada golpe era un corte. Un **instrumento** toca un sample
+como notas: cada nota suena a su altura, varias a la vez, con una
+envolvente (cómo entra y cómo se apaga).
+
+**Carga `nota.wav` como instrumento.** Añade al final:
+
+```lua añade
+local teclas = sample("nota.wav"):instrument({
+  root = "C4", voices = 6, adsr = { 10, 300, 0.6, 400 }, loop = { 300, 1200 },
+})
+
+track("teclas", teclas)
+  :melody("c _ _ _  . . . .  . . . .  . . . .")
+  :gain(0.5)
+```
+
+Ctrl-S. Al principio de cada compás suena una nota: un do que dura 4
+pasos y luego se apaga despacio. El panel de efectos dice `· ♪ C4 1/6`
+(la raíz y cuántas voces suenan de las 6).
+
+Qué es cada opción:
+
+- `root = "C4"`: la nota en la que suena el sample tal cual (C4 es el do
+  central). Si tu sample es un la, pon `"A3"` o la que sea: así las notas
+  de `melody` suenan afinadas.
+- `voices = 6`: cuántas notas pueden sonar a la vez. Con todas ocupadas,
+  una nota nueva quita la más antigua.
+- `adsr = { 10, 300, 0.6, 400 }`: la envolvente. Ataque de 10 ms (lo que
+  tarda en entrar), decay de 300 ms (lo que tarda en bajar) hasta el
+  sustain, 0.6 (el nivel mientras dura la nota), y release de 400 ms (lo
+  que tarda en apagarse al acabar).
+- `loop = { 300, 1200 }`: mientras dura la nota, el trozo entre los 300 y
+  los 1200 ms se repite en bucle, con un fundido para que no haga clic.
+  Así una nota puede durar más que el sample. Elige un trozo en el que la
+  nota ya suena estable (tras el ataque).
+
+**Si no pasa:**
+
+- `loop = {300, 1200}: tiene que ir dentro del sample (0 a 900.0 ms)`: tu
+  nota es más corta. Pon un bucle dentro de lo que dura, o quita `loop`
+  (la nota acaba con el sample).
+- Suena desafinada respecto a la batería o a otro instrumento: revisa
+  `root`. Si no sabes qué nota es tu sample, compáralo de oído con las
+  teclas del modo tocar (paso 9).
+- Suena fuerte: un instrumento suma sus voces; baja el `:gain()`.
+
+Todas las opciones (`keep`, `formant`, `crossfade`) están en
+`sample:instrument`, [sección 4](#4-api-de-lua).
+
+### Paso 9. Líneas melódicas
+
+**Una melodía.** `melody` escribe notas por su nombre: `c d e f g a b`,
+con `#` o `b` (`eb` es mi bemol), y la octava detrás si hace falta
+(`c5`; sin ella, la de `root`). `_` alarga la nota anterior un paso y `.`
+es silencio. Cambia el párrafo de `track("teclas", teclas)`:
+
+```lua cambia
+track("teclas", teclas)
+  :melody("c . eb .  g . eb .  f _ _ .  g _ bb _")
+  :gain(0.5)
+```
+
+Ctrl-S. Una frase en do menor. El tracker enseña las notas con sostenidos (el mi
+bemol sale `D#4`) y `│` en las filas que alargan una nota. En el código se resalta la nota
+que suena, como en el paso 4.
+
+**Acordes y notas largas.** Con `+`, varias notas a la vez (las que no
+llevan octava van justo encima de la anterior). Una pista de acordes con
+el mismo instrumento; añade al final:
+
+```lua añade
+track("acordes", teclas)
+  :melody("c+eb+g _ _ _  _ _ _ _  ab3+c+eb _ _ _  bb3+d+f _ _ _")
+  :gain(0.3)
+```
+
+Ctrl-S. Tres acordes largos debajo de la melodía: do menor (8 pasos), la
+bemol y si bemol. Un acorde lleva hasta 4 notas.
+
+**Con una escala.** Si prefieres pensar en grados (1 la tónica, 3 la
+tercera, 5 la quinta...), `scale()` los convierte en semitonos sobre la
+raíz. Para probarlo, en un script aparte:
+
+```lua
+bpm(170)
+local teclas = sample("nota.wav"):instrument({ root = "C4" })
+local menor = scale("minor")
+track("teclas", teclas):steps(menor:melody("1 . 3 .  5 . 3 .  4 . . .  5 . 7 .", "1"))
+```
+
+`menor:melody(...)` devuelve `"1^0 . 1^3 ..."`: en un instrumento, cada
+`^` son semitonos sobre la raíz. Las escalas que hay, en `scale`
+([sección 4](#4-api-de-lua)).
+
+**Tocar en vivo.** Esc (modo tocar) y Ctrl-O hasta que la pista
+seleccionada sea `teclas`. Cada tecla es una nota: `1` la raíz (C4) y
+cada tecla siguiente, un semitono más. En do menor: `1` do, `4` mi
+bemol, `6` fa, `8` sol, `9` la bemol, `q` si bemol, `e` el do de arriba.
+La nota dura mientras mantienes la tecla, pero eso depende de la
+terminal: en kitty, foot, WezTerm o Ghostty, hasta que la sueltas; en
+tmux y la mayoría, mientras llegan las repeticiones de la tecla. Ver
+«Modo tocar (Esc)», [sección 2](#2-atajos-de-teclado).
+
+**Con un teclado MIDI.** Abre con `--allow-midi` y conecta el teclado al
+puerto «sampler entrada»:
+
+```sh
+tui --edit cancion.sampler --allow-audio --allow-midi
+aconnect -l                         # en otra terminal: lista los puertos
+aconnect "Mi teclado" "sampler"     # con el nombre que salga en la lista
+```
+
+Cada nota suena en la pista seleccionada a su altura real (el C4 del
+teclado es la raíz `C4`), con la velocidad como volumen. Ver «MIDI» en la
+[sección 2](#2-atajos-de-teclado).
+
+**Grabar lo tocado.** Para que lo que tocas quede escrito:
+
+1. En el editor, escribe al final una línea nueva con
+   `track("teclas"):` y deja el cursor detrás de los dos puntos.
+2. Con `teclas` seleccionada, F1 «Grabar lo tocado». La línea de órdenes
+   dice `grabar 1`: cambia el número por los compases que quieras y
+   Enter.
+3. La grabación empieza al principio del compás siguiente (el panel del
+   motor dice `● REC teclas: al compás` y luego `● REC teclas 1/1`).
+   Toca en el modo tocar o con el MIDI.
+4. Al acabar se escribe en el cursor lo tocado, por ejemplo
+   `steps("1^0 _ . 1^3  . . 1^7 _  ...")`: cada nota con su `^` (semitonos
+   sobre la raíz) y sus `_`.
+5. Ctrl-S lo carga: ese `steps` sustituye a la melodía de antes. Ctrl-Z
+   lo quita de una vez.
+
+Para seguir el tutorial con el mismo script que aquí, borra después esa
+línea (o guárdala en otra pista).
+
+**Si no pasa:** un aviso al pie como `⚠ línea N: ...` señala la nota que
+no se entiende (una `h`, un acorde de más de 4 notas). Si las teclas del
+modo tocar disparan cortes en vez de notas, la pista seleccionada no es
+la del instrumento: Ctrl-O.
+
+### Paso 10. Efectos sobre la melodía
+
+Los efectos de un instrumento son los de su pista: las llaves por paso
+no valen aquí (el paso 6 era para pistas de cortes). Cambia el párrafo
+de `track("teclas", teclas)`:
+
+```lua cambia
+track("teclas", teclas)
+  :melody("c . eb .  g . eb .  f _ _ .  g _ bb _")
+  :fx("lowpass", { cutoff = lfo("1 compás", 900, 5000), q = 3 })
+  :fx("distortion", { drive = 3, mix = 0.3 })
+  :pan(-0.3)
+  :send("delay", 0.3)
+  :send("reverb", 0.25)
+  :gain(0.5)
+```
+
+- `lowpass` con `lfo`: el filtro se abre y se cierra una vez por compás
+  (`q = 3` le da un pico que se oye al moverse).
+- `distortion` con `mix = 0.3`: un 30 % de la señal saturada, para darle
+  cuerpo.
+- `pan(-0.3)`: un poco a la izquierda.
+- `send` al delay y a la reverb.
+
+Y los acordes, más atrás, con más reverb y sin graves (dejan sitio al
+bajo del paso 11). Cambia el párrafo de `track("acordes", teclas)`:
+
+```lua cambia
+track("acordes", teclas)
+  :melody("c+eb+g _ _ _  _ _ _ _  ab3+c+eb _ _ _  bb3+d+f _ _ _")
+  :fx("highpass", { cutoff = 200 })
+  :pan(0.3)
+  :send("reverb", 0.4)
+  :gain(0.3)
+```
+
+Ctrl-S. Para cambiar el filtro **en una nota concreta**, `~` y la
+frecuencia detrás de la nota (`eb~800`): mueve el primer filtro de la
+pista desde esa nota hasta la siguiente. Ver «`~` (corte por paso)» en la
+[sección 3](#3-mini-notación).
+
+**Si no pasa:** `melody: paso 1 ("c{lp=800}"): los efectos de un paso
+({...}) solo se entienden desde el script (steps("..."))` quiere decir que
+en `melody` y en los instrumentos no hay llaves: usa `:fx()`. Si la
+melodía tapa la batería, baja su `:gain()` o sus envíos.
+
+### Paso 11. Un bajo que no choque con el bombo
+
+**El bajo.** Otro instrumento, grave y de una sola voz (una nota nueva
+corta la anterior, como un bajo de verdad). Añade al final:
+
+```lua añade
+local grave = sample("bajo.wav"):instrument({
+  root = "C2", voices = 1, adsr = { 5, 200, 0.8, 150 },
+})
+
+track("bajo", grave)
+  :melody("c2 _ _ _  . . c2 .  eb2 _ _ .  f2 _ g2 _")
+  :fx("lowpass", { cutoff = 500 })
+  :gain(0.7)
+```
+
+Ctrl-S. Notas largas (`_`) en las mismas notas que los acordes. El
+`lowpass` a 500 Hz deja solo lo grave. Con `bajo.wav` a otra altura, pon
+su nota en `root` (paso 8).
+
+**Dónde chocan.** El bajo y el bombo suenan en la misma zona (60-100 Hz)
+y se tapan. El programa lo mide sin escucharlo: F1 «Choques de
+frecuencia». Renderiza aparte cada pista en solo (no toca lo que suena)
+y abre un informe: un choque por fila (la pareja de pistas, la banda y
+una puntuación de 0 a 1), y la tabla pareja × banda. Lo mismo desde la
+línea de comandos:
+
+```sh
+tui --script cancion.lua --analyze-masking
+```
+
+**Quién manda.** En cada choque, una pista manda y la otra cede. Dile que
+manda la batería; añade al final:
+
+```lua añade
+priority({ "drums", "bajo" })
+```
+
+Esto no cambia el sonido: solo dice al análisis a quién sugerir el
+recorte.
+
+**Recortar con un EQ.** En el informe, Enter sobre un choque propone un
+EQ para la pista que cede, y Enter otra vez lo escribe en el script,
+detrás de la pista (sin guardar: Ctrl-S lo carga, Ctrl-Z lo quita). Algo
+como esto, con los números de tus samples:
+
+```text
+track("bajo"):fx("eq", { freq1 = 63, gain1 = -3.5, q1 = 1.4 })
+```
+
+Un EQ fijo quita esa zona siempre. Vuelve a analizar para ver cuánto ha
+bajado el choque.
+
+**O apartarse solo cuando pega el bombo.** Un EQ dinámico con
+*sidechain* baja los graves del bajo solo mientras suena fuerte la
+batería, y los devuelve en cuanto pasa. Cambia el párrafo de
+`track("bajo", grave)`:
+
+```lua cambia
+track("bajo", grave)
+  :melody("c2 _ _ _  . . c2 .  eb2 _ _ .  f2 _ g2 _")
+  :fx("lowpass", { cutoff = 500 })
+  :fx("dyneq", { freq = 80, range = 6, threshold = -30, attack = 2, release = 80, sidechain = "drums" })
+  :gain(0.7)
+```
+
+`freq = 80` es la banda que escucha y que baja; `range = 6`, lo más que
+baja (6 dB); `sidechain = "drums"`, que escucha la batería en vez del
+propio bajo. Más, en «Que el break deje sitio al bombo» de la
+[sección 6](#6-recetas-para-amen-breaks) y en la tabla de `pista:fx`.
+
+**Si no pasa:** el informe no dice nada de `bajo` y `drums`: con tus
+samples no chocan (o poco), y no hace falta recortar. (Con los samples de
+prueba del paso 1, el choque que sale es `drums × perc`: las dos pistas
+son el mismo break sintético, y la sugerencia va a `perc`.) Si el EQ sugerido
+no cabe, la pista ya tiene 4 efectos: quita uno. Si `sidechain` da
+error, mira que el nombre sea el de una pista que existe.
+
+**El script entero**, hasta aquí:
+
+```lua entero
+bpm(170)
+bus("delay", { time = "3/16", feedback = 0.4, level = 0.6 })
+bus("reverb", { size = 0.6, damp = 0.5 })
+
+local amen = sample("amen.wav"):slice(8)
+amen:name(1, "kick"):name(3, "snare")
+amen:fx("snare", "bitcrush", { bits = 6, downsample = 2 })
+amen:fx("kick", "lowpass", { cutoff = 2500 })
+
+track("drums", amen)
+  :steps("kick . 2 2@0.4  snare . 4{hp=4000} .  kick kick^-2 2 .  snare . snare'r2 2r4{lp=300>9000}")
+  :fx("highpass", { cutoff = 40 })
+  :fx("compressor", { threshold = -14, ratio = 3, attack = 10, makeup = 2 })
+  :send("reverb", 0.1)
+  :gain(0.8)
+
+local perc = sample("perc.wav"):stretch(120):slice_grid(1)
+
+track("perc", perc)
+  :steps("1 . . .  . . . .  . . . .  . . . .")
+  :fx("lowpass", { cutoff = ramp(1500, 9000, "4 compases"), q = 2 })
+  :fx("bitcrush", { bits = 8, downsample = 2 })
+  :pan(lfo("2 compases", -0.5, 0.5))
+  :send("delay", 0.25)
+  :gain(0.6)
+
+local teclas = sample("nota.wav"):instrument({
+  root = "C4", voices = 6, adsr = { 10, 300, 0.6, 400 }, loop = { 300, 1200 },
+})
+
+track("teclas", teclas)
+  :melody("c . eb .  g . eb .  f _ _ .  g _ bb _")
+  :fx("lowpass", { cutoff = lfo("1 compás", 900, 5000), q = 3 })
+  :fx("distortion", { drive = 3, mix = 0.3 })
+  :pan(-0.3)
+  :send("delay", 0.3)
+  :send("reverb", 0.25)
+  :gain(0.5)
+
+track("acordes", teclas)
+  :melody("c+eb+g _ _ _  _ _ _ _  ab3+c+eb _ _ _  bb3+d+f _ _ _")
+  :fx("highpass", { cutoff = 200 })
+  :pan(0.3)
+  :send("reverb", 0.4)
+  :gain(0.3)
+
+local grave = sample("bajo.wav"):instrument({
+  root = "C2", voices = 1, adsr = { 5, 200, 0.8, 150 },
+})
+
+track("bajo", grave)
+  :melody("c2 _ _ _  . . c2 .  eb2 _ _ .  f2 _ g2 _")
+  :fx("lowpass", { cutoff = 500 })
+  :fx("dyneq", { freq = 80, range = 6, threshold = -30, attack = 2, release = 80, sidechain = "drums" })
+  :gain(0.7)
+
+priority({ "drums", "bajo" })
 ```
