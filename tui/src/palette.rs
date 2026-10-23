@@ -618,4 +618,28 @@ mod tests {
              ACTUALIZAR_GUIA=1 cargo test -p tui the_guide_lists_the_palette"
         );
     }
+
+    /// Cada `F1 «acción»` del tutorial (sección 8 de la guía) es una
+    /// acción de la paleta, escrita tal cual.
+    #[test]
+    fn the_tutorial_names_real_actions() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../docs/GUIA.md");
+        let guide = std::fs::read_to_string(path).unwrap();
+        let start = guide.find("\n## 8. Tu primera canción").unwrap();
+        let tutorial = &guide[start..];
+        let mut cited = 0;
+        for (i, _) in tutorial.match_indices("F1 «") {
+            let rest = &tutorial[i + "F1 «".len()..];
+            let name: String = rest[..rest.find('»').unwrap()]
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            assert!(
+                ACTIONS.iter().any(|a| a.name == name),
+                "el tutorial cita F1 «{name}», que no está en la paleta"
+            );
+            cited += 1;
+        }
+        assert!(cited >= 4, "solo {cited} acciones citadas");
+    }
 }

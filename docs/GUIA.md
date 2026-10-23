@@ -9,6 +9,22 @@ Todos los bloques de código Lua de esta guía se comprueban en los tests
 y deben funcionar sin errores. Las recetas están también como archivos en
 `scripts/ejemplos/`.
 
+**¿Nunca has usado el programa?** Empieza por la sección 8, [Tu primera
+canción, de principio a fin](#8-tu-primera-canción-de-principio-a-fin): un
+tutorial paso a paso que monta una canción entera.
+
+## Índice
+
+- [Qué se puede hacer](#qué-se-puede-hacer)
+- [1. Inicio rápido](#1-inicio-rápido)
+- [2. Atajos de teclado](#2-atajos-de-teclado)
+- [3. Mini-notación](#3-mini-notación)
+- [4. API de Lua](#4-api-de-lua)
+- [5. Cuantización, recarga atómica y errores](#5-cuantización-recarga-atómica-y-errores)
+- [6. Recetas para amen breaks](#6-recetas-para-amen-breaks)
+- [7. Solución de problemas](#7-solución-de-problemas)
+- [8. Tu primera canción, de principio a fin](#8-tu-primera-canción-de-principio-a-fin)
+
 ## Qué se puede hacer
 
 Un mapa de todo, con dónde se explica. Las funciones de Lua están todas en
@@ -2901,13 +2917,390 @@ song.lua:1: ')' expected near <eof>
 
 Error de sintaxis de Lua: falta cerrar un paréntesis, unas comillas o un
 `end`.
-).
 
-```text
-song.lua:1: ')' expected near <eof>
+## 8. Tu primera canción, de principio a fin
+
+Un tutorial para quien nunca ha usado el programa. Montas una canción
+entera, paso a paso: un break troceado, una segunda percusión, efectos,
+una melodía, un bajo y una estructura con intro, drop y break. Al final
+la guardas y la exportas a WAV.
+
+Cada paso es una acción con un resultado que puedes ver u oír. Si algo no
+pasa como se dice, cada paso explica qué mirar. Lo que ya está explicado
+en otra sección de la guía no se repite aquí: hay un enlace.
+
+1. [Preparar la carpeta](#paso-1-preparar-la-carpeta)
+2. [Abrir un proyecto nuevo](#paso-2-abrir-un-proyecto-nuevo)
+3. [Cargar un break y trocearlo](#paso-3-cargar-un-break-y-trocearlo)
+4. [El primer patrón de batería](#paso-4-el-primer-patrón-de-batería)
+
+**Cómo crece el script.** El script de la canción se escribe entero una
+vez, en el paso 3. Después, cada bloque de código dice qué hacer con él:
+
+- **«Añade al final»**: copia el bloque al final del script, tras una
+  línea en blanco.
+- **«Cambia el párrafo»**: busca el párrafo que empieza igual que el
+  bloque (desde esa línea hasta la siguiente línea en blanco) y sustitúyelo
+  entero por el bloque.
+
+Algunos pasos terminan con **el script entero**, para que compares el
+tuyo. Los tests del programa siguen estos mismos pasos y comprueban que
+cada estado del script se carga y suena, y que el script entero de cada
+paso es exactamente lo que llevas.
+
+**Antes de oír nada, baja el volumen.** Sin `--allow-audio` el programa
+no suena nunca (todo se mueve, pero el audio se tira). Antes de usar
+`--allow-audio`, baja el volumen del sistema, por ejemplo al 30 %:
+
+```sh
+wpctl set-volume @DEFAULT_AUDIO_SINK@ 0.3
 ```
 
-Error de sintaxis de Lua: falta cerrar un paréntesis, unas comillas o un
-`end`.
-e sintaxis de Lua: falta cerrar un paréntesis, unas comillas o un
-`end`.
+Luego súbelo poco a poco. Un error en el script puede dejar un sonido
+muy fuerte (un `@4`, un `:gain(4)`).
+
+### Paso 1. Preparar la carpeta
+
+**Una carpeta por canción.** Crea una y entra en ella:
+
+```sh
+mkdir -p ~/musica/primera
+cd ~/musica/primera
+```
+
+El script de la canción (`cancion.lua`) y sus samples van aquí.
+
+**Los samples.** Este tutorial usa cuatro archivos WAV. Ponlos en la
+carpeta con estos nombres:
+
+| Archivo | Qué es |
+| --- | --- |
+| `amen.wav` | Un break de batería (el amen o cualquier otro) |
+| `perc.wav` | Otro loop de percusión, de un compás, a otro tempo |
+| `nota.wav` | Una nota sostenida de piano, synth o voz (mejor de 2 s o más) |
+| `bajo.wav` | Una nota grave (un bajo, un synth grave) |
+
+¿No tienes samples, o quieres probar sin derechos de autor? El
+repositorio trae un break sintético (ver «Generar el break sintético» en
+la [sección 1](#1-inicio-rápido)). Cópialo dos veces y fabrica las dos
+notas con `ffmpeg` (un tono puro: suena simple, pero vale para aprender):
+
+```sh
+cp ~/sampler/renders/synth_break.wav amen.wav
+cp ~/sampler/renders/synth_break.wav perc.wav
+ffmpeg -f lavfi -i "sine=frequency=261.63:duration=3" nota.wav
+ffmpeg -f lavfi -i "sine=frequency=65.41:duration=3" bajo.wav
+```
+
+(`~/sampler` es la carpeta del repositorio; cambia la ruta si está en
+otro sitio.) La primera nota es un do central (C4) y la segunda, un do
+dos octavas más abajo (C2). El break sintético va a 140 BPM; tus samples
+irán a otro tempo, y está bien: el paso 5 explica cómo igualarlos.
+
+**Formato.** Solo se leen archivos **WAV**. Valen mono o estéreo (el mono
+suena igual por los dos lados; de un archivo con más canales se usan los
+dos primeros), en enteros de 16 o 24 bits o en coma flotante, y a
+cualquier frecuencia: al cargarlos se convierten a la del motor. Un MP3,
+un FLAC o un OGG se convierte antes con `ffmpeg`:
+
+```sh
+ffmpeg -i amen.mp3 amen.wav
+```
+
+Para convertir todos los MP3 de la carpeta:
+
+```sh
+for f in *.mp3; do ffmpeg -i "$f" "${f%.mp3}.wav"; done
+```
+
+**Rutas.** En el script, `sample("amen.wav")` busca el archivo **en la
+carpeta del script** (con un proyecto que diga `samples = ...`, en esa
+carpeta; ver «Proyectos» en la [sección 1](#1-inicio-rápido)):
+
+- `sample("amen.wav")`: junto al script.
+- `sample("breaks/amen.wav")`: en la subcarpeta `breaks` de la carpeta
+  del script.
+- `sample("/home/yo/samples/amen.wav")`: una ruta absoluta (empieza por
+  `/`) vale tal cual, esté donde esté el script. `~` no se entiende aquí:
+  escribe la ruta entera.
+
+En la línea de comandos, en cambio, las rutas son relativas a la carpeta
+en la que estás (la del `cd`). Por eso este tutorial abre siempre el
+programa desde la carpeta de la canción.
+
+**Si no pasa:** si al cargar sale un error como este, el archivo no está
+donde se busca (mira el nombre, las mayúsculas y la extensión):
+
+```text
+cancion.lua:3: amen.wav: error leyendo WAV: No such file or directory (os error 2)
+```
+
+La ruta del mensaje es la que se ha buscado (relativa a la carpeta del
+script, salvo que sea absoluta). Un archivo que no es WAV de
+verdad (un MP3 renombrado a `.wav`) también da error al leerlo:
+conviértelo con `ffmpeg`.
+
+### Paso 2. Abrir un proyecto nuevo
+
+**Compila el programa una vez**, en la carpeta del repositorio, y crea un
+atajo para llamarlo desde cualquier sitio:
+
+```sh
+cd ~/sampler
+cargo build --release -p tui
+alias tui=~/sampler/target/release/tui
+```
+
+(Añade la línea del `alias` a tu `~/.bashrc` para no repetirla.) Vuelve a
+la carpeta de la canción: `cd ~/musica/primera`.
+
+**Abre la canción con el editor dentro**, en una sola ventana:
+
+```sh
+tui --edit cancion.lua
+```
+
+`cancion.lua` todavía no existe, así que el editor abre una **plantilla**
+(un break de ejemplo con `amen.wav`). El archivo no se crea hasta que
+guardas con Ctrl-S. A la izquierda está el editor; a la derecha, el
+estado del motor, la forma de onda del sample y el tracker; abajo, los
+efectos de cada pista (ver «Abrir la interfaz» en la
+[sección 1](#1-inicio-rápido)). Ctrl-Q sale.
+
+Así no suena nada: el tracker se mueve, pero el audio se tira. Para oírlo
+(¡con el volumen bajo!), sal y vuelve a abrir con `--allow-audio`:
+
+```sh
+tui --edit cancion.lua --allow-audio
+```
+
+**Si no pasa:** si el borde del editor se pone rojo y el pie dice
+`error leyendo WAV`, la plantilla no encuentra `amen.wav`: vuelve al
+paso 1. Si `tui` no se encuentra, el `alias` no está puesto en esta
+terminal.
+
+**El editor en su propia ventana (opcional).** Con dos ventanas, una
+tiene el editor y la otra las vistas grandes (la forma de onda, el
+tracker con todas las pistas, el mezclador) y el modo tocar. Hay tres
+maneras:
+
+1. **Que el programa abra la ventana del editor.** Dile qué terminal usar
+   en `~/.config/sampler/config.toml`:
+
+   ```toml
+   [editor]
+   terminal = "kitty --class sampler-editor -e"
+   ```
+
+   (con foot: `terminal = "foot --app-id sampler-editor"`). Luego:
+
+   ```sh
+   tui --edit cancion.lua --split --allow-audio
+   ```
+
+2. **Abrir el editor a mano**, sin esa línea o por SSH (en otro panel de
+   `tmux`). En una terminal, la principal con `--split`; en la otra, desde
+   la misma carpeta:
+
+   ```sh
+   tui --window-editor cancion.lua
+   ```
+
+   El editor busca la ventana principal de ese mismo script y se conecta.
+   Mientras no la encuentra, lo dice y lo vuelve a intentar cada segundo.
+   Con un archivo que no existe, las dos ventanas parten de la misma
+   plantilla.
+
+3. **Sacarlo y meterlo en caliente**, sin que deje de sonar. F1 abre la
+   paleta de comandos; escribe un trozo del nombre de la acción y Enter.
+   F1 «Abrir el editor en su ventana» saca el editor a una terminal nueva
+   (sin `[editor] terminal`, dice el comando para abrirlo a mano). F1
+   «Volver a meter el editor en la principal» lo devuelve. El texto, lo
+   que no has guardado y el deshacer van con él.
+
+Qué hace cada ventana: en la del **editor** escribes, guardas (Ctrl-S) y
+usas la paleta; en la **principal** suena todo, se ven las vistas y se
+toca (está siempre en el modo tocar). Los detalles, en «El editor en su
+propia ventana» ([sección 1](#1-inicio-rápido)). Para empezar, una sola
+ventana basta.
+
+### Paso 3. Cargar un break y trocearlo
+
+**Borra la plantilla.** Ctrl-Inicio va al principio; Shift-Ctrl-Fin
+selecciona hasta el final; Ctrl-X lo corta. (O escribe el script con tu
+editor de siempre antes de abrir el programa.)
+
+**Escribe el script entero** (o pégalo con Ctrl-Shift-V):
+
+```lua entero
+bpm(170)
+
+local amen = sample("amen.wav"):slice(8)
+
+track("drums", amen)
+  :steps("1 . 2 .  3 . 4 .  5 . 6 .  7 . 8 .")
+```
+
+Qué dice cada línea:
+
+- `bpm(170)`: el tempo de la canción, 170 pulsos por minuto.
+- `sample("amen.wav"):slice(8)`: carga el break y lo corta en sus 8
+  golpes más fuertes (los **cortes**). `local amen` les da un nombre.
+- `track("drums", amen)`: una **pista** que se llama `drums` y toca esos
+  cortes.
+- `:steps(...)`: lo que toca. Cada número es un corte y cada `.` un
+  silencio: aquí, los 8 cortes en orden, uno cada dos pasos.
+
+**Guarda y carga con Ctrl-S.** El pie del editor dice `cargado: entra en
+el siguiente compás` y el secuenciador arranca solo. Oyes los cortes uno
+tras otro, y en la vista del sample la forma de onda tiene los cortes
+numerados (el que suena, resaltado).
+
+**Si no pasa:**
+
+- No oyes nada pero el tracker se mueve: falta `--allow-audio`, o el
+  volumen del sistema está a cero.
+- Ni el tracker se mueve: Ctrl-T arranca y para el secuenciador.
+- Borde rojo: el pie dice el error y Ctrl-G lleva a su línea. Mientras
+  tanto sigue sonando lo anterior.
+- Al pie sale `el corte 8 no existe ("drums" tiene 6)`: el detector ha
+  encontrado menos golpes. Quita del patrón los números que sobran, o pide
+  menos cortes.
+
+**El tempo del break.** Tu break tiene su propio tempo. Desde la
+carpeta de la canción:
+
+```sh
+tui amen.wav --detect-bpm
+```
+
+Con el break sintético dice:
+
+```text
+amen.wav: 140.00 BPM, 1 compás (encaje 100 %) → bpm(140)
+```
+
+Lo mismo desde la interfaz: F1 «Detectar el BPM del sample» deja escrita
+la orden `bpm 140`; Enter cambia la línea `bpm()` del script y Esc la
+deja como está. Aquí la dejamos en 170: cada corte se dispara en la
+rejilla de la canción, así que el break troceado sigue el tempo que
+elijas. Ver «Saber el tempo del break» en la [sección 1](#1-inicio-rápido).
+
+**Oír cada corte.** Pulsa Esc: entras en el **modo tocar** (la línea de
+ayuda cambia). Las teclas `1` a `8` tocan los cortes 1 a 8 de la pista
+seleccionada, al instante. ← y → recorren los cortes y los preescuchan;
+espacio vuelve a sonar el seleccionado. Apunta cuál es el bombo y cuál la
+caja. Esc vuelve al editor. Todas las teclas están en «Modo tocar (Esc)»
+([sección 2](#2-atajos-de-teclado)).
+
+En el break sintético, el 1 es el bombo y el 3 la caja. En tu break
+pueden ser otros números: usa los tuyos en lo que sigue.
+
+**Ponles nombre.** Cambia el párrafo de `local amen` por este (con tus
+números):
+
+```lua cambia
+local amen = sample("amen.wav"):slice(8)
+amen:name(1, "kick"):name(3, "snare")
+```
+
+Ctrl-S. Ahora la vista del sample pone `kick` y `snare` junto a sus
+números, y en los patrones puedes escribir `kick` en vez de `1`. Los
+nombres llevan letras sin tilde, números y `_`.
+
+**Ajustar un corte.** Si un corte empieza tarde (se come el ataque del
+golpe) o pronto (suena un trozo del anterior), en el modo tocar
+selecciónalo con ← → y muévelo: `,` lo adelanta 5 ms y `.` lo retrasa;
+`<` y `>`, de 1 en 1 ms. Cada vez lo preescucha. La vista marca los
+cortes ajustados con `*`. Los ajustes se guardan en el **proyecto**:
+pulsa F2, escribe `guardar` y Enter. Se crea `cancion.sampler` junto al
+script (el script, la carpeta de samples, el tempo y tus ajustes). La
+próxima vez abre el proyecto en vez del script:
+
+```sh
+tui --edit cancion.sampler --allow-audio
+```
+
+F1 «Quitar el ajuste del corte» devuelve el corte seleccionado a donde
+lo puso el detector.
+
+**Otra forma de cortar.** `slice(8)` busca los golpes. `slice_grid(16)`
+corta en 16 partes iguales, sin mirar los golpes: va bien con un break
+bien cuadrado de un compás. Para probarlo, en un script aparte:
+
+```lua
+bpm(170)
+local amen = sample("amen.wav"):slice_grid(16)
+track("drums", amen):steps("1 2 3 4  5 6 7 8  9 10 11 12  13 14 15 16")
+```
+
+Si los cortes de `slice` no te convencen, mira «Cortes mal detectados» en
+la [sección 7](#7-solución-de-problemas).
+
+### Paso 4. El primer patrón de batería
+
+Un patrón son 16 pasos: un compás de semicorcheas. Los espacios de más
+no cuentan, así que se agrupan de cuatro en cuatro (un tiempo cada
+grupo).
+
+**Un ritmo con bombo y caja.** Cambia el párrafo de `track("drums",
+amen)` por este:
+
+```lua cambia
+track("drums", amen)
+  :steps("kick . 2 .  snare . 4 .  kick kick 2 .  snare . 8 .")
+```
+
+Ctrl-S: entra al empezar el compás siguiente. Bombo en el 1, caja en el
+2 y el 4, como un break de verdad. (En el break sintético, 2, 4 y 8 son
+charles.)
+
+**Mira qué suena.** Con la canción en marcha, el paso que suena se
+resalta **en el propio código**, dentro de `steps("...")`, con el color
+de la pista. El tracker de la derecha lo enseña también, fila a fila. El
+resaltado se para mientras escribes y vuelve cuando cargas (solo resalta
+el texto que está sonando). F1 «Resaltado en vivo» lo apaga y lo
+enciende; ver «Resaltado en vivo» en la [sección 2](#2-atajos-de-teclado).
+
+**Si no pasa:** si un paso sale subrayado en rojo y el pie dice
+`⚠ línea 7: ...`, hay un error en el patrón antes de guardar. El más
+típico: `el patrón necesita 16 pasos, tiene 15`. Cuenta los grupos: cuatro
+de cuatro. Si una etiqueta no existe (`snre`), el aviso dice cuáles hay.
+
+**Dale vida con sufijos.** Cada paso admite sufijos pegados:
+
+| Escribe | Qué hace | Ejemplo |
+| --- | --- | --- |
+| `@` y un número | Volumen del golpe (1 normal, 0.5 la mitad) | `2@0.4` |
+| `^` y un número | Pitch en semitonos (negativo, más grave y más largo) | `kick^-2` |
+| `'` | El golpe al revés | `snare'` |
+| `r` y un número | Retrigger: el golpe se repite N veces en su paso | `snare'r2` |
+| `.` | Silencio | `.` |
+
+Cambia otra vez el párrafo de `track("drums", amen)`:
+
+```lua cambia
+track("drums", amen)
+  :steps("kick . 2 2@0.4  snare . 4 .  kick kick^-2 2 .  snare . snare'r2 8@0.5")
+```
+
+Ctrl-S. Oyes un charles suave antes de la primera caja, un bombo más
+grave, y al final una caja al revés repetida dos veces que «aspira» hacia
+el compás siguiente. Todos los símbolos (también `%`, `_`, `~` y las
+llaves) están en la [sección 3](#3-mini-notación).
+
+**Si no pasa:** `falta el número después de ^`: los sufijos llevan el
+número pegado (`kick^-2`, no `kick^ -2`). Si suena demasiado fuerte, mira
+que ningún `@` pase de 1.
+
+**El script entero**, hasta aquí:
+
+```lua entero
+bpm(170)
+
+local amen = sample("amen.wav"):slice(8)
+amen:name(1, "kick"):name(3, "snare")
+
+track("drums", amen)
+  :steps("kick . 2 2@0.4  snare . 4 .  kick kick^-2 2 .  snare . snare'r2 8@0.5")
+```
