@@ -215,6 +215,11 @@ fn string_context(
     if let Some(Frame::Paren { name, arg: 0, .. }) = scan.frames.last()
         && name == "steps"
     {
+        // Dentro de las llaves de los efectos del paso: los efectos y sus
+        // parámetros.
+        if let Some(context) = step_fx_context(&prefix) {
+            return Some(context);
+        }
         let token = prefix.rsplit(char::is_whitespace).next().unwrap_or("");
         let is_word = token.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
             && !token.starts_with(|c: char| c.is_ascii_digit());
@@ -396,6 +401,82 @@ fn string_context(
         }
     };
     Some(Context { prefix, candidates })
+}
+
+/// Dentro de las llaves de un paso (`1{lp=800,q|`): tras `{`, los efectos;
+/// tras una coma, los parámetros de ese efecto; tras `=`, nada. `None`
+/// fuera de unas llaves abiertas.
+fn step_fx_context(prefix: &str) -> Option<Context> {
+    let open = prefix.rfind('{')?;
+    if prefix[open..].contains('}') {
+        return None;
+    }
+    let inside = &prefix[open + 1..];
+    let item = inside.rsplit(',').next().unwrap_or("").trim_start();
+    if item.contains('=') {
+        return None;
+    }
+    if !inside.contains(',') {
+        let candidates = api::EFFECTS
+            .iter()
+            .flat_map(|e| {
+                std::iter::once(e.name)
+                    .chain(e.aliases.iter().copied())
+                    .map(move |n| (n, e))
+            })
+            .map(|(name, e)| {
+                let insert = match e.main_param() {
+                    Some(p) => format!("{name}={}", step_value(p)),
+                    None => name.to_string(),
+                };
+                Candidate {
+                    label: name.into(),
+                    kind: "efecto".into(),
+                    signature: format!(
+                        "{{{}}} en un paso",
+                        insert.replace("${", "").replace('}', "")
+                    ),
+                    description: e.summary.into(),
+                    insert,
+                }
+            })
+            .collect();
+        return Some(Context {
+            prefix: item.to_string(),
+            candidates,
+        });
+    }
+    let name = inside.split([',', '=']).next().unwrap_or("").trim();
+    let effect = api::effect(name)?;
+    let candidates = effect
+        .params
+        .iter()
+        .filter(|p| p.name != "sidechain")
+        .map(|p| Candidate {
+            insert: format!("{}={}", p.name, step_value(p)),
+            ..fx_param(p)
+        })
+        .collect();
+    Some(Context {
+        prefix: item.to_string(),
+        candidates,
+    })
+}
+
+/// El valor por defecto de la plantilla de un parámetro, como se escribe
+/// en un paso (`${3000}`, `${lowpass}`, sin comillas).
+fn step_value(p: &api::FxParam) -> String {
+    let value = p
+        .template
+        .split_once('=')
+        .map_or("", |(_, v)| v)
+        .trim()
+        .replace('"', "");
+    if value.is_empty() {
+        "${valor}".into()
+    } else {
+        value
+    }
 }
 
 fn function(f: &api::Function) -> Candidate {
@@ -1197,6 +1278,30 @@ mod tests {
         assert!(labels(&c).is_empty());
         let c = at(&format!("{SONG}track(\"d\", amen):chance(0.2, \"|")).unwrap();
         assert_eq!(labels(&c), ["retrig", "reverse", "pitch", "gain", "mute"]);
+    }
+
+    #[test]
+    fn step_braces_offer_effects_then_their_parameters() {
+        let c = at(&format!("{SONG}track(\"d\", amen):steps(\"1 . 2{{l|")).unwrap();
+        let m = c.matches();
+        let l = labels(&Context {
+            prefix: c.prefix.clone(),
+            candidates: m.clone(),
+        });
+        assert_eq!(l, ["lowpass", "lp"]);
+        assert_eq!(m[1].insert, "lp=${3000}");
+        // Tras la coma, los parámetros del efecto (sin sidechain).
+        let c = at(&format!("{SONG}track(\"d\", amen):steps(\"1{{lp=800, |")).unwrap();
+        assert_eq!(labels(&c), ["cutoff", "q"]);
+        assert_eq!(c.candidates[1].insert, "q=${0.707}");
+        let c = at(&format!("{SONG}track(\"d\", amen):steps(\"1{{filter,t|")).unwrap();
+        assert_eq!(c.matches()[0].insert, "type=${lowpass}");
+        // Tras `=` o fuera de las llaves, nada.
+        assert!(at(&format!("{SONG}track(\"d\", amen):steps(\"1{{lp=8|")).is_none());
+        // Tras cerrar las llaves, lo de siempre (las etiquetas del paso
+        // siguiente), no los efectos.
+        let after = at(&format!("{SONG}track(\"d\", amen):steps(\"1{{lp=800}} |"));
+        assert!(after.is_none_or(|c| c.candidates.iter().all(|c| c.kind == "etiqueta")));
     }
 
     #[test]

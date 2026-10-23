@@ -163,6 +163,14 @@ impl Effect {
         self.params.iter().find(|p| p.name == name)
     }
 
+    /// Su parámetro principal: el primero que es un número (el que va tras
+    /// `=` en los efectos de un paso, `{lp=800}`).
+    pub fn main_param(&self) -> Option<&'static FxParam> {
+        self.params
+            .iter()
+            .find(|p| p.values.is_empty() && p.automate.curves())
+    }
+
     /// Si su parámetro `name` admite `ramp()` y `lfo()` (ver [`Auto`]).
     pub fn automatable(&self, name: &str) -> bool {
         self.param(name).is_some_and(|p| p.automate.curves())
@@ -1373,7 +1381,9 @@ pub const FUNCTIONS: &[Function] = &[
         summary: "Patrón de la pista en mini-notación (16 pasos, o los de :length).",
         doc: "La notación está en la sección 3. Lleva tantos pasos como la longitud \
               de la pista (16, o la de `:length(n)`, que va antes). Los cortes que no \
-              existen dan error en esa línea.",
+              existen dan error en esa línea. Un paso puede llevar efectos solo para \
+              su golpe entre llaves: `3{lp=800,q=4}{crush=6}` (los de `:fx`, con \
+              rampas del golpe: `{lp=200>4000:4}`).",
         params: &[Param {
             name: "texto",
             description: "pasos separados por espacios: 16, o los de :length(n)",
@@ -2130,21 +2140,21 @@ pub const EFFECTS: &[Effect] = &[
     },
     Effect {
         name: "lowpass",
-        aliases: &[],
+        aliases: &["lp"],
         summary: "Filtro paso bajo (como filter con type = \"lowpass\").",
         params: FILTER_PARAMS,
         template: "{ cutoff = ${3000} }",
     },
     Effect {
         name: "highpass",
-        aliases: &[],
+        aliases: &["hp"],
         summary: "Filtro paso alto (como filter con type = \"highpass\").",
         params: FILTER_PARAMS,
         template: "{ cutoff = ${200} }",
     },
     Effect {
         name: "bitcrush",
-        aliases: &["bitcrusher"],
+        aliases: &["bitcrusher", "crush"],
         summary: "Menos bits y menos frecuencia de muestreo: suena sucio.",
         params: &[
             FxParam {

@@ -1095,6 +1095,7 @@ compases).
 | `@g` | Volumen del paso (lineal, de 0 a 4) | `3@0.5` |
 | `rN` | Retrigger / stutter: el paso se divide en N partes y el corte vuelve a empezar en cada una (de 1 a 16) | `3r4` |
 | `~Hz` | Corte del primer filtro de la pista desde este golpe hasta el siguiente (parameter lock, de 20 a 20000 Hz); un golpe sin `~` vuelve al corte de `:fx` | `3~800` |
+| `{efecto=valor,clave=valor}` | Un efecto solo en este golpe, con sus parámetros; varios, cada uno en sus llaves | `3{lp=800,q=4}{crush=6}` |
 
 Los sufijos se combinan en cualquier orden, cada uno una vez (salvo `^`,
 que repetido hace un acorde): `3'^7@0.5r2` es el corte 3, al revés, una quinta arriba, a media
@@ -1122,6 +1123,43 @@ va en su tabla: `sample:instrument({ keep = true, formant = 0 })`. Cada
 grano se analiza con LPC y se le cambia la envolvente; cuesta otro 2 % de
 un núcleo por voz. Con `^` no actúa (el sampler clásico lo mueve todo), y
 si la pista no tiene pasos con `%`, la carga avisa.
+
+**Efectos por paso (`{...}`).** Cualquier efecto de `:fx`, solo en ese
+golpe: `3{lp=800}` lo filtra, `3{crush=4,downsample=3}{drive=8}` lo
+ensucia. Dentro de las llaves va el efecto (su nombre o un alias: `lp`,
+`hp`, `crush`, `comp`, `drive`, `gain`, `eq`, `dyneq`, `filter`...), `=` y
+el valor de su parámetro principal (el primer número de su tabla: `cutoff`,
+`bits`, `threshold`, `drive`, `level`...) y, tras comas, los demás
+`clave=valor` (`{filter,type=highpass,cutoff=300}`). Lo que no se da, por
+defecto. Un valor puede ser una **rampa del golpe**: `3{lp=200>4000}` abre
+el filtro durante el paso, `3{lp=200>4000:4}` durante 4 pasos, y luego se
+queda arriba; con retrigger (`3r4{lp=200>4000}`) cada subdisparo sigue la
+rampa por donde va. Dentro de las llaves puede haber espacios. El tracker
+los enseña (`03{lp∿,crush}`; `∿`, lo que lleva rampa), el autocompletado
+ofrece efectos y parámetros dentro de las llaves y el diagnóstico en vivo
+subraya el paso con un efecto mal escrito.
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen)
+  :steps("1 . 2 .  3 . 4{crush=4}{lp=900,q=6} .  5 6 2r4{lp=300>9000} .  7 . 8{hp=2000} .")
+```
+
+Cada golpe con efectos los lleva en su voz, con su propio estado: los
+demás golpes suenan exactamente igual que sin ellos (y la cola del
+efecto, como mucho 100 ms, sigue sonando con su golpe). **Orden y
+precedencia**: la voz (volumen del paso, envolvente y pan del corte) →
+efectos del paso y del corte → efectos de la pista → volumen, pan y mute
+de la pista → mezcla (envíos, buses y limitador). Entre el paso y su
+corte manda el paso: un efecto del mismo tipo que uno de `cortes:fx`
+(el mismo filtro, otro bitcrusher...) lo sustituye en ese golpe, y los
+demás van detrás de los del corte; entre los dos, como mucho 4 efectos (si
+no caben, error con la línea del `steps`). Los efectos de la pista no se
+pueden quitar para un golpe (suenan sobre la suma de todos): para mover su
+filtro en un golpe está `~`, que manda sobre la automatización de la
+pista. En un **instrumento** o una pista con **granos** no hay voces de
+corte, así que un efecto de paso da error con la línea (usa los de la
+pista).
 
 **`~` (corte por paso).** Necesita un filtro en la pista
 (`:fx("lowpass", { cutoff = 3000 })`): `"1~300 . 2 .  1 . 2~8000 ."` cierra
@@ -1786,7 +1824,7 @@ track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
 
 Devuelve: pista.
 
-Patrón de la pista en mini-notación (16 pasos, o los de :length). La notación está en la sección 3. Lleva tantos pasos como la longitud de la pista (16, o la de `:length(n)`, que va antes). Los cortes que no existen dan error en esa línea.
+Patrón de la pista en mini-notación (16 pasos, o los de :length). La notación está en la sección 3. Lleva tantos pasos como la longitud de la pista (16, o la de `:length(n)`, que va antes). Los cortes que no existen dan error en esa línea. Un paso puede llevar efectos solo para su golpe entre llaves: `3{lp=800,q=4}{crush=6}` (los de `:fx`, con rampas del golpe: `{lp=200>4000:4}`).
 
 - `texto`: pasos separados por espacios: 16, o los de :length(n)
 
@@ -1960,11 +1998,11 @@ El filtro es un biquad de 12 dB/octava; `q = 0.707` es la respuesta más plana y
 | `"filter"` | `type` | tipo de filtro | `"lowpass"` | `"lowpass"` o `"highpass"` |
 |  | `cutoff` | frecuencia de corte en Hz | obligatorio | 20–20000 |
 |  | `q` | resonancia | `0.707` | 0.1–20 |
-| `"lowpass"` | `cutoff` | frecuencia de corte en Hz | obligatorio | 20–20000 |
+| `"lowpass"` (o `"lp"`) | `cutoff` | frecuencia de corte en Hz | obligatorio | 20–20000 |
 |  | `q` | resonancia | `0.707` | 0.1–20 |
-| `"highpass"` | `cutoff` | frecuencia de corte en Hz | obligatorio | 20–20000 |
+| `"highpass"` (o `"hp"`) | `cutoff` | frecuencia de corte en Hz | obligatorio | 20–20000 |
 |  | `q` | resonancia | `0.707` | 0.1–20 |
-| `"bitcrush"` (o `"bitcrusher"`) | `bits` | resolución | `8` | 1–16 |
+| `"bitcrush"` (o `"bitcrusher"`) (o `"crush"`) | `bits` | resolución | `8` | 1–16 |
 |  | `downsample` | repite cada muestra n veces | `1` | 1–64 |
 | `"compressor"` (o `"comp"`) | `threshold` | umbral en dB: por encima empieza a comprimir | `-18` | -60–0 |
 |  | `ratio` | cuántos dB de entrada por cada dB de salida sobre el umbral | `4` | 1–20 |

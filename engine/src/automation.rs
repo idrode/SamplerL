@@ -32,6 +32,11 @@ pub enum Curve {
     /// Seno entre `min` y `max` que empieza en `min` cuando arranca la
     /// canción.
     Lfo { min: f32, max: f32, rate: LfoRate },
+    /// Rampa de un golpe (`200>4000:4` en un paso): de `from` a `to` en
+    /// `steps` pasos desde el paso del golpe, una sola vez, y después se
+    /// queda en `to`. Solo vale en los efectos de un paso (la voz sabe
+    /// cuándo sonó su paso).
+    Hit { from: f32, to: f32, steps: f64 },
 }
 
 impl Curve {
@@ -39,7 +44,19 @@ impl Curve {
     /// desde que arrancó) y `seconds` (segundos desde que arrancó). Con
     /// `log`, se interpola en escala logarítmica (frecuencias).
     pub fn value(&self, steps: f64, seconds: f64, log: bool) -> f32 {
+        self.value_at(steps, seconds, 0.0, log)
+    }
+
+    /// Como [`Curve::value`], para una curva que suena en un golpe cuyo
+    /// paso cayó en `origin` (pasos de la canción): la rampa de un golpe
+    /// cuenta desde ahí; las demás, desde que arrancó la canción.
+    pub fn value_at(&self, steps: f64, seconds: f64, origin: f64, log: bool) -> f32 {
         let (a, b, t) = match *self {
+            Curve::Hit {
+                from,
+                to,
+                steps: len,
+            } => (from, to, ((steps - origin) / len).clamp(0.0, 1.0)),
             Curve::Ramp {
                 from,
                 to,
@@ -60,7 +77,7 @@ impl Curve {
     /// Los dos extremos de la curva.
     pub fn bounds(&self) -> (f32, f32) {
         match *self {
-            Curve::Ramp { from, to, .. } => (from, to),
+            Curve::Ramp { from, to, .. } | Curve::Hit { from, to, .. } => (from, to),
             Curve::Lfo { min, max, .. } => (min, max),
         }
     }
@@ -93,8 +110,26 @@ pub struct Automation {
 
 impl Automation {
     /// Comprueba que el efecto y el parámetro existen y que la curva no se
-    /// sale de su rango.
+    /// sale de su rango (una curva de la canción: no de un golpe).
     pub fn validate(&self, chain: &[Option<Fx>]) -> Result<(), &'static str> {
+        self.validate_bounds(chain)?;
+        check_curve(&self.curve)
+    }
+
+    /// Como [`Automation::validate`], en los efectos de una voz (de un
+    /// corte o de un paso), que también admiten la rampa de un golpe.
+    pub fn validate_in_voice(&self, chain: &[Option<Fx>]) -> Result<(), &'static str> {
+        self.validate_bounds(chain)?;
+        match self.curve {
+            Curve::Hit { steps, .. } if !(steps > 0.0 && steps <= MAX_HIT_STEPS) => {
+                Err("la rampa de un paso dura de 0 a 1024 pasos (a>b:pasos)")
+            }
+            Curve::Hit { .. } => Ok(()),
+            _ => check_curve(&self.curve),
+        }
+    }
+
+    fn validate_bounds(&self, chain: &[Option<Fx>]) -> Result<(), &'static str> {
         let fx = chain
             .get(self.fx)
             .copied()
@@ -107,13 +142,18 @@ impl Automation {
         if ![a, b].iter().all(|v| (lo..=hi).contains(v)) {
             return Err("la automatización se sale del rango del parámetro");
         }
-        check_curve(&self.curve)
+        Ok(())
     }
 }
 
-/// Comprueba la duración de una rampa y la velocidad de un LFO.
+/// Lo más que dura la rampa de un golpe, en pasos (64 compases).
+pub const MAX_HIT_STEPS: f64 = 1024.0;
+
+/// Comprueba la duración de una rampa y la velocidad de un LFO. La rampa
+/// de un golpe no vale aquí: solo en los efectos de un paso.
 pub(crate) fn check_curve(curve: &Curve) -> Result<(), &'static str> {
     match *curve {
+        Curve::Hit { .. } => Err("una rampa de golpe (a>b) solo vale en los efectos de un paso"),
         Curve::Ramp { steps, .. } if !(steps >= 1.0 && steps.is_finite()) => {
             Err("la rampa tiene que durar al menos un paso")
         }

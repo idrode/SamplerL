@@ -2404,6 +2404,7 @@ mod sends;
 mod shapes;
 mod slice_fx;
 mod split;
+mod step_fx;
 mod stretch;
 mod swap;
 mod tempo;

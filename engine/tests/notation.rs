@@ -277,3 +277,59 @@ fn percent_is_a_pitch_that_keeps_the_duration() {
         assert!(err.contains(message), "{bad}: {err}");
     }
 }
+
+#[test]
+fn step_effects_are_read_and_handed_to_the_resolver() {
+    use engine::notation::{FxValue, WrittenFx, parse_pattern_with, step_tokens};
+    // Las llaves no se parten por los espacios de dentro.
+    assert_eq!(
+        step_tokens("1{lp = 800, q=4} .  x"),
+        vec![(0, 16), (17, 18), (20, 21)]
+    );
+    let seen = std::cell::RefCell::new(Vec::new());
+    let resolve = |written: &[WrittenFx]| {
+        seen.borrow_mut().push(written.to_vec());
+        Ok(engine::SliceFx::new(&[engine::Fx::gain(0.5)], &[]).unwrap())
+    };
+    let steps = parse_pattern_with(
+        "1{lp=200>4000:4, q=2}{crush} . 2'{eq,gain2=-3,type2=lowshelf}^7 .",
+        4,
+        &[],
+        Some(&resolve),
+    )
+    .unwrap();
+    assert!(steps[0].unwrap().fx.is_some() && steps[1].is_none());
+    let s = steps[2].unwrap();
+    assert!(s.reverse && s.semitones == 7.0 && s.fx.is_some());
+    let seen = seen.into_inner();
+    assert_eq!(
+        seen[0],
+        vec![
+            WrittenFx {
+                name: "lp".into(),
+                main: Some(FxValue::Ramp {
+                    from: 200.0,
+                    to: 4000.0,
+                    steps: Some(4.0)
+                }),
+                params: vec![("q".into(), FxValue::Number(2.0))],
+            },
+            WrittenFx {
+                name: "crush".into(),
+                main: None,
+                params: vec![],
+            },
+        ]
+    );
+    assert_eq!(
+        seen[1][0].params,
+        vec![
+            ("gain2".into(), FxValue::Number(-3.0)),
+            ("type2".into(), FxValue::Word("lowshelf".into()))
+        ]
+    );
+    // El error del que resuelve sale con el paso y el token.
+    let fail = |_: &[WrittenFx]| Err("no me gusta".to_string());
+    let error = parse_pattern_with(". 1{zz=1}", 2, &[], Some(&fail)).unwrap_err();
+    assert_eq!(error.to_string(), "paso 2 (\"1{zz=1}\"): no me gusta");
+}

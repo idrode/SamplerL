@@ -74,6 +74,9 @@ pub struct Step {
     /// Otras notas del acorde (varios `^`: `1^0^4^7`), en semitonos sobre
     /// `semitones`. Solo suenan en una pista con instrumento.
     pub chord: [Option<f32>; MAX_CHORD - 1],
+    /// Efectos de este golpe (`3{lp=800}`), que se juntan con los de su
+    /// corte (manda el paso; ver [`SliceFx::with_step`]).
+    pub fx: Option<SliceFx>,
 }
 
 impl Step {
@@ -89,7 +92,13 @@ impl Step {
             lock: None,
             hold: 0,
             chord: [None; MAX_CHORD - 1],
+            fx: None,
         }
+    }
+
+    /// Efectos de este golpe (ver [`crate::slice_fx`]).
+    pub fn with_fx(self, fx: Option<SliceFx>) -> Self {
+        Step { fx, ..self }
     }
 
     /// Alarga el golpe `hold` pasos más.
@@ -174,6 +183,11 @@ pub(crate) struct Trigger {
     pub hold: u8,
     /// Velocidad de lectura de las otras notas del acorde.
     pub chord: [Option<f64>; MAX_CHORD - 1],
+    /// Efectos del paso: su índice en `Pattern::step_fx`.
+    pub fx: Option<u16>,
+    /// Paso de la canción en que cae el golpe (lo pone el motor al
+    /// dispararlo): ahí empiezan las rampas de golpe.
+    pub origin: f64,
 }
 
 /// Patrón de una pista. Los pasos se resuelven a rangos de frames y
@@ -226,6 +240,9 @@ pub struct Pattern {
     /// Efectos de cada corte (`slice_fx[i]`, los del corte `i`); vacío si
     /// ninguno tiene.
     slice_fx: Vec<Option<SliceFx>>,
+    /// Las cadenas distintas de los efectos de paso (`Trigger::fx` es el
+    /// índice); vacío si ningún paso tiene.
+    step_fx: Vec<SliceFx>,
     /// Etiqueta de quien lo hizo (de 0 a [`crate::MAX_TAG`]): vuelve con
     /// el paso que suena ([`crate::Cursor`]).
     pub(crate) tag: u32,
@@ -270,12 +287,13 @@ impl Pattern {
             return Err(SendError::InvalidLength(length));
         }
         let mut steps = Vec::with_capacity(length * bars.len());
+        let mut step_fx = Vec::new();
         for bar in bars {
             let bar = bar.as_ref();
             if bar.len() != length {
                 return Err(SendError::InvalidLength(bar.len()));
             }
-            resolve_bar(&sample, slices, bar, &mut steps)?;
+            resolve_bar(&sample, slices, bar, &mut steps, &mut step_fx)?;
         }
         Ok(Pattern {
             sample,
@@ -298,6 +316,7 @@ impl Pattern {
             pitch_curve: None,
             formant_curve: None,
             slice_fx: Vec::new(),
+            step_fx,
             tag: 0,
         })
     }
@@ -317,6 +336,11 @@ impl Pattern {
             if !self.slice_fx.is_empty() {
                 return Err(SendError::InvalidFx(
                     "un instrumento no tiene efectos por corte (usa los de la pista)",
+                ));
+            }
+            if !self.step_fx.is_empty() {
+                return Err(SendError::InvalidFx(
+                    "un instrumento no tiene efectos por paso (usa los de la pista)",
                 ));
             }
         }
@@ -386,6 +410,11 @@ impl Pattern {
             if self.instrument.is_some() {
                 return Err(SendError::InvalidGranular(
                     "una pista con granos no puede ser instrumento",
+                ));
+            }
+            if !self.step_fx.is_empty() {
+                return Err(SendError::InvalidGranular(
+                    "una pista con granos no tiene efectos por paso (los granos no son voces)",
                 ));
             }
         }
@@ -466,12 +495,34 @@ impl Pattern {
         } else {
             Vec::new()
         };
+        // Cada golpe con efectos de paso cabe con los de su corte.
+        for hit in self.steps.iter().flatten() {
+            if hit.fx.is_some() {
+                self.hit_fx_checked(hit).map_err(SendError::InvalidFx)?;
+            }
+        }
         Ok(self)
     }
 
     /// Efectos del corte `slice`, si tiene.
     pub(crate) fn slice_fx(&self, slice: usize) -> Option<SliceFx> {
         self.slice_fx.get(slice).copied().flatten()
+    }
+
+    /// Los efectos con los que suena `hit`: los de su corte y los de su
+    /// paso (manda el paso), o ninguno.
+    pub(crate) fn hit_fx(&self, hit: &Trigger) -> Option<SliceFx> {
+        // Ya comprobado al crear el patrón: siempre cabe.
+        self.hit_fx_checked(hit).ok().flatten()
+    }
+
+    fn hit_fx_checked(&self, hit: &Trigger) -> Result<Option<SliceFx>, &'static str> {
+        let step = hit.fx.and_then(|i| self.step_fx.get(i as usize));
+        Ok(match (self.slice_fx(hit.slice), step) {
+            (slice, None) => slice,
+            (None, Some(step)) => Some(*step),
+            (Some(slice), Some(step)) => Some(slice.with_step(step)?),
+        })
     }
 
     /// Parámetros de efecto que cambian con el tiempo (ver
@@ -610,6 +661,7 @@ fn resolve_bar(
     slices: &Slices,
     steps: &[Option<Step>],
     out: &mut Vec<Option<Trigger>>,
+    chains: &mut Vec<SliceFx>,
 ) -> Result<(), SendError> {
     for (i, step) in steps.iter().copied().enumerate() {
         let Some(step) = step else {
@@ -647,6 +699,21 @@ fn resolve_bar(
         if step.hold as usize >= MAX_STEPS {
             return Err(invalid("golpe alargado (_) más que el patrón más largo"));
         }
+        // Los efectos del paso: la cadena (sin vacías) en la tabla del
+        // patrón, sin repetirla.
+        let fx = match step.fx.filter(|c| c.effects().next().is_some()) {
+            None => None,
+            Some(chain) => {
+                let index = match chains.iter().position(|c| *c == chain) {
+                    Some(i) => i,
+                    None => {
+                        chains.push(chain);
+                        chains.len() - 1
+                    }
+                };
+                Some(u16::try_from(index).map_err(|_| invalid("demasiados efectos de paso"))?)
+            }
+        };
         let rate = |st: f32| 2f64.powf(st as f64 / 12.0);
         out.push(Some(Trigger {
             slice: step.slice,
@@ -666,6 +733,8 @@ fn resolve_bar(
             lock: step.lock,
             hold: step.hold,
             chord: step.chord.map(|i| i.map(|i| rate(step.semitones + i))),
+            fx,
+            origin: 0.0,
         }));
     }
     Ok(())

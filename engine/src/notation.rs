@@ -17,11 +17,87 @@
 //!   corte del primer filtro de la pista en Hz desde ese golpe (parameter
 //!   lock).
 //!
+//! - Efectos del golpe entre llaves, uno por par de llaves, detrás del
+//!   corte y en cualquier orden con los sufijos: `3{lp=800,q=4}{crush=6}`.
+//!   Dentro, el efecto, `=` y el valor de su parámetro principal y, tras
+//!   comas, otros parámetros `clave=valor`. Un valor puede ser un número,
+//!   una palabra (`type=highpass`) o una rampa del golpe: `200>4000` va de
+//!   200 a 4000 durante el paso y `200>4000:4` durante 4 pasos. Las llaves
+//!   pueden llevar espacios dentro (el paso sigue siendo uno). Qué efectos
+//!   y parámetros hay lo sabe el script (el registro de la API): aquí solo
+//!   se lee lo escrito ([`WrittenFx`]) y se pasa a quien lo resuelve
+//!   ([`parse_pattern_with`]).
+//!
 //! Ejemplo: `"1 . 3' .  1^7 . 5@0.5 .  . 3'^-12@0.8 . x  . . . ."`.
 
 use std::fmt;
 
 use crate::sequencer::{MAX_CHORD, MAX_STEPS, STEPS, Step};
+use crate::slice_fx::SliceFx;
+
+/// Un efecto escrito en un paso (`{lp=800,q=4}`), tal como se escribió.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WrittenFx {
+    /// El nombre del efecto (`lp`).
+    pub name: String,
+    /// El valor de su parámetro principal (`lp=800`), si lo lleva.
+    pub main: Option<FxValue>,
+    /// Los demás parámetros, en orden (`q=4`).
+    pub params: Vec<(String, FxValue)>,
+}
+
+/// Un valor de un efecto de paso.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FxValue {
+    Number(f32),
+    /// Rampa del golpe: de `from` a `to` en `steps` pasos (sin `:`, uno).
+    Ramp {
+        from: f32,
+        to: f32,
+        steps: Option<f64>,
+    },
+    /// Una palabra (`highpass`).
+    Word(String),
+}
+
+/// Quien sabe convertir los efectos escritos en un paso en una cadena (el
+/// script, con el registro de la API).
+pub type FxResolver<'a> = &'a dyn Fn(&[WrittenFx]) -> Result<SliceFx, String>;
+
+/// Los pasos de un patrón: columnas (en caracteres) de inicio y fin de
+/// cada uno, separados por espacios que no estén dentro de llaves.
+pub fn step_tokens(text: &str) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let mut start = None;
+    let mut depth = 0usize;
+    let end = text.chars().count();
+    for (i, c) in text.chars().chain([' ']).enumerate() {
+        match c {
+            '{' => depth += 1,
+            '}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        let space = c.is_whitespace() && (depth == 0 || i == end);
+        match (space, start) {
+            (false, None) => start = Some(i),
+            (true, Some(s)) => {
+                out.push((s, i));
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// El texto de cada paso de un patrón (ver [`step_tokens`]).
+pub fn step_texts(text: &str) -> Vec<String> {
+    let chars: Vec<char> = text.chars().collect();
+    step_tokens(text)
+        .into_iter()
+        .map(|(a, b)| chars[a..b].iter().collect())
+        .collect()
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct NotationError {
@@ -64,6 +140,17 @@ pub fn parse_pattern_labeled(
     length: usize,
     labels: &[Option<String>],
 ) -> Result<Vec<Option<Step>>, NotationError> {
+    parse_pattern_with(text, length, labels, None)
+}
+
+/// Como [`parse_pattern_labeled`], con efectos por paso (`3{lp=800}`):
+/// `fx` los convierte en su cadena. Sin él, unas llaves dan error.
+pub fn parse_pattern_with(
+    text: &str,
+    length: usize,
+    labels: &[Option<String>],
+    fx: Option<FxResolver>,
+) -> Result<Vec<Option<Step>>, NotationError> {
     let error = |message: String| NotationError {
         step: None,
         token: String::new(),
@@ -74,7 +161,20 @@ pub fn parse_pattern_labeled(
             "la longitud del patrón va de 1 a {MAX_STEPS} pasos (es {length})"
         )));
     }
-    let tokens: Vec<&str> = text.split_whitespace().collect();
+    let tokens = step_texts(text);
+    // Unas llaves sin cerrar se tragan el resto del patrón: el error, en
+    // su paso.
+    if let Some((i, token)) = tokens
+        .iter()
+        .enumerate()
+        .find(|(_, t)| t.matches('{').count() > t.matches('}').count())
+    {
+        return Err(NotationError {
+            step: Some(i + 1),
+            token: token.chars().take(24).collect(),
+            message: "falta } al final de los efectos del paso ({...})".into(),
+        });
+    }
     if tokens.len() != length {
         return Err(error(format!(
             "el patrón necesita {length} pasos, tiene {}",
@@ -85,12 +185,13 @@ pub fn parse_pattern_labeled(
     // Último golpe que un `_` puede alargar.
     let mut held: Option<usize> = None;
     for (i, token) in tokens.iter().enumerate() {
-        let step = parse_step_labeled(token, labels).map_err(|message| NotationError {
+        let token = token.as_str();
+        let step = parse_step_with(token, labels, fx).map_err(|message| NotationError {
             step: Some(i + 1),
             token: token.to_string(),
             message,
         })?;
-        if *token == HOLD {
+        if token == HOLD {
             let Some(j) = held else {
                 return Err(NotationError {
                     step: Some(i + 1),
@@ -182,6 +283,16 @@ pub fn check_label(name: &str) -> Result<(), String> {
 /// Como [`parse_step`], pero el corte también puede ser una etiqueta de
 /// `labels` (`labels[i]` es la del corte `i`, desde 0).
 pub fn parse_step_labeled(token: &str, labels: &[Option<String>]) -> Result<Option<Step>, String> {
+    parse_step_with(token, labels, None)
+}
+
+/// Como [`parse_step_labeled`], con los efectos del paso (`{...}`)
+/// resueltos por `fx`.
+pub fn parse_step_with(
+    token: &str,
+    labels: &[Option<String>],
+    fx: Option<FxResolver>,
+) -> Result<Option<Step>, String> {
     if token == "." || token == HOLD {
         return Ok(None);
     }
@@ -228,9 +339,18 @@ pub fn parse_step_labeled(token: &str, labels: &[Option<String>]) -> Result<Opti
     let mut pitches = 0;
     let (mut seen_reverse, mut seen_gain) = (false, false);
     let (mut seen_retrig, mut seen_lock) = (false, false);
+    let mut written: Vec<WrittenFx> = Vec::new();
     while let Some(c) = rest.chars().next() {
         rest = &rest[c.len_utf8()..];
         match c {
+            '{' => {
+                let end = rest
+                    .find('}')
+                    .ok_or("falta } al final de los efectos del paso ({...})")?;
+                written.push(written_fx(&rest[..end])?);
+                rest = &rest[end + 1..];
+            }
+            '}' => return Err("} sin su { (los efectos del paso van entre llaves)".into()),
             '\'' => {
                 once(&mut seen_reverse, "reverse (')")?;
                 step.reverse = true;
@@ -286,12 +406,103 @@ pub fn parse_step_labeled(token: &str, labels: &[Option<String>]) -> Result<Opti
                 return Err(format!(
                     "carácter inesperado '{other}' \
                      (efectos: ' reverse, ^n pitch, %n pitch sin cambiar la duración, \
-                     @n volumen, rN retrigger, ~Hz corte)"
+                     @n volumen, rN retrigger, ~Hz corte, {{efecto=valor}})"
                 ));
             }
         }
     }
+    if !written.is_empty() {
+        let resolve = fx.ok_or(
+            "los efectos de un paso ({...}) solo se entienden desde el script (steps(\"...\"))",
+        )?;
+        step.fx = Some(resolve(&written)?);
+    }
     Ok(Some(step))
+}
+
+/// Lee lo de dentro de unas llaves: `lp=800,q=4` (con espacios, si los
+/// hay, alrededor de cada cosa).
+fn written_fx(inner: &str) -> Result<WrittenFx, String> {
+    let mut items = inner.split(',').map(str::trim);
+    let head = items.next().unwrap_or("");
+    if head.is_empty() {
+        return Err("efecto vacío: {efecto=valor} (por ejemplo {lp=800})".into());
+    }
+    let (name, main) = match head.split_once('=') {
+        Some((name, value)) => (name.trim(), Some(fx_value(name.trim(), value.trim())?)),
+        None => (head, None),
+    };
+    if !is_word(name) {
+        return Err(format!(
+            "\"{name}\" no es un nombre de efecto (letras, números y _)"
+        ));
+    }
+    let mut params = Vec::new();
+    for item in items {
+        let (key, value) = item
+            .split_once('=')
+            .ok_or_else(|| format!("{{{name}}}: \"{item}\" va como clave=valor"))?;
+        let key = key.trim();
+        if !is_word(key) {
+            return Err(format!(
+                "{{{name}}}: \"{key}\" no es un nombre de parámetro"
+            ));
+        }
+        if params.iter().any(|(k, _)| k == key) {
+            return Err(format!("{{{name}}}: {key} repetido"));
+        }
+        params.push((key.to_string(), fx_value(key, value.trim())?));
+    }
+    Ok(WrittenFx {
+        name: name.to_string(),
+        main,
+        params,
+    })
+}
+
+fn is_word(text: &str) -> bool {
+    !text.is_empty() && text.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Un valor: número, palabra o rampa (`a>b` o `a>b:pasos`).
+fn fx_value(key: &str, text: &str) -> Result<FxValue, String> {
+    if text.is_empty() {
+        return Err(format!("falta el valor de {key} (tras =)"));
+    }
+    if let Some((from, to)) = text.split_once('>') {
+        let (to, steps) = match to.split_once(':') {
+            Some((to, steps)) => (to, Some(steps)),
+            None => (to, None),
+        };
+        let number = |t: &str| match self::number(t.trim(), true) {
+            Some((v, "")) => Some(v),
+            _ => None,
+        };
+        let (Some(from), Some(to)) = (number(from), number(to)) else {
+            return Err(format!(
+                "{key}={text}: una rampa es desde>hasta (o desde>hasta:pasos), con números"
+            ));
+        };
+        let steps = match steps {
+            None => None,
+            Some(steps) => match number(steps) {
+                Some(n) if n > 0.0 => Some(n as f64),
+                _ => {
+                    return Err(format!(
+                        "{key}={text}: tras : van los pasos que dura la rampa (más de 0)"
+                    ));
+                }
+            },
+        };
+        return Ok(FxValue::Ramp { from, to, steps });
+    }
+    match number(text, true) {
+        Some((v, "")) => Ok(FxValue::Number(v)),
+        _ if is_word(text) => Ok(FxValue::Word(text.to_string())),
+        _ => Err(format!(
+            "{key}={text}: el valor es un número, una palabra o desde>hasta"
+        )),
+    }
 }
 
 fn once(seen: &mut bool, what: &str) -> Result<(), String> {

@@ -1050,6 +1050,57 @@ fn the_audio_thread_never_allocates() {
     assert_eq!(n, 0, "reservas al quitar las curvas por golpe");
     controller.collect_garbage();
 
+    // Efectos por paso: con una rampa de golpe, retrigger, reverse y
+    // pitch, juntos con los de su corte (uno sustituido y otro detrás).
+    let step_chain = engine::SliceFx::new(
+        &[Fx::lowpass(300.0), Fx::bitcrush(6, 2)],
+        &[engine::Automation {
+            fx: 0,
+            param: 0,
+            curve: engine::Curve::Hit {
+                from: 300.0,
+                to: 9000.0,
+                steps: 2.0,
+            },
+        }],
+    )
+    .unwrap();
+    let slice_chain =
+        engine::SliceFx::new(&[Fx::lowpass(2000.0), Fx::distortion(3.0, 0.5)], &[]).unwrap();
+    let stepped: Vec<Option<Step>> = (0..STEPS)
+        .map(|i| {
+            let step = Step::new(i % 2).with_fx((i % 3 == 0).then_some(step_chain));
+            Some(match i % 4 {
+                0 => step.with_retrig(3),
+                1 => step.reversed(),
+                2 => step.with_pitch(5.0),
+                _ => step,
+            })
+        })
+        .collect();
+    let with_steps = Pattern::from_steps(sample.clone(), &slices, stepped)
+        .unwrap()
+        .with_slice_fx(&[Some(slice_chain), None])
+        .unwrap();
+    controller.set_track_pattern(2, Some(with_steps)).unwrap();
+    let n = counted(|| {
+        for _ in 0..400 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas con efectos por paso");
+    controller.set_track_pattern(2, None).unwrap();
+    let n = counted(|| {
+        for _ in 0..100 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(
+        n, 0,
+        "reservas al quitar los efectos por paso con sus colas"
+    );
+    controller.collect_garbage();
+
     // Rampa de tempo y cambio de compás.
     controller
         .set_tempo_ramp(engine::TempoRamp {

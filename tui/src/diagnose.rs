@@ -9,7 +9,7 @@
 
 use std::ops::Range;
 
-use engine::notation::{parse_pattern_labeled, parse_step_labeled};
+use engine::notation::{parse_pattern_with, parse_step_with};
 use engine::{MAX_GAIN, MAX_RETRIG, MAX_SEMITONES, STEPS};
 use script::api;
 
@@ -263,7 +263,8 @@ fn check(
         })
         .collect();
     for (i, token) in steps.iter().enumerate() {
-        if let Err(message) = parse_step_labeled(&token.text, labels) {
+        if let Err(message) = parse_step_with(&token.text, labels, Some(&script::step_fx::resolve))
+        {
             return Some((
                 token.cols.clone(),
                 format!("paso {} (\"{}\"): {message}", i + 1, token.text),
@@ -311,7 +312,12 @@ fn check_pattern(
 ) -> Option<(Range<usize>, String)> {
     let length = length.unwrap_or(steps.len().max(1));
     let notation: Vec<&str> = steps.iter().map(|t| t.notation.as_str()).collect();
-    let parsed = match parse_pattern_labeled(&notation.join(" "), length, labels) {
+    let parsed = match parse_pattern_with(
+        &notation.join(" "),
+        length,
+        labels,
+        Some(&script::step_fx::resolve),
+    ) {
         Ok(parsed) => parsed,
         Err(e) => {
             // El paso del error (un `_` sin golpe), o todo el patrón.
@@ -358,21 +364,13 @@ fn check_pattern(
     })
 }
 
-/// Columnas (en caracteres) de cada paso separado por espacios.
+/// Columnas (en caracteres) de cada paso separado por espacios (los de
+/// dentro de las llaves de los efectos de un paso no separan).
 fn tokens(content: &str) -> Vec<Range<usize>> {
-    let mut out = Vec::new();
-    let mut start = None;
-    for (i, c) in content.chars().chain([' ']).enumerate() {
-        match (c.is_whitespace(), start) {
-            (false, None) => start = Some(i),
-            (true, Some(s)) => {
-                out.push(s..i);
-                start = None;
-            }
-            _ => {}
-        }
-    }
-    out
+    engine::notation::step_tokens(content)
+        .into_iter()
+        .map(|(a, b)| a..b)
+        .collect()
 }
 
 /// Longitud de cada cadena de `track(...)` del texto (de un `track(` al

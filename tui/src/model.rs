@@ -485,7 +485,45 @@ fn suffixes(step: &Step) -> String {
     if let Some(hz) = step.lock {
         text.push_str(&format!("~{hz}"));
     }
+    // Efectos del paso: su nombre más corto del registro, con `∿` si algo
+    // se mueve (`{lp∿,crush}`).
+    if let Some(chain) = &step.fx {
+        let names: Vec<String> = chain
+            .effects()
+            .enumerate()
+            .map(|(i, fx)| {
+                let moving = chain.automations().any(|a| a.fx == i);
+                format!("{}{}", short_name(fx), if moving { "∿" } else { "" })
+            })
+            .collect();
+        if !names.is_empty() {
+            text.push_str(&format!("{{{}}}", names.join(",")));
+        }
+    }
     text
+}
+
+/// El nombre más corto (nombre o alias del registro) del efecto de `fx`.
+pub fn short_name(fx: &Fx) -> &'static str {
+    let name = match fx {
+        Fx::Filter {
+            kind: engine::FilterKind::LowPass,
+            ..
+        } => "lowpass",
+        Fx::Filter { .. } => "highpass",
+        Fx::Bitcrush { .. } => "bitcrush",
+        Fx::Compressor { .. } => "compressor",
+        Fx::Distortion { .. } => "distortion",
+        Fx::Gain { .. } => "gain",
+        Fx::Eq { .. } => "eq",
+        Fx::DynEq(_) => "dyneq",
+    };
+    script::api::effect(name).map_or(name, |e| {
+        std::iter::once(e.name)
+            .chain(e.aliases.iter().copied())
+            .min_by_key(|n| n.len())
+            .unwrap_or(e.name)
+    })
 }
 
 /// Descripción corta de un efecto.

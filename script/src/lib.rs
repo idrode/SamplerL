@@ -31,7 +31,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
-use engine::notation::{check_label, parse_pattern_labeled, split_label};
+use engine::notation::{check_label, parse_pattern_with, split_label};
 use engine::{
     Batch, Buses, Controller, Division, EQ_BANDS, EqBand, EqKind, FilterKind, Fx, MAX_CYCLE_BARS,
     MAX_FX, MAX_GAIN, MAX_RETRIG, MAX_SEMITONES, MAX_STEPS, MAX_TRACKS, Pattern, STEPS, Sample,
@@ -42,6 +42,7 @@ pub mod blocks;
 pub mod masking;
 pub mod patterns;
 pub mod project;
+pub mod step_fx;
 mod watch;
 mod written;
 
@@ -2296,6 +2297,7 @@ fn track_source(lua: &Lua, name: &str, source: &AnyUserData) -> mlua::Result<Tra
             transforms: Vec::new(),
             steps_set: false,
             written: Vec::new(),
+            steps_at: String::new(),
         });
     }
     if let Ok(source) = source.borrow::<InstrumentHandle>() {
@@ -2318,6 +2320,7 @@ fn track_source(lua: &Lua, name: &str, source: &AnyUserData) -> mlua::Result<Tra
             transforms: Vec::new(),
             steps_set: false,
             written: Vec::new(),
+            steps_at: String::new(),
         });
     }
     Err(fail(
@@ -2398,6 +2401,10 @@ struct TrackBuild {
     steps_set: bool,
     /// Dónde está escrito cada paso de `:steps()` (ver [`written`]).
     written: Vec<Option<TokenSpan>>,
+    /// Archivo y línea del último `:steps()` (`song.lua:3: `): para los
+    /// errores que solo se ven al acabar el script (los efectos de un paso
+    /// que no caben con los de su corte, si el corte los recibe después).
+    steps_at: String,
 }
 
 #[derive(Clone)]
@@ -2484,6 +2491,7 @@ fn expand(track: TrackBuild, rng: &mut Rng, timing: Timing) -> Result<TrackDef, 
         transforms,
         steps_set: _,
         written,
+        steps_at,
     } = track;
     def.labels = labels.borrow().clone();
     def.shapes = shapes.borrow().clone();
@@ -2589,6 +2597,7 @@ fn expand(track: TrackBuild, rng: &mut Rng, timing: Timing) -> Result<TrackDef, 
     }
     def.bars = bars;
     def.spans = spans;
+    step_fx_fit(&def).map_err(|e| ScriptError::new(format!("{steps_at}steps: {e}")))?;
     Ok(def)
 }
 
@@ -3086,6 +3095,12 @@ fn set_granular(
     });
     if let Some(params) = params {
         table_curves(lua, who, params, api::GRAIN_PARAMS)?;
+    }
+    if this.with_track(|t| t.def.steps.iter().flatten().any(|s| s.fx.is_some())) {
+        return Err(fail(
+            lua,
+            format!("{who}: {}", grains_without_step_fx(&name)),
+        ));
     }
     let mut granular = engine::Granular::new(seed);
     if let Some(pos) = freeze {
@@ -3958,11 +3973,18 @@ impl TrackHandle {
             count,
         };
         let steps = checked_steps(lua, &self.name, &labels, &stale, text, length, instrument)?;
+        if self.with_track(|t| t.def.granular.is_some())
+            && steps.iter().flatten().any(|s| s.fx.is_some())
+        {
+            return Err(fail(lua, grains_without_step_fx(&self.name)));
+        }
         let spans = written::spans(lua, written, length);
+        let at = location(lua);
         self.with_track(|t| {
             t.def.steps = steps;
             t.steps_set = true;
             t.written = spans;
+            t.steps_at = at;
         });
         Ok(())
     }
@@ -3997,7 +4019,7 @@ fn checked_steps(
     instrument: bool,
 ) -> mlua::Result<Bar> {
     let slices = labels.len();
-    let steps = parse_pattern_labeled(text, length, labels).map_err(|e| {
+    let steps = parse_pattern_with(text, length, labels, Some(&step_fx::resolve)).map_err(|e| {
         // Una etiqueta del proyecto de otro `slice(n)`: decirlo.
         let hint = split_label(&e.token)
             .and_then(|(name, _)| stale.labels.iter().find(|(n, _)| n == name))
@@ -4021,6 +4043,15 @@ fn checked_steps(
             ));
         }
         check_step(lua, step)?;
+        if instrument && step.fx.is_some() {
+            return Err(fail(
+                lua,
+                format!(
+                    "steps: \"{track}\" es un instrumento: sus notas no tienen efectos por paso \
+                     ({{...}}); usa los de la pista (:fx)"
+                ),
+            ));
+        }
         if !instrument && step.chord.iter().any(Option::is_some) {
             return Err(fail(
                 lua,
@@ -4131,6 +4162,42 @@ fn table_curves(lua: &Lua, who: &str, table: &Table, params: &[api::FxParam]) ->
     Ok(())
 }
 
+/// Que los efectos de cada paso quepan con los de su corte (como mucho 4
+/// efectos y 8 curvas entre los dos; manda el paso).
+fn step_fx_fit(def: &TrackDef) -> Result<(), String> {
+    for (lap, bar) in def.bars.iter().enumerate() {
+        for (k, step) in bar.iter().enumerate() {
+            let Some((step, fx)) = step.and_then(|s| Some((s, s.fx?))) else {
+                continue;
+            };
+            let Some(chain) = def.slice_fx.get(step.slice).filter(|c| !c.fx.is_empty()) else {
+                continue;
+            };
+            let slice = SliceFx::new(&chain.fx, &chain.automation).map_err(str::to_string)?;
+            slice.with_step(&fx).map_err(|e| {
+                let at = if def.bars.len() > 1 {
+                    format!("vuelta {}, paso {}", lap + 1, k + 1)
+                } else {
+                    format!("paso {}", k + 1)
+                };
+                format!(
+                    "{at}: {e} (con los de cortes:fx del corte {})",
+                    step.slice + 1
+                )
+            })?;
+        }
+    }
+    Ok(())
+}
+
+/// Por qué una pista con granos no admite efectos por paso.
+fn grains_without_step_fx(track: &str) -> String {
+    format!(
+        "\"{track}\" toca en granos: sus golpes no tienen efectos por paso ({{...}}; los granos no \
+         son voces), usa los de la pista (:fx)"
+    )
+}
+
 /// Si un valor de Lua es una curva (`ramp()`, `lfo()`).
 fn is_curve(value: &Value) -> bool {
     matches!(value, Value::UserData(ud) if ud.is::<CurveHandle>())
@@ -4239,111 +4306,123 @@ fn parse_fx(
     name: &str,
     params: Option<Table>,
 ) -> mlua::Result<(Fx, Vec<(String, engine::Curve)>)> {
-    let curves: RefCell<Vec<(String, engine::Curve)>> = RefCell::default();
-    let get = |key: &str| -> mlua::Result<Option<f32>> {
+    if api::effect(name).is_some() {
+        fx_params(lua, name, &params)?;
+    }
+    let arg = |key: &str| -> Result<Option<FxArg>, String> {
         let Some(p) = &params else { return Ok(None) };
-        match p.get::<Value>(key)? {
-            Value::Nil => Ok(None),
-            Value::UserData(ud) if ud.is::<CurveHandle>() => {
-                let curve = ud.borrow::<CurveHandle>()?.0;
+        Ok(match p.get::<Value>(key).map_err(|e| e.to_string())? {
+            Value::Nil => None,
+            Value::UserData(ud) if ud.is::<CurveHandle>() => Some(FxArg::Curve(
+                ud.borrow::<CurveHandle>().map_err(|e| e.to_string())?.0,
+            )),
+            Value::Integer(i) => Some(FxArg::Number(i as f32)),
+            Value::Number(n) => Some(FxArg::Number(n as f32)),
+            Value::String(s) => Some(FxArg::Text(s.to_string_lossy().to_string())),
+            _ => Some(FxArg::Other),
+        })
+    };
+    build_fx(name, &arg).map_err(|e| fail(lua, e))
+}
+
+/// Un valor de un parámetro de efecto, venga de una tabla de Lua o de los
+/// efectos de un paso.
+pub(crate) enum FxArg {
+    Number(f32),
+    Curve(engine::Curve),
+    Text(String),
+    Other,
+}
+
+/// El efecto `name` (nombre o alias del registro) con los parámetros que da
+/// `arg`: sus valores fijos y los parámetros que llevan una curva (el valor
+/// fijo de esos es su primer extremo). Las claves desconocidas las
+/// comprueba quien llama.
+pub(crate) fn build_fx(
+    name: &str,
+    arg: &dyn Fn(&str) -> Result<Option<FxArg>, String>,
+) -> Result<(Fx, Vec<(String, engine::Curve)>), String> {
+    let curves: RefCell<Vec<(String, engine::Curve)>> = RefCell::default();
+    let get = |key: &str| -> Result<Option<f32>, String> {
+        let wrong = || format!("fx(\"{name}\"): {key} tiene que ser un número, ramp() o lfo()");
+        match arg(key)? {
+            None => Ok(None),
+            Some(FxArg::Curve(curve)) => {
                 curves.borrow_mut().push((key.to_string(), curve));
                 Ok(Some(curve.bounds().0))
             }
-            other => lua.unpack::<f32>(other).map(Some).map_err(|_| {
-                fail(
-                    lua,
-                    format!("fx(\"{name}\"): {key} tiene que ser un número, ramp() o lfo()"),
-                )
-            }),
+            Some(FxArg::Number(v)) => Ok(Some(v)),
+            Some(FxArg::Text(t)) => t.trim().parse().map(Some).map_err(|_| wrong()),
+            Some(FxArg::Other) => Err(wrong()),
         }
     };
-    let filter = |kind: FilterKind| -> mlua::Result<Fx> {
-        let cutoff_hz = get("cutoff")?
-            .ok_or_else(|| fail(lua, format!("fx(\"{name}\"): falta cutoff (Hz)")))?;
+    // Un parámetro de texto (`type`): `None` si no está.
+    let text = |key: &str, wrong: String| -> Result<Option<String>, String> {
+        match arg(key)? {
+            None => Ok(None),
+            Some(FxArg::Text(t)) => Ok(Some(t)),
+            Some(FxArg::Number(n)) => Ok(Some(n.to_string())),
+            Some(_) => Err(wrong),
+        }
+    };
+    let filter = |kind: FilterKind| -> Result<Fx, String> {
+        let cutoff_hz =
+            get("cutoff")?.ok_or_else(|| format!("fx(\"{name}\"): falta cutoff (Hz)"))?;
         Ok(Fx::Filter {
             kind,
             cutoff_hz,
             q: get("q")?.unwrap_or(engine::DEFAULT_Q),
         })
     };
-    let fx = match name {
+    let canonical = api::effect(name).map_or(name, |e| e.name);
+    let fx = match canonical {
         "filter" => {
-            fx_params(lua, name, &params)?;
-            let kind: Option<String> = match &params {
-                Some(p) => p.get("type")?,
-                None => None,
-            };
+            let kind = text("type", "fx(\"filter\"): type tiene que ser un texto".into())?;
             match kind.as_deref().unwrap_or("lowpass") {
                 "lowpass" => filter(FilterKind::LowPass)?,
                 "highpass" => filter(FilterKind::HighPass)?,
                 other => {
-                    return Err(fail(
-                        lua,
-                        format!("fx(\"filter\"): type \"{other}\" no existe (lowpass o highpass)"),
+                    return Err(format!(
+                        "fx(\"filter\"): type \"{other}\" no existe (lowpass o highpass)"
                     ));
                 }
             }
         }
         "lowpass" | "highpass" => {
-            fx_params(lua, name, &params)?;
-            let kind = if name == "lowpass" {
+            let kind = if canonical == "lowpass" {
                 FilterKind::LowPass
             } else {
                 FilterKind::HighPass
             };
             filter(kind)?
         }
-        "bitcrush" | "bitcrusher" => {
-            fx_params(lua, name, &params)?;
-            Fx::Bitcrush {
-                bits: get("bits")?.unwrap_or(8.0) as u32,
-                downsample: get("downsample")?.unwrap_or(1.0) as u32,
-            }
-        }
-        "compressor" | "comp" => {
-            fx_params(lua, name, &params)?;
-            Fx::Compressor {
-                threshold_db: get("threshold")?.unwrap_or(-18.0),
-                ratio: get("ratio")?.unwrap_or(4.0),
-                attack_ms: get("attack")?.unwrap_or(5.0),
-                release_ms: get("release")?.unwrap_or(100.0),
-                makeup_db: get("makeup")?.unwrap_or(0.0),
-            }
-        }
-        "distortion" | "drive" => {
-            fx_params(lua, name, &params)?;
-            Fx::Distortion {
-                drive: get("drive")?.unwrap_or(4.0),
-                mix: get("mix")?.unwrap_or(1.0),
-            }
-        }
-        "gain" => {
-            fx_params(lua, name, &params)?;
-            Fx::Gain {
-                level: get("level")?.unwrap_or(1.0),
-            }
-        }
+        "bitcrush" => Fx::Bitcrush {
+            bits: get("bits")?.unwrap_or(8.0) as u32,
+            downsample: get("downsample")?.unwrap_or(1.0) as u32,
+        },
+        "compressor" => Fx::Compressor {
+            threshold_db: get("threshold")?.unwrap_or(-18.0),
+            ratio: get("ratio")?.unwrap_or(4.0),
+            attack_ms: get("attack")?.unwrap_or(5.0),
+            release_ms: get("release")?.unwrap_or(100.0),
+            makeup_db: get("makeup")?.unwrap_or(0.0),
+        },
+        "distortion" => Fx::Distortion {
+            drive: get("drive")?.unwrap_or(4.0),
+            mix: get("mix")?.unwrap_or(1.0),
+        },
+        "gain" => Fx::Gain {
+            level: get("level")?.unwrap_or(1.0),
+        },
         "dyneq" => {
-            fx_params(lua, name, &params)?;
-            let kind: Option<String> = match &params {
-                Some(p) => p
-                    .get("type")
-                    .map_err(|_| fail(lua, "fx(\"dyneq\"): type tiene que ser un texto"))?,
-                None => None,
-            };
+            let kind = text("type", "fx(\"dyneq\"): type tiene que ser un texto".into())?;
             let kind = match kind.as_deref() {
                 None => EqKind::Bell,
                 Some(k) => EqKind::from_name(k).ok_or_else(|| {
-                    fail(
-                        lua,
-                        format!(
-                            "fx(\"dyneq\"): type \"{k}\" no existe (bell, lowshelf o highshelf)"
-                        ),
-                    )
+                    format!("fx(\"dyneq\"): type \"{k}\" no existe (bell, lowshelf o highshelf)")
                 })?,
             };
-            let freq_hz =
-                get("freq")?.ok_or_else(|| fail(lua, "fx(\"dyneq\"): falta freq (Hz)"))?;
+            let freq_hz = get("freq")?.ok_or("fx(\"dyneq\"): falta freq (Hz)")?;
             let d = engine::DynEqParams::new(freq_hz);
             Fx::DynEq(engine::DynEqParams {
                 kind,
@@ -4358,24 +4437,18 @@ fn parse_fx(
             })
         }
         "eq" => {
-            fx_params(lua, name, &params)?;
             let mut bands = [EqBand::flat(0); EQ_BANDS];
             for (i, band) in bands.iter_mut().enumerate() {
                 let n = i + 1;
-                let kind: Option<String> = match &params {
-                    Some(p) => p.get(format!("type{n}")).map_err(|_| {
-                        fail(lua, format!("fx(\"eq\"): type{n} tiene que ser un texto"))
-                    })?,
-                    None => None,
-                };
+                let kind = text(
+                    &format!("type{n}"),
+                    format!("fx(\"eq\"): type{n} tiene que ser un texto"),
+                )?;
                 let kind = match kind.as_deref() {
                     None => EqKind::Bell,
                     Some(k) => EqKind::from_name(k).ok_or_else(|| {
-                        fail(
-                            lua,
-                            format!(
-                                "fx(\"eq\"): type{n} \"{k}\" no existe (bell, lowshelf o highshelf)"
-                            ),
+                        format!(
+                            "fx(\"eq\"): type{n} \"{k}\" no existe (bell, lowshelf o highshelf)"
                         )
                     })?,
                 };
@@ -4388,18 +4461,14 @@ fn parse_fx(
             }
             Fx::Eq { bands }
         }
-        other => {
-            return Err(fail(
-                lua,
-                format!(
-                    "fx(\"{other}\"): no existe ({})",
-                    names(api::EFFECTS.iter().map(|e| e.name))
-                ),
+        _ => {
+            return Err(format!(
+                "fx(\"{name}\"): no existe ({})",
+                names(api::EFFECTS.iter().map(|e| e.name))
             ));
         }
     };
-    fx.validate()
-        .map_err(|e| fail(lua, format!("fx(\"{name}\"): {e}")))?;
+    fx.validate().map_err(|e| format!("fx(\"{name}\"): {e}"))?;
     let curves = curves.into_inner();
     Ok((fx, curves))
 }

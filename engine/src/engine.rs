@@ -1664,13 +1664,14 @@ impl Engine {
                 slice,
             } => {
                 self.status.set_hit(track, start);
+                let origin = self.song_position().0;
                 // Un pad del sample de la pista: con los efectos de su corte.
                 let fx = self.tracks[track]
                     .pattern
                     .as_ref()
                     .filter(|p| Arc::ptr_eq(&p.sample, &sample) && p.instrument.is_none())
                     .and_then(|p| slice.and_then(|i| p.slice_fx(i)))
-                    .map(|chain| VoiceFx::new(chain, self.sample_rate));
+                    .map(|chain| VoiceFx::new(chain, self.sample_rate, origin));
                 let voice = Voice::new(sample, start, end, playback).with_fx(fx);
                 self.trigger(track, Some(voice));
                 self.choke(track);
@@ -1929,11 +1930,14 @@ impl Engine {
                 .pattern
                 .as_ref()
                 .and_then(|p| p.hit(global - origin));
-            let Some(hit) = hit else {
+            let Some(mut hit) = hit else {
                 // Un paso vacío no corta los subdisparos pendientes de un
                 // golpe retrasado del paso anterior.
                 continue;
             };
+            // Donde empiezan las rampas de golpe de sus efectos de paso (y
+            // de sus subdisparos): en su paso.
+            hit.origin = (global - origin) as f64;
             let length = next - now;
             let delay = (hit.delay as f64 * length as f64).round() as u64;
             if delay == 0 {
@@ -2020,9 +2024,10 @@ impl Engine {
             formant: hit.playback.formant.or(pattern.formant),
             ..hit.playback
         };
+        // Los efectos del corte y los del paso (manda el paso).
         let fx = pattern
-            .slice_fx(hit.slice)
-            .map(|chain| VoiceFx::new(chain, self.sample_rate));
+            .hit_fx(&hit)
+            .map(|chain| VoiceFx::new(chain, self.sample_rate, hit.origin));
         let mut voice =
             Voice::new(pattern.sample.clone(), hit.start, hit.end, playback).with_fx(fx);
         if pattern.gate {
@@ -2963,6 +2968,7 @@ fn modulate(
             &mut track.mods,
             clock.steps + frames / clock.frames_per_step,
             clock.seconds + frames / rate as f64,
+            0.0,
             snap,
             snap && block == 0,
             keep,
@@ -2991,6 +2997,7 @@ pub(crate) fn drive_block(
     mods: &mut [[Option<f32>; MAX_PARAMS]; MAX_FX],
     steps: f64,
     seconds: f64,
+    origin: f64,
     snap: bool,
     first: bool,
     keep: f32,
@@ -3010,7 +3017,7 @@ pub(crate) fn drive_block(
             let lock = lock.filter(|&(s, _)| p == 0 && s == slot).map(|(_, hz)| hz);
             let target = match (lock, curve) {
                 (Some(hz), _) => Some(hz),
-                (None, Some(a)) => Some(a.curve.value(steps, seconds, log)),
+                (None, Some(a)) => Some(a.curve.value_at(steps, seconds, origin, log)),
                 (None, None) => None,
             };
             if target.is_none() && current.is_none() {

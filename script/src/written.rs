@@ -120,21 +120,10 @@ fn literals(line: &[char]) -> Vec<(usize, usize)> {
     out
 }
 
-/// Columnas (en caracteres) de cada paso separado por espacios.
+/// Columnas (en caracteres) de cada paso separado por espacios (los de
+/// dentro de las llaves de los efectos de paso no separan).
 fn tokens(text: &str) -> Vec<(usize, usize)> {
-    let mut out = Vec::new();
-    let mut start = None;
-    for (i, c) in text.chars().chain([' ']).enumerate() {
-        match (c.is_whitespace(), start) {
-            (false, None) => start = Some(i),
-            (true, Some(s)) => {
-                out.push((s, i));
-                start = None;
-            }
-            _ => {}
-        }
-    }
-    out
+    engine::notation::step_tokens(text)
 }
 
 #[cfg(test)]

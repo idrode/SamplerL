@@ -121,9 +121,14 @@ fn run() -> Result<(), BoxError> {
             "--analyze-masking" => masking = true,
             "--pattern" => {
                 let text = value()?;
-                let length = text.split_whitespace().count();
-                let steps = engine::notation::parse_pattern_labeled(&text, length, &[])
-                    .map_err(|e| format!("--pattern: {e}"))?;
+                let length = engine::notation::step_tokens(&text).len();
+                let steps = engine::notation::parse_pattern_with(
+                    &text,
+                    length,
+                    &[],
+                    Some(&script::step_fx::resolve),
+                )
+                .map_err(|e| format!("--pattern: {e}"))?;
                 pattern = Some(steps);
             }
             "--slices" => slices = Some(parse_number::<usize>("--slices", &value()?)?),

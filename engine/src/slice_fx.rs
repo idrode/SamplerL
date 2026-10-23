@@ -12,6 +12,10 @@
 //! Orden: la voz (con su volumen, su envolvente y su pan), los efectos de
 //! su corte, los efectos de la pista, el volumen de la pista y la mezcla.
 //! Un corte sin efectos no pasa por aquí: suena bit a bit como siempre.
+//!
+//! Los efectos de un paso (`3{lp=800}` en la notación) van por el mismo
+//! camino: su cadena se junta con la del corte del golpe
+//! ([`SliceFx::with_step`]: manda el paso) y suena en la voz de ese golpe.
 
 use crate::automation::{Automation, MAX_AUTOMATIONS};
 use crate::engine::{Clock, GAIN_SMOOTHING_SECONDS, MOD_BLOCK, drive_block};
@@ -50,7 +54,7 @@ impl SliceFx {
         }
         let mut slots = [None; MAX_AUTOMATIONS];
         for (slot, a) in slots.iter_mut().zip(automation) {
-            a.validate(&fx)?;
+            a.validate_in_voice(&fx)?;
             *slot = Some(*a);
         }
         Ok(SliceFx {
@@ -62,6 +66,64 @@ impl SliceFx {
     /// Los efectos de la cadena, en orden.
     pub fn effects(&self) -> impl Iterator<Item = &Fx> {
         self.fx.iter().flatten()
+    }
+
+    /// Las automatizaciones de la cadena (`Automation::fx`: el índice del
+    /// efecto en [`SliceFx::effects`]).
+    pub fn automations(&self) -> impl Iterator<Item = &Automation> {
+        self.automation.iter().flatten()
+    }
+
+    /// La cadena de un golpe con efectos de corte (`self`) y de paso
+    /// (`step`): manda el paso. Un efecto del paso del mismo tipo que uno
+    /// del corte (el mismo filtro, el mismo bitcrusher...) lo sustituye, con
+    /// sus curvas, en su sitio; los demás van detrás de los del corte. Sin
+    /// memoria dinámica (vale en el hilo de audio); error si no cabe (más de
+    /// [`MAX_FX`] efectos o [`MAX_AUTOMATIONS`] curvas).
+    pub fn with_step(&self, step: &SliceFx) -> Result<SliceFx, &'static str> {
+        let mut out = *self;
+        for (i, fx) in step.fx.iter().enumerate() {
+            let Some(fx) = fx else { continue };
+            let slot = match out
+                .fx
+                .iter()
+                .position(|f| f.is_some_and(|f| same_kind(&f, fx)))
+            {
+                Some(slot) => {
+                    // Las curvas del efecto sustituido ya no valen.
+                    for a in &mut out.automation {
+                        if a.is_some_and(|a| a.fx == slot) {
+                            *a = None;
+                        }
+                    }
+                    slot
+                }
+                None => out
+                    .fx
+                    .iter()
+                    .position(Option::is_none)
+                    .ok_or("el paso y su corte suman más de 4 efectos")?,
+            };
+            out.fx[slot] = Some(*fx);
+            for a in step.automation.iter().flatten().filter(|a| a.fx == i) {
+                let free = out
+                    .automation
+                    .iter()
+                    .position(Option::is_none)
+                    .ok_or("el paso y su corte suman más de 8 curvas")?;
+                out.automation[free] = Some(Automation { fx: slot, ..*a });
+            }
+        }
+        Ok(out)
+    }
+}
+
+/// Dos efectos del mismo tipo (un paso sustituye el de su corte): el mismo
+/// efecto y, en los filtros, el mismo paso bajo o alto.
+fn same_kind(a: &Fx, b: &Fx) -> bool {
+    match (a, b) {
+        (Fx::Filter { kind: x, .. }, Fx::Filter { kind: y, .. }) => x == y,
+        _ => std::mem::discriminant(a) == std::mem::discriminant(b),
     }
 }
 
@@ -77,10 +139,15 @@ pub(crate) struct VoiceFx {
     /// Frames que quedan de cola cuando la voz ya ha acabado.
     tail: usize,
     sample_rate: u32,
+    /// Paso de la canción en que cayó el golpe (donde empieza la rampa de
+    /// un golpe).
+    origin: f64,
 }
 
 impl VoiceFx {
-    pub fn new(chain: SliceFx, sample_rate: u32) -> Self {
+    /// Los efectos de una voz cuyo paso cayó en `origin` (pasos de la
+    /// canción).
+    pub fn new(chain: SliceFx, sample_rate: u32, origin: f64) -> Self {
         VoiceFx {
             chain,
             state: std::array::from_fn(|i| FxState::Off.update(chain.fx[i], sample_rate)),
@@ -88,6 +155,7 @@ impl VoiceFx {
             started: false,
             tail: (TAIL_SECONDS * sample_rate as f32) as usize,
             sample_rate,
+            origin,
         }
     }
 
@@ -123,6 +191,7 @@ impl VoiceFx {
                 &mut self.mods,
                 clock.steps + frames / clock.frames_per_step,
                 clock.seconds + frames / rate as f64,
+                self.origin,
                 snap,
                 snap && block == 0,
                 keep,

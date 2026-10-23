@@ -9,7 +9,7 @@ use engine::{MAX_STEPS, STEPS};
 /// Pasos de un patrón (de 1 a `MAX_STEPS`; los cuenta `steps` con la
 /// longitud de la pista), o un error con quién lo pidió.
 pub fn tokens(text: &str, who: &str) -> Result<Vec<String>, String> {
-    let tokens: Vec<String> = text.split_whitespace().map(String::from).collect();
+    let tokens = engine::notation::step_texts(text);
     if !(1..=MAX_STEPS).contains(&tokens.len()) {
         return Err(format!(
             "{who}: el patrón necesita de 1 a {MAX_STEPS} pasos, tiene {}",
