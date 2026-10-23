@@ -640,6 +640,6 @@ mod tests {
             );
             cited += 1;
         }
-        assert!(cited >= 4, "solo {cited} acciones citadas");
+        assert!(cited >= 6, "solo {cited} acciones citadas");
     }
 }

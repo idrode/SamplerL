@@ -2933,6 +2933,9 @@ en otra sección de la guía no se repite aquí: hay un enlace.
 2. [Abrir un proyecto nuevo](#paso-2-abrir-un-proyecto-nuevo)
 3. [Cargar un break y trocearlo](#paso-3-cargar-un-break-y-trocearlo)
 4. [El primer patrón de batería](#paso-4-el-primer-patrón-de-batería)
+5. [Otro sample en otra pista](#paso-5-otro-sample-en-otra-pista)
+6. [Efectos en un solo corte](#paso-6-efectos-en-un-solo-corte)
+7. [Efectos de pista y automatización](#paso-7-efectos-de-pista-y-automatización)
 
 **Cómo crece el script.** El script de la canción se escribe entero una
 vez, en el paso 3. Después, cada bloque de código dice qué hacer con él:
@@ -3303,4 +3306,215 @@ amen:name(1, "kick"):name(3, "snare")
 
 track("drums", amen)
   :steps("kick . 2 2@0.4  snare . 4 .  kick kick^-2 2 .  snare . snare'r2 8@0.5")
+```
+
+### Paso 5. Otro sample en otra pista
+
+**Una pista nueva con `perc.wav`.** Añade al final:
+
+```lua añade
+local perc = sample("perc.wav"):stretch(120):slice_grid(1)
+
+track("perc", perc)
+  :steps("1 . . .  . . . .  . . . .  . . . .")
+  :gain(0.6)
+```
+
+Ctrl-S. Ahora suenan dos pistas: el tracker tiene dos columnas y el panel
+de abajo, dos pistas. Ctrl-O cambia la pista seleccionada (la de la vista
+del sample y la del modo tocar).
+
+Qué hace cada parte:
+
+- `slice_grid(1)`: el loop entero como un solo corte. (`slice(1)` no
+  vale para esto: su corte empieza en el golpe más fuerte, que puede no
+  ser el primero.)
+- `steps("1 . . . ...")`: lo dispara al principio de cada compás.
+- `stretch(120)`: el loop va a 120 BPM y la canción a 170. Sin estirarlo,
+  un compás del loop dura más que uno de la canción y se corta antes de
+  acabar. `stretch(120)` lo lleva de 120 al tempo de la canción **sin
+  cambiar su tono**: cada golpe cae en su sitio. La vista del sample lo
+  dice (`120→170 BPM`). Sin el número, `stretch()` usa el tempo que
+  detecta (el de `--detect-bpm`, paso 3).
+- `gain(0.6)`: el volumen de la pista (1 lo deja igual).
+
+Pon el tempo de **tu** loop en `stretch(...)`. Va bien entre ×0,7 y
+×1,4 (de 120 a 170 es casi el límite). Ver `sample:stretch` en la
+[sección 4](#4-api-de-lua).
+
+**Si no pasa:**
+
+- `la pista "perc" no existe; defínela con track("perc", sample(...):slice(n))`:
+  has escrito `track("perc")` sin los cortes. Con un solo argumento,
+  `track` solo **recupera** una pista ya definida; para crearla hacen
+  falta los dos: `track("perc", perc)`.
+- `argumento 2 no válido`: has pasado a `track()` el sample sin cortar.
+  Añade `:slice(n)` o `:slice_grid(n)`.
+- Suena demasiado fuerte al sumar las dos pistas: baja los `:gain()`. El
+  panel del motor avisa con `LIMITADOR` o `SATURA` (ver «Saturación» en
+  la [sección 7](#7-solución-de-problemas)).
+
+**Elegir samples sin salir.** F1 «Explorador de samples» lista los WAV
+de la carpeta de samples (la del script, o la `samples` del proyecto) y
+de sus subcarpetas. Escribe para filtrar por
+nombre; ↑ ↓ eligen y preescuchan cada uno (sin tocar las pistas); Tab lo
+vuelve a sonar; Enter escribe `sample("ruta")` donde está el cursor; Esc
+cierra. Con el editor en su ventana, el explorador se abre en la
+principal.
+
+### Paso 6. Efectos en un solo corte
+
+Un efecto puede sonar solo en un corte: ensuciar solo la caja, quitar
+solo el clic del bombo. Hay dos maneras.
+
+**En todos los golpes de un corte** (`cortes:fx`). Cambia el párrafo de
+`local amen` por este:
+
+```lua cambia
+local amen = sample("amen.wav"):slice(8)
+amen:name(1, "kick"):name(3, "snare")
+amen:fx("snare", "bitcrush", { bits = 6, downsample = 2 })
+amen:fx("kick", "lowpass", { cutoff = 2500 })
+```
+
+Ctrl-S. Cada caja suena sucia (`bitcrush`: menos bits, más grano) y cada
+bombo, más redondo (`lowpass`: quita los agudos por encima de 2500 Hz). El
+resto de golpes suena igual. El panel de efectos enseña cada corte con
+efectos tras un `◇` (`◇ 3 snare › crush 6b ÷2`; si no caben, una línea:
+`◇ efectos en 1 kick, 3 snare`). El primer argumento es el corte: su
+etiqueta, su número o una lista (`{ "kick", 5 }`). Los efectos son los de
+la pista (tabla en `pista:fx`, [sección 4](#4-api-de-lua)), hasta 4 por
+corte.
+
+**En un solo golpe** (llaves en el patrón). Cambia el párrafo de
+`track("drums", amen)`:
+
+```lua cambia
+track("drums", amen)
+  :steps("kick . 2 2@0.4  snare . 4{hp=4000} .  kick kick^-2 2 .  snare . snare'r2 2r4{lp=300>9000}")
+```
+
+Ctrl-S. Dos cosas nuevas:
+
+- `4{hp=4000}`: ese golpe pasa por un filtro paso alto a 4000 Hz (solo
+  quedan los agudos). Los demás golpes del corte 4, no.
+- `2r4{lp=300>9000}`: el último paso se repite 4 veces (`r4`) con un
+  filtro paso bajo que **se abre durante el paso**, de 300 a 9000 Hz. Es
+  una rampa dentro del golpe: `{efecto=desde>hasta}`. Con `:4` detrás
+  (`{lp=300>9000:4}`), la rampa dura 4 pasos.
+
+Dentro de las llaves va el efecto (`lp`, `hp`, `crush`, `drive`...), `=`
+y su valor principal; tras comas, los demás (`{lp=800,q=4}`). Varios
+efectos, cada uno en sus llaves: `3{crush=6}{lp=900}`. Todo, en
+«Efectos por paso» de la [sección 3](#3-mini-notación).
+
+**Si no pasa:** un paso con un efecto mal escrito sale subrayado en rojo
+antes de guardar. Entre el corte y el paso caben 4 efectos: si no, la
+carga da error con la línea. Las llaves no valen en una pista de
+instrumento (pasos 8-11): allí, efectos de pista.
+
+### Paso 7. Efectos de pista y automatización
+
+Los efectos de pista suenan sobre todo lo que toca la pista, después de
+los efectos de cada corte. Van en orden, hasta 4 por pista.
+
+**Los buses de delay y de reverb.** Son dos, compartidos por todas las
+pistas: cada pista les **envía** una parte de su sonido con `:send()`.
+Cambia el párrafo de `bpm(170)` por este:
+
+```lua cambia
+bpm(170)
+bus("delay", { time = "3/16", feedback = 0.4, level = 0.6 })
+bus("reverb", { size = 0.6, damp = 0.5 })
+```
+
+(Así solo cambia cómo suenan los buses; nada se oye distinto hasta que
+una pista les envía algo.)
+
+**La batería: limpia, comprimida y con algo de sala.** Cambia el párrafo
+de `track("drums", amen)`:
+
+```lua cambia
+track("drums", amen)
+  :steps("kick . 2 2@0.4  snare . 4{hp=4000} .  kick kick^-2 2 .  snare . snare'r2 2r4{lp=300>9000}")
+  :fx("highpass", { cutoff = 40 })
+  :fx("compressor", { threshold = -14, ratio = 3, attack = 10, makeup = 2 })
+  :send("reverb", 0.1)
+  :gain(0.8)
+```
+
+- `highpass` a 40 Hz quita los graves que no se oyen pero ocupan sitio.
+- `compressor` iguala los golpes: por encima de -14 dB baja el volumen
+  (`ratio = 3`); `attack = 10` deja pasar el ataque y `makeup = 2` sube
+  2 dB al final.
+- `send("reverb", 0.1)`: un 10 % de la batería va a la reverb.
+
+**La percusión: un filtro que se mueve.** Cambia el párrafo de
+`track("perc", perc)`:
+
+```lua cambia
+track("perc", perc)
+  :steps("1 . . .  . . . .  . . . .  . . . .")
+  :fx("lowpass", { cutoff = ramp(1500, 9000, "4 compases"), q = 2 })
+  :fx("bitcrush", { bits = 8, downsample = 2 })
+  :pan(lfo("2 compases", -0.5, 0.5))
+  :send("delay", 0.25)
+  :gain(0.6)
+```
+
+- `ramp(1500, 9000, "4 compases")`: en lugar de un número fijo, el corte
+  del filtro sube de 1500 a 9000 Hz en 4 compases y vuelve a empezar.
+- `lfo("2 compases", -0.5, 0.5)`: el pan va y viene de izquierda a
+  derecha en un ciclo de 2 compases.
+- `send("delay", 0.25)`: un eco en semicorchea con puntillo (`3/16`).
+
+El panel de efectos marca lo que se mueve (`∿cutoff`) y los envíos
+(`→ d0.25`). Qué parámetros admiten `ramp()` y `lfo()`, en «Qué se puede
+automatizar» ([sección 4](#4-api-de-lua)). Más efectos (distorsión, EQ,
+volumen) en la tabla de `pista:fx`.
+
+**Mute y solo.** Para escuchar una pista sola o quitar otra mientras
+pruebas: en el modo tocar (Esc), Ctrl-O elige la pista, `m` la silencia y
+`s` la pone en solo, al instante. Otra vez, lo quita. F1 «Quitar mute y
+solo» los quita todos. En el script, `:mute()` y `:solo()` hacen lo mismo
+al empezar el compás (el paso 12 los usa).
+
+**Si no pasa:**
+
+- `fx("filter"): parámetro desconocido "cutof"`: una errata en un
+  parámetro. El autocompletado (F4) y la ayuda del pie del editor dicen
+  cuáles hay.
+- La reverb o el delay no suenan: el `level` del bus o el envío están a
+  0, o la pista está en mute (los envíos van después del mute).
+- `fx: máximo 4 efectos por pista`: una pista admite 4 efectos; quita
+  uno.
+
+**El script entero**, hasta aquí:
+
+```lua entero
+bpm(170)
+bus("delay", { time = "3/16", feedback = 0.4, level = 0.6 })
+bus("reverb", { size = 0.6, damp = 0.5 })
+
+local amen = sample("amen.wav"):slice(8)
+amen:name(1, "kick"):name(3, "snare")
+amen:fx("snare", "bitcrush", { bits = 6, downsample = 2 })
+amen:fx("kick", "lowpass", { cutoff = 2500 })
+
+track("drums", amen)
+  :steps("kick . 2 2@0.4  snare . 4{hp=4000} .  kick kick^-2 2 .  snare . snare'r2 2r4{lp=300>9000}")
+  :fx("highpass", { cutoff = 40 })
+  :fx("compressor", { threshold = -14, ratio = 3, attack = 10, makeup = 2 })
+  :send("reverb", 0.1)
+  :gain(0.8)
+
+local perc = sample("perc.wav"):stretch(120):slice_grid(1)
+
+track("perc", perc)
+  :steps("1 . . .  . . . .  . . . .  . . . .")
+  :fx("lowpass", { cutoff = ramp(1500, 9000, "4 compases"), q = 2 })
+  :fx("bitcrush", { bits = 8, downsample = 2 })
+  :pan(lfo("2 compases", -0.5, 0.5))
+  :send("delay", 0.25)
+  :gain(0.6)
 ```
