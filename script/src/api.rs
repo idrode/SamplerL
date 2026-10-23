@@ -139,7 +139,6 @@ const DISCRETE: &str =
     "elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer";
 const TRACK_REF: &str = "es una pista, no un número";
 const AT_LOAD: &str = "se aplica al cargar, en el hilo de control (el sample o el bucle se preparan una vez): no suena en el tiempo";
-const AT_BIRTH: &str = "la voz lo lee al nacer";
 const STRUCTURE: &str =
     "cambia cuántas cosas suenan, no cómo suenan: entra con el patrón al compás";
 const SEED: &str = "es la semilla del azar: entre dos semillas no hay nada continuo";
@@ -1195,7 +1194,9 @@ pub const FUNCTIONS: &[Function] = &[
         doc: "Vale para todas las pistas que usan esta variable, también las \
               definidas antes (como `:name`). Una clave desconocida da error. Los \
               parámetros están en la tabla de abajo; los que no se dan quedan como \
-              estaban.",
+              estaban. Los números admiten `ramp()` y `lfo()`: cada golpe toma el \
+              valor de la curva al sonar (la voz los lee al nacer; en los pads, el \
+              primer extremo).",
         params: &[
             Param {
                 name: "i",
@@ -1812,6 +1813,29 @@ pub const FUNCTIONS: &[Function] = &[
         ),
     },
     Function {
+        name: "pitch",
+        receiver: Receiver::Track,
+        signature: "pista:pitch(semitonos)",
+        returns: Some(Receiver::Track),
+        summary: "Transpone todos los golpes de la pista (se suma al pitch de cada paso).",
+        doc: "Como `^` en cada paso: cambia la velocidad de lectura (y la duración); \
+              con `%` en el paso, sin cambiar la duración. Admite `ramp()` y \
+              `lfo()`: cada golpe toma el valor de la curva en el momento en que \
+              suena y lo mantiene mientras dura (una voz no cambia de velocidad a \
+              media lectura). El total, con el del paso, como mucho ±36 semitonos. \
+              Vale también en los instrumentos y en los granos.",
+        params: &[Param {
+            name: "semitonos",
+            description: "-36 a 36, `ramp()` o `lfo()`",
+        }],
+        template: "pitch(${-12})",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             -- Cada golpe, un poco más agudo que el anterior durante 4 compases.\n\
+             track(\"sube\", amen):steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\"):pitch(ramp(0, 12, \"4 compases\"))\n",
+        ),
+    },
+    Function {
         name: "formant",
         receiver: Receiver::Track,
         signature: "pista:formant(semitonos)",
@@ -1827,10 +1851,10 @@ pub const FUNCTIONS: &[Function] = &[
               ninguno, avisa); con `^` el sonido se lee más deprisa o más despacio \
               entero, como un sampler clásico. Cuesta otro 2 % de un núcleo por \
               voz. En un instrumento va en su tabla: `sample:instrument({ keep = \
-              true, formant = 0 })`.",
+              true, formant = 0 })`. Admite `ramp()` y `lfo()`, por golpe.",
         params: &[Param {
             name: "semitonos",
-            description: "-24 a 24; 0 deja los formantes donde estaban",
+            description: "-24 a 24 (0 deja los formantes donde estaban), `ramp()` o `lfo()`",
         }],
         template: "formant(${0})",
         example: Some(
@@ -2345,7 +2369,7 @@ pub const SLICE_PARAMS: &[FxParam] = &[
         valid: "0–2000",
         values: &[],
         template: "attack = ${5}",
-        automate: Auto::No(AT_BIRTH),
+        automate: Auto::PerHit,
     },
     FxParam {
         name: "release",
@@ -2354,7 +2378,7 @@ pub const SLICE_PARAMS: &[FxParam] = &[
         valid: "0–5000",
         values: &[],
         template: "release = ${40}",
-        automate: Auto::No(AT_BIRTH),
+        automate: Auto::PerHit,
     },
     FxParam {
         name: "pan",
@@ -2363,7 +2387,7 @@ pub const SLICE_PARAMS: &[FxParam] = &[
         valid: "-1–1",
         values: &[],
         template: "pan = ${-0.5}",
-        automate: Auto::No(AT_BIRTH),
+        automate: Auto::PerHit,
     },
     FxParam {
         name: "length",
@@ -2372,7 +2396,7 @@ pub const SLICE_PARAMS: &[FxParam] = &[
         valid: "0.01–1",
         values: &[],
         template: "length = ${0.5}",
-        automate: Auto::No(AT_BIRTH),
+        automate: Auto::PerHit,
     },
     FxParam {
         name: "play",
@@ -2390,7 +2414,7 @@ pub const SLICE_PARAMS: &[FxParam] = &[
         valid: "0–1000",
         values: &[],
         template: "crossfade = ${10}",
-        automate: Auto::No(AT_BIRTH),
+        automate: Auto::PerHit,
     },
 ];
 
@@ -2649,6 +2673,24 @@ pub const TRACK_PARAMS: &[FxParam] = &[
         values: &[],
         template: "send(\"${reverb}\", ${0.3})",
         automate: Auto::Smooth,
+    },
+    FxParam {
+        name: "pitch",
+        description: "pitch de la pista (`:pitch(semitonos)`), sumado al de cada golpe",
+        default: Some("0"),
+        valid: "-36–36",
+        values: &[],
+        template: "pitch(${-12})",
+        automate: Auto::PerHit,
+    },
+    FxParam {
+        name: "formant",
+        description: "formantes de los pasos con `%` (`:formant(semitonos)`)",
+        default: Some("nil"),
+        valid: "-24–24",
+        values: &[],
+        template: "formant(${0})",
+        automate: Auto::PerHit,
     },
     FxParam {
         name: "swing",

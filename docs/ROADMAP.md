@@ -400,9 +400,9 @@ sintaxis nueva; versión nueva del protocolo del socket si cambia.
    `ratio`, `attack` y `release` del compresor y del EQ dinámico, `bits` y
    `downsample` del bitcrusher, `:gain()`, el `:pan()` nuevo y `:send()` de
    la pista, y `feedback`, `level`, `size` y `damp` de los buses.
-2. **Lo que se lee al nacer cada voz, por golpe**: pitch de pista, forma
-   del corte (`attack`, `release`, `pan`, `length`, `crossfade`) y
-   `formant`.
+2. ✅ **Lo que se lee al nacer cada voz, por golpe**: el `:pitch()` nuevo
+   de pista, la forma del corte (`attack`, `release`, `pan`, `length`,
+   `crossfade` en `cortes:set`) y `:formant()`.
 3. **Efectos por paso en la mini-notación**: `3{lp=800,q=4}{crush=6}`, con
    rampas del golpe (`200>4000`, `200>4000:4`).
 4. **El tracker editable**: cursor, añadir, cambiar y quitar los efectos de

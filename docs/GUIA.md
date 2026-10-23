@@ -1495,7 +1495,7 @@ track("drums", amen)
 
 | Dónde | Admiten curva |
 | --- | --- |
-| `pista` | `gain` (continuo), `pan` (continuo), `send` (continuo) |
+| `pista` | `gain` (continuo), `pan` (continuo), `send` (continuo), `pitch` (por golpe), `formant` (por golpe) |
 | `fx("filter")` | `cutoff` (continuo), `q` (continuo) |
 | `fx("bitcrush")` | `bits` (continuo), `downsample` (continuo) |
 | `fx("compressor")` | `threshold` (continuo), `ratio` (continuo), `attack` (continuo), `release` (continuo), `makeup` (continuo) |
@@ -1505,6 +1505,7 @@ track("drums", amen)
 | `fx("dyneq")` | `freq` (continuo), `q` (continuo), `threshold` (continuo), `ratio` (continuo), `range` (continuo), `attack` (continuo), `release` (continuo) |
 | `bus("delay")` | `feedback` (continuo), `level` (continuo) |
 | `bus("reverb")` | `size` (continuo), `damp` (continuo), `level` (continuo) |
+| `cortes:set` | `attack` (por golpe), `release` (por golpe), `pan` (por golpe), `length` (por golpe), `crossfade` (por golpe) |
 | `:grains` | `size` (por grano), `density` (por grano), `pos` (por grano), `speed` (por grano), `jitter` (por grano), `pitch` (por grano), `spread` (por grano) |
 
 | Dónde | No admiten curva | Por qué |
@@ -1515,7 +1516,6 @@ track("drums", amen)
 | `fx("dyneq")` | `type` | elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer |
 | `fx("dyneq")` | `sidechain` | es una pista, no un número |
 | `bus("delay")` | `time` | es una figura ("1/8"), no un número; además, mover el retardo de una línea con repeticiones dentro suena a cambio de pitch |
-| `cortes:set` | `attack`, `release`, `pan`, `length`, `crossfade` | la voz lo lee al nacer |
 | `cortes:set` | `play` | elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer |
 | `:grains` | `seed` | es la semilla del azar: entre dos semillas no hay nada continuo |
 | `instrument` | `root`, `adsr`, `formant` | cada nota lo lee al nacer y el instrumento se valida entero al cargar; para cambiar la nota, la del paso (`^`) |
@@ -1682,7 +1682,7 @@ track("caja", caja):steps(". . . .  x . . .  . . . .  x . . .")
 
 Devuelve: cortes.
 
-Forma de un corte (o de todos, sin i): ataque, cola, pan, parte que suena y bucle. Vale para todas las pistas que usan esta variable, también las definidas antes (como `:name`). Una clave desconocida da error. Los parámetros están en la tabla de abajo; los que no se dan quedan como estaban.
+Forma de un corte (o de todos, sin i): ataque, cola, pan, parte que suena y bucle. Vale para todas las pistas que usan esta variable, también las definidas antes (como `:name`). Una clave desconocida da error. Los parámetros están en la tabla de abajo; los que no se dan quedan como estaban. Los números admiten `ramp()` y `lfo()`: cada golpe toma el valor de la curva al sonar (la voz los lee al nacer; en los pads, el primer extremo).
 
 - `i`: el corte (desde 1); sin él, todos
 - `parámetros`: tabla con los de la tabla de abajo
@@ -2102,13 +2102,27 @@ track("hielo", amen)
   :freeze(0.4, { size = 120, density = 25, jitter = 15, pitch = -12 })
 ```
 
+### `pista:pitch(semitonos)`
+
+Devuelve: pista.
+
+Transpone todos los golpes de la pista (se suma al pitch de cada paso). Como `^` en cada paso: cambia la velocidad de lectura (y la duración); con `%` en el paso, sin cambiar la duración. Admite `ramp()` y `lfo()`: cada golpe toma el valor de la curva en el momento en que suena y lo mantiene mientras dura (una voz no cambia de velocidad a media lectura). El total, con el del paso, como mucho ±36 semitonos. Vale también en los instrumentos y en los granos.
+
+- `semitonos`: -36 a 36, `ramp()` o `lfo()`
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+-- Cada golpe, un poco más agudo que el anterior durante 4 compases.
+track("sube", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 ."):pitch(ramp(0, 12, "4 compases"))
+```
+
 ### `pista:formant(semitonos)`
 
 Devuelve: pista.
 
-Formantes de los pasos con % (pitch sin cambiar la duración): 0 los deja donde estaban, n los desplaza n semitonos. Al transponer, la envolvente del sonido sube o baja con el tono: una voz subida suena a ardilla y una caja bajada, a bombo de juguete. Con `formant(0)`, los pasos con `%` cambian de tono pero su envolvente se queda donde estaba (cada grano se analiza con LPC y se blanquea y se vuelve a colorear con la del original); con `formant(n)` se desplaza `n` semitonos por su cuenta, también con `%0` (cambiar el timbre sin cambiar la nota). Solo actúa en los pasos con `%` (si no hay ninguno, avisa); con `^` el sonido se lee más deprisa o más despacio entero, como un sampler clásico. Cuesta otro 2 % de un núcleo por voz. En un instrumento va en su tabla: `sample:instrument({ keep = true, formant = 0 })`.
+Formantes de los pasos con % (pitch sin cambiar la duración): 0 los deja donde estaban, n los desplaza n semitonos. Al transponer, la envolvente del sonido sube o baja con el tono: una voz subida suena a ardilla y una caja bajada, a bombo de juguete. Con `formant(0)`, los pasos con `%` cambian de tono pero su envolvente se queda donde estaba (cada grano se analiza con LPC y se blanquea y se vuelve a colorear con la del original); con `formant(n)` se desplaza `n` semitonos por su cuenta, también con `%0` (cambiar el timbre sin cambiar la nota). Solo actúa en los pasos con `%` (si no hay ninguno, avisa); con `^` el sonido se lee más deprisa o más despacio entero, como un sampler clásico. Cuesta otro 2 % de un núcleo por voz. En un instrumento va en su tabla: `sample:instrument({ keep = true, formant = 0 })`. Admite `ramp()` y `lfo()`, por golpe.
 
-- `semitonos`: -24 a 24; 0 deja los formantes donde estaban
+- `semitonos`: -24 a 24 (0 deja los formantes donde estaban), `ramp()` o `lfo()`
 
 ```lua
 local amen = sample("amen.wav"):slice(8)

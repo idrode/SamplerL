@@ -161,6 +161,9 @@ pub(crate) struct Trigger {
     pub slice: usize,
     pub start: usize,
     pub end: usize,
+    /// El final del corte entero (antes de `length`): para una curva en
+    /// `length`.
+    pub full_end: usize,
     pub playback: Playback,
     pub retrig: u8,
     /// Retraso en fracción de paso.
@@ -216,6 +219,10 @@ pub struct Pattern {
     /// Formantes de los pasos con `%`: `Some(0)` los mantiene, `Some(n)`
     /// los desplaza `n` semitonos; `None`, se mueven con el pitch.
     pub(crate) formant: Option<f32>,
+    /// Pitch de la pista (semitonos que se suman a los de cada golpe) y
+    /// formante que siguen una curva: cada golpe toma su valor al sonar.
+    pub(crate) pitch_curve: Option<crate::automation::Curve>,
+    pub(crate) formant_curve: Option<crate::automation::Curve>,
     /// Efectos de cada corte (`slice_fx[i]`, los del corte `i`); vacío si
     /// ninguno tiene.
     slice_fx: Vec<Option<SliceFx>>,
@@ -288,6 +295,8 @@ impl Pattern {
             instrument: None,
             granular: None,
             formant: None,
+            pitch_curve: None,
+            formant_curve: None,
             slice_fx: Vec::new(),
             tag: 0,
         })
@@ -322,6 +331,51 @@ impl Pattern {
         crate::shift::check_formant(formant)
             .map_err(|reason| SendError::InvalidStep { step: 0, reason })?;
         Ok(Pattern { formant, ..self })
+    }
+
+    /// Pitch de la pista que sigue una curva (`ramp`, `lfo`; de ±36
+    /// semitonos): cada golpe suma a los suyos el valor de la curva en el
+    /// momento en que suena (y lo mantiene; el total, como mucho ±36).
+    pub fn with_pitch_curve(
+        self,
+        curve: Option<crate::automation::Curve>,
+    ) -> Result<Self, SendError> {
+        let invalid = |reason| SendError::InvalidStep { step: 0, reason };
+        if let Some(c) = &curve {
+            let (a, b) = c.bounds();
+            if ![a, b]
+                .iter()
+                .all(|v| (-MAX_SEMITONES..=MAX_SEMITONES).contains(v))
+            {
+                return Err(invalid("la curva del pitch se sale de -36 a 36 semitonos"));
+            }
+            crate::automation::check_curve(c).map_err(invalid)?;
+        }
+        Ok(Pattern {
+            pitch_curve: curve,
+            ..self
+        })
+    }
+
+    /// Formantes de los pasos con `%` que siguen una curva (como
+    /// [`Pattern::with_formant`], por golpe).
+    pub fn with_formant_curve(
+        self,
+        curve: Option<crate::automation::Curve>,
+    ) -> Result<Self, SendError> {
+        let invalid = |reason| SendError::InvalidStep { step: 0, reason };
+        if let Some(c) = &curve {
+            let (a, b) = c.bounds();
+            let max = crate::shift::MAX_FORMANT;
+            if ![a, b].iter().all(|v| (-max..=max).contains(v)) {
+                return Err(invalid("la curva del formante se sale de su rango"));
+            }
+            crate::automation::check_curve(c).map_err(invalid)?;
+        }
+        Ok(Pattern {
+            formant_curve: curve,
+            ..self
+        })
     }
 
     /// Toca el sample en granos (ver [`crate::grain`]): cada golpe abre
@@ -598,6 +652,7 @@ fn resolve_bar(
             slice: step.slice,
             start: range.start,
             end: range.end.min(sample.frames()),
+            full_end: range.end.min(sample.frames()),
             playback: Playback {
                 gain: step.gain,
                 rate: rate(step.semitones),

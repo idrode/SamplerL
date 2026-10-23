@@ -339,6 +339,7 @@ fn the_audio_thread_never_allocates() {
                     length: 1.0,
                     play: engine::PlayMode::Loop,
                     crossfade_ms: 0.0,
+                    curves: [None; engine::SHAPE_PARAMS],
                 },
                 engine::SliceShape {
                     pan: 0.7,
@@ -998,6 +999,55 @@ fn the_audio_thread_never_allocates() {
         }
     });
     assert_eq!(n, 0, "reservas al quitar las curvas de los buses");
+    controller.collect_garbage();
+
+    // Curvas por golpe: el pitch y el formante de la pista y la forma de
+    // los cortes (con `length` y un bucle con fundido), con retrigger.
+    let mut curves = [None; engine::SHAPE_PARAMS];
+    for (i, curve) in curves.iter_mut().enumerate() {
+        let (lo, hi) = [
+            (0.0, 50.0),
+            (0.0, 80.0),
+            (-1.0, 1.0),
+            (0.05, 1.0),
+            (0.0, 20.0),
+        ][i];
+        *curve = Some(ramp(lo, hi));
+    }
+    let shaped = engine::SliceShape {
+        play: engine::PlayMode::Loop,
+        curves,
+        ..engine::SliceShape::DEFAULT
+    };
+    let per_hit = Pattern::from_bars(sample.clone(), &slices, &bars[..1])
+        .unwrap()
+        .with_shapes(&[shaped, shaped, shaped, shaped])
+        .unwrap()
+        .with_gate(true)
+        .with_formant(Some(0.0))
+        .unwrap()
+        .with_formant_curve(Some(ramp(-6.0, 6.0)))
+        .unwrap()
+        .with_pitch_curve(Some(engine::Curve::Lfo {
+            min: -12.0,
+            max: 12.0,
+            rate: engine::LfoRate::Steps(8.0),
+        }))
+        .unwrap();
+    controller.set_track_pattern(3, Some(per_hit)).unwrap();
+    let n = counted(|| {
+        for _ in 0..400 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas con curvas por golpe");
+    controller.set_track_pattern(3, None).unwrap();
+    let n = counted(|| {
+        for _ in 0..100 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas al quitar las curvas por golpe");
     controller.collect_garbage();
 
     // Rampa de tempo y cambio de compás.

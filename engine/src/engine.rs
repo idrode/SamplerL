@@ -214,7 +214,23 @@ pub struct SliceShape {
     /// En bucle (`PlayMode::Loop`), fundido cruzado en el salto, en ms (0:
     /// salto seco). Ver [`Voice::new`].
     pub crossfade_ms: f32,
+    /// Curvas (`ramp`, `lfo`) de `attack`, `release`, `pan`, `length` y
+    /// `crossfade` (índices [`SHAPE_ATTACK`]...): cada golpe toma su valor
+    /// en el momento en que suena (la voz los lee al nacer).
+    pub curves: ShapeCurves,
 }
+
+/// Parámetros de la forma de un corte que pueden seguir una curva, por
+/// golpe (índices de [`ShapeCurves`]).
+pub const SHAPE_ATTACK: usize = 0;
+pub const SHAPE_RELEASE: usize = 1;
+pub const SHAPE_PAN: usize = 2;
+pub const SHAPE_LENGTH: usize = 3;
+pub const SHAPE_CROSSFADE: usize = 4;
+pub const SHAPE_PARAMS: usize = 5;
+
+/// Una curva (o ninguna) por parámetro de la forma de un corte.
+pub type ShapeCurves = [Option<crate::automation::Curve>; SHAPE_PARAMS];
 
 impl SliceShape {
     pub const DEFAULT: SliceShape = SliceShape {
@@ -224,9 +240,53 @@ impl SliceShape {
         length: 1.0,
         play: PlayMode::Once,
         crossfade_ms: 0.0,
+        curves: [None; SHAPE_PARAMS],
     };
 
+    /// Rango de cada parámetro con curva.
+    fn curve_range(param: usize) -> (f32, f32) {
+        match param {
+            SHAPE_ATTACK => (0.0, MAX_ATTACK_MS),
+            SHAPE_RELEASE => (0.0, MAX_RELEASE_MS),
+            SHAPE_PAN => (-1.0, 1.0),
+            SHAPE_LENGTH => (0.01, 1.0),
+            _ => (0.0, MAX_CROSSFADE_MS),
+        }
+    }
+
+    /// Tiene alguna curva.
+    pub(crate) fn moving(&self) -> bool {
+        self.curves.iter().any(Option::is_some)
+    }
+
+    /// La forma con la que suena un golpe en `steps`/`seconds` de la
+    /// canción: los parámetros con curva toman su valor ahí.
+    pub(crate) fn at(&self, steps: f64, seconds: f64) -> SliceShape {
+        let mut shape = *self;
+        for (param, curve) in self.curves.iter().enumerate() {
+            let Some(curve) = curve else { continue };
+            let value = curve.value(steps, seconds, false);
+            match param {
+                SHAPE_ATTACK => shape.attack_ms = value,
+                SHAPE_RELEASE => shape.release_ms = value,
+                SHAPE_PAN => shape.pan = value,
+                SHAPE_LENGTH => shape.length = value,
+                _ => shape.crossfade_ms = value,
+            }
+        }
+        shape
+    }
+
     pub fn validate(&self) -> Result<(), &'static str> {
+        for (param, curve) in self.curves.iter().enumerate() {
+            let Some(curve) = curve else { continue };
+            let (lo, hi) = Self::curve_range(param);
+            let (a, b) = curve.bounds();
+            if ![a, b].iter().all(|v| (lo..=hi).contains(v)) {
+                return Err("la curva de la forma del corte se sale del rango del parámetro");
+            }
+            crate::automation::check_curve(curve)?;
+        }
         if !(0.0..=MAX_ATTACK_MS).contains(&self.attack_ms) {
             return Err("ataque fuera de rango (0 a 2000 ms)");
         }
@@ -1915,6 +1975,7 @@ impl Engine {
     /// paso o su parte del retrigger). Corta las pistas de su grupo de
     /// choke.
     fn play_hit(&mut self, t: usize, hit: Trigger, gate: usize) {
+        let hit = self.per_hit(t, hit);
         let Some(pattern) = &self.tracks[t].pattern else {
             return;
         };
@@ -1956,7 +2017,7 @@ impl Engine {
             return;
         }
         let playback = Playback {
-            formant: pattern.formant,
+            formant: hit.playback.formant.or(pattern.formant),
             ..hit.playback
         };
         let fx = pattern
@@ -1975,6 +2036,54 @@ impl Engine {
         if let Some((channel, base)) = midi {
             self.midi_note_on(t, channel, base, hit, gate);
         }
+    }
+
+    /// Posición de la canción ahora (pasos y segundos, desde el inicio de
+    /// la sección), la que siguen las curvas.
+    fn song_position(&self) -> (f64, f64) {
+        let rate = self.sample_rate;
+        let (origin_step, origin_frame) = self
+            .playlist
+            .as_ref()
+            .map_or((0, 0), |p| (p.origin_step, p.origin_frame));
+        (
+            self.transport.position_steps(rate) - origin_step as f64,
+            self.transport.frame.saturating_sub(origin_frame) as f64 / rate as f64,
+        )
+    }
+
+    /// El golpe con lo que toma de las curvas por golpe de su pista en el
+    /// momento en que suena: el pitch de la pista (sumado al suyo, como
+    /// mucho ±36 semitonos en total), el formante y la forma de su corte.
+    /// Sin curvas, tal cual.
+    fn per_hit(&self, t: usize, mut hit: Trigger) -> Trigger {
+        let Some(pattern) = &self.tracks[t].pattern else {
+            return hit;
+        };
+        let shaped = hit.playback.shape.moving();
+        if pattern.pitch_curve.is_none() && pattern.formant_curve.is_none() && !shaped {
+            return hit;
+        }
+        let (steps, seconds) = self.song_position();
+        if let Some(curve) = pattern.pitch_curve {
+            let semitones = curve.value(steps, seconds, false) as f64;
+            let factor = 2f64.powf(semitones / 12.0);
+            let limit = 2f64.powf(crate::sequencer::MAX_SEMITONES as f64 / 12.0);
+            let rate = hit.playback.rate;
+            hit.playback.rate = (rate * factor).clamp(1.0 / limit, limit);
+            hit.chord = hit
+                .chord
+                .map(|r| r.map(|r| (r * factor).clamp(1.0 / limit, limit)));
+        }
+        if let Some(curve) = pattern.formant_curve {
+            hit.playback.formant = Some(curve.value(steps, seconds, false));
+        }
+        if shaped {
+            let shape = hit.playback.shape.at(steps, seconds);
+            hit.end = shape.range(hit.start..hit.full_end).end;
+            hit.playback.shape = shape;
+        }
+        hit
     }
 
     /// Un golpe de una pista con instrumento: una nota por cada nota del

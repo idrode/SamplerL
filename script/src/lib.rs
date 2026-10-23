@@ -175,6 +175,12 @@ pub struct TrackDef {
     pub sends: [f32; engine::bus::BUSES],
     /// Pan de la pista (`:pan()`), de -1 a 1.
     pub pan: f32,
+    /// Pitch de la pista (`:pitch()`), en semitonos que se suman a los de
+    /// cada golpe, y su curva (por golpe), si la tiene.
+    pub pitch: f32,
+    pub pitch_curve: Option<engine::Curve>,
+    /// Curva del formante (`:formant(ramp(...))`), por golpe.
+    pub formant_curve: Option<engine::Curve>,
     /// Volumen, pan y envíos con `ramp()` o `lfo()` (índices
     /// `engine::MIX_GAIN`, `MIX_PAN` y `MIX_SEND + bus`).
     pub mix_curves: engine::MixCurves,
@@ -1900,6 +1906,17 @@ fn track_pattern(
         .and_then(|p| p.with_instrument(track.instrument.map(|i| i.engine)))
         .and_then(|p| p.with_granular(track.granular))
         .and_then(|p| p.with_formant(track.formant))
+        .and_then(|p| p.with_formant_curve(track.formant_curve))
+        // Un pitch fijo es una curva que no se mueve.
+        .and_then(|p| {
+            p.with_pitch_curve(track.pitch_curve.or((track.pitch != 0.0).then_some(
+                engine::Curve::Ramp {
+                    from: track.pitch,
+                    to: track.pitch,
+                    steps: 1.0,
+                },
+            )))
+        })
         .map(|p| p.with_gate(track.gate))
         .map(|p| p.with_mute(track.mute).with_solo(track.solo))
         .and_then(|p| p.with_tag(track.tag))
@@ -2238,6 +2255,9 @@ fn track_source(lua: &Lua, name: &str, source: &AnyUserData) -> mlua::Result<Tra
         sends: [0.0; engine::bus::BUSES],
         pan: 0.0,
         mix_curves: [None; engine::MIX_PARAMS],
+        pitch: 0.0,
+        pitch_curve: None,
+        formant_curve: None,
         automation: Vec::new(),
         shapes: Vec::new(),
         gate: false,
@@ -3456,19 +3476,35 @@ fn apply_slice_table(
             Value::String(s) => s.to_str()?.to_string(),
             other => format!("{other:?}"),
         };
-        let number = |v: &Value| -> mlua::Result<f32> {
+        // Un número o una curva (por golpe): el valor fijo es su primer
+        // extremo; un número quita la curva que hubiera.
+        let mut number = |v: &Value, slot: usize| -> mlua::Result<f32> {
             match v {
-                Value::Integer(i) => Ok(*i as f32),
-                Value::Number(n) => Ok(*n as f32),
-                _ => Err(fail(lua, format!("{who}: {key} tiene que ser un número"))),
+                Value::Integer(i) => {
+                    shape.curves[slot] = None;
+                    Ok(*i as f32)
+                }
+                Value::Number(n) => {
+                    shape.curves[slot] = None;
+                    Ok(*n as f32)
+                }
+                Value::UserData(ud) if ud.is::<CurveHandle>() => {
+                    let curve = ud.borrow::<CurveHandle>()?.0;
+                    shape.curves[slot] = Some(curve);
+                    Ok(curve.bounds().0)
+                }
+                _ => Err(fail(
+                    lua,
+                    format!("{who}: {key} tiene que ser un número, ramp() o lfo()"),
+                )),
             }
         };
         match key.as_str() {
-            "attack" => shape.attack_ms = number(&value)?,
-            "release" => shape.release_ms = number(&value)?,
-            "pan" => shape.pan = number(&value)?,
-            "length" => shape.length = number(&value)?,
-            "crossfade" => shape.crossfade_ms = number(&value)?,
+            "attack" => shape.attack_ms = number(&value, engine::SHAPE_ATTACK)?,
+            "release" => shape.release_ms = number(&value, engine::SHAPE_RELEASE)?,
+            "pan" => shape.pan = number(&value, engine::SHAPE_PAN)?,
+            "length" => shape.length = number(&value, engine::SHAPE_LENGTH)?,
+            "crossfade" => shape.crossfade_ms = number(&value, engine::SHAPE_CROSSFADE)?,
             "play" => {
                 let text = match &value {
                     Value::String(s) => s.to_str()?.to_string(),
@@ -4572,7 +4608,11 @@ impl UserData for TrackHandle {
         );
 
         // `:formant(n)`: los formantes de los pasos con `%`.
-        methods.add_method("formant", |lua, this, semitones: f32| {
+        methods.add_method("formant", |lua, this, semitones: Value| {
+            let who = format!("formant({})", value_text(&semitones));
+            let max = engine::MAX_FORMANT;
+            let (semitones, curve) =
+                number_or_curve(lua, &who, "formant", semitones, (-max, max))?;
             let (name, instrument) =
                 this.with_track(|t| (t.def.name.clone(), t.def.instrument.is_some()));
             if instrument {
@@ -4584,7 +4624,30 @@ impl UserData for TrackHandle {
                 ));
             }
             check_formant(lua, "formant", semitones)?;
-            this.with_track(|t| t.def.formant = Some(semitones));
+            this.with_track(|t| {
+                t.def.formant = Some(semitones);
+                t.def.formant_curve = curve;
+            });
+            Ok(this.clone())
+        });
+
+        // `:pitch(st)`: transpone todos los golpes de la pista (por golpe).
+        methods.add_method("pitch", |lua, this, semitones: Value| {
+            let who = format!("pitch({})", value_text(&semitones));
+            let (semitones, curve) = number_or_curve(
+                lua,
+                &who,
+                "pitch",
+                semitones,
+                (-MAX_SEMITONES, MAX_SEMITONES),
+            )?;
+            if !(-MAX_SEMITONES..=MAX_SEMITONES).contains(&semitones) {
+                return Err(fail(lua, format!("{who}: fuera de rango (-36 a 36)")));
+            }
+            this.with_track(|t| {
+                t.def.pitch = semitones;
+                t.def.pitch_curve = curve;
+            });
             Ok(this.clone())
         });
 

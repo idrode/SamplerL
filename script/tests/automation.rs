@@ -381,3 +381,70 @@ fn gain_pan_and_sends_take_curves() {
 fn song_err(source: &str) -> String {
     song(source).err().expect("debería fallar")
 }
+
+#[test]
+fn per_hit_curves_reach_the_engine() {
+    // `:pitch(7)` es como `^7` en cada paso, bit a bit.
+    let up = "1^7 . 2^7 .  1^7 . 2^7 2^7  . 1^7 . 2^7  1^7 . . 2^7";
+    let fixed = song(&format!("track(\"d\", b):steps(\"{STEPS}\"):pitch(7)")).unwrap();
+    let written = song(&format!("track(\"d\", b):steps(\"{up}\")")).unwrap();
+    assert_eq!(
+        fixed.render(RATE, 2).unwrap(),
+        written.render(RATE, 2).unwrap()
+    );
+
+    // Con curvas: el pitch, el formante y la forma de un corte.
+    let song = song(&format!(
+        "b:set(2, {{ pan = lfo(\"1 compás\", -1, 1), length = ramp(1, 0.2, \"2 compases\") }})\n\
+         track(\"d\", b):steps(\"{STEPS}\"):pitch(ramp(-5, 5, \"2 compases\")):formant(lfo(1, -3, 3))"
+    ))
+    .unwrap();
+    let t = &song.tracks[0];
+    assert_eq!(
+        t.pitch_curve,
+        Some(Curve::Ramp {
+            from: -5.0,
+            to: 5.0,
+            steps: 32.0
+        })
+    );
+    assert_eq!(t.pitch, -5.0);
+    assert_eq!(t.formant, Some(-3.0));
+    assert!(t.formant_curve.is_some());
+    let shape = t.shapes[1];
+    assert!(shape.curves[engine::SHAPE_PAN].is_some());
+    assert!(shape.curves[engine::SHAPE_LENGTH].is_some());
+    assert_eq!((shape.pan, shape.length), (-1.0, 1.0));
+    assert!(t.shapes[0].curves.iter().all(Option::is_none));
+    // Igual que el motor con lo mismo.
+    let sample = Arc::new(Sample::load_wav(dir().join("break.wav"), RATE).unwrap());
+    let slices = Slices::detect(&sample, 2);
+    let steps = engine::notation::parse_steps(STEPS).unwrap();
+    let pattern = Pattern::from_steps(sample, &slices, steps)
+        .unwrap()
+        .with_shapes(&t.shapes)
+        .unwrap()
+        .with_formant(Some(-3.0))
+        .unwrap()
+        .with_formant_curve(t.formant_curve)
+        .unwrap()
+        .with_pitch_curve(t.pitch_curve)
+        .unwrap();
+    let (mut controller, mut engine) = new_engine(RATE);
+    controller.set_bpm(120.0).unwrap();
+    controller.set_pattern(pattern).unwrap();
+    controller.start().unwrap();
+    let expected = offline::render(&mut engine, 2 * engine::bar_frames(120.0, RATE) as usize, 2);
+    assert_eq!(song.render(RATE, 2).unwrap(), expected);
+
+    // Un número después quita la curva; fuera de rango, error con la línea.
+    let plain =
+        self::song("b:set(2, { pan = lfo(1, -1, 1) })\nb:set(2, { pan = 0.5 })\ntrack(\"d\", b)")
+            .unwrap();
+    assert!(plain.tracks[0].shapes[1].curves.iter().all(Option::is_none));
+    assert!(
+        song_err("track(\"d\", b):pitch(ramp(0, 40, \"1 compás\"))")
+            .contains("song.lua:3: pitch(ramp(...)): la curva se sale del rango (-36 a 36)")
+    );
+    assert!(song_err("b:set(1, { length = ramp(0, 1, \"1 compás\") })").contains("song.lua:3:"));
+}
