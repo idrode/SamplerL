@@ -380,9 +380,9 @@ el motor; nunca la salida de audio real.
 10. ✅ **Tests** con `TestBackend` y render offline; `golden.rs` intacto;
     `no_alloc.rs` sin cambios, o ampliado si se toca el motor.
 
-## Fase N: automatización y efectos por paso en todo
+## Fase N: automatización y efectos por paso en todo ✅
 
-Objetivo: que se pueda automatizar todo lo que suena, no solo el filtro, y
+Hechas las cuatro partes. Objetivo: que se pueda automatizar todo lo que suena, no solo el filtro, y
 poner cualquier efecto en un golpe concreto, desde el patrón y desde el
 tracker. Detalle y decisiones en «Fase N» de [docs/ESTADO.md](ESTADO.md).
 
@@ -407,8 +407,10 @@ sintaxis nueva; versión nueva del protocolo del socket si cambia.
    con rampas del golpe (`200>4000`, `200>4000:4`); manda el paso sobre su
    corte, y el tracker, el diagnóstico, el autocompletado y el resaltado
    en vivo los entienden.
-4. **El tracker editable**: cursor, añadir, cambiar y quitar los efectos de
-   un paso, escribiéndolo en el texto (un paso de deshacer).
+4. ✅ **El tracker editable**: cursor, añadir, cambiar y quitar los efectos
+   de un paso, escribiéndolo en su token del texto (un paso de deshacer) y
+   cargando; también con el editor en su ventana (protocolo sin cambios,
+   versión 3).
 
 ## Mejoras sueltas
 

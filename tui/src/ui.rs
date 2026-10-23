@@ -1558,9 +1558,14 @@ fn render_tracker(view: &ViewModel, inner: Rect, buf: &mut Buffer, column: usize
     // Paso de cada pista; la fila que se sigue al desplazarse es la de la
     // pista seleccionada (o la primera que suene).
     let positions: Vec<Option<usize>> = view.tracks.iter().map(|t| t.position).collect();
+    // Con el cursor de edición, se sigue el cursor.
     let current = view
-        .selected
-        .and_then(|i| positions.get(i).copied().flatten())
+        .tracker_cursor
+        .map(|(_, row)| row)
+        .or_else(|| {
+            view.selected
+                .and_then(|i| positions.get(i).copied().flatten())
+        })
         .or_else(|| positions.iter().flatten().next().copied())
         .or(t.step.filter(|_| t.running && view.tracks.is_empty()));
     let rows = view
@@ -1639,7 +1644,11 @@ fn render_tracker(view: &ViewModel, inner: Rect, buf: &mut Buffer, column: usize
             } else {
                 Span::from(text).fg(dim())
             };
-            spans.push(if here[i] && !whole {
+            let cursor = view.tracker_cursor == Some((i, step));
+            spans.push(if cursor {
+                // El cursor de edición: invertido, encima de lo demás.
+                span.add_modifier(Modifier::REVERSED).bold()
+            } else if here[i] && !whole {
                 span.style(playing)
             } else {
                 span

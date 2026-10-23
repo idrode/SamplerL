@@ -542,6 +542,7 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Unir el corte seleccionado con el anterior | Quita su marca: el anterior se alarga hasta donde acababa este (se guarda en el proyecto) | — |
 | Grabar lo tocado | Abre «grabar 1»: graba N compases de lo que tocas (pads o MIDI) en la pista seleccionada, desde el compás siguiente, y lo escribe como steps("...") en el cursor; otra vez, para antes | — |
 | Tap tempo | Golpea el pulso con espacio (media de los últimos 8 golpes); Enter pone bpm(N) en el script | espacio (al golpear) |
+| Editar los efectos de un paso en el tracker | Cursor en el tracker: ↑↓ paso, ←→ pista, Enter escribe los efectos del paso (lp=800,q=4 crush=6) en su token del código y carga, Supr los quita, Esc sale; un paso de deshacer | — |
 | Explorador de samples | Los WAV de la carpeta de muestras: filtra, ↑↓ preescucha (sin tocar las pistas), Enter inserta sample("...") | — |
 | Remuestrear la pista seleccionada | Abre «remuestrear pista »: graba su salida (render offline) como un WAV nuevo en la carpeta de samples | — |
 | Guardar la selección como bloque | Abre «bloque » para escribir nombre, etiquetas y `-- descripción`; va a la biblioteca global | — |
@@ -612,6 +613,29 @@ la actual); están en la sección 4 y también en la paleta. Aceptar algo se
 deshace de una vez con Ctrl-Z. Las
 funciones, efectos y parámetros salen del mismo registro que la sección 4
 de esta guía.
+
+### Editar los efectos de un paso desde el tracker
+
+«Editar los efectos de un paso en el tracker» (paleta, F1) pone un cursor
+en el tracker, en la pista seleccionada y el paso que suena: ↑↓ cambian de
+paso y ←→ de pista. **Enter** abre la línea de órdenes con los efectos que
+tiene el paso (`efectos lp=800,q=4 crush=6`): se cambian, se añaden o se
+borran y Enter los escribe; cada efecto va como dentro de sus llaves y
+separado por espacios, o con las llaves (`{lp=800}{crush=6}`); vacía, los
+quita. **Supr** quita los efectos del paso. **Esc** sale.
+
+El cambio se escribe en el código, en el token de ese paso de su
+`steps("...")` (solo cambian sus caracteres: `2` pasa a ser
+`2{lp=800,q=4}{crush=6}`; los sufijos y lo demás del texto se quedan
+como estaban), es un solo paso de deshacer (Ctrl-Z) y se carga como con
+Ctrl-L: entra en el compás siguiente. Una errata no toca el texto (la
+línea de estado dice por qué). No se puede editar desde aquí un paso que
+no está escrito tal cual (sale de `euclid`, `rotate`, `chance`, una cadena
+hecha a trozos...), un silencio, una pista de instrumento o de granos, ni
+nada si el texto ya no es el cargado (carga antes). Con `every`, se edita
+la vuelta que se ve (si sale de un `c:steps("...")`, ese texto). Con el
+editor en su ventana, se edita desde la principal y el cambio llega al
+editor como un solo paso de deshacer.
 
 ### Modo tocar (Esc)
 

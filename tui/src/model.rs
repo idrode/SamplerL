@@ -14,6 +14,8 @@ pub use crate::diagnose::Diagnostic;
 pub struct ViewModel {
     /// Nombre del archivo del script.
     pub file: String,
+    /// Cursor del tracker al editar los efectos de un paso: (pista, paso).
+    pub tracker_cursor: Option<(usize, usize)>,
     /// Hay cambios en el editor sin guardar.
     pub dirty: bool,
     /// Modo tocar: las teclas disparan cortes en vez de escribir.

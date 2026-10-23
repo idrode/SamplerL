@@ -2408,6 +2408,7 @@ mod step_fx;
 mod stretch;
 mod swap;
 mod tempo;
+mod tracker_edit;
 mod tracker_rows;
 mod variants;
 

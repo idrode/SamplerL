@@ -24,6 +24,7 @@ use crate::palette::{self, Action, Item};
 mod split;
 #[cfg(test)]
 pub use split::editor_command;
+mod tracker_edit;
 
 /// Plantilla para un script nuevo.
 const TEMPLATE: &str = r#"bpm(170)
@@ -274,6 +275,10 @@ pub struct App {
     loads: u64,
     /// Explorador de samples abierto.
     browser: Option<Browser>,
+    /// Cursor del tracker para editar los efectos de los pasos, y el paso
+    /// que se edita en la línea de órdenes (ver `tracker_edit`).
+    tracker_edit: Option<tracker_edit::TrackerCursor>,
+    pending_edit: Option<tracker_edit::PendingEdit>,
     /// Grabación de lo tocado en curso.
     recording: Option<crate::record::Recording>,
     /// Notas en vivo de instrumentos que suenan (pads y MIDI).
@@ -379,6 +384,8 @@ impl App {
             editor_terminal: None,
             socket_dir: None,
             browser: None,
+            tracker_edit: None,
+            pending_edit: None,
             tapping: None,
             recording: None,
             held: Vec::new(),
@@ -508,6 +515,7 @@ impl App {
             "abrir!" | "open!" => self.open_project_command(args.first().copied(), true),
             "muestras" | "samples" => self.set_samples(args.first().copied()),
             "etiquetar" | "label" => self.label_slice(&args),
+            tracker_edit::COMMAND => self.run_step_fx_command(rest),
             "bpm" => self.set_bpm_line(args.first().copied()),
             "grabar" | "record" => self.start_recording(args.first().copied()),
             "seccion" | "sección" | "section" => self.jump_to_section(rest),
@@ -2962,6 +2970,7 @@ impl App {
             Action::SplitSlice => self.split_selected(),
             Action::Resample => self.start_resample(),
             Action::Browser => self.open_browser(),
+            Action::EditTracker => self.open_tracker_edit(),
             Action::TapTempo => self.start_tap(Instant::now()),
             Action::Record => {
                 if self.recording.is_some() {
@@ -3359,6 +3368,23 @@ impl App {
             self.open_palette();
             return Flow::Continue;
         }
+        // El cursor del tracker se queda las teclas, salvo deshacer,
+        // rehacer, cargar, marcha y salir.
+        if self.tracker_edit.is_some()
+            && !matches!(
+                bound,
+                Some(Bound::Action(
+                    Action::Undo
+                        | Action::Redo
+                        | Action::Load
+                        | Action::SaveAndLoad
+                        | Action::Transport
+                        | Action::Quit
+                ))
+            )
+        {
+            return self.handle_tracker_edit(input);
+        }
         // Con el autocompletado abierto, las flechas lo recorren, Tab acepta,
         // Enter acepta solo tras moverse con las flechas (si no, cierra y es
         // un salto de línea) y Esc solo lo cierra (no entra en modo tocar).
@@ -3754,6 +3780,7 @@ impl App {
                     .map(|s| s.as_ref().map(|t| t.lines().map(String::from).collect()))
                     .collect(),
             }),
+            tracker_cursor: self.tracker_edit.map(|c| (c.track, c.row)),
             browser: self.browser.as_ref().map(|b| {
                 let items = self.browser_matches();
                 BrowserView {

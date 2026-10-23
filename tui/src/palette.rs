@@ -48,6 +48,7 @@ pub enum Action {
     JoinSlice,
     Resample,
     Browser,
+    EditTracker,
     TapTempo,
     Record,
     SaveBlock,
@@ -315,6 +316,12 @@ pub const ACTIONS: &[ActionDef] = &[
         name: "Tap tempo",
         description: "Golpea el pulso con espacio (media de los últimos 8 golpes); Enter pone bpm(N) en el script",
         keys: "espacio (al golpear)",
+    },
+    ActionDef {
+        action: Action::EditTracker,
+        name: "Editar los efectos de un paso en el tracker",
+        description: "Cursor en el tracker: ↑↓ paso, ←→ pista, Enter escribe los efectos del paso (lp=800,q=4 crush=6) en su token del código y carga, Supr los quita, Esc sale; un paso de deshacer",
+        keys: "",
     },
     ActionDef {
         action: Action::Browser,
