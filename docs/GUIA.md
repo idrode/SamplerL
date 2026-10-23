@@ -2875,8 +2875,10 @@ song.lua:2: la pista "hats" no existe; defínela con track("hats", sample(...):s
 song.lua:2: argumento 2 no válido: userdata is not expected type
 ```
 
-Has pasado a `track()` un `sample(...)` sin cortar: añade `:slice(n)` (o
-`:slice(1)` para el sample entero).
+Has pasado a `track()` un `sample(...)` sin cortar: añade `:slice(n)`, o
+`:slice_grid(1)` para el sample entero como un solo corte. (`:slice(1)` no
+sirve para eso: su único corte empieza en el golpe más fuerte, que puede
+no ser el primero, y lo de antes queda fuera.)
 
 ```text
 song.lua:2: argumento 2 no válido: se esperaba f32 y llegó string

@@ -189,3 +189,39 @@ fn the_project_saves_and_reads_edits_and_grid_keys() {
             .contains("de 2 a 64")
     );
 }
+
+/// `slice_grid(1)` es el sample entero; `slice(1)` no: su único corte
+/// empieza en el golpe más fuerte y lo de antes queda fuera (la guía lo
+/// dice en «Errores comunes de Lua»).
+#[test]
+fn the_whole_sample_is_slice_grid_1_not_slice_1() {
+    // 1 s: un golpe flojo al principio y uno fuerte a la mitad.
+    let hit = |i: usize, at: usize, gain: f32| {
+        let t = i.wrapping_sub(at);
+        if t < 2000 {
+            gain * (t as f32 * 0.3).sin() * (1.0 - t as f32 / 2000.0)
+        } else {
+            0.0
+        }
+    };
+    let mono: Vec<f32> = (0..48_000)
+        .map(|i| hit(i, 0, 0.2) + hit(i, 24_000, 0.9))
+        .collect();
+    offline::write_wav(dir().join("dos_golpes.wav"), &mono, 1, RATE).unwrap();
+
+    let whole =
+        song("track(\"d\", sample(\"dos_golpes.wav\"):slice_grid(1)):steps(\"1 . . .  . . . .  . . . .  . . . .\")")
+            .unwrap();
+    assert_eq!(
+        whole.tracks[0].slices.iter().collect::<Vec<_>>(),
+        [0..48_000]
+    );
+
+    let loudest =
+        song("track(\"d\", sample(\"dos_golpes.wav\"):slice(1)):steps(\"1 . . .  . . . .  . . . .  . . . .\")")
+            .unwrap();
+    let only = loudest.tracks[0].slices.iter().next().unwrap();
+    assert_eq!(loudest.tracks[0].slices.len(), 1);
+    assert!((23_900..24_100).contains(&only.start), "{only:?}");
+    assert_eq!(only.end, 48_000);
+}
