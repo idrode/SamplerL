@@ -1129,12 +1129,14 @@ el filtro en el primer golpe y lo abre del todo en la segunda caja. Mueve
 siempre el primer filtro de la pista, aunque el corte tenga su propio
 filtro con `cortes:fx`.
 
-**Automatización.** En la tabla de `:fx` (de la pista o de un corte con
-`cortes:fx`), `cutoff`, `q`, `threshold`, `makeup`, `drive`, `mix`,
-`level`, los `freqN`, `gainN` y `qN` del EQ y los `freq`, `q`,
-`threshold` y `range` del EQ dinámico admiten `ramp(desde, hasta, "4 compases")` (una
-rampa que se repite) o `lfo(frecuencia, mín, máx)` (un seno) en lugar de un
-número (ver la sección 4). Las dos dependen solo de la posición de la
+**Automatización.** Todos los números de la tabla de `:fx` (de la pista o
+de un corte con `cortes:fx`), de `bus()` y de `:grains`, y el volumen, el
+pan y los envíos de la pista (`:gain()`, `:pan()`, `:send()`), admiten
+`ramp(desde, hasta, "4 compases")` (una rampa que se repite) o
+`lfo(frecuencia, mín, máx)` (un seno) en lugar de un número. Lo que no
+(tipos, `time` del delay, lo que se prepara al cargar...) da error con la
+línea y el porqué: la tabla completa, «Qué se puede automatizar», está en
+la sección 4, tras `lfo`. Las dos dependen solo de la posición de la
 canción: son deterministas y recargar no las desplaza. Todo lo que se
 mueve (curvas y `~`) se suaviza en unos 5 ms y el filtro recalcula sus
 coeficientes cada 32 muestras: no hay clics. El panel de efectos marca los
@@ -1457,7 +1459,7 @@ track("drums", amen):steps(shuffle("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .", 3))
 
 ### `ramp(desde, hasta, duración)`
 
-Valor que va de desde a hasta en esa duración y vuelve a empezar (para un parámetro de :fx o de :grains). Se pone en lugar de un número en la tabla de `:fx` (`cutoff`, `q`, `threshold`, `makeup`, `drive` o `mix`). Es una rampa en diente de sierra alineada con la canción: con `"4 compases"` sube en los compases 0-3, otra vez en los 4-7... (como `every`, cuenta desde que arranca el secuenciador, así que recargar no la desplaza). Las frecuencias suben en escala logarítmica (de 200 a 4000 Hz, la mitad del camino es 894 Hz). Entra con el patrón al empezar el compás y se suaviza: nunca hace clic. También vale en la tabla de `:grains` y `:freeze` (y en el `pos` de `freeze`): ahí se mira al nacer cada grano (`size` y `density`, en escala logarítmica).
+Valor que va de desde a hasta en esa duración y vuelve a empezar (en lugar de un número). Se pone en lugar de un número: en la tabla de `:fx`, de `bus()` o de `:grains`, o en `:gain()`, `:pan()` y `:send()` (lo que lo admite y lo que no, con el porqué, en la tabla de «Qué se puede automatizar», justo después de `lfo`). Es una rampa en diente de sierra alineada con la canción: con `"4 compases"` sube en los compases 0-3, otra vez en los 4-7... (como `every`, cuenta desde que arranca el secuenciador, así que recargar no la desplaza). Las frecuencias suben en escala logarítmica (de 200 a 4000 Hz, la mitad del camino es 894 Hz). Entra con el patrón al empezar el compás y se suaviza: nunca hace clic. También vale en la tabla de `:grains` y `:freeze` (y en el `pos` de `freeze`): ahí se mira al nacer cada grano (`size` y `density`, en escala logarítmica).
 
 - `desde`: valor al empezar
 - `hasta`: valor al acabar
@@ -1473,7 +1475,7 @@ track("drums", amen)
 
 ### `lfo(frecuencia, mín, máx)`
 
-Valor que oscila (seno) entre mín y máx (para un parámetro de :fx o de :grains). Como `ramp`, va en lugar de un número en la tabla de `:fx` o de `:grains`. La frecuencia es un número en Hz (de 0.01 a 50) o lo que dura un ciclo en el tempo de la canción (`"1 compás"`, `"8 pasos"`). Empieza en `mín` cuando arranca el secuenciador; las frecuencias oscilan en escala logarítmica.
+Valor que oscila (seno) entre mín y máx (en lugar de un número). Como `ramp`, va en lugar de un número (ver la tabla que sigue). La frecuencia es un número en Hz (de 0.01 a 50) o lo que dura un ciclo en el tempo de la canción (`"1 compás"`, `"8 pasos"`). Empieza en `mín` cuando arranca el secuenciador; las frecuencias oscilan en escala logarítmica.
 
 - `frecuencia`: Hz, o la duración de un ciclo: `"1 compás"`, `"8 pasos"`
 - `mín`: valor más bajo
@@ -1486,6 +1488,41 @@ track("drums", amen)
   :fx("lowpass", { cutoff = lfo("2 compases", 400, 6000), q = 2 })
   :fx("distortion", { drive = 6, mix = lfo(0.5, 0, 0.8) })
 ```
+
+#### Qué se puede automatizar
+
+*Continuo*: la curva se evalúa cada 32 frames y se suaviza (~5 ms), también dentro de un golpe. *Por golpe*: cada golpe toma el valor de la curva al sonar y lo mantiene. *Por grano*: al nacer cada grano. Una curva en un parámetro que no la admite da error con la línea.
+
+| Dónde | Admiten curva |
+| --- | --- |
+| `pista` | `gain` (continuo), `pan` (continuo), `send` (continuo) |
+| `fx("filter")` | `cutoff` (continuo), `q` (continuo) |
+| `fx("bitcrush")` | `bits` (continuo), `downsample` (continuo) |
+| `fx("compressor")` | `threshold` (continuo), `ratio` (continuo), `attack` (continuo), `release` (continuo), `makeup` (continuo) |
+| `fx("distortion")` | `drive` (continuo), `mix` (continuo) |
+| `fx("gain")` | `level` (continuo) |
+| `fx("eq")` | `freq1` (continuo), `gain1` (continuo), `q1` (continuo), `freq2` (continuo), `gain2` (continuo), `q2` (continuo), `freq3` (continuo), `gain3` (continuo), `q3` (continuo), `freq4` (continuo), `gain4` (continuo), `q4` (continuo) |
+| `fx("dyneq")` | `freq` (continuo), `q` (continuo), `threshold` (continuo), `ratio` (continuo), `range` (continuo), `attack` (continuo), `release` (continuo) |
+| `bus("delay")` | `feedback` (continuo), `level` (continuo) |
+| `bus("reverb")` | `size` (continuo), `damp` (continuo), `level` (continuo) |
+| `:grains` | `size` (por grano), `density` (por grano), `pos` (por grano), `speed` (por grano), `jitter` (por grano), `pitch` (por grano), `spread` (por grano) |
+
+| Dónde | No admiten curva | Por qué |
+| --- | --- | --- |
+| `pista` | `swing` | se convierte al cargar en el retraso de cada contratiempo (como `humanize`): es parte del patrón |
+| `fx("filter")` | `type` | elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer |
+| `fx("eq")` | `type1`, `type2`, `type3`, `type4` | elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer |
+| `fx("dyneq")` | `type` | elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer |
+| `fx("dyneq")` | `sidechain` | es una pista, no un número |
+| `bus("delay")` | `time` | es una figura ("1/8"), no un número; además, mover el retardo de una línea con repeticiones dentro suena a cambio de pitch |
+| `cortes:set` | `attack`, `release`, `pan`, `length`, `crossfade` | la voz lo lee al nacer |
+| `cortes:set` | `play` | elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer |
+| `:grains` | `seed` | es la semilla del azar: entre dos semillas no hay nada continuo |
+| `instrument` | `root`, `adsr`, `formant` | cada nota lo lee al nacer y el instrumento se valida entero al cargar; para cambiar la nota, la del paso (`^`) |
+| `instrument` | `loop`, `crossfade` | se aplica al cargar, en el hilo de control (el sample o el bucle se preparan una vez): no suena en el tiempo |
+| `instrument` | `voices` | cambia cuántas cosas suenan, no cómo suenan: entra con el patrón al compás |
+| `instrument` | `keep` | elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer |
+| `sample` | `trim`, `normalize`, `fade_in`, `fade_out` | se aplica al cargar, en el hilo de control (el sample o el bucle se preparan una vez): no suena en el tiempo |
 
 ### `scale(nombre [, tónica])`
 
@@ -1796,13 +1833,27 @@ track("kick", amen:slice_at(1))
 
 Devuelve: pista.
 
-Volumen de la pista, lineal de 0 a 4. Se aplica después de los efectos.
+Volumen de la pista, lineal de 0 a 4. Se aplica después de los efectos. Admite `ramp()` y `lfo()`: el volumen se mueve suavizado, también dentro de un golpe.
 
-- `g`: volumen lineal (0 a 4; 1 lo deja igual)
+- `g`: volumen lineal (0 a 4; 1 lo deja igual), `ramp()` o `lfo()`
 
 ```lua
 local amen = sample("amen.wav"):slice(8)
 track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 ."):gain(0.7)
+track("sube", amen):steps("x . x .  x . x .  x . x .  x . x ."):gain(ramp(0, 1, "8 compases"))
+```
+
+### `pista:pan(p)`
+
+Devuelve: pista.
+
+Pan de la pista: -1 izquierda, 0 centro, 1 derecha. Va después del volumen y antes de los envíos, con la ley de balance de los cortes (el lado contrario baja, el propio no sube). Admite `ramp()` y `lfo()`. El pan de cada corte, con `cortes:set(i, { pan = ... })`.
+
+- `p`: de -1 a 1, `ramp()` o `lfo()`
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+track("hats", amen):steps("3 3 3 3  3 3 3 3  3 3 3 3  3 3 3 3"):pan(lfo("2 compases", -0.6, 0.6))
 ```
 
 ### `pista:swing(porcentaje)`
@@ -1899,7 +1950,7 @@ Devuelve: pista.
 
 Añade un efecto a la cadena de la pista (hasta 4, en orden). Un parámetro desconocido da error, para pillar las erratas. Los efectos y sus parámetros están en la tabla de abajo.
 
-El filtro es un biquad de 12 dB/octava; `q = 0.707` es la respuesta más plana y valores altos resuenan en el corte. El bitcrusher reduce la resolución a `bits` y repite cada muestra `downsample` veces (reducción de la frecuencia de muestreo, sin filtro: suena sucio a propósito). El EQ tiene hasta 4 bandas en serie, cada una con su `freqN`, `gainN`, `qN` y `typeN` (`"bell"`, campana; `"lowshelf"` y `"highshelf"`, estantes que mueven todo lo que queda por debajo o por encima); una banda con `gainN = 0` no hace nada, y un EQ sin ganancias suena idéntico a no tenerlo. Al recargar con otras ganancias, el EQ va hacia ellas en unos 5 ms, sin clic. El EQ dinámico (`dyneq`) tiene una banda que escucha (un paso de banda en `freq` y `q`) y baja solo mientras lo que oye pasa de `threshold`: `1 − 1/ratio` dB por dB de más, como mucho `range`, con `attack` y `release`. Sin `sidechain` escucha la propia pista; con `sidechain = "kick"`, la salida de esa pista (tras sus efectos, antes de su volumen, aunque esté en mute o fuera del solo). Por debajo del umbral suena idéntico a no tenerlo. Los `freq`, `q`, `threshold` y `range` del EQ dinámico también admiten `ramp()` y `lfo()`. Los parámetros `cutoff`, `q`, `threshold`, `makeup`, `drive`, `mix`, `level` y los `freqN`, `gainN` y `qN` del EQ admiten `ramp()` y `lfo()` en lugar de un número; el corte del primer filtro, además, puede cambiar en cada golpe con `~` en `steps` (`3~800`).
+El filtro es un biquad de 12 dB/octava; `q = 0.707` es la respuesta más plana y valores altos resuenan en el corte. El bitcrusher reduce la resolución a `bits` y repite cada muestra `downsample` veces (reducción de la frecuencia de muestreo, sin filtro: suena sucio a propósito). El EQ tiene hasta 4 bandas en serie, cada una con su `freqN`, `gainN`, `qN` y `typeN` (`"bell"`, campana; `"lowshelf"` y `"highshelf"`, estantes que mueven todo lo que queda por debajo o por encima); una banda con `gainN = 0` no hace nada, y un EQ sin ganancias suena idéntico a no tenerlo. Al recargar con otras ganancias, el EQ va hacia ellas en unos 5 ms, sin clic. El EQ dinámico (`dyneq`) tiene una banda que escucha (un paso de banda en `freq` y `q`) y baja solo mientras lo que oye pasa de `threshold`: `1 − 1/ratio` dB por dB de más, como mucho `range`, con `attack` y `release`. Sin `sidechain` escucha la propia pista; con `sidechain = "kick"`, la salida de esa pista (tras sus efectos, antes de su volumen, aunque esté en mute o fuera del solo). Por debajo del umbral suena idéntico a no tenerlo. Todos los parámetros numéricos admiten `ramp()` y `lfo()` en lugar de un número (los tipos y el `sidechain`, no: ver «Qué se puede automatizar», tras `lfo`); el corte del primer filtro, además, puede cambiar en cada golpe con `~` en `steps` (`3~800`).
 
 - `nombre`: el efecto (ver la tabla)
 - `parámetros`: tabla con los parámetros del efecto
@@ -2071,10 +2122,10 @@ track("drums", amen)
 
 Devuelve: pista.
 
-Manda una parte de la pista al bus de delay o de reverb (0 a 1). El envío va después del volumen, el mute y el solo de la pista: una pista en mute no suena tampoco en el delay (pero lo que ya estaba en la cola sigue). Entra con el patrón, al empezar el compás, suavizado para que no haga clic. Los parámetros de los buses, con `bus()`.
+Manda una parte de la pista al bus de delay o de reverb (0 a 1). El envío va después del volumen, el mute y el solo de la pista: una pista en mute no suena tampoco en el delay (pero lo que ya estaba en la cola sigue). Entra con el patrón, al empezar el compás, suavizado para que no haga clic. El nivel admite `ramp()` y `lfo()`. Los parámetros de los buses, con `bus()`.
 
 - `bus`: `"delay"` o `"reverb"`
-- `nivel`: cuánto se manda (0 a 1; 0 quita el envío)
+- `nivel`: cuánto se manda (0 a 1; 0 quita el envío), `ramp()` o `lfo()`
 
 ```lua
 local amen = sample("amen.wav"):slice(8)

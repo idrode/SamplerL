@@ -253,6 +253,11 @@ pub struct TrackView {
     pub level: f32,
     /// Volumen de la pista (lineal).
     pub gain: f32,
+    /// Pan de la pista (de -1 a 1).
+    pub pan: f32,
+    /// Volumen, pan y envíos que se mueven con `ramp`/`lfo` (índices
+    /// `engine::MIX_GAIN`, `MIX_PAN`, `MIX_SEND + bus`).
+    pub mix_moving: [bool; engine::MIX_PARAMS],
     /// Efectos de la pista, en orden.
     pub fx: Vec<Fx>,
     /// Parámetros automatizados de cada efecto (`ramp`, `lfo`), por su

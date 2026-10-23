@@ -1839,15 +1839,38 @@ fn draw_vertical_meter(level: f32, strip: Rect, rows: u16, color: Color, buf: &m
 /// Envíos de una pista a los buses, para el panel de efectos: `
 /// → d0.30 r0.15` (vacío sin envíos).
 pub fn sends_text(sends: [f32; 2]) -> String {
-    let parts: Vec<String> = [("d", sends[0]), ("r", sends[1])]
+    sends_text_moving(sends, [false; 2])
+}
+
+/// Como [`sends_text`], con `∿` en los envíos que se mueven con una curva.
+pub fn sends_text_moving(sends: [f32; 2], moving: [bool; 2]) -> String {
+    let parts: Vec<String> = [("d", sends[0], moving[0]), ("r", sends[1], moving[1])]
         .iter()
-        .filter(|(_, s)| *s > 0.0)
-        .map(|(bus, s)| format!("{bus}{s:.2}"))
+        .filter(|(_, s, m)| *s > 0.0 || *m)
+        .map(|(bus, s, m)| {
+            if *m {
+                format!("{bus}∿")
+            } else {
+                format!("{bus}{s:.2}")
+            }
+        })
         .collect();
     if parts.is_empty() {
         String::new()
     } else {
         format!(" → {}", parts.join(" "))
+    }
+}
+
+/// El pan de una pista para el panel de efectos: ` pan -0.30`, ` pan ∿`
+/// si se mueve, o nada al centro.
+fn pan_text(track: &crate::model::TrackView) -> String {
+    if track.mix_moving[engine::MIX_PAN] {
+        " pan ∿".into()
+    } else if track.pan != 0.0 {
+        format!(" pan {:+.2}", track.pan)
+    } else {
+        String::new()
     }
 }
 
@@ -1939,14 +1962,31 @@ impl Widget for FxPanel<'_> {
             let mut lines = vec![
                 Line::from(title),
                 Line::from(vec![
-                    Span::raw(format!("vol {:.2} ", track.gain)),
+                    Span::raw(format!(
+                        "vol {:.2}{} ",
+                        track.gain,
+                        if track.mix_moving[engine::MIX_GAIN] {
+                            "∿"
+                        } else {
+                            ""
+                        }
+                    )),
                     Span::from(meter(
                         track.gain / engine::MAX_GAIN,
                         width.saturating_sub(4),
                     ))
                     .fg(accent()),
+                    // Pan de la pista, si no está al centro (o se mueve).
+                    Span::from(pan_text(track)).fg(dim()),
                     // Envíos a los buses: `→ d0.30 r0.15`.
-                    Span::from(sends_text(track.sends)).fg(dim()),
+                    Span::from(sends_text_moving(
+                        track.sends,
+                        [
+                            track.mix_moving[engine::MIX_SEND],
+                            track.mix_moving[engine::MIX_SEND + 1],
+                        ],
+                    ))
+                    .fg(dim()),
                 ]),
                 Line::from(vec![
                     Span::raw("nivel "),

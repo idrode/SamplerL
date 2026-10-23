@@ -130,3 +130,44 @@ pub(crate) fn check_curve(curve: &Curve) -> Result<(), &'static str> {
         _ => Ok(()),
     }
 }
+
+/// Parámetros de mezcla de una pista que pueden seguir una curva
+/// ([`crate::Pattern::with_mix_automation`]): volumen, pan y el envío a
+/// cada bus. Van después de los efectos y se suavizan como el volumen de
+/// siempre (un polo de ~5 ms por muestra); la curva se evalúa cada
+/// [`crate::engine::MOD_BLOCK`] frames.
+pub const MIX_GAIN: usize = 0;
+pub const MIX_PAN: usize = 1;
+/// El envío al bus `b` es `MIX_SEND + b`.
+pub const MIX_SEND: usize = 2;
+pub const MIX_PARAMS: usize = MIX_SEND + crate::bus::BUSES;
+
+/// Una curva (o ninguna) por parámetro de mezcla.
+pub type MixCurves = [Option<Curve>; MIX_PARAMS];
+
+/// Rango de cada parámetro de mezcla.
+pub(crate) fn mix_range(param: usize) -> (f32, f32) {
+    match param {
+        MIX_GAIN => (0.0, crate::sequencer::MAX_GAIN),
+        MIX_PAN => (-1.0, 1.0),
+        _ => (0.0, crate::bus::MAX_SEND),
+    }
+}
+
+/// Comprueba que cada curva cabe en el rango de su parámetro.
+pub(crate) fn check_mix(curves: &MixCurves) -> Result<(), &'static str> {
+    for (param, curve) in curves.iter().enumerate() {
+        let Some(curve) = curve else { continue };
+        let (lo, hi) = mix_range(param);
+        let (a, b) = curve.bounds();
+        if ![a, b].iter().all(|v| (lo..=hi).contains(v)) {
+            return Err(match param {
+                MIX_GAIN => "la curva del volumen se sale de 0 a 4",
+                MIX_PAN => "la curva del pan se sale de -1 a 1",
+                _ => "la curva del envío se sale de 0 a 1",
+            });
+        }
+        check_curve(curve)?;
+    }
+    Ok(())
+}

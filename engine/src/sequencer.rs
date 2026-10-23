@@ -9,7 +9,7 @@
 
 use std::sync::Arc;
 
-use crate::automation::{Automation, MAX_AUTOMATIONS};
+use crate::automation::{Automation, MAX_AUTOMATIONS, MIX_PARAMS, MixCurves};
 use crate::engine::{MAX_CHOKE, Playback, SendError, SliceShape};
 use crate::fx::{Fx, MAX_FX};
 use crate::grain::Granular;
@@ -195,6 +195,12 @@ pub struct Pattern {
     pub(crate) sends: [f32; crate::bus::BUSES],
     /// Parámetros de efecto automatizados.
     pub(crate) automation: [Option<Automation>; MAX_AUTOMATIONS],
+    /// Pan de la pista, de -1 a 1 (ley de balance, como el de los cortes),
+    /// después de su volumen.
+    pub(crate) pan: f32,
+    /// Volumen, pan y envíos que siguen una curva (ver
+    /// [`crate::automation::MIX_PARAMS`]).
+    pub(crate) mix_curves: MixCurves,
     /// Modo gate: cada golpe suena solo lo que dura su paso (luego, su
     /// cola). Si no, one-shot: el corte entero.
     pub(crate) gate: bool,
@@ -274,6 +280,8 @@ impl Pattern {
             solo: false,
             sends: [0.0; crate::bus::BUSES],
             automation: [None; MAX_AUTOMATIONS],
+            pan: 0.0,
+            mix_curves: [None; MIX_PARAMS],
             gate: false,
             choke: None,
             midi: None,
@@ -444,6 +452,27 @@ impl Pattern {
         }
         self.sends = sends;
         Ok(self)
+    }
+
+    /// Pan de la pista (de -1 a 1; 0, al centro sin tocar nada), después de
+    /// su volumen y antes de los envíos.
+    pub fn with_pan(self, pan: f32) -> Result<Self, SendError> {
+        if !(-1.0..=1.0).contains(&pan) {
+            return Err(SendError::InvalidFx("pan de pista fuera de rango (-1 a 1)"));
+        }
+        Ok(Pattern { pan, ..self })
+    }
+
+    /// Volumen, pan y envíos que siguen una curva (`ramp`, `lfo`; índices
+    /// [`crate::MIX_GAIN`], [`crate::MIX_PAN`] y [`crate::MIX_SEND`]` + bus`).
+    /// La curva manda sobre el valor fijo; se evalúa cada 32 frames y se
+    /// suaviza como el volumen.
+    pub fn with_mix_automation(self, curves: MixCurves) -> Result<Self, SendError> {
+        crate::automation::check_mix(&curves).map_err(SendError::InvalidFx)?;
+        Ok(Pattern {
+            mix_curves: curves,
+            ..self
+        })
     }
 
     /// Pista silenciada (entra con el patrón, al empezar el compás).

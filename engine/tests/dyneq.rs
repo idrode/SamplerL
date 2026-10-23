@@ -218,6 +218,14 @@ fn out_of_range_values_are_rejected() {
     assert!(bad(base.with_sidechain(8)));
     assert_eq!(
         Fx::DynEq(base).params(),
-        ["freq", "q", "threshold", "range"]
+        [
+            "freq",
+            "q",
+            "threshold",
+            "range",
+            "ratio",
+            "attack",
+            "release"
+        ]
     );
 }

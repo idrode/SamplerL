@@ -233,14 +233,23 @@ impl Fx {
     pub fn params(&self) -> &'static [&'static str] {
         match self {
             Fx::Filter { .. } => &["cutoff", "q"],
-            Fx::Compressor { .. } => &["threshold", "makeup"],
+            // Los nuevos, al final: los índices de antes no cambian.
+            Fx::Compressor { .. } => &["threshold", "makeup", "ratio", "attack", "release"],
             Fx::Distortion { .. } => &["drive", "mix"],
-            Fx::Bitcrush { .. } => &[],
+            Fx::Bitcrush { .. } => &["bits", "downsample"],
             Fx::Eq { .. } => &[
                 "freq1", "gain1", "q1", "freq2", "gain2", "q2", "freq3", "gain3", "q3", "freq4",
                 "gain4", "q4",
             ],
-            Fx::DynEq(_) => &["freq", "q", "threshold", "range"],
+            Fx::DynEq(_) => &[
+                "freq",
+                "q",
+                "threshold",
+                "range",
+                "ratio",
+                "attack",
+                "release",
+            ],
             Fx::Gain { .. } => &["level"],
         }
     }
@@ -267,6 +276,11 @@ impl Fx {
             (Fx::Filter { .. }, 1) => (0.1, 20.0, true),
             (Fx::Compressor { .. }, 0) => (-60.0, 0.0, false),
             (Fx::Compressor { .. }, 1) => (0.0, 24.0, false),
+            (Fx::Compressor { .. }, 2) => (1.0, 20.0, true),
+            (Fx::Compressor { .. }, 3) => (0.1, 200.0, true),
+            (Fx::Compressor { .. }, 4) => (1.0, 2000.0, true),
+            (Fx::Bitcrush { .. }, 0) => (1.0, 16.0, false),
+            (Fx::Bitcrush { .. }, 1) => (1.0, 64.0, true),
             (Fx::Distortion { .. }, 0) => (1.0, 50.0, true),
             (Fx::Distortion { .. }, 1) => (0.0, 1.0, false),
             (Fx::Eq { .. }, i) if i < MAX_PARAMS => match i % 3 {
@@ -278,6 +292,9 @@ impl Fx {
             (Fx::DynEq(_), 1) => (EQ_Q_RANGE.0, EQ_Q_RANGE.1, true),
             (Fx::DynEq(_), 2) => (-60.0, 0.0, false),
             (Fx::DynEq(_), 3) => (0.0, 24.0, false),
+            (Fx::DynEq(_), 4) => (1.0, 20.0, true),
+            (Fx::DynEq(_), 5) => (0.1, 200.0, true),
+            (Fx::DynEq(_), 6) => (1.0, 2000.0, true),
             (Fx::Gain { .. }, 0) => (0.0, MAX_LEVEL, false),
             _ => return None,
         })
@@ -290,13 +307,26 @@ impl Fx {
             (Fx::Filter { q, .. }, 1) => q,
             (Fx::Compressor { threshold_db, .. }, 0) => threshold_db,
             (Fx::Compressor { makeup_db, .. }, 1) => makeup_db,
+            (Fx::Compressor { ratio, .. }, 2) => ratio,
+            (Fx::Compressor { attack_ms, .. }, 3) => attack_ms,
+            (Fx::Compressor { release_ms, .. }, 4) => release_ms,
+            (Fx::Bitcrush { bits, .. }, 0) => bits as f32,
+            (Fx::Bitcrush { downsample, .. }, 1) => downsample as f32,
             (Fx::Distortion { drive, .. }, 0) => drive,
             (Fx::Distortion { mix, .. }, 1) => mix,
             (Fx::Eq { bands }, i) if i < MAX_PARAMS => {
                 let band = bands[i / 3];
                 [band.freq_hz, band.gain_db, band.q][i % 3]
             }
-            (Fx::DynEq(p), i) if i < 4 => [p.freq_hz, p.q, p.threshold_db, p.range_db][i],
+            (Fx::DynEq(p), i) if i < 7 => [
+                p.freq_hz,
+                p.q,
+                p.threshold_db,
+                p.range_db,
+                p.ratio,
+                p.attack_ms,
+                p.release_ms,
+            ][i],
             (Fx::Gain { level }, 0) => level,
             _ => return None,
         })
@@ -743,6 +773,22 @@ impl Biquad {
     }
 }
 
+/// Coeficiente por muestra de una envolvente de `ms` milisegundos (el
+/// mismo cálculo que al crear el compresor y el EQ dinámico).
+fn time_coef(ms: f32, sample_rate: u32) -> f32 {
+    (-1.0 / (ms / 1000.0 * sample_rate as f32)).exp()
+}
+
+/// Niveles del bitcrusher para `bits` (con decimales mientras se mueve:
+/// la resolución cambia poco a poco); con un entero, los de siempre.
+fn crush_levels(bits: f32) -> f32 {
+    if bits.fract() == 0.0 {
+        (1u32 << ((bits as u32).clamp(1, 16) - 1)) as f32
+    } else {
+        (bits - 1.0).exp2()
+    }
+}
+
 impl FxState {
     /// Estado para `fx`. Si el estado anterior es del mismo tipo, conserva
     /// su memoria (así cambiar el corte de un filtro no hace clic).
@@ -864,6 +910,26 @@ impl FxState {
             }
             (FxState::Comp { threshold_db, .. }, 0) => *threshold_db = value,
             (FxState::Comp { makeup_db, .. }, 1) => *makeup_db = value,
+            (FxState::Comp { slope, .. }, 2) => *slope = 1.0 - 1.0 / value,
+            (FxState::Comp { attack, .. }, 3) => *attack = time_coef(value, sample_rate),
+            (FxState::Comp { release, .. }, 4) => *release = time_coef(value, sample_rate),
+            (FxState::Crush { levels, .. }, 0) => *levels = crush_levels(value),
+            // Repeticiones de cada muestra: a saltos enteros (lo que se
+            // mueve es cada cuánto se toma una muestra nueva, no su valor).
+            (
+                FxState::Crush {
+                    downsample,
+                    counter,
+                    ..
+                },
+                1,
+            ) => {
+                let ds = (value.round() as u32).max(1);
+                if ds != *downsample {
+                    *downsample = ds;
+                    *counter %= ds;
+                }
+            }
             (FxState::Drive { drive, .. }, 0) => *drive = value,
             (FxState::Drive { mix, .. }, 1) => *mix = value,
             (FxState::Gain { level }, 0) => *level = value,
@@ -875,6 +941,15 @@ impl FxState {
                     band.current[i % 3] = value;
                     band.coefs = Biquad::eq(band.kind, band.current, sample_rate);
                 }
+            }
+            (FxState::Dyn(state), 4) => state.params.ratio = value,
+            (FxState::Dyn(state), 5) => {
+                state.params.attack_ms = value;
+                state.attack = time_coef(value, sample_rate);
+            }
+            (FxState::Dyn(state), 6) => {
+                state.params.release_ms = value;
+                state.release = time_coef(value, sample_rate);
             }
             (FxState::Dyn(state), i) if i < 4 => {
                 let p = &mut state.params;

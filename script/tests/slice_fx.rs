@@ -254,8 +254,8 @@ fn errors_say_the_line_and_the_old_song_keeps_playing() {
             &["song.lua:4:", "se sale del rango"],
         ),
         (
-            "a:fx(3, \"bitcrush\", { bits = lfo(1, 2, 8) })",
-            &["song.lua:4:", "bits no se puede automatizar"],
+            "a:fx(3, \"filter\", { cutoff = 300, type = lfo(1, 0, 1) })",
+            &["song.lua:4:", "type no admite ramp() ni lfo()"],
         ),
         (
             "a:fx(3, \"dyneq\", { freq = 200, sidechain = \"d\" })",

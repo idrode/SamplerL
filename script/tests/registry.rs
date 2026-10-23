@@ -336,3 +336,108 @@ fn every_grain_parameter_is_accepted() {
     ));
     eval(&source);
 }
+
+/// El efecto del motor que corresponde a un nombre del registro.
+fn engine_fx(name: &str) -> engine::Fx {
+    match api::effect(name).map(|e| e.name) {
+        Some("filter" | "lowpass" | "highpass") => engine::Fx::lowpass(1000.0),
+        Some("compressor") => engine::Fx::compressor(-18.0, 4.0),
+        Some("distortion") => engine::Fx::distortion(4.0, 1.0),
+        Some("gain") => engine::Fx::gain(1.0),
+        Some("bitcrush") => engine::Fx::bitcrush(8, 1),
+        Some("eq") => engine::Fx::eq(&[]),
+        Some("dyneq") => engine::Fx::DynEq(engine::DynEqParams::new(100.0)),
+        other => panic!("efecto sin motor: {other:?}"),
+    }
+}
+
+/// Los extremos de `valid` (`"20–20000"`); para lo que no es un rango,
+/// 0 y 1.
+fn bounds(valid: &str) -> (String, String) {
+    match valid.split_once('–') {
+        Some((a, b)) if a.parse::<f32>().is_ok() && b.parse::<f32>().is_ok() => {
+            (a.to_string(), b.to_string())
+        }
+        _ => ("0".into(), "1".into()),
+    }
+}
+
+#[test]
+fn the_engine_moves_exactly_what_the_registry_says() {
+    for e in EFFECTS {
+        let fx = engine_fx(e.name);
+        for p in e.params {
+            assert_eq!(
+                fx.param_index(p.name).is_some(),
+                p.automate.curves(),
+                "fx(\"{}\").{}: el registro y el motor no coinciden",
+                e.name,
+                p.name
+            );
+        }
+    }
+}
+
+#[test]
+fn every_sound_parameter_takes_a_curve_or_says_why_not() {
+    let dir = samples();
+    let try_eval = |source: &str| {
+        let mut host = ScriptHost::new(RATE);
+        host.set_seed(Some(1));
+        host.eval(source, "registro.lua", &dir)
+            .map(|_| ())
+            .map_err(|e| e.message)
+    };
+    let mut checked = 0;
+    for (what, p) in api::sound_params() {
+        let (lo, hi) = bounds(p.valid);
+        let curve = format!("ramp({lo}, {hi}, \"1 compás\")");
+        let call = match what.as_str() {
+            "pista" => match p.name {
+                "send" => format!("t:send(\"delay\", {curve})"),
+                name => format!("t:{name}({curve})"),
+            },
+            "cortes:set" => format!("amen:set(1, {{ {} = {curve} }})", p.name),
+            ":grains" => format!("t:grains({{ {} = {curve} }})", p.name),
+            "instrument" => format!("local i = s:instrument({{ {} = {curve} }})", p.name),
+            "sample" => format!("local x = sample(\"amen.wav\", {{ {} = {curve} }})", p.name),
+            fx if fx.starts_with("fx(") => {
+                let name = &fx[4..fx.len() - 2];
+                let effect = api::effect(name).unwrap();
+                // Los obligatorios (menos este), con su plantilla.
+                let mut items: Vec<String> = effect
+                    .params
+                    .iter()
+                    .filter(|q| q.default.is_none() && q.name != p.name)
+                    .map(|q| expand_template(q.template).0)
+                    .collect();
+                items.push(format!("{} = {curve}", p.name));
+                format!("t:fx(\"{name}\", {{ {} }})", items.join(", "))
+            }
+            bus if bus.starts_with("bus(") => {
+                format!("{}, {{ {} = {curve} }})", &bus[..bus.len() - 1], p.name)
+            }
+            other => panic!("tabla sin probar: {other}"),
+        };
+        let source = format!("{PRELUDE}{call}\n");
+        let result = try_eval(&source);
+        match p.automate {
+            api::Auto::No(why) => {
+                let message = result
+                    .err()
+                    .unwrap_or_else(|| panic!("{call}: debería fallar"));
+                assert!(
+                    message.contains("no admite ramp() ni lfo()") && message.contains(why),
+                    "{call}: {message}"
+                );
+            }
+            _ => {
+                if let Err(e) = result {
+                    panic!("{call}: {e}");
+                }
+            }
+        }
+        checked += 1;
+    }
+    assert!(checked > 50, "{checked}");
+}

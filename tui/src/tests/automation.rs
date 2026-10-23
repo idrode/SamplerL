@@ -16,8 +16,15 @@ fn ramp_and_lfo_complete_after_an_automatable_key() {
         "{}",
         current_line(&app)
     );
-    // Una clave que no se mueve: nada.
+    // También tras las claves nuevas (`bits`) y en las tablas de `bus()`.
     replace_all(&mut app, "track(\"drums\"):fx(\"bitcrush\", { bits = ");
+    app.handle(f(4));
+    assert_eq!(completion_items(&app), ["ramp", "lfo"]);
+    replace_all(&mut app, "bus(\"reverb\", { size = ");
+    app.handle(f(4));
+    assert_eq!(completion_items(&app), ["ramp", "lfo"]);
+    // Una clave que no se mueve: nada.
+    replace_all(&mut app, "bus(\"delay\", { time = ");
     app.handle(f(4));
     assert!(completion_items(&app).is_empty());
 }
@@ -34,4 +41,18 @@ fn the_panels_show_what_moves() {
     let screen = text(&draw(&mut app, 140, 45));
     assert!(screen.contains("› LP 300 Hz q0.71 ∿cutoff"), "{screen}");
     assert!(screen.contains("00 01~300"), "{screen}");
+}
+
+#[test]
+fn the_fx_panel_shows_pan_and_moving_mix() {
+    let song = format!(
+        "{SONG}track(\"drums\"):steps(\"1 . 2 .  1 . 2 .  1 . 2 .  1 . 2 .\")\n  \
+         :gain(ramp(0.5, 1, \"2 compases\")):pan(-0.3):send(\"reverb\", lfo(1, 0, 0.5))\n"
+    );
+    let (_, mut app, _engine) = open("auto_mix", Some(&song));
+    assert!(app.view().error.is_none(), "{:?}", app.view().error);
+    let screen = text(&draw(&mut app, 140, 45));
+    assert!(screen.contains("vol 0.50∿"), "{screen}");
+    assert!(screen.contains("pan -0.30"), "{screen}");
+    assert!(screen.contains("→ r∿"), "{screen}");
 }

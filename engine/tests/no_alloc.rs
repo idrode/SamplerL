@@ -927,6 +927,79 @@ fn the_audio_thread_never_allocates() {
     assert_eq!(n, 0, "reservas al quitar el patrón de una nube en vivo");
     controller.collect_garbage();
 
+    // Todo automatizado: los parámetros nuevos del compresor, el
+    // bitcrusher y el EQ dinámico, el volumen, el pan y los envíos de la
+    // pista, y los parámetros de los buses.
+    let ramp = |from: f32, to: f32| engine::Curve::Ramp {
+        from,
+        to,
+        steps: 8.0,
+    };
+    let auto = |fx: usize, param: usize, curve| engine::Automation { fx, param, curve };
+    let mut mix: engine::MixCurves = [None; engine::MIX_PARAMS];
+    mix[engine::MIX_GAIN] = Some(ramp(0.2, 1.5));
+    mix[engine::MIX_PAN] = Some(engine::Curve::Lfo {
+        min: -1.0,
+        max: 1.0,
+        rate: engine::LfoRate::Hz(3.0),
+    });
+    mix[engine::MIX_SEND] = Some(ramp(0.0, 1.0));
+    mix[engine::MIX_SEND + 1] = Some(ramp(1.0, 0.0));
+    let everything = Pattern::from_bars(sample.clone(), &slices, &bars[..1])
+        .unwrap()
+        .with_fx(&[
+            Fx::compressor(-30.0, 4.0),
+            Fx::bitcrush(8, 1),
+            Fx::DynEq(engine::DynEqParams::new(200.0)),
+        ])
+        .unwrap()
+        .with_automation(&[
+            auto(0, 2, ramp(1.0, 20.0)),
+            auto(0, 3, ramp(0.1, 200.0)),
+            auto(0, 4, ramp(1.0, 2000.0)),
+            auto(1, 0, ramp(16.0, 1.0)),
+            auto(1, 1, ramp(1.0, 64.0)),
+            auto(2, 4, ramp(1.0, 20.0)),
+            auto(2, 5, ramp(0.1, 200.0)),
+            auto(2, 6, ramp(1.0, 2000.0)),
+        ])
+        .unwrap()
+        .with_pan(0.3)
+        .unwrap()
+        .with_mix_automation(mix)
+        .unwrap();
+    controller.set_track_pattern(4, Some(everything)).unwrap();
+    let buses = engine::Buses {
+        curves: [
+            Some(ramp(0.0, 0.95)),
+            Some(ramp(1.0, 0.0)),
+            Some(ramp(0.0, 1.0)),
+            Some(ramp(1.0, 0.0)),
+            Some(ramp(0.2, 1.0)),
+        ],
+        ..engine::Buses::default()
+    };
+    controller.set_buses(buses).unwrap();
+    let n = counted(|| {
+        for _ in 0..400 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(
+        n, 0,
+        "reservas con todo automatizado (efectos, mezcla y buses)"
+    );
+    // Sin las curvas de los buses: vuelven suavizados a sus valores fijos.
+    controller.set_buses(engine::Buses::default()).unwrap();
+    controller.set_track_pattern(4, None).unwrap();
+    let n = counted(|| {
+        for _ in 0..200 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas al quitar las curvas de los buses");
+    controller.collect_garbage();
+
     // Rampa de tempo y cambio de compás.
     controller
         .set_tempo_ramp(engine::TempoRamp {

@@ -380,6 +380,34 @@ el motor; nunca la salida de audio real.
 10. ✅ **Tests** con `TestBackend` y render offline; `golden.rs` intacto;
     `no_alloc.rs` sin cambios, o ampliado si se toca el motor.
 
+## Fase N: automatización y efectos por paso en todo
+
+Objetivo: que se pueda automatizar todo lo que suena, no solo el filtro, y
+poner cualquier efecto en un golpe concreto, desde el patrón y desde el
+tracker. Detalle y decisiones en «Fase N» de [docs/ESTADO.md](ESTADO.md).
+
+Reglas de siempre: registro único de la API (autocompletado, ayuda, guía,
+paleta); el hilo de audio sin reservas, mutex ni E/S (`no_alloc.rs`
+ampliado); `golden.rs` idéntico si no se usa nada nuevo; cambios por lotes
+atómicos al compás; error con la línea y sigue sonando lo anterior;
+portable (x86_64 y ARM64); el resaltado en vivo de la fase M con la
+sintaxis nueva; versión nueva del protocolo del socket si cambia.
+
+1. ✅ **Automatizar todo lo continuo**: cada parámetro de sonido del
+   registro dice si admite `ramp()`/`lfo()` y cómo (`api::Auto`: continuo,
+   por golpe, por grano o no, con el porqué); de ahí salen los errores, el
+   autocompletado y la tabla «Qué se puede automatizar» de la guía. Nuevos:
+   `ratio`, `attack` y `release` del compresor y del EQ dinámico, `bits` y
+   `downsample` del bitcrusher, `:gain()`, el `:pan()` nuevo y `:send()` de
+   la pista, y `feedback`, `level`, `size` y `damp` de los buses.
+2. **Lo que se lee al nacer cada voz, por golpe**: pitch de pista, forma
+   del corte (`attack`, `release`, `pan`, `length`, `crossfade`) y
+   `formant`.
+3. **Efectos por paso en la mini-notación**: `3{lp=800,q=4}{crush=6}`, con
+   rampas del golpe (`200>4000`, `200>4000:4`).
+4. **El tracker editable**: cursor, añadir, cambiar y quitar los efectos de
+   un paso, escribiéndolo en el texto (un paso de deshacer).
+
 ## Mejoras sueltas
 
 Arreglos pequeños fuera de las fases, con las reglas de siempre. Detalle

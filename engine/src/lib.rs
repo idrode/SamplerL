@@ -24,7 +24,9 @@ mod status;
 pub mod stretch;
 
 pub use arrangement::{Arrangement, MAX_ENTRIES, MAX_SECTIONS};
-pub use automation::{Automation, Curve, LfoRate, MAX_AUTOMATIONS};
+pub use automation::{
+    Automation, Curve, LfoRate, MAX_AUTOMATIONS, MIX_GAIN, MIX_PAN, MIX_PARAMS, MIX_SEND, MixCurves,
+};
 pub use bpm::{BpmGuess, detect_bpm};
 pub use bus::{Buses, DelayParams, Division, ReverbParams};
 pub use engine::{

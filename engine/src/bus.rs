@@ -10,6 +10,7 @@
 //! procesa ni se suma (así, sin envíos, la salida es la de siempre bit a
 //! bit, y no gasta CPU).
 
+use crate::automation::{Curve, mix};
 use crate::sequencer::{MIN_BPM, STEPS};
 
 /// Nivel máximo de un envío.
@@ -101,15 +102,71 @@ impl Default for ReverbParams {
     }
 }
 
+/// Parámetros de los buses que pueden seguir una curva (`ramp`, `lfo`):
+/// índices de [`BusCurves`].
+pub const DELAY_FEEDBACK: usize = 0;
+pub const DELAY_LEVEL: usize = 1;
+pub const REVERB_SIZE: usize = 2;
+pub const REVERB_DAMP: usize = 3;
+pub const REVERB_LEVEL: usize = 4;
+pub const BUS_PARAMS: usize = 5;
+
+/// Una curva (o ninguna) por parámetro de los buses. La curva manda sobre
+/// el valor fijo; se evalúa cada 32 frames y se suaviza (~5 ms).
+pub type BusCurves = [Option<Curve>; BUS_PARAMS];
+
 /// Parámetros de los dos buses.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Buses {
     pub delay: DelayParams,
     pub reverb: ReverbParams,
+    pub curves: BusCurves,
+}
+
+/// Rango de cada parámetro con curva de los buses.
+fn bus_range(param: usize) -> (f32, f32) {
+    match param {
+        DELAY_FEEDBACK => (0.0, MAX_FEEDBACK),
+        _ => (0.0, 1.0),
+    }
 }
 
 impl Buses {
+    /// El valor fijo del parámetro `param` (índice de [`BusCurves`]).
+    fn value(&self, param: usize) -> f32 {
+        match param {
+            DELAY_FEEDBACK => self.delay.feedback,
+            DELAY_LEVEL => self.delay.level,
+            REVERB_SIZE => self.reverb.size,
+            REVERB_DAMP => self.reverb.damp,
+            _ => self.reverb.level,
+        }
+    }
+
+    fn set(&mut self, param: usize, value: f32) {
+        match param {
+            DELAY_FEEDBACK => self.delay.feedback = value,
+            DELAY_LEVEL => self.delay.level = value,
+            REVERB_SIZE => self.reverb.size = value,
+            REVERB_DAMP => self.reverb.damp = value,
+            _ => self.reverb.level = value,
+        }
+    }
+
     pub fn validate(&self) -> Result<(), &'static str> {
+        for (param, curve) in self.curves.iter().enumerate() {
+            let Some(curve) = curve else { continue };
+            let (lo, hi) = bus_range(param);
+            let (a, b) = curve.bounds();
+            if ![a, b].iter().all(|v| (lo..=hi).contains(v)) {
+                return Err(if param == DELAY_FEEDBACK {
+                    "la curva del feedback del delay se sale de 0 a 0.95"
+                } else {
+                    "la curva de un parámetro de bus se sale de 0 a 1"
+                });
+            }
+            crate::automation::check_curve(curve)?;
+        }
         let unit = 0.0..=1.0;
         if !(0.0..=MAX_FEEDBACK).contains(&self.delay.feedback) {
             return Err("feedback del delay fuera de rango (0 a 0.95)");
@@ -140,6 +197,17 @@ pub(crate) struct Rack {
     idle: [usize; BUSES],
     awake: [bool; BUSES],
     sample_rate: u32,
+    /// Valor suavizado de cada parámetro con curva mientras se mueve;
+    /// `None`: el fijo.
+    moving: [Option<f32>; BUS_PARAMS],
+}
+
+/// Dónde está la canción al empezar un trozo (para las curvas de los
+/// buses): pasos, segundos y frames por paso.
+pub(crate) struct BusClock {
+    pub steps: f64,
+    pub seconds: f64,
+    pub frames_per_step: f64,
 }
 
 impl Rack {
@@ -152,7 +220,32 @@ impl Rack {
             idle: [0; BUSES],
             awake: [false; BUSES],
             sample_rate,
+            moving: [None; BUS_PARAMS],
         }
+    }
+
+    /// Los parámetros con los que suena el bloque que empieza en `steps` y
+    /// `seconds`: los fijos, o los de su curva suavizados desde el bloque
+    /// anterior (`keep`). Un parámetro sin curva que vuelve a su valor fijo
+    /// deja de moverse.
+    fn drive(&mut self, steps: f64, seconds: f64, keep: f32) -> Buses {
+        let mut params = self.params;
+        for (i, current) in self.moving.iter_mut().enumerate() {
+            let fixed = self.params.value(i);
+            let target = self.params.curves[i].map(|c| c.value(steps, seconds, false));
+            if target.is_none() && current.is_none() {
+                continue;
+            }
+            let goal = target.unwrap_or(fixed);
+            let next = mix(goal, current.unwrap_or(goal), keep, false);
+            if target.is_none() && (next - fixed).abs() <= 1e-4 {
+                *current = None;
+            } else {
+                *current = Some(next);
+                params.set(i, next);
+            }
+        }
+        params
     }
 
     /// Procesa `n` frames: `inputs[b]` es lo enviado al bus `b` (estéreo
@@ -164,13 +257,53 @@ impl Rack {
         fed: [bool; BUSES],
         n: usize,
         bpm: f64,
+        clock: &BusClock,
         master: &mut [f32],
     ) {
         let rate = self.sample_rate;
         let delay = delay_frames(self.params.delay.division, bpm, rate);
+        // Con curvas (o volviendo de una), por bloques de MOD_BLOCK frames.
+        let curved = self.params.curves.iter().any(Option::is_some)
+            || self.moving.iter().any(Option::is_some);
+        let block = if curved {
+            crate::engine::MOD_BLOCK
+        } else {
+            n.max(1)
+        };
+        let keep = (-(crate::engine::MOD_BLOCK as f32)
+            / (crate::engine::GAIN_SMOOTHING_SECONDS * rate as f32))
+            .exp();
+        let mut peaks = [0.0f32; BUSES];
+        let mut params = self.params;
+        for start in (0..n).step_by(block) {
+            let frames = block.min(n - start);
+            if curved {
+                let offset = start as f64;
+                params = self.drive(
+                    clock.steps + offset / clock.frames_per_step,
+                    clock.seconds + offset / rate as f64,
+                    keep,
+                );
+            }
+            let range = 2 * start..2 * (start + frames);
+            for bus in 0..BUSES {
+                if fed[bus] {
+                    self.awake[bus] = true;
+                }
+                if !self.awake[bus] {
+                    continue;
+                }
+                let input = &inputs[bus][range.clone()];
+                let out = &mut master[range.clone()];
+                let peak = match bus {
+                    DELAY => self.delay.process(input, out, delay, params.delay),
+                    _ => self.reverb.process(input, out, params.reverb),
+                };
+                peaks[bus] = peaks[bus].max(peak);
+            }
+        }
         for bus in 0..BUSES {
             if fed[bus] {
-                self.awake[bus] = true;
                 self.idle[bus] = 0;
             } else {
                 self.idle[bus] += n;
@@ -178,14 +311,15 @@ impl Rack {
             if !self.awake[bus] {
                 continue;
             }
-            let input = &inputs[bus][..2 * n];
-            let peak = match bus {
-                DELAY => self.delay.process(input, master, delay, self.params.delay),
-                _ => self.reverb.process(input, master, self.params.reverb),
-            };
-            // A dormir cuando la cola se ha apagado del todo.
+            let peak = peaks[bus];
+            // A dormir cuando la cola se ha apagado del todo (con una curva,
+            // con el feedback más alto al que llega).
+            let feedback = self.params.curves[DELAY_FEEDBACK]
+                .map_or(0.0, |c| c.bounds().0.max(c.bounds().1))
+                .max(params.delay.feedback)
+                .max(self.params.delay.feedback);
             let tail = match bus {
-                DELAY => delay * (1 + repeats(self.params.delay.feedback)),
+                DELAY => delay * (1 + repeats(feedback)),
                 _ => rate as usize,
             };
             if self.idle[bus] > tail && (bus == DELAY || peak < 1e-6) {

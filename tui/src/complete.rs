@@ -135,7 +135,7 @@ pub fn context(
             }
             // Tras `cutoff =` (un parámetro que se puede mover): ramp y lfo.
             if let Some(key) = item.strip_suffix('=').map(str::trim)
-                && api::automatable(effect.name, key)
+                && effect.automatable(key)
             {
                 return Some(Context {
                     prefix,
@@ -1117,7 +1117,7 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(labels(&c), ["lowpass", "highpass"]);
-        // Tras `cutoff =` (se puede mover): ramp y lfo; tras `bits =`, nada.
+        // Tras `cutoff =` (se puede mover): ramp y lfo; tras `type =`, nada.
         let c = at(&format!(
             "{SONG}track(\"d\", amen):fx(\"filter\", {{ cutoff = |"
         ))
@@ -1125,7 +1125,7 @@ mod tests {
         assert_eq!(labels(&c), ["ramp", "lfo"]);
         assert!(
             at(&format!(
-                "{SONG}track(\"d\", amen):fx(\"bitcrush\", {{ bits = |"
+                "{SONG}track(\"d\", amen):fx(\"filter\", {{ type = |"
             ))
             .is_none()
         );

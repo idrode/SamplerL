@@ -130,6 +130,7 @@ fn the_tail_never_passes_one_and_a_silent_bus_sleeps() {
             damp: 0.0,
             level: 1.0,
         },
+        ..Default::default()
     });
     for t in 0..engine::MAX_TRACKS {
         let all = vec![Some(Step::new(0).with_gain(4.0)); STEPS];

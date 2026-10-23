@@ -173,6 +173,11 @@ pub struct TrackDef {
     pub automation: Vec<engine::Automation>,
     /// Envíos a los buses (`:send()`): `[delay, reverb]`.
     pub sends: [f32; engine::bus::BUSES],
+    /// Pan de la pista (`:pan()`), de -1 a 1.
+    pub pan: f32,
+    /// Volumen, pan y envíos con `ramp()` o `lfo()` (índices
+    /// `engine::MIX_GAIN`, `MIX_PAN` y `MIX_SEND + bus`).
+    pub mix_curves: engine::MixCurves,
     /// Forma de cada corte (`cortes:set()`), uno por corte.
     pub shapes: Vec<SliceShape>,
     /// Modo gate (`:mode("gate")`): cada golpe dura lo que su paso.
@@ -1402,13 +1407,33 @@ impl ScriptHost {
                         }
                     }
                 }
-                let number = |key: &str, default: f32, max: f32| -> mlua::Result<f32> {
+                // Un número o una curva (con su índice en `Buses::curves`).
+                let curves = RefCell::new([None; engine::bus::BUS_PARAMS]);
+                let number = |key: &str, default: f32, max: f32, slot: usize| -> mlua::Result<f32> {
                     let value = match get(key)? {
                         None => default,
                         Some(Value::Integer(i)) => i as f32,
                         Some(Value::Number(n)) => n as f32,
+                        Some(Value::UserData(ud)) if ud.is::<CurveHandle>() => {
+                            if let Some(param) = def.param(key) {
+                                no_curve(lua, &who, param)?;
+                            }
+                            let curve = ud.borrow::<CurveHandle>()?.0;
+                            let (a, b) = curve.bounds();
+                            if ![a, b].iter().all(|v| (0.0..=max).contains(v)) {
+                                return Err(fail(
+                                    lua,
+                                    format!("{who}: {key}: la curva se sale del rango (0 a {max})"),
+                                ));
+                            }
+                            curves.borrow_mut()[slot] = Some(curve);
+                            a
+                        }
                         Some(_) => {
-                            return Err(fail(lua, format!("{who}: {key} tiene que ser un número")));
+                            return Err(fail(
+                                lua,
+                                format!("{who}: {key} tiene que ser un número, ramp() o lfo()"),
+                            ));
                         }
                     };
                     if !(0.0..=max).contains(&value) {
@@ -1419,6 +1444,9 @@ impl ScriptHost {
                     }
                     Ok(value)
                 };
+                use engine::bus::{
+                    DELAY_FEEDBACK, DELAY_LEVEL, REVERB_DAMP, REVERB_LEVEL, REVERB_SIZE,
+                };
                 let mut builder = st.borrow_mut();
                 let buses = &mut builder.buses;
                 match name.as_str() {
@@ -1426,6 +1454,11 @@ impl ScriptHost {
                         let d = engine::DelayParams::default();
                         let division = match get("time")? {
                             None => d.division,
+                            Some(value) if is_curve(&value) => {
+                                let param = def.param("time").expect("time es del registro");
+                                no_curve(lua, &who, param)?;
+                                d.division
+                            }
                             Some(Value::String(text)) => {
                                 let text = text.to_str()?.to_string();
                                 Division::parse(&text).ok_or_else(|| {
@@ -1446,17 +1479,30 @@ impl ScriptHost {
                         };
                         buses.delay = engine::DelayParams {
                             division,
-                            feedback: number("feedback", d.feedback, engine::bus::MAX_FEEDBACK)?,
-                            level: number("level", d.level, 1.0)?,
+                            feedback: number(
+                                "feedback",
+                                d.feedback,
+                                engine::bus::MAX_FEEDBACK,
+                                DELAY_FEEDBACK,
+                            )?,
+                            level: number("level", d.level, 1.0, DELAY_LEVEL)?,
                         };
+                        let curves = curves.borrow();
+                        for slot in [DELAY_FEEDBACK, DELAY_LEVEL] {
+                            buses.curves[slot] = curves[slot];
+                        }
                     }
                     _ => {
                         let r = engine::ReverbParams::default();
                         buses.reverb = engine::ReverbParams {
-                            size: number("size", r.size, 1.0)?,
-                            damp: number("damp", r.damp, 1.0)?,
-                            level: number("level", r.level, 1.0)?,
+                            size: number("size", r.size, 1.0, REVERB_SIZE)?,
+                            damp: number("damp", r.damp, 1.0, REVERB_DAMP)?,
+                            level: number("level", r.level, 1.0, REVERB_LEVEL)?,
                         };
+                        let curves = curves.borrow();
+                        for slot in [REVERB_SIZE, REVERB_DAMP, REVERB_LEVEL] {
+                            buses.curves[slot] = curves[slot];
+                        }
                     }
                 }
                 Ok(())
@@ -1845,6 +1891,8 @@ fn track_pattern(
         .and_then(|p| p.with_fx(&fx))
         .and_then(|p| p.with_automation(&track.automation))
         .and_then(|p| p.with_sends(track.sends))
+        .and_then(|p| p.with_pan(track.pan))
+        .and_then(|p| p.with_mix_automation(track.mix_curves))
         .and_then(|p| p.with_shapes(&track.shapes))
         .and_then(|p| p.with_slice_fx(&chains))
         .and_then(|p| p.with_choke(track.choke))
@@ -2188,6 +2236,8 @@ fn track_source(lua: &Lua, name: &str, source: &AnyUserData) -> mlua::Result<Tra
         swing: STRAIGHT_SWING,
         humanize: None,
         sends: [0.0; engine::bus::BUSES],
+        pan: 0.0,
+        mix_curves: [None; engine::MIX_PARAMS],
         automation: Vec::new(),
         shapes: Vec::new(),
         gate: false,
@@ -2770,6 +2820,7 @@ fn instrument_options(
     let Some(table) = table else {
         return Ok(def);
     };
+    table_curves(lua, &who, table, api::INSTRUMENT_PARAMS)?;
     let known: Vec<&str> = api::INSTRUMENT_PARAMS.iter().map(|p| p.name).collect();
     let mut crossfade = None;
     for pair in table.pairs::<Value, Value>() {
@@ -3013,6 +3064,9 @@ fn set_granular(
     let seed = name.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
         (h ^ b as u64).wrapping_mul(0x100_0000_01b3)
     });
+    if let Some(params) = params {
+        table_curves(lua, who, params, api::GRAIN_PARAMS)?;
+    }
     let mut granular = engine::Granular::new(seed);
     if let Some(pos) = freeze {
         granular.position = pos;
@@ -3335,6 +3389,7 @@ struct SlicedHandle {
 /// registro `api::SAMPLE_PARAMS`).
 fn import_options(lua: &Lua, name: &str, table: &Table) -> mlua::Result<engine::ImportOptions> {
     let who = format!("sample(\"{name}\")");
+    table_curves(lua, &who, table, api::SAMPLE_PARAMS)?;
     let known: Vec<&str> = api::SAMPLE_PARAMS.iter().map(|p| p.name).collect();
     let mut options = engine::ImportOptions::default();
     for pair in table.pairs::<Value, Value>() {
@@ -3393,6 +3448,7 @@ fn apply_slice_table(
     shape: &mut SliceShape,
     table: &Table,
 ) -> mlua::Result<()> {
+    table_curves(lua, who, table, api::SLICE_PARAMS)?;
     let known: Vec<&str> = api::SLICE_PARAMS.iter().map(|p| p.name).collect();
     for pair in table.pairs::<Value, Value>() {
         let (key, value) = pair?;
@@ -4000,7 +4056,7 @@ fn fx_params(lua: &Lua, name: &str, params: &Option<Table>) -> mlua::Result<()> 
         .map(|e| e.params.iter().map(|p| p.name).collect())
         .unwrap_or_default();
     for pair in params.pairs::<Value, Value>() {
-        let (key, _) = pair?;
+        let (key, value) = pair?;
         let key = match key {
             Value::String(s) => s.to_str()?.to_string(),
             other => format!("{other:?}"),
@@ -4014,8 +4070,100 @@ fn fx_params(lua: &Lua, name: &str, params: &Option<Table>) -> mlua::Result<()> 
                 ),
             ));
         }
+        if is_curve(&value)
+            && let Some(param) = api::effect(name).and_then(|e| e.param(&key))
+        {
+            no_curve(lua, &format!("fx(\"{name}\")"), param)?;
+        }
     }
     Ok(())
+}
+
+/// Error con la línea si alguna clave de `table` lleva una curva y su
+/// parámetro (en `params`, del registro) no la admite.
+fn table_curves(lua: &Lua, who: &str, table: &Table, params: &[api::FxParam]) -> mlua::Result<()> {
+    for pair in table.pairs::<Value, Value>() {
+        let (key, value) = pair?;
+        let Value::String(key) = key else { continue };
+        let key = key.to_str()?.to_string();
+        if is_curve(&value)
+            && let Some(param) = params.iter().find(|p| p.name == key)
+        {
+            no_curve(lua, who, param)?;
+        }
+    }
+    Ok(())
+}
+
+/// Si un valor de Lua es una curva (`ramp()`, `lfo()`).
+fn is_curve(value: &Value) -> bool {
+    matches!(value, Value::UserData(ud) if ud.is::<CurveHandle>())
+}
+
+/// Error con la línea si `param` no admite curvas (el porqué, del registro).
+fn no_curve(lua: &Lua, who: &str, param: &api::FxParam) -> mlua::Result<()> {
+    match param.automate {
+        api::Auto::No(why) => Err(fail(
+            lua,
+            format!("{who}: {} no admite ramp() ni lfo(): {why}", param.name),
+        )),
+        _ => Ok(()),
+    }
+}
+
+/// Un número o una curva para el parámetro de pista `param` (del registro,
+/// [`api::TRACK_PARAMS`]) de `who`, dentro de `lo..=hi`: el valor fijo (el
+/// primer extremo de la curva) y la curva, si la hay.
+fn number_or_curve(
+    lua: &Lua,
+    who: &str,
+    param: &str,
+    value: Value,
+    (lo, hi): (f32, f32),
+) -> mlua::Result<(f32, Option<engine::Curve>)> {
+    let (fixed, curve) = match &value {
+        Value::UserData(ud) if ud.is::<CurveHandle>() => {
+            if let Some(p) = api::track_param(param) {
+                no_curve(lua, who, p)?;
+            }
+            let curve = ud.borrow::<CurveHandle>()?.0;
+            (curve.bounds().0, Some(curve))
+        }
+        other => (
+            lua.unpack::<f32>(other.clone()).map_err(|_| {
+                fail(
+                    lua,
+                    format!("{who}: tiene que ser un número, ramp() o lfo()"),
+                )
+            })?,
+            None,
+        ),
+    };
+    if let Some(c) = curve {
+        let (a, b) = c.bounds();
+        if ![a, b].iter().all(|v| (lo..=hi).contains(v)) {
+            return Err(fail(
+                lua,
+                format!("{who}: la curva se sale del rango ({lo} a {hi})"),
+            ));
+        }
+    }
+    Ok((fixed, curve))
+}
+
+/// Un argumento tal como se escribió, para los mensajes: el número, o
+/// `ramp(...)`/`lfo(...)`.
+fn value_text(value: &Value) -> String {
+    match value {
+        Value::Integer(i) => i.to_string(),
+        Value::Number(n) => n.to_string(),
+        Value::UserData(ud) => match ud.borrow::<CurveHandle>().map(|c| c.0) {
+            Ok(engine::Curve::Ramp { .. }) => "ramp(...)".into(),
+            Ok(engine::Curve::Lfo { .. }) => "lfo(...)".into(),
+            _ => "...".into(),
+        },
+        _ => "...".into(),
+    }
 }
 
 /// Lista separada por comas.
@@ -4268,16 +4416,38 @@ impl UserData for TrackHandle {
         });
 
         // `:gain(g)`: volumen de la pista (lineal, de 0 a 4).
-        methods.add_method("gain", |lua, this, gain: f32| {
+        methods.add_method("gain", |lua, this, gain: Value| {
+            let who = format!("gain({})", value_text(&gain));
+            let (gain, curve) = number_or_curve(lua, &who, "gain", gain, (0.0, MAX_GAIN))?;
             if !(0.0..=MAX_GAIN).contains(&gain) {
                 return Err(fail(lua, SendError::InvalidTrackGain(gain)));
             }
-            this.with_track(|t| t.def.gain = gain);
+            this.with_track(|t| {
+                t.def.gain = gain;
+                t.def.mix_curves[engine::MIX_GAIN] = curve;
+            });
+            Ok(this.clone())
+        });
+
+        // `:pan(p)`: pan de la pista (de -1 a 1), después de su volumen.
+        methods.add_method("pan", |lua, this, pan: Value| {
+            let who = format!("pan({})", value_text(&pan));
+            let (pan, curve) = number_or_curve(lua, &who, "pan", pan, (-1.0, 1.0))?;
+            if !(-1.0..=1.0).contains(&pan) {
+                return Err(fail(lua, format!("{who}: el pan va de -1 a 1")));
+            }
+            this.with_track(|t| {
+                t.def.pan = pan;
+                t.def.mix_curves[engine::MIX_PAN] = curve;
+            });
             Ok(this.clone())
         });
 
         // `:swing(p)`: swing en porcentaje estilo MPC (50 recto, 75 máximo).
-        methods.add_method("swing", |lua, this, percent: f32| {
+        methods.add_method("swing", |lua, this, percent: Value| {
+            let who = format!("swing({})", value_text(&percent));
+            let (percent, _) =
+                number_or_curve(lua, &who, "swing", percent, (STRAIGHT_SWING, MAX_SWING))?;
             if !(STRAIGHT_SWING..=MAX_SWING).contains(&percent) {
                 return Err(fail(
                     lua,
@@ -4419,7 +4589,7 @@ impl UserData for TrackHandle {
         });
 
         // `:send(bus, nivel)`: parte de la pista al delay o a la reverb.
-        methods.add_method("send", |lua, this, (bus, level): (String, f32)| {
+        methods.add_method("send", |lua, this, (bus, level): (String, Value)| {
             let index = match bus.as_str() {
                 "delay" => engine::bus::DELAY,
                 "reverb" => engine::bus::REVERB,
@@ -4433,13 +4603,16 @@ impl UserData for TrackHandle {
                     ));
                 }
             };
+            let who = format!("send(\"{bus}\", {})", value_text(&level));
+            let (level, curve) =
+                number_or_curve(lua, &who, "send", level, (0.0, engine::bus::MAX_SEND))?;
             if !(0.0..=engine::bus::MAX_SEND).contains(&level) {
-                return Err(fail(
-                    lua,
-                    format!("send(\"{bus}\", {level}): el nivel va de 0 a 1"),
-                ));
+                return Err(fail(lua, format!("{who}: el nivel va de 0 a 1")));
             }
-            this.with_track(|t| t.def.sends[index] = level);
+            this.with_track(|t| {
+                t.def.sends[index] = level;
+                t.def.mix_curves[engine::MIX_SEND + index] = curve;
+            });
             Ok(this.clone())
         });
 
@@ -4457,6 +4630,9 @@ impl UserData for TrackHandle {
         methods.add_method(
             "fx",
             |lua, this, (name, params): (String, Option<Table>)| {
+                if let (Some(effect), Some(p)) = (api::effect(&name), &params) {
+                    table_curves(lua, &format!("fx(\"{name}\")"), p, effect.params)?;
+                }
                 // `sidechain = "pista"` del EQ dinámico: la pista se busca al
                 // acabar el script (puede definirse después).
                 let sidechain = match (&params, name.as_str()) {

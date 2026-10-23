@@ -95,7 +95,56 @@ pub struct FxParam {
     pub values: &'static [&'static str],
     /// Texto que inserta el autocompletado.
     pub template: &'static str,
+    /// Si admite `ramp()` y `lfo()` en vez de un número, y cómo se mueve.
+    /// Es la lista única de lo automatizable: de aquí salen los errores, el
+    /// autocompletado de `ramp`/`lfo` y la tabla de la guía (un test
+    /// comprueba que el motor lo acepta).
+    pub automate: Auto,
 }
+
+/// Si un parámetro admite una curva (`ramp()`, `lfo()`) y cómo la sigue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Auto {
+    /// Se mueve también dentro de un golpe: el motor evalúa la curva cada
+    /// 32 frames y la suaviza (~5 ms), sin clics.
+    Smooth,
+    /// Cada golpe toma el valor de la curva en el momento en que suena (y
+    /// lo mantiene mientras dura).
+    PerHit,
+    /// Cada grano toma el valor de la curva al nacer.
+    PerGrain,
+    /// No admite curvas, por esto.
+    No(&'static str),
+}
+
+impl Auto {
+    /// Admite `ramp()` y `lfo()`.
+    pub fn curves(self) -> bool {
+        !matches!(self, Auto::No(_))
+    }
+
+    /// Cómo se mueve, para la guía.
+    pub fn text(self) -> &'static str {
+        match self {
+            Auto::Smooth => "continuo",
+            Auto::PerHit => "por golpe",
+            Auto::PerGrain => "por grano",
+            Auto::No(_) => "no",
+        }
+    }
+}
+
+/// Por qué un parámetro no admite curvas (ver [`Auto::No`]).
+const DISCRETE: &str =
+    "elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer";
+const TRACK_REF: &str = "es una pista, no un número";
+const AT_LOAD: &str = "se aplica al cargar, en el hilo de control (el sample o el bucle se preparan una vez): no suena en el tiempo";
+const AT_BIRTH: &str = "la voz lo lee al nacer";
+const STRUCTURE: &str =
+    "cambia cuántas cosas suenan, no cómo suenan: entra con el patrón al compás";
+const SEED: &str = "es la semilla del azar: entre dos semillas no hay nada continuo";
+const INSTRUMENT: &str = "cada nota lo lee al nacer y el instrumento se valida entero al cargar; para cambiar la nota, la del paso (`^`)";
+const DELAY_TIME: &str = "es una figura (\"1/8\"), no un número; además, mover el retardo de una línea con repeticiones dentro suena a cambio de pitch";
 
 /// Efecto de pista para `:fx(nombre, parámetros)`.
 #[derive(Debug, Clone, Copy)]
@@ -110,6 +159,16 @@ pub struct Effect {
 }
 
 impl Effect {
+    /// Su parámetro `name`.
+    pub fn param(&self, name: &str) -> Option<&'static FxParam> {
+        self.params.iter().find(|p| p.name == name)
+    }
+
+    /// Si su parámetro `name` admite `ramp()` y `lfo()` (ver [`Auto`]).
+    pub fn automatable(&self, name: &str) -> bool {
+        self.param(name).is_some_and(|p| p.automate.curves())
+    }
+
     /// Plantilla de la tabla de parámetros (con sus `${...}`) para cambiar
     /// a este efecto desde una tabla escrita: conserva el valor de cada
     /// parámetro de `old` (clave y valor tal como está escrito) que este
@@ -828,9 +887,11 @@ pub const FUNCTIONS: &[Function] = &[
         receiver: Receiver::Global,
         signature: "ramp(desde, hasta, duración)",
         returns: None,
-        summary: "Valor que va de desde a hasta en esa duración y vuelve a empezar (para un parámetro de :fx o de :grains).",
-        doc: "Se pone en lugar de un número en la tabla de `:fx` (`cutoff`, `q`, \
-              `threshold`, `makeup`, `drive` o `mix`). Es una rampa en diente de \
+        summary: "Valor que va de desde a hasta en esa duración y vuelve a empezar (en lugar de un número).",
+        doc: "Se pone en lugar de un número: en la tabla de `:fx`, de `bus()` o de \
+              `:grains`, o en `:gain()`, `:pan()` y `:send()` (lo que lo admite y \
+              lo que no, con el porqué, en la tabla de «Qué se puede automatizar», \
+              justo después de `lfo`). Es una rampa en diente de \
               sierra alineada con la canción: con `\"4 compases\"` sube en los \
               compases 0-3, otra vez en los 4-7... (como `every`, cuenta desde que \
               arranca el secuenciador, así que recargar no la desplaza). Las \
@@ -867,9 +928,8 @@ pub const FUNCTIONS: &[Function] = &[
         receiver: Receiver::Global,
         signature: "lfo(frecuencia, mín, máx)",
         returns: None,
-        summary: "Valor que oscila (seno) entre mín y máx (para un parámetro de :fx o de :grains).",
-        doc: "Como `ramp`, va en lugar de un número en la tabla de `:fx` o de \
-              `:grains`. La \
+        summary: "Valor que oscila (seno) entre mín y máx (en lugar de un número).",
+        doc: "Como `ramp`, va en lugar de un número (ver la tabla que sigue). La \
               frecuencia es un número en Hz (de 0.01 a 50) o lo que dura un ciclo \
               en el tempo de la canción (`\"1 compás\"`, `\"8 pasos\"`). Empieza en \
               `mín` cuando arranca el secuenciador; las frecuencias oscilan en \
@@ -1385,15 +1445,36 @@ pub const FUNCTIONS: &[Function] = &[
         signature: "pista:gain(g)",
         returns: Some(Receiver::Track),
         summary: "Volumen de la pista, lineal de 0 a 4.",
-        doc: "Se aplica después de los efectos.",
+        doc: "Se aplica después de los efectos. Admite `ramp()` y `lfo()`: el \
+              volumen se mueve suavizado, también dentro de un golpe.",
         params: &[Param {
             name: "g",
-            description: "volumen lineal (0 a 4; 1 lo deja igual)",
+            description: "volumen lineal (0 a 4; 1 lo deja igual), `ramp()` o `lfo()`",
         }],
         template: "gain(${0.8})",
         example: Some(
             "local amen = sample(\"amen.wav\"):slice(8)\n\
-             track(\"drums\", amen):steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\"):gain(0.7)\n",
+             track(\"drums\", amen):steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\"):gain(0.7)\n\
+             track(\"sube\", amen):steps(\"x . x .  x . x .  x . x .  x . x .\"):gain(ramp(0, 1, \"8 compases\"))\n",
+        ),
+    },
+    Function {
+        name: "pan",
+        receiver: Receiver::Track,
+        signature: "pista:pan(p)",
+        returns: Some(Receiver::Track),
+        summary: "Pan de la pista: -1 izquierda, 0 centro, 1 derecha.",
+        doc: "Va después del volumen y antes de los envíos, con la ley de balance \
+              de los cortes (el lado contrario baja, el propio no sube). Admite \
+              `ramp()` y `lfo()`. El pan de cada corte, con `cortes:set(i, { pan = ... })`.",
+        params: &[Param {
+            name: "p",
+            description: "de -1 a 1, `ramp()` o `lfo()`",
+        }],
+        template: "pan(${-0.3})",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             track(\"hats\", amen):steps(\"3 3 3 3  3 3 3 3  3 3 3 3  3 3 3 3\"):pan(lfo(\"2 compases\", -0.6, 0.6))\n",
         ),
     },
     Function {
@@ -1557,12 +1638,10 @@ pub const FUNCTIONS: &[Function] = &[
               `release`. Sin `sidechain` escucha la propia pista; con \
               `sidechain = \"kick\"`, la salida de esa pista (tras sus efectos, \
               antes de su volumen, aunque esté en mute o fuera del solo). Por \
-              debajo del umbral suena idéntico a no tenerlo. Los `freq`, `q`, \
-              `threshold` y `range` del EQ dinámico también admiten `ramp()` y \
-              `lfo()`. Los \
-              parámetros `cutoff`, `q`, `threshold`, `makeup`, `drive`, `mix`, `level` y los \
-              `freqN`, `gainN` y `qN` del EQ admiten `ramp()` y `lfo()` en lugar de \
-              un número; el corte del primer filtro, además, puede cambiar en cada \
+              debajo del umbral suena idéntico a no tenerlo. Todos los parámetros \
+              numéricos admiten `ramp()` y `lfo()` en lugar de un número (los \
+              tipos y el `sidechain`, no: ver «Qué se puede automatizar», tras \
+              `lfo`); el corte del primer filtro, además, puede cambiar en cada \
               golpe con `~` en `steps` (`3~800`).",
         params: &[
             Param {
@@ -1771,7 +1850,8 @@ pub const FUNCTIONS: &[Function] = &[
         doc: "El envío va después del volumen, el mute y el solo de la pista: una \
               pista en mute no suena tampoco en el delay (pero lo que ya estaba en \
               la cola sigue). Entra con el patrón, al empezar el compás, suavizado \
-              para que no haga clic. Los parámetros de los buses, con `bus()`.",
+              para que no haga clic. El nivel admite `ramp()` y `lfo()`. Los \
+              parámetros de los buses, con `bus()`.",
         params: &[
             Param {
                 name: "bus",
@@ -1779,7 +1859,7 @@ pub const FUNCTIONS: &[Function] = &[
             },
             Param {
                 name: "nivel",
-                description: "cuánto se manda (0 a 1; 0 quita el envío)",
+                description: "cuánto se manda (0 a 1; 0 quita el envío), `ramp()` o `lfo()`",
             },
         ],
         template: "send(\"${reverb}\", ${0.3})",
@@ -1945,6 +2025,7 @@ const FILTER_PARAMS: &[FxParam] = &[
         valid: "20–20000",
         values: &[],
         template: "cutoff = ${3000}",
+        automate: Auto::Smooth,
     },
     FxParam {
         name: "q",
@@ -1953,6 +2034,7 @@ const FILTER_PARAMS: &[FxParam] = &[
         valid: "0.1–20",
         values: &[],
         template: "q = ${0.707}",
+        automate: Auto::Smooth,
     },
 ];
 
@@ -1968,6 +2050,7 @@ macro_rules! eq_params {
                 valid: "20–20000",
                 values: &[],
                 template: concat!("freq", $n, " = ${", $freq, "}"),
+                automate: Auto::Smooth,
             },
             FxParam {
                 name: concat!("gain", $n),
@@ -1976,6 +2059,7 @@ macro_rules! eq_params {
                 valid: "-24–24",
                 values: &[],
                 template: concat!("gain", $n, " = ${-3}"),
+                automate: Auto::Smooth,
             },
             FxParam {
                 name: concat!("q", $n),
@@ -1984,6 +2068,7 @@ macro_rules! eq_params {
                 valid: "0.1–18",
                 values: &[],
                 template: concat!("q", $n, " = ${1}"),
+                automate: Auto::Smooth,
             },
             FxParam {
                 name: concat!("type", $n),
@@ -1992,6 +2077,7 @@ macro_rules! eq_params {
                 valid: "`\"bell\"`, `\"lowshelf\"` o `\"highshelf\"`",
                 values: &["bell", "lowshelf", "highshelf"],
                 template: concat!("type", $n, " = \"${bell}\""),
+                automate: Auto::No(DISCRETE),
             },
         )*]
     };
@@ -2011,6 +2097,7 @@ pub const EFFECTS: &[Effect] = &[
                 valid: "`\"lowpass\"` o `\"highpass\"`",
                 values: &["lowpass", "highpass"],
                 template: "type = \"${lowpass}\"",
+                automate: Auto::No(DISCRETE),
             },
             FILTER_PARAMS[0],
             FILTER_PARAMS[1],
@@ -2043,6 +2130,7 @@ pub const EFFECTS: &[Effect] = &[
                 valid: "1–16",
                 values: &[],
                 template: "bits = ${8}",
+                automate: Auto::Smooth,
             },
             FxParam {
                 name: "downsample",
@@ -2051,6 +2139,7 @@ pub const EFFECTS: &[Effect] = &[
                 valid: "1–64",
                 values: &[],
                 template: "downsample = ${2}",
+                automate: Auto::Smooth,
             },
         ],
         template: "{ bits = ${6}, downsample = ${2} }",
@@ -2067,6 +2156,7 @@ pub const EFFECTS: &[Effect] = &[
                 valid: "-60–0",
                 values: &[],
                 template: "threshold = ${-18}",
+                automate: Auto::Smooth,
             },
             FxParam {
                 name: "ratio",
@@ -2075,6 +2165,7 @@ pub const EFFECTS: &[Effect] = &[
                 valid: "1–20",
                 values: &[],
                 template: "ratio = ${4}",
+                automate: Auto::Smooth,
             },
             FxParam {
                 name: "attack",
@@ -2083,6 +2174,7 @@ pub const EFFECTS: &[Effect] = &[
                 valid: "0.1–200",
                 values: &[],
                 template: "attack = ${5}",
+                automate: Auto::Smooth,
             },
             FxParam {
                 name: "release",
@@ -2091,6 +2183,7 @@ pub const EFFECTS: &[Effect] = &[
                 valid: "1–2000",
                 values: &[],
                 template: "release = ${100}",
+                automate: Auto::Smooth,
             },
             FxParam {
                 name: "makeup",
@@ -2099,6 +2192,7 @@ pub const EFFECTS: &[Effect] = &[
                 valid: "0–24",
                 values: &[],
                 template: "makeup = ${6}",
+                automate: Auto::Smooth,
             },
         ],
         template: "{ threshold = ${-18}, ratio = ${4}, makeup = ${6} }",
@@ -2115,6 +2209,7 @@ pub const EFFECTS: &[Effect] = &[
                 valid: "1–50",
                 values: &[],
                 template: "drive = ${4}",
+                automate: Auto::Smooth,
             },
             FxParam {
                 name: "mix",
@@ -2123,6 +2218,7 @@ pub const EFFECTS: &[Effect] = &[
                 valid: "0–1",
                 values: &[],
                 template: "mix = ${1}",
+                automate: Auto::Smooth,
             },
         ],
         template: "{ drive = ${4}, mix = ${0.7} }",
@@ -2138,6 +2234,7 @@ pub const EFFECTS: &[Effect] = &[
             valid: "0–4",
             values: &[],
             template: "level = ${0.5}",
+            automate: Auto::Smooth,
         }],
         template: "{ level = ${0.5} }",
     },
@@ -2160,6 +2257,7 @@ pub const EFFECTS: &[Effect] = &[
                 valid: "20–20000",
                 values: &[],
                 template: "freq = ${100}",
+                automate: Auto::Smooth,
             },
             FxParam {
                 name: "q",
@@ -2168,6 +2266,7 @@ pub const EFFECTS: &[Effect] = &[
                 valid: "0.1–18",
                 values: &[],
                 template: "q = ${1}",
+                automate: Auto::Smooth,
             },
             FxParam {
                 name: "type",
@@ -2176,6 +2275,7 @@ pub const EFFECTS: &[Effect] = &[
                 valid: "`\"bell\"`, `\"lowshelf\"` o `\"highshelf\"`",
                 values: &["bell", "lowshelf", "highshelf"],
                 template: "type = \"${bell}\"",
+                automate: Auto::No(DISCRETE),
             },
             FxParam {
                 name: "threshold",
@@ -2184,6 +2284,7 @@ pub const EFFECTS: &[Effect] = &[
                 valid: "-60–0",
                 values: &[],
                 template: "threshold = ${-30}",
+                automate: Auto::Smooth,
             },
             FxParam {
                 name: "ratio",
@@ -2192,6 +2293,7 @@ pub const EFFECTS: &[Effect] = &[
                 valid: "1–20",
                 values: &[],
                 template: "ratio = ${4}",
+                automate: Auto::Smooth,
             },
             FxParam {
                 name: "range",
@@ -2200,6 +2302,7 @@ pub const EFFECTS: &[Effect] = &[
                 valid: "0–24",
                 values: &[],
                 template: "range = ${6}",
+                automate: Auto::Smooth,
             },
             FxParam {
                 name: "attack",
@@ -2208,6 +2311,7 @@ pub const EFFECTS: &[Effect] = &[
                 valid: "0.1–200",
                 values: &[],
                 template: "attack = ${5}",
+                automate: Auto::Smooth,
             },
             FxParam {
                 name: "release",
@@ -2216,6 +2320,7 @@ pub const EFFECTS: &[Effect] = &[
                 valid: "1–2000",
                 values: &[],
                 template: "release = ${120}",
+                automate: Auto::Smooth,
             },
             FxParam {
                 name: "sidechain",
@@ -2224,6 +2329,7 @@ pub const EFFECTS: &[Effect] = &[
                 valid: "nombre de otra pista",
                 values: &[],
                 template: "sidechain = \"${kick}\"",
+                automate: Auto::No(TRACK_REF),
             },
         ],
         template: "{ freq = ${80}, range = ${6}, sidechain = \"${kick}\" }",
@@ -2239,6 +2345,7 @@ pub const SLICE_PARAMS: &[FxParam] = &[
         valid: "0–2000",
         values: &[],
         template: "attack = ${5}",
+        automate: Auto::No(AT_BIRTH),
     },
     FxParam {
         name: "release",
@@ -2247,6 +2354,7 @@ pub const SLICE_PARAMS: &[FxParam] = &[
         valid: "0–5000",
         values: &[],
         template: "release = ${40}",
+        automate: Auto::No(AT_BIRTH),
     },
     FxParam {
         name: "pan",
@@ -2255,6 +2363,7 @@ pub const SLICE_PARAMS: &[FxParam] = &[
         valid: "-1–1",
         values: &[],
         template: "pan = ${-0.5}",
+        automate: Auto::No(AT_BIRTH),
     },
     FxParam {
         name: "length",
@@ -2263,6 +2372,7 @@ pub const SLICE_PARAMS: &[FxParam] = &[
         valid: "0.01–1",
         values: &[],
         template: "length = ${0.5}",
+        automate: Auto::No(AT_BIRTH),
     },
     FxParam {
         name: "play",
@@ -2271,6 +2381,7 @@ pub const SLICE_PARAMS: &[FxParam] = &[
         valid: "`\"normal\"`, `\"loop\"` o `\"pingpong\"`",
         values: &["normal", "loop", "pingpong"],
         template: "play = \"${loop}\"",
+        automate: Auto::No(DISCRETE),
     },
     FxParam {
         name: "crossfade",
@@ -2279,6 +2390,7 @@ pub const SLICE_PARAMS: &[FxParam] = &[
         valid: "0–1000",
         values: &[],
         template: "crossfade = ${10}",
+        automate: Auto::No(AT_BIRTH),
     },
 ];
 
@@ -2292,6 +2404,7 @@ pub const SAMPLE_PARAMS: &[FxParam] = &[
         valid: "`true`, `false` o -120–0",
         values: &[],
         template: "trim = ${true}",
+        automate: Auto::No(AT_LOAD),
     },
     FxParam {
         name: "normalize",
@@ -2300,6 +2413,7 @@ pub const SAMPLE_PARAMS: &[FxParam] = &[
         valid: "`true`, `false` o -60–0",
         values: &[],
         template: "normalize = ${true}",
+        automate: Auto::No(AT_LOAD),
     },
     FxParam {
         name: "fade_in",
@@ -2308,6 +2422,7 @@ pub const SAMPLE_PARAMS: &[FxParam] = &[
         valid: "0–10000",
         values: &[],
         template: "fade_in = ${5}",
+        automate: Auto::No(AT_LOAD),
     },
     FxParam {
         name: "fade_out",
@@ -2316,6 +2431,7 @@ pub const SAMPLE_PARAMS: &[FxParam] = &[
         valid: "0–10000",
         values: &[],
         template: "fade_out = ${20}",
+        automate: Auto::No(AT_LOAD),
     },
 ];
 
@@ -2328,6 +2444,7 @@ pub const INSTRUMENT_PARAMS: &[FxParam] = &[
         valid: "una nota (`\"C3\"`, `\"F#2\"`, `\"Bb4\"`) o un número MIDI (0–127)",
         values: &[],
         template: "root = \"${C3}\"",
+        automate: Auto::No(INSTRUMENT),
     },
     FxParam {
         name: "loop",
@@ -2336,6 +2453,7 @@ pub const INSTRUMENT_PARAMS: &[FxParam] = &[
         valid: "dentro del sample, con el fin después del inicio",
         values: &[],
         template: "loop = { ${200}, ${600} }",
+        automate: Auto::No(AT_LOAD),
     },
     FxParam {
         name: "voices",
@@ -2344,6 +2462,7 @@ pub const INSTRUMENT_PARAMS: &[FxParam] = &[
         valid: "1–16",
         values: &[],
         template: "voices = ${4}",
+        automate: Auto::No(STRUCTURE),
     },
     FxParam {
         name: "adsr",
@@ -2352,6 +2471,7 @@ pub const INSTRUMENT_PARAMS: &[FxParam] = &[
         valid: "ms de 0 a 10000; sustain de 0 a 1",
         values: &[],
         template: "adsr = { ${5}, ${80}, ${0.7}, ${300} }",
+        automate: Auto::No(INSTRUMENT),
     },
     FxParam {
         name: "crossfade",
@@ -2360,6 +2480,7 @@ pub const INSTRUMENT_PARAMS: &[FxParam] = &[
         valid: "0–1000",
         values: &[],
         template: "crossfade = ${20}",
+        automate: Auto::No(AT_LOAD),
     },
     FxParam {
         name: "keep",
@@ -2368,6 +2489,7 @@ pub const INSTRUMENT_PARAMS: &[FxParam] = &[
         valid: "`true` o `false`",
         values: &[],
         template: "keep = ${true}",
+        automate: Auto::No(DISCRETE),
     },
     FxParam {
         name: "formant",
@@ -2376,6 +2498,7 @@ pub const INSTRUMENT_PARAMS: &[FxParam] = &[
         valid: "-24–24 (necesita `keep = true`)",
         values: &[],
         template: "formant = ${0}",
+        automate: Auto::No(INSTRUMENT),
     },
 ];
 
@@ -2399,6 +2522,7 @@ pub const GRAIN_PARAMS: &[FxParam] = &[
         valid: "5–1000",
         values: &[],
         template: "size = ${80}",
+        automate: Auto::PerGrain,
     },
     FxParam {
         name: "density",
@@ -2407,6 +2531,7 @@ pub const GRAIN_PARAMS: &[FxParam] = &[
         valid: "0.5–400",
         values: &[],
         template: "density = ${20}",
+        automate: Auto::PerGrain,
     },
     FxParam {
         name: "pos",
@@ -2415,6 +2540,7 @@ pub const GRAIN_PARAMS: &[FxParam] = &[
         valid: "0–1",
         values: &[],
         template: "pos = ${0.5}",
+        automate: Auto::PerGrain,
     },
     FxParam {
         name: "speed",
@@ -2423,6 +2549,7 @@ pub const GRAIN_PARAMS: &[FxParam] = &[
         valid: "-4–4",
         values: &[],
         template: "speed = ${0.5}",
+        automate: Auto::PerGrain,
     },
     FxParam {
         name: "jitter",
@@ -2431,6 +2558,7 @@ pub const GRAIN_PARAMS: &[FxParam] = &[
         valid: "0–2000",
         values: &[],
         template: "jitter = ${20}",
+        automate: Auto::PerGrain,
     },
     FxParam {
         name: "pitch",
@@ -2439,6 +2567,7 @@ pub const GRAIN_PARAMS: &[FxParam] = &[
         valid: "-24–24",
         values: &[],
         template: "pitch = ${-12}",
+        automate: Auto::PerGrain,
     },
     FxParam {
         name: "spread",
@@ -2447,6 +2576,7 @@ pub const GRAIN_PARAMS: &[FxParam] = &[
         valid: "0–24",
         values: &[],
         template: "spread = ${3}",
+        automate: Auto::PerGrain,
     },
     FxParam {
         name: "seed",
@@ -2455,6 +2585,7 @@ pub const GRAIN_PARAMS: &[FxParam] = &[
         valid: "entero de 0 en adelante",
         values: &[],
         template: "seed = ${1}",
+        automate: Auto::No(SEED),
     },
 ];
 
@@ -2488,6 +2619,55 @@ pub const SLICE_TABLE: Effect = Effect {
     template: "{ attack = ${5}, release = ${40} }",
 };
 
+/// Parámetros de mezcla de la pista (`:gain()`, `:pan()`, `:send()`) y
+/// los demás valores de pista que se preguntan por una curva: si admiten
+/// `ramp()`/`lfo()` en lugar del número.
+pub const TRACK_PARAMS: &[FxParam] = &[
+    FxParam {
+        name: "gain",
+        description: "volumen de la pista (`:gain(g)`), después de los efectos",
+        default: Some("1"),
+        valid: "0–4",
+        values: &[],
+        template: "gain(${0.8})",
+        automate: Auto::Smooth,
+    },
+    FxParam {
+        name: "pan",
+        description: "pan de la pista (`:pan(p)`), después del volumen",
+        default: Some("0"),
+        valid: "-1–1",
+        values: &[],
+        template: "pan(${-0.3})",
+        automate: Auto::Smooth,
+    },
+    FxParam {
+        name: "send",
+        description: "nivel de un envío (`:send(bus, nivel)`)",
+        default: Some("0"),
+        valid: "0–1",
+        values: &[],
+        template: "send(\"${reverb}\", ${0.3})",
+        automate: Auto::Smooth,
+    },
+    FxParam {
+        name: "swing",
+        description: "swing de la pista (`:swing(porcentaje)`)",
+        default: Some("50"),
+        valid: "50–75",
+        values: &[],
+        template: "swing(${56})",
+        automate: Auto::No(
+            "se convierte al cargar en el retraso de cada contratiempo (como `humanize`): es parte del patrón",
+        ),
+    },
+];
+
+/// Parámetro de pista por nombre (ver [`TRACK_PARAMS`]).
+pub fn track_param(name: &str) -> Option<&'static FxParam> {
+    TRACK_PARAMS.iter().find(|p| p.name == name)
+}
+
 /// Buses de envío para `bus(nombre, parámetros)` y `pista:send(nombre,
 /// nivel)`.
 pub const BUSES: &[Effect] = &[
@@ -2503,6 +2683,7 @@ pub const BUSES: &[Effect] = &[
                 valid: "`\"1/4\"`, `\"3/16\"`, `\"1/8\"` o `\"1/16\"`",
                 values: &["1/4", "3/16", "1/8", "1/16"],
                 template: "time = \"${1/8}\"",
+                automate: Auto::No(DELAY_TIME),
             },
             FxParam {
                 name: "feedback",
@@ -2511,6 +2692,7 @@ pub const BUSES: &[Effect] = &[
                 valid: "0–0.95",
                 values: &[],
                 template: "feedback = ${0.4}",
+                automate: Auto::Smooth,
             },
             FxParam {
                 name: "level",
@@ -2519,6 +2701,7 @@ pub const BUSES: &[Effect] = &[
                 valid: "0–1",
                 values: &[],
                 template: "level = ${0.8}",
+                automate: Auto::Smooth,
             },
         ],
         template: "{ time = \"${1/8}\", feedback = ${0.4} }",
@@ -2535,6 +2718,7 @@ pub const BUSES: &[Effect] = &[
                 valid: "0–1",
                 values: &[],
                 template: "size = ${0.7}",
+                automate: Auto::Smooth,
             },
             FxParam {
                 name: "damp",
@@ -2543,6 +2727,7 @@ pub const BUSES: &[Effect] = &[
                 valid: "0–1",
                 values: &[],
                 template: "damp = ${0.5}",
+                automate: Auto::Smooth,
             },
             FxParam {
                 name: "level",
@@ -2551,6 +2736,7 @@ pub const BUSES: &[Effect] = &[
                 valid: "0–1",
                 values: &[],
                 template: "level = ${0.8}",
+                automate: Auto::Smooth,
             },
         ],
         template: "{ size = ${0.7}, damp = ${0.5} }",
@@ -2704,20 +2890,9 @@ pub fn function(receiver: Receiver, name: &str) -> Option<&'static Function> {
 }
 
 /// Si el parámetro `param` del efecto `effect` (nombre o alias del
-/// registro) admite `ramp()` y `lfo()`: lo dice el propio motor
-/// ([`engine::Fx::params`]).
+/// registro) admite `ramp()` y `lfo()`: lo dice su [`FxParam::automate`].
 pub fn automatable(effect: &str, param: &str) -> bool {
-    let fx = match self::effect(effect).map(|e| e.name) {
-        Some("filter" | "lowpass" | "highpass") => engine::Fx::lowpass(1000.0),
-        Some("compressor") => engine::Fx::compressor(-18.0, 4.0),
-        Some("distortion") => engine::Fx::distortion(4.0, 1.0),
-        Some("gain") => engine::Fx::gain(1.0),
-        Some("bitcrush") => engine::Fx::bitcrush(8, 1),
-        Some("eq") => engine::Fx::eq(&[]),
-        Some("dyneq") => engine::Fx::DynEq(engine::DynEqParams::new(100.0)),
-        _ => return false,
-    };
-    fx.param_index(param).is_some()
+    self::effect(effect).is_some_and(|e| e.automatable(param))
 }
 
 /// Efecto de `:fx` por nombre o alias.
@@ -2796,6 +2971,78 @@ fn params_table(what: &str, effects: &[Effect]) -> String {
                 p.valid
             ));
         }
+    }
+    out.push('\n');
+    out
+}
+
+/// Todas las tablas de parámetros de sonido del registro, con su nombre
+/// para la guía (lo que se puede automatizar sale de aquí).
+pub fn sound_params() -> Vec<(String, &'static FxParam)> {
+    let mut out = Vec::new();
+    let mut add = |what: String, params: &'static [FxParam]| {
+        out.extend(params.iter().map(|p| (what.clone(), p)));
+    };
+    add("pista".into(), TRACK_PARAMS);
+    for e in EFFECTS {
+        // `lowpass` y `highpass` son el mismo filtro que `filter`.
+        if matches!(e.name, "lowpass" | "highpass") {
+            continue;
+        }
+        add(format!("fx(\"{}\")", e.name), e.params);
+    }
+    for b in BUSES {
+        add(format!("bus(\"{}\")", b.name), b.params);
+    }
+    add("cortes:set".into(), SLICE_PARAMS);
+    add(":grains".into(), GRAIN_PARAMS);
+    add("instrument".into(), INSTRUMENT_PARAMS);
+    add("sample".into(), SAMPLE_PARAMS);
+    out
+}
+
+/// «Qué se puede automatizar»: lo que admite `ramp()`/`lfo()` y cómo, y lo
+/// que no, con el porqué (todo de [`FxParam::automate`]).
+fn automation_table() -> String {
+    let params = sound_params();
+    let mut out = String::from(
+        "#### Qué se puede automatizar\n\n\
+         *Continuo*: la curva se evalúa cada 32 frames y se suaviza (~5 ms), \
+         también dentro de un golpe. *Por golpe*: cada golpe toma el valor de la \
+         curva al sonar y lo mantiene. *Por grano*: al nacer cada grano. Una curva \
+         en un parámetro que no la admite da error con la línea.\n\n\
+         | Dónde | Admiten curva |\n| --- | --- |\n",
+    );
+    let mut groups: Vec<(String, Vec<String>)> = Vec::new();
+    for (what, p) in &params {
+        if !p.automate.curves() {
+            continue;
+        }
+        let item = format!("{} ({})", code(p.name), p.automate.text());
+        match groups.iter_mut().find(|(w, _)| w == what) {
+            Some((_, items)) => items.push(item),
+            None => groups.push((what.clone(), vec![item])),
+        }
+    }
+    for (what, items) in groups {
+        out.push_str(&format!("| {} | {} |\n", code(&what), items.join(", ")));
+    }
+    out.push_str("\n| Dónde | No admiten curva | Por qué |\n| --- | --- | --- |\n");
+    // Los del mismo sitio y por lo mismo, en una fila.
+    let mut rows: Vec<(String, &str, Vec<String>)> = Vec::new();
+    for (what, p) in &params {
+        let Auto::No(why) = p.automate else { continue };
+        match rows.iter_mut().find(|(w, y, _)| w == what && *y == why) {
+            Some((_, _, names)) => names.push(code(p.name)),
+            None => rows.push((what.clone(), why, vec![code(p.name)])),
+        }
+    }
+    for (what, why, names) in rows {
+        out.push_str(&format!(
+            "| {} | {} | {why} |\n",
+            code(&what),
+            names.join(", ")
+        ));
     }
     out.push('\n');
     out
@@ -2897,6 +3144,9 @@ pub fn guide_markdown() -> String {
         }
         if let Some(example) = f.example {
             out.push_str(&format!("```lua\n{example}```\n\n"));
+        }
+        if (f.receiver, f.name) == (Receiver::Global, "lfo") {
+            out.push_str(&automation_table());
         }
     }
     out.push_str(

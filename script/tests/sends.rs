@@ -54,6 +54,7 @@ fn the_script_sounds_like_the_engine_with_the_same_sends() {
             size: 0.9,
             ..ReverbParams::default()
         },
+        ..Buses::default()
     };
     assert_eq!(script.buses, buses);
     assert_eq!(script.tracks[0].sends, [0.5, 0.25]);

@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::arrangement::{Arrangement, Place, Playlist, resume};
-use crate::automation::{Automation, mix};
+use crate::automation::{Automation, MIX_GAIN, MIX_PAN, MIX_PARAMS, MIX_SEND, mix};
 use crate::bus::{BUSES, Buses, Rack};
 use crate::fx::{Fx, FxState, MAX_FX, MAX_PARAMS};
 use crate::grain::{Cloud, Position};
@@ -759,6 +759,8 @@ struct Track {
     fading: Option<Voice>,
     /// Volumen actual, que se acerca suavemente al del patrón.
     gain: f32,
+    /// Pan actual, que se acerca suavemente al del patrón.
+    pan: f32,
     /// Estado de los efectos del patrón actual.
     fx: [FxState; MAX_FX],
     /// Subdisparos pendientes del paso actual (retrigger).
@@ -850,6 +852,7 @@ impl Default for Track {
             voice: None,
             fading: None,
             gain: 1.0,
+            pan: 0.0,
             fx: [FxState::Off; MAX_FX],
             retrig: None,
             live_mute: false,
@@ -2317,8 +2320,34 @@ impl Engine {
         let mut live = [false; MAX_TRACKS];
         for t in mix_order(&listens) {
             let track = &mut self.tracks[t];
-            let target = track.pattern.as_ref().map_or(1.0, |p| p.gain);
-            let target_sends = track.pattern.as_ref().map_or([0.0; BUSES], |p| p.sends);
+            let base = (
+                track.pattern.as_ref().map_or(1.0, |p| p.gain),
+                track.pattern.as_ref().map_or(0.0, |p| p.pan),
+                track.pattern.as_ref().map_or([0.0; BUSES], |p| p.sends),
+            );
+            // Volumen, pan y envíos con curva: el destino de cada bloque de
+            // MOD_BLOCK frames (`k`, desde el inicio del trozo).
+            let curves = track
+                .pattern
+                .as_ref()
+                .map_or([None; MIX_PARAMS], |p| p.mix_curves);
+            let curved = curves.iter().any(Option::is_some);
+            let mix_at = |k: usize| {
+                if !curved {
+                    return base;
+                }
+                let steps = clock.steps + k as f64 / clock.frames_per_step;
+                let seconds = clock.seconds + k as f64 / rate as f64;
+                let at = |i: usize, fixed: f32| {
+                    curves[i].map_or(fixed, |c| c.value(steps, seconds, false))
+                };
+                (
+                    at(MIX_GAIN, base.0),
+                    at(MIX_PAN, base.1),
+                    std::array::from_fn(|b| at(MIX_SEND + b, base.2[b])),
+                )
+            };
+            let (mut target, mut target_pan, mut target_sends) = mix_at(0);
             let audible = if track.muted() || (any_solo && !track.soloed()) {
                 0.0
             } else {
@@ -2333,6 +2362,7 @@ impl Engine {
                 // En silencio no hay nada que suavizar: el siguiente golpe
                 // empieza ya con el volumen nuevo y los efectos sin memoria.
                 track.gain = target;
+                track.pan = target_pan;
                 track.sends = target_sends;
                 for state in &mut track.fx {
                     state.reset();
@@ -2428,8 +2458,9 @@ impl Engine {
 
             let master = &mut self.master[..2 * n];
             let mut peak = 0.0f32;
-            let sending: [bool; BUSES] =
-                std::array::from_fn(|b| target_sends[b] > 0.0 || track.sends[b] > 0.0);
+            let sending: [bool; BUSES] = std::array::from_fn(|b| {
+                target_sends[b] > 0.0 || track.sends[b] > 0.0 || curves[MIX_SEND + b].is_some()
+            });
             for (k, (dst, src)) in master
                 .as_chunks_mut::<2>()
                 .0
@@ -2437,12 +2468,21 @@ impl Engine {
                 .zip(buf.as_chunks::<2>().0)
                 .enumerate()
             {
+                if curved && k > 0 && k % MOD_BLOCK == 0 {
+                    (target, target_pan, target_sends) = mix_at(k);
+                }
                 track.gain += (target - track.gain) * smoothing;
                 // Mute y solo también se suavizan: las voces siguen su curso
                 // (al quitar el mute suenan por donde iban) pero no se oyen.
                 track.audible += (audible - track.audible) * smoothing;
                 let gain = track.gain * track.audible;
-                let (l, r) = (gain * src[0], gain * src[1]);
+                let (mut l, mut r) = (gain * src[0], gain * src[1]);
+                // Pan de la pista (ley de balance); al centro, nada.
+                if target_pan != 0.0 || track.pan != 0.0 {
+                    track.pan += (target_pan - track.pan) * smoothing;
+                    l *= (1.0 - track.pan).min(1.0);
+                    r *= (1.0 + track.pan).min(1.0);
+                }
                 dst[0] += l;
                 dst[1] += r;
                 peak = peak.max(l.abs()).max(r.abs());
@@ -2494,6 +2534,11 @@ impl Engine {
             fed,
             n,
             self.transport.bpm(),
+            &crate::bus::BusClock {
+                steps: clock.steps,
+                seconds: clock.seconds,
+                frames_per_step: clock.frames_per_step,
+            },
             &mut self.master[..2 * n],
         );
         // La preescucha, directa al master.
@@ -2755,6 +2800,7 @@ fn put_pattern(track: &mut Track, new: Option<Pattern>, sample_rate: u32) -> Opt
     // el primer golpe suena con él desde el principio.
     if !track.sounding() {
         track.gain = track.pattern.as_ref().map_or(1.0, |p| p.gain);
+        track.pan = track.pattern.as_ref().map_or(0.0, |p| p.pan);
         track.sends = track.pattern.as_ref().map_or([0.0; BUSES], |p| p.sends);
     }
     for (i, state) in track.fx.iter_mut().enumerate() {
