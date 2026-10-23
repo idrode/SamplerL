@@ -349,8 +349,8 @@ fn render_sequence(path: &str, out: &str, sequence: &Sequence) -> Result<(), Box
     let audio = engine::offline::render(&mut engine, frames as usize, 2);
     engine::offline::write_wav(out, &audio, 2, RENDER_RATE)?;
     println!(
-        "{out}: {} compases a {} BPM, {} frames ({:.2} s)",
-        sequence.bars,
+        "{out}: {} a {} BPM, {} frames ({:.2} s)",
+        script::bars_text(sequence.bars),
         sequence.bpm,
         frames,
         frames as f64 / RENDER_RATE as f64
@@ -377,8 +377,9 @@ fn detect_tempo(path: &str) -> Result<(), BoxError> {
     );
     if let Some((bpm, n)) = guess.alternative {
         println!(
-            "  también encaja {} BPM con {n} compases",
-            engine::bpm::round_bpm(bpm)
+            "  también encaja {} BPM con {}",
+            engine::bpm::round_bpm(bpm),
+            script::bars_text(n as u64)
         );
     }
     Ok(())
@@ -400,7 +401,7 @@ fn render_track(path: &str, out: &str, track: &str, bars: Option<u64>) -> Result
         .render_track(RENDER_RATE, bars, track)
         .ok_or_else(|| format!("--track: no hay ninguna pista \"{track}\""))??;
     engine::offline::write_wav(out, &audio, 2, RENDER_RATE)?;
-    println!("{out}: pista \"{track}\", {bars} compases");
+    println!("{out}: pista \"{track}\", {}", script::bars_text(bars));
     Ok(())
 }
 
@@ -471,7 +472,8 @@ fn render_script(
     let audio = engine::offline::render(&mut engine, frames as usize, 2);
     engine::offline::write_wav(out, &audio, 2, RENDER_RATE)?;
     println!(
-        "{out}: {bars} compases a {bpm} BPM, {frames} frames ({:.2} s)",
+        "{out}: {} a {bpm} BPM, {frames} frames ({:.2} s)",
+        script::bars_text(bars),
         frames as f64 / RENDER_RATE as f64
     );
     Ok(())

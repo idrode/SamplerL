@@ -957,6 +957,13 @@ fn export_renders_the_mix_to_wav() {
     let (spec, samples) = read_wav(&out);
     assert_eq!((spec.channels, spec.sample_rate), (2, RATE));
     assert_eq!(samples.len() / 2, 2 * 16 * STEP);
+    // Un compás, en singular.
+    command(&mut app, "exportar uno.wav 1");
+    assert!(
+        app.view().message.contains("1 compás a 120 BPM (2.0 s)"),
+        "{}",
+        app.view().message
+    );
 
     // Lo mismo que renderizar la canción por separado (a 16 bits).
     let mut host = script::ScriptHost::new(RATE);

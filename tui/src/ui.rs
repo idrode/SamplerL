@@ -258,7 +258,7 @@ impl Widget for ClashPanel<'_> {
         };
         let block = Block::bordered()
             .border_style(border)
-            .title(format!(" choques · {} compases ", table.bars));
+            .title(format!(" choques · {} ", script::bars_text(table.bars)));
         let mut inner = block.inner(area);
         block.render(area, buf);
         if inner.height == 0 || inner.width == 0 {

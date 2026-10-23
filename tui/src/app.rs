@@ -589,8 +589,9 @@ impl App {
         }
         self.message = match result {
             Ok(frames) => format!(
-                "exportado {}: {bars} compases a {bpm} BPM ({:.1} s){note}",
+                "exportado {}: {} a {bpm} BPM ({:.1} s){note}",
                 path.display(),
+                script::bars_text(bars as u64),
                 frames as f64 / self.sample_rate as f64
             ),
             Err(e) => format!("no se pudo exportar: {e}"),
@@ -858,7 +859,8 @@ impl App {
         });
         self.message = match result {
             Ok(()) => format!(
-                "remuestreo de {label}: {bars} compases en {} · úsalo con sample(\"{file}\")",
+                "remuestreo de {label}: {} en {} · úsalo con sample(\"{file}\")",
+                script::bars_text(bars as u64),
                 path.display()
             ),
             Err(e) => format!("no se pudo remuestrear: {e}"),
@@ -2560,17 +2562,17 @@ impl App {
         self.last_masking = Some((report.clone(), self.loads));
         if clashes.is_empty() {
             self.message = format!(
-                "sin choques de frecuencia entre {} pistas en {} compases{note}",
+                "sin choques de frecuencia entre {} pistas en {}{note}",
                 report.tracks.len(),
-                report.bars
+                script::bars_text(report.bars)
             );
             return;
         }
         self.completion = None;
         self.message = format!(
-            "{} choques en {} compases{note}",
+            "{} choques en {}{note}",
             clashes.len(),
-            report.bars
+            script::bars_text(report.bars)
         );
         self.masking = Some(MaskingPicker {
             query: String::new(),
@@ -3895,8 +3897,8 @@ impl App {
                 };
                 BlockPickerView {
                     title: format!(
-                        "choques de frecuencia · {} compases · {} pistas · Enter propone el EQ",
-                        p.report.bars,
+                        "choques de frecuencia · {} · {} pistas · Enter propone el EQ",
+                        script::bars_text(p.report.bars),
                         p.report.tracks.len()
                     ),
                     confirm,

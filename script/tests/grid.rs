@@ -212,10 +212,8 @@ fn the_whole_sample_is_slice_grid_1_not_slice_1() {
     let whole =
         song("track(\"d\", sample(\"dos_golpes.wav\"):slice_grid(1)):steps(\"1 . . .  . . . .  . . . .  . . . .\")")
             .unwrap();
-    assert_eq!(
-        whole.tracks[0].slices.iter().collect::<Vec<_>>(),
-        [0..48_000]
-    );
+    assert_eq!(whole.tracks[0].slices.len(), 1);
+    assert_eq!(whole.tracks[0].slices.iter().next().unwrap(), 0..48_000);
 
     let loudest =
         song("track(\"d\", sample(\"dos_golpes.wav\"):slice(1)):steps(\"1 . . .  . . . .  . . . .  . . . .\")")

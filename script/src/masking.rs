@@ -368,9 +368,9 @@ impl MaskingReport {
     /// por choque y una tabla por pareja con las bandas que chocan.
     pub fn text(&self) -> String {
         let mut out = format!(
-            "choques de frecuencia: {} pistas, {} compases (ventanas de {} ms; activa a menos de {} dB de su máximo; choque hasta {} dB de diferencia; informe desde {})\n",
+            "choques de frecuencia: {} pistas, {} (ventanas de {} ms; activa a menos de {} dB de su máximo; choque hasta {} dB de diferencia; informe desde {})\n",
             self.tracks.len(),
-            self.bars,
+            crate::bars_text(self.bars),
             self.options.window_ms,
             self.options.active_range_db,
             self.options.level_gap_db,

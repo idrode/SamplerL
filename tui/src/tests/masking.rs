@@ -121,7 +121,7 @@ fn the_command_line_prints_the_same_report() {
     let (path, _app, _engine) = sines("masking_cli", &two(300, 300));
     let report = crate::masking_report(&path).unwrap();
     assert!(
-        report.starts_with("choques de frecuencia: 2 pistas, 1 compases"),
+        report.starts_with("choques de frecuencia: 2 pistas, 1 compás"),
         "{report}"
     );
     assert!(report.contains("a × b  315 Hz"), "{report}");

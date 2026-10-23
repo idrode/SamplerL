@@ -38,6 +38,24 @@ use engine::{
     SendError, SliceFx, SliceShape, Slices, Step, valid_bpm,
 };
 pub mod api;
+
+/// `n` compases como texto: «1 compás», «4 compases».
+pub fn bars_text(n: u64) -> String {
+    if n == 1 {
+        "1 compás".to_string()
+    } else {
+        format!("{n} compases")
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn one_bar_is_singular() {
+    assert_eq!(bars_text(1), "1 compás");
+    assert_eq!(bars_text(0), "0 compases");
+    assert_eq!(bars_text(24), "24 compases");
+}
+
 pub mod blocks;
 pub mod masking;
 pub mod patterns;
