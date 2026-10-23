@@ -173,10 +173,21 @@ Recuerda respetar los derechos de los samples si publicas lo que hagas.
 ### Abrir la interfaz
 
 ```sh
-cargo run -p tui -- --edit mi-cancion.lua
+cargo run -p tui -- --edit mi-cancion.lua --new
 ```
 
-Si el archivo no existe, se abre una plantilla. A la izquierda está el
+Con `--new`, si el script no existe se abre una plantilla (el archivo se
+crea al guardar, en una carpeta que ya tiene que existir); si existe, se
+abre tal cual. Sin `--new`, una ruta que no existe es un error que dice
+dónde se ha buscado (así una errata en el nombre no abre en silencio un
+script vacío):
+
+```text
+error: mi-canción.lua: el script no existe (buscado en /home/yo/sampler/mi-canción.lua); para empezar uno nuevo con la plantilla: tui --edit mi-canción.lua --new
+```
+
+Un proyecto (`.sampler`) que no existe es siempre un error: se crea desde
+la interfaz con la orden `guardar`. A la izquierda está el
 editor; a la derecha, el estado del motor, la forma de onda del sample y el
 tracker; abajo, los efectos de cada pista. Ctrl-S guarda y carga. El
 tracker enseña sus 16 pasos enteros en cuanto caben (le quita filas a la
@@ -187,7 +198,7 @@ siguiendo el paso que suena.
 mueve), pero el audio se tira. Para oírlo por la tarjeta:
 
 ```sh
-cargo run -p tui -- --edit mi-cancion.lua --allow-audio
+cargo run -p tui -- --edit mi-cancion.lua --new --allow-audio
 ```
 
 ### Leer el panel de efectos
@@ -224,7 +235,7 @@ cierra el editor, la principal sigue sonando, y si se cae la principal, el
 editor sigue editando y guardando y se reconecta solo cuando vuelve.
 
 ```sh
-cargo run -p tui -- --edit mi-cancion.lua --split [--allow-audio] [--allow-midi]
+cargo run -p tui -- --edit mi-cancion.lua --split [--new] [--allow-audio] [--allow-midi]
 ```
 
 La principal abre el editor con el comando de `[editor] terminal` de
@@ -3071,12 +3082,13 @@ la carpeta de la canción: `cd ~/musica/primera`.
 **Abre la canción con el editor dentro**, en una sola ventana:
 
 ```sh
-tui --edit cancion.lua
+tui --edit cancion.lua --new
 ```
 
-`cancion.lua` todavía no existe, así que el editor abre una **plantilla**
-(un break de ejemplo con `amen.wav`). El archivo no se crea hasta que
-guardas con Ctrl-S. A la izquierda está el editor; a la derecha, el
+`cancion.lua` todavía no existe: `--new` le dice al programa que lo
+quieres empezar, y el editor abre una **plantilla** (un break de ejemplo
+con `amen.wav`). El archivo no se crea hasta que guardas con Ctrl-S. Con
+el archivo ya guardado, `--new` no cambia nada: lo abre tal cual. A la izquierda está el editor; a la derecha, el
 estado del motor, la forma de onda del sample y el tracker; abajo, los
 efectos de cada pista (ver «Abrir la interfaz» en la
 [sección 1](#1-inicio-rápido)). Ctrl-Q sale.
@@ -3085,10 +3097,12 @@ Así no suena nada: el tracker se mueve, pero el audio se tira. Para oírlo
 (¡con el volumen bajo!), sal y vuelve a abrir con `--allow-audio`:
 
 ```sh
-tui --edit cancion.lua --allow-audio
+tui --edit cancion.lua --new --allow-audio
 ```
 
-**Si no pasa:** si el borde del editor se pone rojo y el pie dice
+**Si no pasa:** sin `--new`, si `cancion.lua` no existe, el programa no
+se abre y dice `el script no existe (buscado en ...)`: mira la carpeta en
+la que estás y el nombre, o añade `--new` si lo quieres empezar. Si el borde del editor se pone rojo y el pie dice
 `error leyendo WAV`, la plantilla no encuentra `amen.wav`: vuelve al
 paso 1. Si `tui` no se encuentra, el `alias` no está puesto en esta
 terminal.
@@ -3109,7 +3123,7 @@ maneras:
    (con foot: `terminal = "foot --app-id sampler-editor"`). Luego:
 
    ```sh
-   tui --edit cancion.lua --split --allow-audio
+   tui --edit cancion.lua --new --split --allow-audio
    ```
 
 2. **Abrir el editor a mano**, sin esa línea o por SSH (en otro panel de
@@ -3122,8 +3136,8 @@ maneras:
 
    El editor busca la ventana principal de ese mismo script y se conecta.
    Mientras no la encuentra, lo dice y lo vuelve a intentar cada segundo.
-   Con un archivo que no existe, las dos ventanas parten de la misma
-   plantilla.
+   Con un archivo que todavía no existe (la principal abierta con
+   `--new`), las dos ventanas parten de la misma plantilla.
 
 3. **Sacarlo y meterlo en caliente**, sin que deje de sonar. F1 abre la
    paleta de comandos; escribe un trozo del nombre de la acción y Enter.
@@ -4113,6 +4127,7 @@ end)
 | No se oye nada, pero el tracker se mueve | ¿Abriste con `--allow-audio`? ¿El volumen del sistema está a cero (`wpctl get-volume @DEFAULT_AUDIO_SINK@`)? ¿Hay alguna pista en solo (`S` en el tracker)? F1 «Quitar mute y solo» |
 | El tracker no se mueve | Ctrl-T arranca. El secuenciador arranca solo con la primera carga buena: si el script tiene un error desde el principio, corrígelo y Ctrl-S |
 | Borde rojo en el editor | El error está al pie; Ctrl-G va a su línea. Sigue sonando lo anterior |
+| `el script no existe (buscado en ...)` al abrir | Estás en otra carpeta o el nombre tiene una errata. Para empezar un script nuevo, `--new` (paso 2) |
 | `error leyendo WAV` | La ruta del sample (paso 1): nombre, mayúsculas, carpeta. ¿Es un WAV de verdad? Conviértelo con `ffmpeg` |
 | `la pista "x" no existe` | Para crear una pista hacen falta los cortes: `track("x", cortes)`. `track("x")` solo recupera una ya creada (paso 5) |
 | `el corte N no existe` | El detector encontró menos golpes que los que pediste: quita ese número del patrón o pide menos cortes |

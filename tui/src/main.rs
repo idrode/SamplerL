@@ -27,6 +27,7 @@ use engine::{DetectOptions, Detector, Pattern, Slices, Step};
 
 const USAGE: &str = "\
 uso: tui --edit <canción.lua | proyecto.sampler> [--allow-audio] [--allow-midi]   (interfaz)
+     tui --edit <canción.lua> --new [...]         (un script nuevo, con la plantilla)
      tui --edit <canción.lua | proyecto.sampler> --split [...]  (el editor en otra ventana)
      tui --window-editor <canción.lua | proyecto.sampler>    (editor de una --split en marcha)
      tui <archivo.wav> --render <salida.wav>
@@ -52,6 +53,8 @@ uso: tui --edit <canción.lua | proyecto.sampler> [--allow-audio] [--allow-midi]
   --analyze-masking  renderiza offline cada pista en solo (un ciclo entero de la
                canción, hasta 256 compases) y dice en qué bandas chocan
   --allow-midi abre los puertos MIDI virtuales «sampler entrada» y «sampler salida» (ALSA)
+  --new      con --edit: si el script no existe, empieza uno con la plantilla (se
+               crea al guardar); sin --new, una ruta que no existe es un error
   --split    con --edit: el motor y las vistas aquí y el editor en una terminal nueva
                ([editor] terminal en config.toml); se hablan por un socket local
   --window-editor  abre solo el editor y conecta con la ventana principal de ese script
@@ -106,6 +109,7 @@ fn run() -> Result<(), BoxError> {
     let mut track = None;
     let mut masking = false;
     let mut split = false;
+    let mut new = false;
     let mut window_editor = None;
     while let Some(arg) = args.next() {
         let mut value = || {
@@ -138,6 +142,7 @@ fn run() -> Result<(), BoxError> {
             "--track" => track = Some(value()?),
             "--edit" => edit = Some(value()?),
             "--split" => split = true,
+            "--new" => new = true,
             "--window-editor" => window_editor = Some(value()?),
             "--detector" => {
                 detector = Some(match value()?.as_str() {
@@ -171,6 +176,7 @@ fn run() -> Result<(), BoxError> {
     if let Some(target) = window_editor {
         if edit.is_some()
             || split
+            || new
             || allow_audio
             || allow_midi
             || path.is_some()
@@ -189,10 +195,14 @@ fn run() -> Result<(), BoxError> {
     if split && edit.is_none() {
         return Err(format!("--split va con --edit\n{USAGE}").into());
     }
+    if new && edit.is_none() {
+        return Err(format!("--new va con --edit\n{USAGE}").into());
+    }
     if let Some(edit) = edit {
         if path.is_some() || script.is_some() || render_to.is_some() || pattern.is_some() {
             return Err(format!("--edit no se combina con otras opciones\n{USAGE}").into());
         }
+        check_edit_target(std::path::Path::new(&edit), new)?;
         return run_editor(std::path::Path::new(&edit), allow_audio, allow_midi, split);
     }
     if let Some(script) = script {
@@ -516,6 +526,42 @@ fn play_script(path: &str) -> Result<(), BoxError> {
 /// nula (a ritmo real, sin abrir la tarjeta): se ve todo y no suena nada.
 /// Con `split`, esta es la ventana principal y el editor se abre en una
 /// terminal nueva.
+/// Lo que abre `--edit`: tiene que existir, salvo un script con `--new`
+/// (empieza con la plantilla y se crea al guardar, en una carpeta que ya
+/// existe). Un proyecto nuevo se hace con la orden `guardar`.
+fn check_edit_target(path: &std::path::Path, new: bool) -> Result<(), String> {
+    if path.exists() {
+        return Ok(());
+    }
+    let shown = path.display();
+    let full = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    if path
+        .extension()
+        .is_some_and(|e| e == script::project::EXTENSION)
+    {
+        return Err(format!(
+            "{shown}: el proyecto no existe (buscado en {}); un proyecto se crea desde la \
+             interfaz con la orden «guardar»",
+            full.display()
+        ));
+    }
+    if !new {
+        return Err(format!(
+            "{shown}: el script no existe (buscado en {}); para empezar uno nuevo con la \
+             plantilla: tui --edit {shown} --new",
+            full.display()
+        ));
+    }
+    let parent = full.parent().unwrap_or(std::path::Path::new("/"));
+    if !parent.is_dir() {
+        return Err(format!(
+            "{shown}: la carpeta {} no existe; créala antes (mkdir -p)",
+            parent.display()
+        ));
+    }
+    Ok(())
+}
+
 fn run_editor(
     path: &std::path::Path,
     allow_audio: bool,

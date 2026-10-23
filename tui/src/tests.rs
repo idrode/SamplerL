@@ -2495,3 +2495,39 @@ fn a_burst_in_play_mode_plays_pads() {
     app.paste("x\ny");
     assert_eq!(app.editor.lines(), before);
 }
+
+/// `--edit` con una ruta que no existe es un error claro, salvo un script
+/// con `--new` en una carpeta que existe; un proyecto, nunca.
+#[test]
+fn edit_refuses_a_missing_script_unless_new() {
+    let existing = fixture("edit_target", Some("bpm(120)\n"));
+    let folder = existing.parent().unwrap();
+    assert_eq!(crate::check_edit_target(&existing, false), Ok(()));
+    assert_eq!(crate::check_edit_target(&existing, true), Ok(()));
+
+    let missing = folder.join("nueva.lua");
+    let error = crate::check_edit_target(&missing, false).unwrap_err();
+    assert!(
+        error.contains("el script no existe")
+            && error.contains(&format!("tui --edit {} --new", missing.display())),
+        "{error}"
+    );
+    assert_eq!(crate::check_edit_target(&missing, true), Ok(()));
+    assert!(!missing.exists(), "comprobar no crea nada");
+
+    let nowhere = folder.join("no-hay/nueva.lua");
+    let error = crate::check_edit_target(&nowhere, true).unwrap_err();
+    assert!(
+        error.contains("la carpeta") && error.contains("no existe"),
+        "{error}"
+    );
+
+    let project = folder.join("nuevo.sampler");
+    for new in [false, true] {
+        let error = crate::check_edit_target(&project, new).unwrap_err();
+        assert!(
+            error.contains("el proyecto no existe") && error.contains("guardar"),
+            "{error}"
+        );
+    }
+}

@@ -436,3 +436,7 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
 8. ✅ **Tutorial «Tu primera canción»** (sección 8 de la guía): una
    canción entera en trece pasos, para quien nunca ha usado el programa;
    un test sigue los pasos y carga cada estado del script.
+9. ✅ **Arreglos tras el tutorial**: la guía ya no dice que `slice(1)` es
+   el sample entero (es `slice_grid(1)`); las llaves en `melody()` dicen
+   dónde valen; «1 compás» en singular; y `tui --edit` con una ruta que
+   no existe es un error, salvo con `--new`.
