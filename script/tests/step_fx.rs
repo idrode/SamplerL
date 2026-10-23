@@ -271,3 +271,30 @@ fn spans_follow_braces_with_spaces_inside() {
     let third = spans[2].unwrap();
     assert_eq!(third.start, start + 19);
 }
+
+/// Las llaves en `melody()` (de un instrumento, de una pista de cortes o
+/// dentro de `every`) dicen dónde valen, no que falte el script.
+#[test]
+fn braces_in_a_melody_say_where_they_belong() {
+    let notes = "c{lp=800} . . .  . . . .  . . . .  . . . .";
+    for source in [
+        format!(
+            "local i = sample(\"break.wav\"):instrument()\ntrack(\"m\", i):melody(\"{notes}\")"
+        ),
+        format!("track(\"d\", b):melody(\"{notes}\")"),
+        format!(
+            "track(\"d\", b):steps(\"{STEPS}\"):every(2, function(c) c:melody(\"{notes}\") end)"
+        ),
+    ] {
+        let message = error(&source);
+        assert!(
+            message.contains("paso 1 (\"c{lp=800}\")")
+                && message.contains(
+                    "las llaves ({...}) solo valen en steps(\"...\") de una pista de cortes, \
+                     no en melody() ni en un instrumento: usa los efectos de la pista (:fx)"
+                )
+                && !message.contains("desde el script"),
+            "{source}\n→ {message}"
+        );
+    }
+}

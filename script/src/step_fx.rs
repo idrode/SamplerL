@@ -194,7 +194,7 @@ mod tests {
         assert!(
             engine::notation::parse_step("1{lp=800}")
                 .unwrap_err()
-                .contains("solo se entienden desde el script")
+                .contains("solo valen en steps(\"...\") de una pista de cortes")
         );
     }
 }

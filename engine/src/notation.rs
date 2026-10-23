@@ -413,7 +413,7 @@ pub fn parse_step_with(
     }
     if !written.is_empty() {
         let resolve = fx.ok_or(
-            "los efectos de un paso ({...}) solo se entienden desde el script (steps(\"...\"))",
+            "las llaves ({...}) solo valen en steps(\"...\") de una pista de cortes, en un script",
         )?;
         step.fx = Some(resolve(&written)?);
     }

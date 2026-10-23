@@ -284,6 +284,10 @@ pub fn notes(text: &str, root: i32) -> Result<String, String> {
 /// `e@0.5` → `1^4@0.5` con la raíz C4. Con `root`, también comprueba que
 /// cada nota esté a menos de ±36 semitonos de ella; sin ella (el editor no
 /// la sabe), los semitonos son sobre C4 y no se comprueban.
+/// Las llaves de un paso en `melody`: solo las entienden los cortes.
+pub const BRACES_IN_MELODY: &str = "las llaves ({...}) solo valen en steps(\"...\") de una pista de \
+     cortes, no en melody() ni en un instrumento: usa los efectos de la pista (:fx)";
+
 pub fn note_step(token: &str, root: Option<i32>) -> Result<String, String> {
     if token == "." || token == engine::notation::HOLD {
         return Ok(token.to_string());
@@ -319,6 +323,9 @@ pub fn note_step(token: &str, root: Option<i32>) -> Result<String, String> {
     }
     if rest.contains(['^', '%']) {
         return Err("el tono lo da la nota, sin ^ ni %".into());
+    }
+    if rest.contains('{') {
+        return Err(BRACES_IN_MELODY.into());
     }
     engine::notation::parse_step(&format!("1{rest}"))?;
     let mut step = String::from("1");

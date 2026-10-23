@@ -3713,9 +3713,10 @@ frecuencia detrás de la nota (`eb~800`): mueve el primer filtro de la
 pista desde esa nota hasta la siguiente. Ver «`~` (corte por paso)» en la
 [sección 3](#3-mini-notación).
 
-**Si no pasa:** `melody: paso 1 ("c{lp=800}"): los efectos de un paso
-({...}) solo se entienden desde el script (steps("..."))` quiere decir que
-en `melody` y en los instrumentos no hay llaves: usa `:fx()`. Si la
+**Si no pasa:** `melody: paso 1 ("c{lp=800}"): las llaves ({...}) solo
+valen en steps("...") de una pista de cortes, no en melody() ni en un
+instrumento: usa los efectos de la pista (:fx)`. En `melody` y en los
+instrumentos no hay llaves: usa `:fx()`. Si la
 melodía tapa la batería, baja su `:gain()` o sus envíos.
 
 ### Paso 11. Un bajo que no choque con el bombo
