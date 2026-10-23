@@ -626,20 +626,21 @@ mod tests {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../docs/GUIA.md");
         let guide = std::fs::read_to_string(path).unwrap();
         let start = guide.find("\n## 8. Tu primera canción").unwrap();
-        let tutorial = &guide[start..];
+        // Con los saltos de línea como espacios: una cita puede partirse.
+        let tutorial = guide[start..]
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
         let mut cited = 0;
         for (i, _) in tutorial.match_indices("F1 «") {
             let rest = &tutorial[i + "F1 «".len()..];
-            let name: String = rest[..rest.find('»').unwrap()]
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ");
+            let name = &rest[..rest.find('»').unwrap()];
             assert!(
                 ACTIONS.iter().any(|a| a.name == name),
                 "el tutorial cita F1 «{name}», que no está en la paleta"
             );
             cited += 1;
         }
-        assert!(cited >= 8, "solo {cited} acciones citadas");
+        assert!(cited >= 14, "solo {cited} acciones citadas");
     }
 }

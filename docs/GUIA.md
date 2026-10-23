@@ -2940,6 +2940,11 @@ en otra sección de la guía no se repite aquí: hay un enlace.
 9. [Líneas melódicas](#paso-9-líneas-melódicas)
 10. [Efectos sobre la melodía](#paso-10-efectos-sobre-la-melodía)
 11. [Un bajo que no choque con el bombo](#paso-11-un-bajo-que-no-choque-con-el-bombo)
+12. [Variación y estructura](#paso-12-variación-y-estructura)
+13. [Guardar, versiones y exportar](#paso-13-guardar-versiones-y-exportar)
+- [El script final](#el-script-final)
+- [Si algo no suena, mira esto](#si-algo-no-suena-mira-esto)
+- [Para seguir](#para-seguir)
 
 **Cómo crece el script.** El script de la canción se escribe entero una
 vez, en el paso 3. Después, cada bloque de código dice qué hacer con él:
@@ -3321,7 +3326,7 @@ local perc = sample("perc.wav"):stretch(120):slice_grid(1)
 
 track("perc", perc)
   :steps("1 . . .  . . . .  . . . .  . . . .")
-  :gain(0.6)
+  :gain(0.4)
 ```
 
 Ctrl-S. Ahora suenan dos pistas: el tracker tiene dos columnas y el panel
@@ -3340,7 +3345,7 @@ Qué hace cada parte:
   cambiar su tono**: cada golpe cae en su sitio. La vista del sample lo
   dice (`120→170 BPM`). Sin el número, `stretch()` usa el tempo que
   detecta (el de `--detect-bpm`, paso 3).
-- `gain(0.6)`: el volumen de la pista (1 lo deja igual).
+- `gain(0.4)`: el volumen de la pista (1 lo deja igual).
 
 Pon el tempo de **tu** loop en `stretch(...)`. Va bien entre ×0,7 y
 ×1,4 (de 120 a 170 es casi el límite). Ver `sample:stretch` en la
@@ -3444,7 +3449,7 @@ track("drums", amen)
   :fx("highpass", { cutoff = 40 })
   :fx("compressor", { threshold = -14, ratio = 3, attack = 10, makeup = 2 })
   :send("reverb", 0.1)
-  :gain(0.8)
+  :gain(0.6)
 ```
 
 - `highpass` a 40 Hz quita los graves que no se oyen pero ocupan sitio.
@@ -3463,7 +3468,7 @@ track("perc", perc)
   :fx("bitcrush", { bits = 8, downsample = 2 })
   :pan(lfo("2 compases", -0.5, 0.5))
   :send("delay", 0.25)
-  :gain(0.6)
+  :gain(0.4)
 ```
 
 - `ramp(1500, 9000, "4 compases")`: en lugar de un número fijo, el corte
@@ -3510,7 +3515,7 @@ track("drums", amen)
   :fx("highpass", { cutoff = 40 })
   :fx("compressor", { threshold = -14, ratio = 3, attack = 10, makeup = 2 })
   :send("reverb", 0.1)
-  :gain(0.8)
+  :gain(0.6)
 
 local perc = sample("perc.wav"):stretch(120):slice_grid(1)
 
@@ -3520,7 +3525,7 @@ track("perc", perc)
   :fx("bitcrush", { bits = 8, downsample = 2 })
   :pan(lfo("2 compases", -0.5, 0.5))
   :send("delay", 0.25)
-  :gain(0.6)
+  :gain(0.4)
 ```
 
 ### Paso 8. Abrir un instrumento
@@ -3806,7 +3811,7 @@ track("drums", amen)
   :fx("highpass", { cutoff = 40 })
   :fx("compressor", { threshold = -14, ratio = 3, attack = 10, makeup = 2 })
   :send("reverb", 0.1)
-  :gain(0.8)
+  :gain(0.6)
 
 local perc = sample("perc.wav"):stretch(120):slice_grid(1)
 
@@ -3816,7 +3821,7 @@ track("perc", perc)
   :fx("bitcrush", { bits = 8, downsample = 2 })
   :pan(lfo("2 compases", -0.5, 0.5))
   :send("delay", 0.25)
-  :gain(0.6)
+  :gain(0.4)
 
 local teclas = sample("nota.wav"):instrument({
   root = "C4", voices = 6, adsr = { 10, 300, 0.6, 400 }, loop = { 300, 1200 },
@@ -3850,3 +3855,289 @@ track("bajo", grave)
 
 priority({ "drums", "bajo" })
 ```
+
+### Paso 12. Variación y estructura
+
+Un loop que se repite igual cansa. Primero, pequeñas variaciones dentro
+del loop; luego, partes distintas: intro, drop y break.
+
+**Rellenos y azar en la batería.** Cambia el párrafo de `track("drums",
+amen)`:
+
+```lua cambia
+track("drums", amen)
+  :steps("kick . 2 2@0.4  snare . 4{hp=4000} .  kick kick^-2 2 .  snare . snare'r2 2r4{lp=300>9000}")
+  :fill("roll", 4)
+  :chance(0.1, "retrig", 3)
+  :fx("highpass", { cutoff = 40 })
+  :fx("compressor", { threshold = -14, ratio = 3, attack = 10, makeup = 2 })
+  :send("reverb", 0.1)
+  :gain(0.6)
+```
+
+- `fill("roll", 4)`: el último tiempo de cada 4 compases se rompe en
+  repeticiones cada vez más rápidas (otros rellenos: `stutter`,
+  `reverse`, `pitch`, `mute`; tabla en `pista:fill`).
+- `chance(0.1, "retrig", 3)`: cada golpe tiene un 10 % de probabilidad de
+  repetirse 3 veces. El azar se tira al cargar, para 16 compases que se
+  repiten: cada Ctrl-S lo vuelve a tirar.
+
+**Otra respuesta en la melodía.** `every(n, función)` cambia un compás de
+cada `n`: los compases 1, 3, 5... (el primero de cada 2, contando desde
+el principio). Cambia el párrafo de `track("teclas", teclas)`:
+
+```lua cambia
+track("teclas", teclas)
+  :melody("c . eb .  g . eb .  f _ _ .  g _ bb _")
+  :every(2, function(c) c:melody("c . eb .  g . eb .  bb _ g .  f _ eb _") end)
+  :fx("lowpass", { cutoff = lfo("1 compás", 900, 5000), q = 3 })
+  :fx("distortion", { drive = 3, mix = 0.3 })
+  :pan(-0.3)
+  :send("delay", 0.3)
+  :send("reverb", 0.25)
+  :gain(0.5)
+```
+
+Ctrl-S. La frase alterna dos finales. Dentro de la función, `c` es el
+compás: `c:melody`, `c:steps`, `c:reverse()`, `c:pitch(n)`... (tabla en
+`pista:every`).
+
+**Secciones.** Una sección dice qué cambia mientras suena; las pistas
+siguen definidas fuera. `arrange` pone las secciones en orden, cada una
+con sus compases. Añade al final:
+
+```lua añade
+section("intro", function()
+  track("drums"):mute()
+  track("teclas"):mute()
+  track("bajo"):mute()
+  track("acordes"):fx("lowpass", { cutoff = ramp(300, 6000, "4 compases") })
+end)
+
+section("drop", function() end)
+
+section("break", function()
+  track("drums"):steps("kick . . .  . . . .  . . snare .  . . . .")
+  track("perc"):mute()
+  track("bajo"):mute()
+end)
+
+arrange({ {"intro", 4}, {"drop", 8}, {"break", 4}, {"drop", 8} })
+```
+
+Ctrl-S. La canción tiene ahora 24 compases y vuelve a empezar al acabar:
+
+- **intro** (4 compases): solo la percusión y los acordes, con un filtro
+  que se abre.
+- **drop** (8): todo, como estaba.
+- **break** (4): un bombo y una caja sueltos, los acordes y la melodía.
+- **drop** (8) otra vez.
+
+Encima de la vista del sample, una fila enseña la línea de tiempo y por
+qué compás va (`▶ drop 3/8`). Dentro de una sección todo cuenta desde su
+primer compás: el `fill` cada 4 cae al final de cada 4 compases del drop.
+
+**Moverte en vivo.** En el modo tocar, `]` y `[` saltan a la sección
+siguiente o anterior, y `l` repite la que suena (otra vez, sigue la línea
+de tiempo). Los saltos entran al empezar el compás siguiente. F1 «Saltar a
+una sección» pide el nombre (`seccion break`). Más, en «Una canción
+entera con secciones» ([sección 6](#6-recetas-para-amen-breaks)).
+
+**Variante A/B.** Para comparar dos versiones del drop sin tocar el
+texto cada vez. Añade al final:
+
+```lua añade
+variant("drop", "B", function()
+  track("teclas"):mute()
+  track("drums"):steps("kick . 2 2  snare . 2 kick  . kick 2 .  snare . 2r4 2r8")
+end)
+```
+
+Ctrl-S. Suena la A (lo escrito). En el modo tocar, `v` (o F1 «Alternar
+variante A/B») pasa a la B en el compás siguiente: el drop sin melodía y
+con otra batería. El panel del motor dice `variante A` o `variante B`.
+
+**Si no pasa:**
+
+- Una pista no suena en una parte: mira si esa sección la silencia
+  (`:mute()`), o si estás en la variante B.
+- `arrange: la sección "drp" no existe (hay: drop)`: el nombre tiene que
+  ser igual que en `section(...)`.
+- `every/chance dan un ciclo de 77 compases (máximo 64)`: usa números que
+  se lleven bien (2, 4, 8, 16).
+- `bpm() es de toda la canción: va fuera de section()`: el tempo y los
+  buses (`bpm`, `bus`) van fuera de las secciones. Dentro de `every` no
+  se puede llamar a `track`, `bpm` ni `sample`.
+
+### Paso 13. Guardar, versiones y exportar
+
+**Guardar.** Ctrl-S guarda `cancion.lua` (y lo carga). F2 `guardar`
+guarda además el proyecto `cancion.sampler` (la carpeta de samples, el
+tempo, las etiquetas y los ajustes de corte hechos desde la interfaz).
+Ctrl-Q sale; si hay cambios sin guardar, pide un segundo Ctrl-Q.
+
+**Versiones.** Cada carga buena se guarda sola como una versión, fuera de
+la carpeta de la canción. F1 «Versiones» abre la lista, de la más nueva a
+la más antigua, con la fecha y una vista previa. Enter pone esa versión
+en el editor **sin guardar**: Ctrl-Z la quita y Ctrl-S la guarda. Así
+puedes volver a lo que sonaba hace media hora. Ver «Historial de
+versiones» en la [sección 2](#2-atajos-de-teclado).
+
+**Exportar la mezcla a WAV.** F2, escribe `exportar` y Enter. Se crea
+`cancion-mezcla.wav` en la carpeta de la canción, con la canción entera
+(los 24 compases de `arrange`). Se renderiza aparte: lo que suena no se
+corta. Graba lo último que se cargó bien y la variante que suena. Para
+otro nombre o más compases: `exportar final.wav 48`.
+
+Lo mismo sin abrir la interfaz, desde la carpeta de la canción:
+
+```sh
+tui --script cancion.lua --render cancion.wav
+```
+
+Con `arrange`, renderiza la línea de tiempo entera; sin ella, 4 compases
+(`--bars 8` para otros). El metrónomo nunca entra, salvo con
+`--metronome`. Ver «Renderizar a WAV» en la [sección 1](#1-inicio-rápido).
+
+**Escucharla en otra máquina.** Si trabajas por SSH, el audio sale por
+los altavoces de la máquina remota. Bájate el WAV:
+
+```sh
+scp laptop:~/musica/primera/cancion-mezcla.wav .
+```
+
+**Si no pasa:** si el mensaje dice que el texto tiene cambios sin cargar
+o con errores, se ha exportado la última versión buena: Ctrl-S y exporta
+otra vez. Si el WAV suena saturado, mira el medidor del master
+(`LIMITADOR`, `SATURA`) y baja los `:gain()`.
+
+Y recuerda: si publicas la canción, respeta los derechos de los samples
+que uses.
+
+### El script final
+
+Lo que llevas si has seguido todos los pasos:
+
+```lua entero
+bpm(170)
+bus("delay", { time = "3/16", feedback = 0.4, level = 0.6 })
+bus("reverb", { size = 0.6, damp = 0.5 })
+
+local amen = sample("amen.wav"):slice(8)
+amen:name(1, "kick"):name(3, "snare")
+amen:fx("snare", "bitcrush", { bits = 6, downsample = 2 })
+amen:fx("kick", "lowpass", { cutoff = 2500 })
+
+track("drums", amen)
+  :steps("kick . 2 2@0.4  snare . 4{hp=4000} .  kick kick^-2 2 .  snare . snare'r2 2r4{lp=300>9000}")
+  :fill("roll", 4)
+  :chance(0.1, "retrig", 3)
+  :fx("highpass", { cutoff = 40 })
+  :fx("compressor", { threshold = -14, ratio = 3, attack = 10, makeup = 2 })
+  :send("reverb", 0.1)
+  :gain(0.6)
+
+local perc = sample("perc.wav"):stretch(120):slice_grid(1)
+
+track("perc", perc)
+  :steps("1 . . .  . . . .  . . . .  . . . .")
+  :fx("lowpass", { cutoff = ramp(1500, 9000, "4 compases"), q = 2 })
+  :fx("bitcrush", { bits = 8, downsample = 2 })
+  :pan(lfo("2 compases", -0.5, 0.5))
+  :send("delay", 0.25)
+  :gain(0.4)
+
+local teclas = sample("nota.wav"):instrument({
+  root = "C4", voices = 6, adsr = { 10, 300, 0.6, 400 }, loop = { 300, 1200 },
+})
+
+track("teclas", teclas)
+  :melody("c . eb .  g . eb .  f _ _ .  g _ bb _")
+  :every(2, function(c) c:melody("c . eb .  g . eb .  bb _ g .  f _ eb _") end)
+  :fx("lowpass", { cutoff = lfo("1 compás", 900, 5000), q = 3 })
+  :fx("distortion", { drive = 3, mix = 0.3 })
+  :pan(-0.3)
+  :send("delay", 0.3)
+  :send("reverb", 0.25)
+  :gain(0.5)
+
+track("acordes", teclas)
+  :melody("c+eb+g _ _ _  _ _ _ _  ab3+c+eb _ _ _  bb3+d+f _ _ _")
+  :fx("highpass", { cutoff = 200 })
+  :pan(0.3)
+  :send("reverb", 0.4)
+  :gain(0.3)
+
+local grave = sample("bajo.wav"):instrument({
+  root = "C2", voices = 1, adsr = { 5, 200, 0.8, 150 },
+})
+
+track("bajo", grave)
+  :melody("c2 _ _ _  . . c2 .  eb2 _ _ .  f2 _ g2 _")
+  :fx("lowpass", { cutoff = 500 })
+  :fx("dyneq", { freq = 80, range = 6, threshold = -30, attack = 2, release = 80, sidechain = "drums" })
+  :gain(0.7)
+
+priority({ "drums", "bajo" })
+
+section("intro", function()
+  track("drums"):mute()
+  track("teclas"):mute()
+  track("bajo"):mute()
+  track("acordes"):fx("lowpass", { cutoff = ramp(300, 6000, "4 compases") })
+end)
+
+section("drop", function() end)
+
+section("break", function()
+  track("drums"):steps("kick . . .  . . . .  . . snare .  . . . .")
+  track("perc"):mute()
+  track("bajo"):mute()
+end)
+
+arrange({ {"intro", 4}, {"drop", 8}, {"break", 4}, {"drop", 8} })
+
+variant("drop", "B", function()
+  track("teclas"):mute()
+  track("drums"):steps("kick . 2 2  snare . 2 kick  . kick 2 .  snare . 2r4 2r8")
+end)
+```
+
+### Si algo no suena, mira esto
+
+| Lo que pasa | Mira esto |
+| --- | --- |
+| No se oye nada, pero el tracker se mueve | ¿Abriste con `--allow-audio`? ¿El volumen del sistema está a cero (`wpctl get-volume @DEFAULT_AUDIO_SINK@`)? ¿Hay alguna pista en solo (`S` en el tracker)? F1 «Quitar mute y solo» |
+| El tracker no se mueve | Ctrl-T arranca. El secuenciador arranca solo con la primera carga buena: si el script tiene un error desde el principio, corrígelo y Ctrl-S |
+| Borde rojo en el editor | El error está al pie; Ctrl-G va a su línea. Sigue sonando lo anterior |
+| `error leyendo WAV` | La ruta del sample (paso 1): nombre, mayúsculas, carpeta. ¿Es un WAV de verdad? Conviértelo con `ffmpeg` |
+| `la pista "x" no existe` | Para crear una pista hacen falta los cortes: `track("x", cortes)`. `track("x")` solo recupera una ya creada (paso 5) |
+| `el corte N no existe` | El detector encontró menos golpes que los que pediste: quita ese número del patrón o pide menos cortes |
+| `el patrón necesita 16 pasos` | Cuenta los pasos: cuatro grupos de cuatro (o los de `:length(n)`) |
+| He cambiado algo y no se oye | ¿Has cargado (Ctrl-S)? Los cambios entran al empezar el compás siguiente. Con secciones, ¿esa pista suena en esta sección? ¿Estás en la variante B? |
+| Una pista no se oye | `:mute()` en el script o `m` en vivo (`M` en el tracker); otra pista en solo; `:gain(0)`; la sección la silencia |
+| Suena saturado o distorsionado | El panel del motor dice `LIMITADOR` o `SATURA`: baja los `:gain()`, los `@` y los envíos (ver «Saturación», [sección 7](#7-solución-de-problemas)) |
+| Muy fuerte de golpe | Un `@` o un `:gain()` mayor que 1 (llegan hasta 4). Baja el volumen del sistema antes de probar |
+| El instrumento suena desafinado | `root` tiene que ser la nota en la que suena tu sample (paso 8) |
+| Las notas se cortan | Más `voices`; un `release` más largo en `adsr`; o un `loop` para que la nota dure más que el sample |
+| El bucle de la nota hace clic | Pon el `loop` en una zona estable de la nota, o sube el `crossfade` del instrumento |
+| No se resalta el código | Se resalta solo lo que está cargado: carga (Ctrl-S). F1 «Resaltado en vivo» lo enciende. Lo que sale de una función (`euclid`...) no se resalta |
+| Las teclas no tocan nada | Esc para entrar en el modo tocar. Con el editor en su ventana, se toca en la principal. Ctrl-O elige la pista |
+| El editor en su ventana no conecta | La principal tiene que estar abierta con `--split` (o haberlo sacado con F1) y las dos con el mismo script |
+| El WAV exportado está vacío o corto | Exporta lo último cargado bien. Sin `arrange`, son 4 compases (o el ciclo de `every`/`chance`) |
+
+### Para seguir
+
+- Todos los símbolos de los patrones: [sección 3](#3-mini-notación).
+- Todas las funciones de Lua, con sus parámetros y rangos:
+  [sección 4](#4-api-de-lua).
+- Todas las teclas, la paleta y la línea de órdenes:
+  [sección 2](#2-atajos-de-teclado).
+- Cuándo entran los cambios y qué pasa con los errores:
+  [sección 5](#5-cuantización-recarga-atómica-y-errores).
+- Más ideas para el break (ghost notes, stutter, granos, secciones):
+  [sección 6](#6-recetas-para-amen-breaks).
+- Problemas con los cortes, el pegado y la saturación:
+  [sección 7](#7-solución-de-problemas).
+- Proyectos, render, choques de frecuencia y el editor en su ventana:
+  [sección 1](#1-inicio-rápido).

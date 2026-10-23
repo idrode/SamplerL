@@ -185,7 +185,7 @@ fn the_tutorial_song_grows_step_by_step() {
         check(&song, &name, &dir);
     }
     assert!(
-        changes >= 3 && wholes >= 1,
+        changes >= 21 && wholes >= 4,
         "{changes} cambios, {wholes} scripts enteros"
     );
 }

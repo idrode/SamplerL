@@ -433,3 +433,6 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
    línea, párrafos, páginas y selección con Shift), verificado, y
    Ctrl-Inicio/Ctrl-Fin al principio y al final del texto; ir a la
    línea N con Alt-G; buscar con Ctrl-F y F6/F7 siguiente y anterior.
+8. ✅ **Tutorial «Tu primera canción»** (sección 8 de la guía): una
+   canción entera en trece pasos, para quien nunca ha usado el programa;
+   un test sigue los pasos y carga cada estado del script.
