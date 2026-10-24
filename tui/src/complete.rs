@@ -1274,10 +1274,14 @@ mod tests {
         let text =
             format!("{SONG}track(\"drums\", amen)\ntrack(\"kick\", amen:slice_at(1))\ntrack(\"|");
         assert_eq!(labels(&at(&text).unwrap()), ["drums", "kick"]);
+        // Los alias (`stutter`) no se ofrecen.
         let c = at(&format!("{SONG}track(\"d\", amen):chance(0.2, \"s|")).unwrap();
-        assert!(labels(&c).is_empty());
+        assert_eq!(labels(&c), ["slide"]);
         let c = at(&format!("{SONG}track(\"d\", amen):chance(0.2, \"|")).unwrap();
-        assert_eq!(labels(&c), ["retrig", "reverse", "pitch", "gain", "mute"]);
+        assert_eq!(
+            labels(&c),
+            ["retrig", "reverse", "pitch", "gain", "mute", "accent", "slide"]
+        );
     }
 
     #[test]

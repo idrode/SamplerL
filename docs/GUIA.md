@@ -61,6 +61,8 @@ la sección 4 (con sus parámetros, rangos y un ejemplo cada una).
 - Instrumentos con polifonía y ADSR (`sample:instrument`), transponer sin
   cambiar la duración (`%`, `keep`) y conservar los formantes
   (`pista:formant`).
+- Sintetizadores sin sample (`synth`): de momento el bajo ácido del 303
+  (`synth("acid", {...})`), con accent (`!`) y slide (`/`) por paso.
 - Texturas con granos y congelar un instante (`pista:grains`,
   `pista:freeze`).
 - Ver dónde se pisan las pistas en frecuencia y que el EQ sugerido se
@@ -1147,6 +1149,8 @@ compases).
 | `rN` | Retrigger / stutter: el paso se divide en N partes y el corte vuelve a empezar en cada una (de 1 a 16) | `3r4` |
 | `~Hz` | Corte del primer filtro de la pista desde este golpe hasta el siguiente (parameter lock, de 20 a 20000 Hz); un golpe sin `~` vuelve al corte de `:fx` | `3~800` |
 | `{efecto=valor,clave=valor}` | Un efecto solo en este golpe, con sus parámetros; varios, cada uno en sus llaves | `3{lp=800,q=4}{crush=6}` |
+| `!` | Accent (solo en un sintetizador): la nota suena más fuerte y más abierta | `1!`, en `melody` `c!` |
+| `/` | Slide (solo en un sintetizador): la nota llega ligada desde la anterior, deslizándose hasta su altura sin volver a disparar las envolventes | `1^3/`, en `melody` `eb/` |
 
 Los sufijos se combinan en cualquier orden, cada uno una vez (salvo `^`,
 que repetido hace un acorde): `3'^7@0.5r2` es el corte 3, al revés, una quinta arriba, a media
@@ -1596,6 +1600,7 @@ track("drums", amen)
 | `bus("reverb")` | `size` (continuo), `damp` (continuo), `level` (continuo) |
 | `cortes:set` | `attack` (por golpe), `release` (por golpe), `pan` (por golpe), `length` (por golpe), `crossfade` (por golpe) |
 | `:grains` | `size` (por grano), `density` (por grano), `pos` (por grano), `speed` (por grano), `jitter` (por grano), `pitch` (por grano), `spread` (por grano) |
+| `synth("acid")` | `cutoff` (continuo), `res` (continuo), `envmod` (continuo), `decay` (continuo), `accent` (continuo), `dist` (continuo), `glide` (continuo) |
 
 | Dónde | No admiten curva | Por qué |
 | --- | --- | --- |
@@ -1611,6 +1616,9 @@ track("drums", amen)
 | `instrument` | `loop`, `crossfade` | se aplica al cargar, en el hilo de control (el sample o el bucle se preparan una vez): no suena en el tiempo |
 | `instrument` | `voices` | cambia cuántas cosas suenan, no cómo suenan: entra con el patrón al compás |
 | `instrument` | `keep` | elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer |
+| `synth("acid")` | `wave` | elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer |
+| `synth("acid")` | `root` | cada nota lo lee al nacer y el instrumento se valida entero al cargar; para cambiar la nota, la del paso (`^`) |
+| `synth("acid")` | `seed` | es la semilla del azar: entre dos semillas no hay nada continuo |
 | `sample` | `trim`, `normalize`, `fade_in`, `fade_out` | se aplica al cargar, en el hilo de control (el sample o el bucle se preparan una vez): no suena en el tiempo |
 
 ### `scale(nombre [, tónica])`
@@ -1733,6 +1741,35 @@ local piano = sample("amen.wav"):instrument({
   root = "C3", loop = { 200, 600 }, voices = 4, adsr = { 5, 80, 0.7, 300 },
 })
 track("lead", piano):melody("c _ e _  g _ e _  c+e+g _ _ _  . . b2 .")
+```
+
+### `synth(tipo, [opciones])`
+
+Devuelve: instrumento.
+
+Un instrumento sintetizado, sin sample: osciladores, filtro y envolventes. Se toca como un instrumento de sample (`track(nombre, synth(...))`, `:melody()`, `scale`, los pads del modo tocar y el MIDI de entrada): el pitch de cada paso son semitonos sobre su `root`. Los parámetros continuos admiten `ramp()` y `lfo()` (se mueven también dentro de una nota, sin clics) y los efectos de la pista van detrás. En sus pasos, dos sufijos más: `!` accent (la nota suena más fuerte y más abierta) y `/` slide (la nota llega ligada desde la anterior: se desliza hasta su altura en `glide` ms sin volver a disparar las envolventes; la anterior sigue sonando hasta que llega). En `melody` van detrás de la nota: `"c!"`, `"eb/"`, `"g!/"`. De momento hay un tipo, `"acid"`: el bajo del 303 (un oscilador de sierra o cuadrada, paso bajo de 4 polos con mucha resonancia, monofónico).
+
+- `tipo`: `"acid"`
+- `opciones`: tabla con sus parámetros (ver abajo)
+
+| Tipo | Parámetro | Qué es | Por defecto | Valores |
+| --- | --- | --- | --- | --- |
+| `"acid"` | `wave` | forma de onda del oscilador | `"saw"` | `"saw"` o `"square"` |
+|  | `root` | la nota que suena con 0 semitonos (`melody` sin octava toca en la suya) | `"C2"` | una nota (`"C2"`, `"F#1"`) o un número MIDI (0–127) |
+|  | `cutoff` | corte del filtro de 4 polos, en Hz | `400` | 20–20000 |
+|  | `res` | resonancia: el pico en el corte (con 1, el filtro silba solo) | `0.7` | 0–1 |
+|  | `envmod` | cuánto abre la envolvente del filtro el corte en cada nota (1: cuatro octavas) | `0.6` | 0–1 |
+|  | `decay` | lo que tarda en cerrarse la envolvente del filtro, en ms | `300` | 10–5000 |
+|  | `accent` | cuánto pesa el `!` de un paso: más volumen (el doble con 1), dos octavas más de filtro con un decay corto, y varios seguidos se acumulan | `0.6` | 0–1 |
+|  | `dist` | saturación a la salida (0, limpio) | `0` | 0–1 |
+|  | `glide` | lo que tarda el `/` de un paso en llegar a su nota, en ms | `60` | 0–1000 |
+|  | `seed` | semilla de la fase del oscilador al empezar desde el silencio: con la misma, el mismo audio; sin ella, una sacada del nombre de la pista | `del nombre` | entero de 0 en adelante |
+
+```lua
+bpm(130)
+local bass = synth("acid", { cutoff = 350, res = 0.8, envmod = 0.7, decay = 250 })
+track("acid", bass)
+  :melody("c c! eb c/  . c bb2 c/  g2! . c c/  eb! f/ eb c")
 ```
 
 ### `sample:slice(n)`
@@ -2282,6 +2319,8 @@ Cada golpe sufre el efecto con probabilidad p. El azar se tira al cargar, para 1
 | `"pitch"` | semitonos (-36 a 36) | Pone su pitch |
 | `"gain"` | volumen (0 a 4) | Pone su volumen |
 | `"mute"` | — | Lo quita |
+| `"accent"` | — | Le pone accent (`!`; solo en un sintetizador) |
+| `"slide"` | — | Lo liga a la nota anterior (`/`; solo en un sintetizador) |
 
 ```lua
 local amen = sample("amen.wav"):slice(8)
@@ -2556,6 +2595,48 @@ track("pad", pad)
   :melody("c+eb+g _ _ _  _ _ _ _  ab2+c+eb _ _ _  bb2+d+f _ _ _")
   :gain(0.4)
 ```
+
+### Un bajo ácido
+
+`synth("acid", {...})` es un bajo del 303 sin sample: un oscilador de
+sierra (o cuadrada, `wave = "square"`) por un paso bajo de 4 polos con
+mucha resonancia, monofónico. Se toca como un instrumento (`melody`,
+`scale`, los pads, el MIDI) y su raíz es C2, así que `melody("c eb g")`
+suena en la octava de un bajo. Lo que lo hace ácido está en cada paso:
+`!` es el **accent** (la nota más fuerte y el filtro más abierto, con un
+decay corto; varios seguidos se acumulan y el filtro se va abriendo) y
+`/` el **slide** (la nota llega ligada desde la anterior: se desliza
+hasta su altura en `glide` ms y las envolventes no vuelven a empezar, así
+que el filtro sigue cerrándose por donde iba). La nota de antes de un
+slide suena hasta que llega la ligada, aunque llegue tarde con swing; un
+slide después de un silencio es una nota normal. Los parámetros se mueven
+con `ramp()` y `lfo()` sin clics, y los efectos de la pista (`:fx`) van
+detrás. En el tracker, las notas salen por su nombre con sus marcas
+(`C2!`, `D#2/`).
+
+```lua
+-- 09-bajo-acido.lua
+bpm(132)
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen)
+  :steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+  :gain(0.8)
+
+local bass = synth("acid", {
+  cutoff = 320, res = 0.82, envmod = 0.65, decay = 220, accent = 0.8,
+  dist = 0.25, glide = 70,
+})
+track("acid", bass)
+  :melody("c c! c' eb/  c . c bb1/  c! g1 . c/  eb! f/ eb c")
+  :every(4, function(c) c:melody("c c! g/ c  bb1! . c c/  f! eb/ c . c! c/ eb g/") end)
+  :fx("lowpass", { cutoff = lfo("8 compases", 1500, 6000) })
+  :gain(0.7)
+```
+
+Para que el filtro se abra poco a poco a lo largo de la canción, una
+rampa en `cutoff` (o en `envmod`): `cutoff = ramp(200, 2000, "16
+compases")`. Y para variar los accents sin escribirlos, `:chance(0.3,
+"accent")` (con `"slide"`, igual).
 
 ### Una caja más grave que dura lo mismo
 

@@ -1145,6 +1145,42 @@ pub const FUNCTIONS: &[Function] = &[
         ),
     },
     Function {
+        name: "synth",
+        receiver: Receiver::Global,
+        signature: "synth(tipo, [opciones])",
+        returns: Some(Receiver::Instrument),
+        summary: "Un instrumento sintetizado, sin sample: osciladores, filtro y envolventes.",
+        doc: "Se toca como un instrumento de sample (`track(nombre, synth(...))`, \
+              `:melody()`, `scale`, los pads del modo tocar y el MIDI de entrada): \
+              el pitch de cada paso son semitonos sobre su `root`. Los parámetros \
+              continuos admiten `ramp()` y `lfo()` (se mueven también dentro de una \
+              nota, sin clics) y los efectos de la pista van detrás. En sus pasos, \
+              dos sufijos más: `!` accent (la nota suena más fuerte y más abierta) \
+              y `/` slide (la nota llega ligada desde la anterior: se desliza hasta \
+              su altura en `glide` ms sin volver a disparar las envolventes; la \
+              anterior sigue sonando hasta que llega). En `melody` van detrás de la \
+              nota: `\"c!\"`, `\"eb/\"`, `\"g!/\"`. De momento hay un tipo, \
+              `\"acid\"`: el bajo del 303 (un oscilador de sierra o cuadrada, paso \
+              bajo de 4 polos con mucha resonancia, monofónico).",
+        params: &[
+            Param {
+                name: "tipo",
+                description: "`\"acid\"`",
+            },
+            Param {
+                name: "opciones",
+                description: "tabla con sus parámetros (ver abajo)",
+            },
+        ],
+        template: "synth(\"${acid}\", { cutoff = ${400}, res = ${0.7} })",
+        example: Some(
+            "bpm(130)\n\
+             local bass = synth(\"acid\", { cutoff = 350, res = 0.8, envmod = 0.7, decay = 250 })\n\
+             track(\"acid\", bass)\n  \
+             :melody(\"c c! eb c/  . c bb2 c/  g2! . c c/  eb! f/ eb c\")\n",
+        ),
+    },
+    Function {
         name: "slice",
         receiver: Receiver::Sample,
         signature: "sample:slice(n)",
@@ -2536,6 +2572,117 @@ pub const INSTRUMENT_PARAMS: &[FxParam] = &[
     },
 ];
 
+/// Parámetros de `synth("acid", { ... })` (los rangos y los valores por
+/// defecto de los continuos son los de `engine::synth::acid::PARAMS`; un
+/// test lo comprueba).
+pub const ACID_PARAMS: &[FxParam] = &[
+    FxParam {
+        name: "wave",
+        description: "forma de onda del oscilador",
+        default: Some("\"saw\""),
+        valid: "`\"saw\"` o `\"square\"`",
+        values: &["saw", "square"],
+        template: "wave = \"${square}\"",
+        automate: Auto::No(DISCRETE),
+    },
+    FxParam {
+        name: "root",
+        description: "la nota que suena con 0 semitonos (`melody` sin octava toca en la suya)",
+        default: Some("\"C2\""),
+        valid: "una nota (`\"C2\"`, `\"F#1\"`) o un número MIDI (0–127)",
+        values: &[],
+        template: "root = \"${C2}\"",
+        automate: Auto::No(INSTRUMENT),
+    },
+    FxParam {
+        name: "cutoff",
+        description: "corte del filtro de 4 polos, en Hz",
+        default: Some("400"),
+        valid: "20–20000",
+        values: &[],
+        template: "cutoff = ${400}",
+        automate: Auto::Smooth,
+    },
+    FxParam {
+        name: "res",
+        description: "resonancia: el pico en el corte (con 1, el filtro silba solo)",
+        default: Some("0.7"),
+        valid: "0–1",
+        values: &[],
+        template: "res = ${0.7}",
+        automate: Auto::Smooth,
+    },
+    FxParam {
+        name: "envmod",
+        description: "cuánto abre la envolvente del filtro el corte en cada nota (1: cuatro octavas)",
+        default: Some("0.6"),
+        valid: "0–1",
+        values: &[],
+        template: "envmod = ${0.6}",
+        automate: Auto::Smooth,
+    },
+    FxParam {
+        name: "decay",
+        description: "lo que tarda en cerrarse la envolvente del filtro, en ms",
+        default: Some("300"),
+        valid: "10–5000",
+        values: &[],
+        template: "decay = ${300}",
+        automate: Auto::Smooth,
+    },
+    FxParam {
+        name: "accent",
+        description: "cuánto pesa el `!` de un paso: más volumen (el doble con 1), dos octavas más de filtro con un decay corto, y varios seguidos se acumulan",
+        default: Some("0.6"),
+        valid: "0–1",
+        values: &[],
+        template: "accent = ${0.6}",
+        automate: Auto::Smooth,
+    },
+    FxParam {
+        name: "dist",
+        description: "saturación a la salida (0, limpio)",
+        default: Some("0"),
+        valid: "0–1",
+        values: &[],
+        template: "dist = ${0.3}",
+        automate: Auto::Smooth,
+    },
+    FxParam {
+        name: "glide",
+        description: "lo que tarda el `/` de un paso en llegar a su nota, en ms",
+        default: Some("60"),
+        valid: "0–1000",
+        values: &[],
+        template: "glide = ${60}",
+        automate: Auto::Smooth,
+    },
+    FxParam {
+        name: "seed",
+        description: "semilla de la fase del oscilador al empezar desde el silencio: con la misma, el mismo audio; sin ella, una sacada del nombre de la pista",
+        default: Some("del nombre"),
+        valid: "entero de 0 en adelante",
+        values: &[],
+        template: "seed = ${1}",
+        automate: Auto::No(SEED),
+    },
+];
+
+/// Los tipos de `synth(tipo, { ... })`, como efectos (para el
+/// autocompletado, la ayuda y la guía).
+pub const SYNTHS: &[Effect] = &[Effect {
+    name: "acid",
+    aliases: &[],
+    summary: "Bajo del 303: un oscilador por un paso bajo de 4 polos resonante, mono, con accent y slide.",
+    params: ACID_PARAMS,
+    template: "{ cutoff = ${400}, res = ${0.7}, envmod = ${0.6}, decay = ${300} }",
+}];
+
+/// El tipo de sintetizador `name`.
+pub fn synth(name: &str) -> Option<&'static Effect> {
+    SYNTHS.iter().find(|s| s.name == name)
+}
+
 /// La tabla de `sample:instrument()`, como un efecto (para el
 /// autocompletado y la ayuda de sus claves).
 pub const INSTRUMENT_TABLE: Effect = Effect {
@@ -2832,6 +2979,18 @@ pub const CHANCE_EFFECTS: &[ChanceEffect] = &[
         value: None,
         summary: "Lo quita",
     },
+    ChanceEffect {
+        name: "accent",
+        aliases: &[],
+        value: None,
+        summary: "Le pone accent (`!`; solo en un sintetizador)",
+    },
+    ChanceEffect {
+        name: "slide",
+        aliases: &[],
+        value: None,
+        summary: "Lo liga a la nota anterior (`/`; solo en un sintetizador)",
+    },
 ];
 
 /// Snippets, por nombre.
@@ -3049,6 +3208,9 @@ pub fn sound_params() -> Vec<(String, &'static FxParam)> {
     add("cortes:set".into(), SLICE_PARAMS);
     add(":grains".into(), GRAIN_PARAMS);
     add("instrument".into(), INSTRUMENT_PARAMS);
+    for synth in SYNTHS {
+        add(format!("synth(\"{}\")", synth.name), synth.params);
+    }
     add("sample".into(), SAMPLE_PARAMS);
     out
 }
@@ -3124,6 +3286,7 @@ pub fn guide_markdown() -> String {
         match (f.receiver, f.name) {
             (Receiver::Track, "fx") => out.push_str(&params_table("Efecto", EFFECTS)),
             (Receiver::Global, "bus") => out.push_str(&params_table("Bus", BUSES)),
+            (Receiver::Global, "synth") => out.push_str(&params_table("Tipo", SYNTHS)),
             (Receiver::Slices, "set")
             | (Receiver::Global, "sample")
             | (Receiver::Sample, "instrument")

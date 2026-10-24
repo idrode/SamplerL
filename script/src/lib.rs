@@ -265,6 +265,42 @@ pub struct InstrumentDef {
     pub loop_ms: Option<(f64, f64)>,
     /// Lo que recibe el motor (voces, ADSR, bucle en frames y fundido).
     pub engine: engine::Instrument,
+    /// Un sintetizador (`synth(tipo, {...})`): no toca el sample (es un
+    /// frame de silencio) sino su banco de voces.
+    pub synth: Option<SynthDef>,
+}
+
+/// `synth(tipo, { ... })`: un instrumento sintetizado.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SynthDef {
+    /// El tipo (`"acid"`, del registro [`api::SYNTHS`]).
+    pub kind: &'static str,
+    /// Lo que recibe el motor (con la raíz del instrumento).
+    pub patch: engine::synth::Patch,
+    /// Los parámetros continuos con `ramp()` o `lfo()`, en las unidades
+    /// del motor.
+    pub curves: engine::synth::SynthCurves,
+    /// La semilla, si se dio (si no, sale del nombre de la pista).
+    pub seed: Option<u64>,
+}
+
+/// Qué toca una pista: cortes, un instrumento de sample o un
+/// sintetizador (mono o no).
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Plays {
+    Slices,
+    Instrument,
+    Synth { mono: bool },
+}
+
+impl Plays {
+    fn of(def: &TrackDef) -> Plays {
+        match def.instrument {
+            None => Plays::Slices,
+            Some(InstrumentDef { synth: None, .. }) => Plays::Instrument,
+            Some(InstrumentDef { synth: Some(s), .. }) => Plays::Synth { mono: s.patch.mono },
+        }
+    }
 }
 
 /// `sample:stretch(bpm_origen)`: el sample se estira del tempo de origen al
@@ -1572,6 +1608,19 @@ impl ScriptHost {
             })?,
         )?;
 
+        let g = guard.clone();
+        globals.set(
+            "synth",
+            lua.create_function(move |lua, (kind, options): (String, Option<Table>)| {
+                g(lua, "synth")?;
+                let def = synth_options(lua, &kind, options.as_ref())?;
+                Ok(SynthHandle {
+                    def,
+                    sample_rate: rate,
+                })
+            })?,
+        )?;
+
         // Funciones de patrones: devuelven texto en mini-notación. Valen
         // también dentro de `every`.
         globals.set(
@@ -1922,7 +1971,18 @@ fn track_pattern(
         .and_then(|p| p.with_slice_fx(&chains))
         .and_then(|p| p.with_choke(track.choke))
         .and_then(|p| p.with_midi(track.midi))
-        .and_then(|p| p.with_instrument(track.instrument.map(|i| i.engine)))
+        .and_then(|p| {
+            p.with_instrument(
+                track
+                    .instrument
+                    .filter(|i| i.synth.is_none())
+                    .map(|i| i.engine),
+            )
+        })
+        .and_then(|p| match track.instrument.and_then(|i| i.synth) {
+            Some(s) => p.with_synth(Some(s.patch), s.curves),
+            None => Ok(p),
+        })
         .and_then(|p| p.with_granular(track.granular))
         .and_then(|p| p.with_formant(track.formant))
         .and_then(|p| p.with_formant_curve(track.formant_curve))
@@ -2341,13 +2401,50 @@ fn track_source(lua: &Lua, name: &str, source: &AnyUserData) -> mlua::Result<Tra
             steps_at: String::new(),
         });
     }
+    if let Ok(source) = source.borrow::<SynthHandle>() {
+        // Un frame de silencio: el sample no suena, pero la pista es como
+        // la de un instrumento (un solo corte).
+        let silence = Arc::new(Sample::silence(source.sample_rate));
+        let origin = SliceOrigin {
+            sample: format!("synth(\"{}\")", source.def.synth.map_or("", |s| s.kind)),
+            count: 1,
+            grid: true,
+            indices: vec![None],
+        };
+        let slices = Slices::grid(&silence, 1);
+        let mut def = def(&silence, Path::new(""), slices, origin);
+        let mut instrument = source.def;
+        if let Some(synth) = &mut instrument.synth {
+            synth.patch.seed = synth.seed.unwrap_or_else(|| name_seed(name));
+        }
+        def.instrument = Some(instrument);
+        return Ok(TrackBuild {
+            def,
+            labels: Rc::new(RefCell::new(vec![None])),
+            stale: Rc::new(Vec::new()),
+            shapes: Rc::new(RefCell::new(vec![DEFAULT_SHAPE])),
+            slice_fx: Rc::default(),
+            transforms: Vec::new(),
+            steps_set: false,
+            written: Vec::new(),
+            steps_at: String::new(),
+        });
+    }
     Err(fail(
         lua,
         format!(
             "track(\"{name}\", ...): el segundo argumento son cortes \
-             (sample(...):slice(n)) o un instrumento (sample(...):instrument{{...}})"
+             (sample(...):slice(n)), un instrumento (sample(...):instrument{{...}}) \
+             o un sintetizador (synth(\"acid\", {{...}}))"
         ),
     ))
+}
+
+/// Semilla de una pista sacada de su nombre (FNV-1a).
+fn name_seed(name: &str) -> u64 {
+    name.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
+        (h ^ b as u64).wrapping_mul(0x100_0000_01b3)
+    })
 }
 
 struct Builder {
@@ -2488,6 +2585,8 @@ enum Chance {
     Pitch(f32),
     Gain(f32),
     Mute,
+    Accent,
+    Slide,
 }
 
 /// Expande `every` y `chance` de una pista a su ciclo de compases.
@@ -2557,7 +2656,7 @@ fn expand(track: TrackBuild, rng: &mut Rng, timing: Timing) -> Result<TrackDef, 
                         count: def.origin.cut(),
                         track: def.name.clone(),
                         root: def.instrument.map_or(60, |i| i.root),
-                        instrument: def.instrument.is_some(),
+                        plays: Plays::of(&def),
                         written: Rc::new(RefCell::new(lap_spans.clone())),
                     };
                     let (shared, shared_spans) = (bar.steps.clone(), bar.written.clone());
@@ -2658,6 +2757,8 @@ fn apply_chance(slot: &mut Option<Step>, effect: Chance) {
         Chance::Pitch(st) => step.semitones = st,
         Chance::Gain(g) => step.gain = g,
         Chance::Mute => *slot = None,
+        Chance::Accent => step.accent = true,
+        Chance::Slide => step.slide = true,
     }
 }
 
@@ -2847,6 +2948,149 @@ impl UserData for InstrumentHandle {
     }
 }
 
+/// `synth(tipo, { ... })`: un sintetizador, que se pasa a `track()`.
+struct SynthHandle {
+    def: InstrumentDef,
+    sample_rate: u32,
+}
+
+impl UserData for SynthHandle {
+    fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        methods.add_method("fx", |lua, _, _: mlua::MultiValue| -> mlua::Result<()> {
+            Err(fail(
+                lua,
+                "fx: los efectos de un sintetizador van en la pista: \
+                 track(...):fx(nombre, { ... })",
+            ))
+        });
+    }
+}
+
+/// Lee `synth(tipo, { ... })` (tipos y claves del registro
+/// [`api::SYNTHS`]).
+fn synth_options(lua: &Lua, kind: &str, table: Option<&Table>) -> mlua::Result<InstrumentDef> {
+    let who = format!("synth(\"{kind}\")");
+    let Some(registered) = api::synth(kind) else {
+        return Err(fail(
+            lua,
+            format!(
+                "{who}: no hay ese sintetizador (hay: {})",
+                names(api::SYNTHS.iter().map(|s| s.name))
+            ),
+        ));
+    };
+    let mut root = 36;
+    let mut patch = engine::synth::acid::patch(root as f32);
+    let mut curves = [None; engine::synth::PARAM_COUNT];
+    let mut seed = None;
+    if let Some(table) = table {
+        let known: Vec<&str> = registered.params.iter().map(|p| p.name).collect();
+        for pair in table.pairs::<Value, Value>() {
+            let (key, value) = pair?;
+            let key = match &key {
+                Value::String(k) => k.to_str()?.to_string(),
+                other => {
+                    return Err(fail(
+                        lua,
+                        format!("{who}: clave no válida ({})", other.type_name()),
+                    ));
+                }
+            };
+            let Some(param) = registered.params.iter().find(|p| p.name == key) else {
+                return Err(fail(
+                    lua,
+                    format!(
+                        "{who}: clave desconocida \"{key}\" (hay: {})",
+                        known.join(", ")
+                    ),
+                ));
+            };
+            if is_curve(&value) {
+                no_curve(lua, &who, param)?;
+            }
+            match key.as_str() {
+                "wave" => {
+                    let wave = match &value {
+                        Value::String(w) => engine::synth::Wave::from_name(w.to_str()?.as_ref())
+                            .filter(|w| engine::synth::acid::WAVES.contains(w)),
+                        _ => None,
+                    };
+                    patch.wave = wave
+                        .ok_or_else(|| fail(lua, format!("{who}: wave es \"saw\" o \"square\"")))?;
+                }
+                "root" => {
+                    root = match &value {
+                        Value::String(name) => {
+                            let name = name.to_str()?.to_string();
+                            patterns::note_number(&name).ok_or_else(|| {
+                                fail(
+                                    lua,
+                                    format!(
+                                        "{who}: root = \"{name}\" no es una nota (C2, F#1, Bb2...)"
+                                    ),
+                                )
+                            })?
+                        }
+                        Value::Integer(n) if (0..=127).contains(n) => *n as i32,
+                        _ => {
+                            return Err(fail(
+                                lua,
+                                format!(
+                                    "{who}: root es una nota (\"C2\") o un número MIDI (0 a 127)"
+                                ),
+                            ));
+                        }
+                    }
+                }
+                "seed" => match value {
+                    Value::Integer(n) if n >= 0 => seed = Some(n as u64),
+                    _ => {
+                        return Err(fail(
+                            lua,
+                            format!("{who}: seed es un entero de 0 en adelante"),
+                        ));
+                    }
+                },
+                name => {
+                    let p = engine::synth::acid::param(name)
+                        .expect("cada parámetro continuo del registro está en el motor");
+                    let (fixed, curve) = number_or_curve(
+                        lua,
+                        &format!("{who}: {name}"),
+                        name,
+                        value,
+                        (p.min, p.max),
+                    )?;
+                    if !(p.min..=p.max).contains(&fixed) {
+                        return Err(fail(
+                            lua,
+                            format!(
+                                "{who}: {name} = {fixed} fuera de rango ({} a {})",
+                                p.min, p.max
+                            ),
+                        ));
+                    }
+                    engine::synth::acid::set(&mut patch, p, fixed);
+                    curves[p.param] = curve.map(|c| engine::synth::acid::curve(p, c));
+                }
+            }
+        }
+    }
+    patch.root = root as f32;
+    let def = SynthDef {
+        kind: registered.name,
+        patch,
+        curves,
+        seed,
+    };
+    Ok(InstrumentDef {
+        root,
+        loop_ms: None,
+        engine: engine::Instrument::new(patch.voices),
+        synth: Some(def),
+    })
+}
+
 /// Fundido cruzado del bucle si no se dice otro, en ms.
 const DEFAULT_CROSSFADE_MS: f64 = 10.0;
 
@@ -2863,6 +3107,7 @@ fn instrument_options(
         root: 60,
         loop_ms: None,
         engine: engine::Instrument::new(4),
+        synth: None,
     };
     let Some(table) = table else {
         return Ok(def);
@@ -3977,20 +4222,20 @@ impl TrackHandle {
     /// `:steps(texto)` (y `:melody()`, que lo traduce a pasos: `written` es
     /// el texto tal como se escribió, para saber dónde está cada paso).
     fn set_steps(&self, lua: &Lua, text: &str, written: &str) -> mlua::Result<()> {
-        let (labels, stale, count, length, instrument) = self.with_track(|t| {
+        let (labels, stale, count, length, plays) = self.with_track(|t| {
             (
                 t.labels.borrow().clone(),
                 t.stale.clone(),
                 t.def.origin.cut(),
                 t.def.length,
-                t.def.instrument.is_some(),
+                Plays::of(&t.def),
             )
         });
         let stale = StaleLabels {
             labels: &stale,
             count,
         };
-        let steps = checked_steps(lua, &self.name, &labels, &stale, text, length, instrument)?;
+        let steps = checked_steps(lua, &self.name, &labels, &stale, text, length, plays)?;
         if self.with_track(|t| t.def.granular.is_some())
             && steps.iter().flatten().any(|s| s.fx.is_some())
         {
@@ -4034,7 +4279,7 @@ fn checked_steps(
     stale: &StaleLabels,
     text: &str,
     length: usize,
-    instrument: bool,
+    plays: Plays,
 ) -> mlua::Result<Bar> {
     let slices = labels.len();
     let steps = parse_pattern_with(text, length, labels, Some(&step_fx::resolve)).map_err(|e| {
@@ -4061,16 +4306,43 @@ fn checked_steps(
             ));
         }
         check_step(lua, step)?;
-        if instrument && step.fx.is_some() {
+        if plays != Plays::Slices && step.fx.is_some() {
+            let what = match plays {
+                Plays::Synth { .. } => "un sintetizador",
+                _ => "un instrumento",
+            };
             return Err(fail(
                 lua,
                 format!(
-                    "steps: \"{track}\" es un instrumento: sus notas no tienen efectos por paso \
+                    "steps: \"{track}\" es {what}: sus notas no tienen efectos por paso \
                      ({{...}}); usa los de la pista (:fx)"
                 ),
             ));
         }
-        if !instrument && step.chord.iter().any(Option::is_some) {
+        if !matches!(plays, Plays::Synth { .. }) && (step.accent || step.slide) {
+            return Err(fail(
+                lua,
+                format!(
+                    "steps: {} es de los sintetizadores (\"{track}\" no lo es); \
+                     usa synth(\"acid\", {{...}})",
+                    if step.accent {
+                        "! (accent)"
+                    } else {
+                        "/ (slide)"
+                    }
+                ),
+            ));
+        }
+        if plays == (Plays::Synth { mono: true }) && step.chord.iter().any(Option::is_some) {
+            return Err(fail(
+                lua,
+                format!(
+                    "steps: \"{track}\" es un sintetizador monofónico: toca una nota cada vez \
+                     (sin acordes)"
+                ),
+            ));
+        }
+        if plays == Plays::Slices && step.chord.iter().any(Option::is_some) {
             return Err(fail(
                 lua,
                 format!(
@@ -4904,6 +5176,17 @@ impl UserData for TrackHandle {
                     "pitch" => Chance::Pitch(check_pitch(lua, need("semitonos")? as f32)?),
                     "gain" => Chance::Gain(check_gain(lua, need("volumen")? as f32)?),
                     "mute" => Chance::Mute,
+                    "accent" | "slide" if !matches!(this.with_track(|t| Plays::of(&t.def)), Plays::Synth { .. }) => {
+                        return Err(fail(
+                            lua,
+                            format!(
+                                "chance: \"{effect}\" es de los sintetizadores (la pista \"{}\" no lo es)",
+                                this.name
+                            ),
+                        ));
+                    }
+                    "accent" => Chance::Accent,
+                    "slide" => Chance::Slide,
                     other => {
                         return Err(fail(
                             lua,
@@ -4930,10 +5213,10 @@ struct BarHandle {
     stale: Rc<Vec<(String, Cut)>>,
     count: Cut,
     track: String,
-    /// Raíz de `melody` (la del instrumento, o C4) y si la pista es un
-    /// instrumento (acordes).
+    /// Raíz de `melody` (la del instrumento, o C4) y qué toca la pista
+    /// (acordes, accent y slide).
     root: i32,
-    instrument: bool,
+    plays: Plays,
     /// Dónde está escrito cada paso de esta vuelta: el de la pista hasta
     /// que un `:steps()` lo sustituye.
     written: Rc<RefCell<Vec<Option<TokenSpan>>>>,
@@ -4955,7 +5238,7 @@ impl BarHandle {
             count: self.count,
             track: self.track.clone(),
             root: self.root,
-            instrument: self.instrument,
+            plays: self.plays,
             written: self.written.clone(),
         }
     }
@@ -4972,7 +5255,7 @@ impl BarHandle {
             &stale,
             text,
             self.length,
-            self.instrument,
+            self.plays,
         )?;
         *self.steps.borrow_mut() = steps;
         *self.written.borrow_mut() = written::spans(lua, written, self.length);

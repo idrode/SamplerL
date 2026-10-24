@@ -237,10 +237,17 @@ fn every_bus_accepts_its_registered_parameters_and_values() {
 #[test]
 fn every_chance_effect_exists() {
     let mut source = String::from(PRELUDE);
+    source.push_str("local acid = track(\"acid\", synth(\"acid\")):melody(\"c c c c  c c c c  c c c c  c c c c\")\n");
     for e in CHANCE_EFFECTS {
+        // Los del sintetizador, en uno.
+        let on = if matches!(e.name, "accent" | "slide") {
+            "acid"
+        } else {
+            "t"
+        };
         for name in std::iter::once(&e.name).chain(e.aliases) {
             let value = if e.value.is_some() { ", 2" } else { "" };
-            source.push_str(&format!("t:chance(0.5, \"{name}\"{value})\n"));
+            source.push_str(&format!("{on}:chance(0.5, \"{name}\"{value})\n"));
         }
     }
     eval(&source);
@@ -316,6 +323,53 @@ fn every_instrument_parameter_is_accepted() {
         all.join(", ")
     ));
     eval(&source);
+}
+
+#[test]
+fn every_synth_parameter_is_accepted() {
+    for synth in api::SYNTHS {
+        let (table, _) = expand_template(synth.template);
+        let all: Vec<String> = synth
+            .params
+            .iter()
+            .map(|p| expand_template(p.template).0)
+            .collect();
+        let mut source = String::from(PRELUDE);
+        source.push_str(&format!(
+            "track(\"a\", synth(\"{name}\", {table})):melody(\"c c! eb/ .  g . c . c . c . c . c .\")\n\
+             track(\"b\", synth(\"{name}\", {{ {} }})):steps(\"1! 1/ . .  . . . .  . . . .  . . . .\")\n",
+            all.join(", "),
+            name = synth.name,
+        ));
+        eval(&source);
+    }
+}
+
+/// Los parámetros continuos del acid en el registro tienen el rango y el
+/// valor por defecto del motor, y los que no están en el motor no admiten
+/// curvas.
+#[test]
+fn the_acid_registry_matches_the_engine() {
+    let acid = api::synth("acid").unwrap();
+    for p in acid.params {
+        match engine::synth::acid::param(p.name) {
+            Some(e) => {
+                assert_eq!(p.valid, format!("{}–{}", e.min, e.max), "{}", p.name);
+                assert_eq!(
+                    p.default,
+                    Some(e.default.to_string().as_str()),
+                    "{}",
+                    p.name
+                );
+                assert!(p.automate.curves(), "{}", p.name);
+            }
+            None => assert!(!p.automate.curves(), "{}", p.name),
+        }
+    }
+    assert_eq!(
+        acid.params.iter().filter(|p| p.automate.curves()).count(),
+        engine::synth::acid::PARAMS.len()
+    );
 }
 
 #[test]
@@ -401,6 +455,13 @@ fn every_sound_parameter_takes_a_curve_or_says_why_not() {
             ":grains" => format!("t:grains({{ {} = {curve} }})", p.name),
             "instrument" => format!("local i = s:instrument({{ {} = {curve} }})", p.name),
             "sample" => format!("local x = sample(\"amen.wav\", {{ {} = {curve} }})", p.name),
+            synth if synth.starts_with("synth(") => {
+                format!(
+                    "local x = {}, {{ {} = {curve} }})",
+                    &synth[..synth.len() - 1],
+                    p.name
+                )
+            }
             fx if fx.starts_with("fx(") => {
                 let name = &fx[4..fx.len() - 2];
                 let effect = api::effect(name).unwrap();

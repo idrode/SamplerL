@@ -1,0 +1,332 @@
+//! `synth("acid", {...})`: suena igual que el motor con lo mismo, sus
+//! parámetros admiten curvas, la semilla sale del nombre, accent y slide
+//! en `steps`, `melody`, `every` y `chance`, y los errores dicen la línea.
+
+use std::path::Path;
+
+use engine::synth::{self, ACCENT, CUTOFF, ENV_AMOUNT, GLIDE, RESONANCE, acid};
+use engine::{Curve, LfoRate, Pattern, Sample, Slices, new_engine, offline};
+use script::{ScriptHost, Song};
+
+const RATE: u32 = 48_000;
+/// 120 BPM: 6000 frames por paso.
+const STEP: usize = 6000;
+
+fn song(source: &str) -> Result<Song, String> {
+    let (mut controller, _engine) = new_engine(RATE);
+    let mut host = ScriptHost::new(RATE);
+    let source = format!("bpm(120)\n{source}");
+    host.load(&mut controller, &source, "song.lua", Path::new("."))
+        .cloned()
+        .map_err(|e| e.to_string())
+}
+
+fn song_ok(source: &str) -> Song {
+    song(source).unwrap_or_else(|e| panic!("{source}: {e}"))
+}
+
+/// El acid de un script y el mismo patch puesto a mano en el motor: los
+/// mismos pasos (con accent y slide) y el mismo audio, muestra a muestra.
+#[test]
+fn the_script_sounds_like_the_engine() {
+    let song = song_ok(
+        "local bass = synth(\"acid\", {\n\
+           cutoff = 500, res = 0.85, envmod = 0.7, decay = 200, accent = 0.9,\n\
+           dist = 0.3, glide = 80, wave = \"square\", seed = 5,\n\
+         })\n\
+         track(\"bass\", bass):melody(\"c c! eb/ c  . c bb1 c!/  g1 . c c/  eb! f/ eb c\")",
+    );
+    let def = song.tracks[0].instrument.unwrap();
+    assert_eq!(def.root, 36);
+    let mut patch = acid::patch(36.0);
+    patch.wave = synth::Wave::Square;
+    patch.seed = 5;
+    for (name, value) in [
+        ("cutoff", 500.0),
+        ("res", 0.85),
+        ("envmod", 0.7),
+        ("decay", 200.0),
+        ("accent", 0.9),
+        ("dist", 0.3),
+        ("glide", 80.0),
+    ] {
+        acid::set(&mut patch, acid::param(name).unwrap(), value);
+    }
+    assert_eq!(def.synth.unwrap().patch, patch);
+    let steps =
+        engine::notation::parse_steps("1 1! 1^3/ 1  . 1 1^-2 1!/  1^-5 . 1 1/  1^3! 1^5/ 1^3 1")
+            .unwrap();
+    let silence = std::sync::Arc::new(Sample::silence(RATE));
+    let slices = Slices::grid(&silence, 1);
+    let pattern = Pattern::from_steps(silence, &slices, steps)
+        .unwrap()
+        .with_synth(Some(patch), [None; synth::PARAM_COUNT])
+        .unwrap();
+    let (mut controller, mut engine) = new_engine(RATE);
+    controller.set_bpm(120.0).unwrap();
+    controller.set_track_pattern(0, Some(pattern)).unwrap();
+    controller.start().unwrap();
+    let frames = 2 * engine::bar_frames(120.0, RATE) as usize;
+    let direct = offline::render(&mut engine, frames, 2);
+    let scripted = song.render(RATE, 2).unwrap();
+    assert!(direct.iter().any(|v| v.abs() > 0.1), "no suena");
+    assert!(scripted == direct, "el script no suena como el motor");
+}
+
+/// `ramp()` y `lfo()` en los parámetros continuos, en las unidades del
+/// motor (`envmod` de 0 a 1 son de 0 a 4 octavas).
+#[test]
+fn continuous_params_take_curves() {
+    let song = song_ok(
+        "track(\"bass\", synth(\"acid\", {\n\
+           cutoff = ramp(200, 3000, \"2 compases\"),\n\
+           envmod = lfo(\"4 pasos\", 0, 1),\n\
+           res = lfo(2, 0.2, 0.9),\n\
+         })):steps(\"1 1 1 1  1 1 1 1  1 1 1 1  1 1 1 1\")",
+    );
+    let curves = song.tracks[0].instrument.unwrap().synth.unwrap().curves;
+    assert_eq!(
+        curves[CUTOFF],
+        Some(Curve::Ramp {
+            from: 200.0,
+            to: 3000.0,
+            steps: 32.0
+        })
+    );
+    assert_eq!(
+        curves[ENV_AMOUNT],
+        Some(Curve::Lfo {
+            min: 0.0,
+            max: acid::ENVMOD_OCTAVES,
+            rate: LfoRate::Steps(4.0)
+        })
+    );
+    assert!(matches!(curves[RESONANCE], Some(Curve::Lfo { .. })));
+    assert!(curves[GLIDE].is_none() && curves[ACCENT].is_none());
+    let audio = song.render(RATE, 2).unwrap();
+    assert!(audio.iter().all(|v| v.is_finite()));
+}
+
+/// Sin semilla, cada pista tiene la suya (de su nombre): dos pistas con el
+/// mismo synth no suenan igual; con la misma semilla, sí. Y el mismo
+/// script suena igual cada vez.
+#[test]
+fn the_seed_comes_from_the_track_name() {
+    let two = |seeds: &str| {
+        song_ok(&format!(
+            "local a = synth(\"acid\", {{ {seeds} }})\n\
+             track(\"uno\", a):steps(\"1 . . .  . . . .  . . . .  . . . .\")\n\
+             track(\"dos\", a):steps(\"1 . . .  . . . .  . . . .  . . . .\")"
+        ))
+    };
+    let solo = |song: &Song, name: &str| {
+        let mut song = song.clone();
+        song.tracks.retain(|t| t.name == name);
+        song.render(RATE, 1).unwrap()
+    };
+    let named = two("");
+    let seed = |s: &Song, i: usize| s.tracks[i].instrument.unwrap().synth.unwrap().patch.seed;
+    assert_ne!(seed(&named, 0), seed(&named, 1));
+    assert_ne!(solo(&named, "uno"), solo(&named, "dos"));
+    let fixed = two("seed = 3");
+    assert_eq!(seed(&fixed, 0), 3);
+    assert_eq!(solo(&fixed, "uno"), solo(&fixed, "dos"));
+    assert_eq!(solo(&two(""), "uno"), solo(&named, "uno"));
+}
+
+/// Accent y slide desde `every` (con `c:melody`) y desde `chance` (con
+/// semilla, el mismo ciclo cada vez).
+#[test]
+fn accents_and_slides_from_every_and_chance() {
+    let song = song_ok(
+        "track(\"bass\", synth(\"acid\"))\n\
+           :melody(\"c . c .  c . c .  c . c .  c . c .\")\n\
+           :every(2, function(c) c:melody(\"c! . eb/ .  c . c .  c . c .  c . c .\") end)\n\
+           :chance(0.5, \"accent\")",
+    );
+    let track = &song.tracks[0];
+    let lap0 = &track.bars[0];
+    assert!(lap0[0].unwrap().accent && lap0[2].unwrap().slide);
+    let accents = track
+        .bars
+        .iter()
+        .flatten()
+        .flatten()
+        .filter(|s| s.accent)
+        .count();
+    let hits = track.bars.iter().flatten().flatten().count();
+    assert!(accents > hits / 4 && accents < hits, "{accents} de {hits}");
+}
+
+/// Una nota con slide hace que la anterior dure hasta ella aunque llegue
+/// tarde (con swing): sin slide, la primera suelta al acabar su paso y
+/// queda un hueco hasta la segunda; con slide, sigue sonando (en `steps` y
+/// en `melody`).
+#[test]
+fn a_slid_note_keeps_the_previous_one_sounding() {
+    let render = |text: &str| {
+        song_ok(&format!(
+            "track(\"bass\", synth(\"acid\", {{ envmod = 0, cutoff = 2000 }}))\n\
+               :steps(\"{text}\"):swing(70)"
+        ))
+        .render(RATE, 1)
+        .unwrap()
+    };
+    let rms = |a: &[f32]| (a.iter().map(|v| v * v).sum::<f32>() / a.len() as f32).sqrt();
+    let left = |a: &[f32]| a.iter().step_by(2).copied().collect::<Vec<_>>();
+    // Con swing de 70, el paso 2 llega 0,4 pasos tarde (2400 frames): el
+    // release de la primera (12 ms) ya ha acabado a los 800.
+    let gap = STEP + 800..STEP + 2000;
+    let plain = left(&render("1 1^7 . .  . . . .  . . . .  . . . ."));
+    let tied = left(&render("1 1^7/ . .  . . . .  . . . .  . . . ."));
+    let (p, t) = (rms(&plain[gap.clone()]), rms(&tied[gap]));
+    assert!(t > 20.0 * p, "con slide {t}, sin él {p}");
+    let melody = song_ok(
+        "track(\"bass\", synth(\"acid\", { envmod = 0, cutoff = 2000 }))\n\
+           :melody(\"c g/ . .  . . . .  . . . .  . . . .\"):swing(70)",
+    )
+    .render(RATE, 1)
+    .unwrap();
+    assert_eq!(left(&melody), tied);
+}
+
+/// Sus notas salen por MIDI como las de un instrumento: raíz + semitonos.
+#[test]
+fn synth_notes_go_out_by_midi() {
+    let (mut controller, mut engine) = new_engine(RATE);
+    let mut host = ScriptHost::new(RATE);
+    host.load(
+        &mut controller,
+        "bpm(120)\n\
+         track(\"bass\", synth(\"acid\", { root = \"C2\" }))\n\
+           :melody(\"c . eb .  . . . .  . . . .  . . . .\"):midi(3)",
+        "song.lua",
+        Path::new("."),
+    )
+    .unwrap();
+    controller.start().unwrap();
+    offline::render(&mut engine, 4 * STEP, 2);
+    let got: Vec<(u64, u8, u8)> = controller
+        .midi_events()
+        .map(|n| (n.frame, n.note, n.velocity))
+        .collect();
+    let step = STEP as u64;
+    assert_eq!(
+        got,
+        [
+            (0, 36, 100),
+            (step, 36, 0),
+            (2 * step, 39, 100),
+            (3 * step, 39, 0)
+        ]
+    );
+}
+
+/// Los errores dicen la línea (la 3: la 1 es `bpm`, la 2 un `local`).
+#[test]
+fn errors_say_the_line() {
+    let acid = "synth(\"acid\")";
+    let cases = [
+        ("synth(\"moog\")", "no hay ese sintetizador (hay: acid)"),
+        (
+            "synth(\"acid\", { cutof = 300 })",
+            "clave desconocida \"cutof\"",
+        ),
+        (
+            "synth(\"acid\", { cutoff = 5 })",
+            "cutoff = 5 fuera de rango (20 a 20000)",
+        ),
+        (
+            "synth(\"acid\", { res = 2 })",
+            "res = 2 fuera de rango (0 a 1)",
+        ),
+        (
+            "synth(\"acid\", { wave = \"sine\" })",
+            "wave es \"saw\" o \"square\"",
+        ),
+        ("synth(\"acid\", { root = \"H2\" })", "no es una nota"),
+        ("synth(\"acid\", { seed = -1 })", "seed es un entero"),
+        (
+            "synth(\"acid\", { wave = ramp(0, 1, \"1 compás\") })",
+            "wave no admite ramp() ni lfo()",
+        ),
+        (
+            "synth(\"acid\", { res = ramp(0, 3, \"1 compás\") })",
+            "la curva se sale del rango (0 a 1)",
+        ),
+        (
+            "track(\"b\", synth(\"acid\")):steps(\"1^0^4 . . .  . . . .  . . . .  . . . .\")",
+            "es un sintetizador monofónico",
+        ),
+        (
+            "track(\"b\", synth(\"acid\")):steps(\"1{lp=800} . . .  . . . .  . . . .  . . . .\")",
+            "es un sintetizador: sus notas no tienen efectos por paso",
+        ),
+        (
+            "track(\"b\", synth(\"acid\")):melody(\"c+e . . .  . . . .  . . . .  . . . .\")",
+            "es un sintetizador monofónico",
+        ),
+        (
+            "synth(\"acid\"):fx(\"lowpass\", {})",
+            "los efectos de un sintetizador van en la pista",
+        ),
+    ];
+    for (line, expected) in cases {
+        let Err(err) = song(&format!("local x = {acid}\n{line}")) else {
+            panic!("{line}: debería fallar");
+        };
+        assert!(err.contains("song.lua:3:"), "{line}: {err}");
+        assert!(err.contains(expected), "{line}: {err}");
+    }
+    // Accent y slide en una pista que no es un sintetizador: con la línea.
+    let dir = std::env::temp_dir();
+    let (mut controller, _engine) = new_engine(RATE);
+    let mut host = ScriptHost::new(RATE);
+    let wav = dir.join("synth-errors.wav");
+    offline::write_wav(&wav, &vec![0.25f32; 4800], 1, RATE).unwrap();
+    for (line, expected) in [
+        (
+            "track(\"d\", s):steps(\"1! . . .  . . . .  . . . .  . . . .\")",
+            "! (accent) es de los sintetizadores",
+        ),
+        (
+            "track(\"d\", s):steps(\"1 . 1/ .  . . . .  . . . .  . . . .\")",
+            "/ (slide) es de los sintetizadores",
+        ),
+        (
+            "track(\"d\", s):chance(0.5, \"slide\")",
+            "\"slide\" es de los sintetizadores",
+        ),
+    ] {
+        let source = format!("bpm(120)\nlocal s = sample(\"synth-errors.wav\"):slice(1)\n{line}");
+        let err = host
+            .load(&mut controller, &source, "song.lua", &dir)
+            .map(|_| ())
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("song.lua:3:"), "{line}: {err}");
+        assert!(err.contains(expected), "{line}: {err}");
+    }
+}
+
+/// Un script con un error en el synth no cambia lo que suena: el modelo
+/// sigue siendo el anterior.
+#[test]
+fn an_invalid_synth_keeps_the_previous_song() {
+    let (mut controller, _engine) = new_engine(RATE);
+    let mut host = ScriptHost::new(RATE);
+    let good = "bpm(120)\ntrack(\"b\", synth(\"acid\", { cutoff = 300 })):melody(\"c . . .  . . . .  . . . .  . . . .\")";
+    host.load(&mut controller, good, "song.lua", Path::new("."))
+        .unwrap();
+    let bad = "bpm(120)\ntrack(\"b\", synth(\"acid\", { cutoff = 3 })):melody(\"c . . .  . . . .  . . . .  . . . .\")";
+    assert!(
+        host.load(&mut controller, bad, "song.lua", Path::new("."))
+            .is_err()
+    );
+    let kept = host.song().unwrap().tracks[0]
+        .instrument
+        .unwrap()
+        .synth
+        .unwrap();
+    assert_eq!(kept.patch.params[CUTOFF], 300.0);
+}

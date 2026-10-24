@@ -585,12 +585,14 @@ mod tests {
         );
         // Sufijos (menos ^) tal cual.
         assert_eq!(notes("c@0.5r2 e'~800", 60).unwrap(), "1^0@0.5r2 1^4'~800");
+        // El accent y el slide de los sintetizadores, también.
+        assert_eq!(notes("c! eb/ g!/", 60).unwrap(), "1^0! 1^3/ 1^7!/");
         for (bad, why) in [
             ("h", "debe ser una nota"),
             ("c^7", "sin ^"),
             ("c+e+g+b+d", "como mucho 4"),
             ("c7", "48 semitonos"),
-            ("c!", "inesperado"),
+            ("c?", "inesperado"),
         ] {
             let err = notes(bad, 48).unwrap_err();
             assert!(err.contains(why) && err.contains("paso 1"), "{bad}: {err}");

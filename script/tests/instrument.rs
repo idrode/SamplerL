@@ -359,7 +359,7 @@ fn errors_say_the_line() {
         ),
         (
             "track(\"t\", scale(\"minor\"))",
-            "cortes (sample(...):slice(n)) o un instrumento",
+            "cortes (sample(...):slice(n)), un instrumento (sample(...):instrument{...}) o un sintetizador",
         ),
     ];
     for (line, expected) in cases {
