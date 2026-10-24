@@ -45,8 +45,8 @@ fn spectrum(y: &[f32]) -> Vec<f64> {
         .enumerate()
         .map(|(i, &v)| {
             let x = std::f64::consts::TAU * i as f64 / n as f64;
-            let w = 0.35875 - 0.48829 * x.cos() + 0.14128 * (2.0 * x).cos()
-                - 0.01168 * (3.0 * x).cos();
+            let w =
+                0.35875 - 0.48829 * x.cos() + 0.14128 * (2.0 * x).cos() - 0.01168 * (3.0 * x).cos();
             Complex::new(v as f64 * w, 0.0)
         })
         .collect();
@@ -265,7 +265,10 @@ fn ramps_and_lfos_do_not_click() {
     let peak = y.iter().fold(0.0f32, |m, v| m.max(v.abs()));
     let ratio = max_curvature(&y) / sine_curvature(peak);
     println!("rampa y LFO: curvatura {ratio:.2} veces la de un seno");
-    assert!(ratio < CLICK_RATIO, "curvatura {ratio:.2} veces la de un seno");
+    assert!(
+        ratio < CLICK_RATIO,
+        "curvatura {ratio:.2} veces la de un seno"
+    );
 }
 
 /// Curvatura máxima permitida, en veces la de un seno de 110 Hz: la
@@ -275,7 +278,9 @@ const CLICK_RATIO: f32 = 4.0;
 
 /// Mayor salto entre dos muestras seguidas.
 fn max_step(y: &[f32]) -> f32 {
-    y.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0, f32::max)
+    y.windows(2)
+        .map(|w| (w[1] - w[0]).abs())
+        .fold(0.0, f32::max)
 }
 
 /// Un cambio de patch en medio de una nota (el corte de 100 a 4000 Hz
@@ -308,7 +313,10 @@ fn a_patch_change_mid_note_does_not_click() {
     let around = max_step(&y[quarter..half]).max(max_step(&y[half + quarter..]));
     let during = max_step(&y[half - 64..half + quarter]);
     println!("cambio de patch: salto {during:.4} (antes y después, {around:.4})");
-    assert!(during < 1.2 * around, "salto {during} (antes y después, {around})");
+    assert!(
+        during < 1.2 * around,
+        "salto {during} (antes y después, {around})"
+    );
     let mut clicked = y.clone();
     for v in &mut clicked[half + 100..] {
         *v += 0.05;
@@ -387,7 +395,11 @@ fn the_acid_patch_is_valid() {
     assert_eq!(patch.filter, FilterMode::Ladder);
     for p in &acid::PARAMS {
         let core = &synth::PARAMS[p.param];
-        assert!(core.min <= p.min * p.scale && p.max * p.scale <= core.max, "{}", p.name);
+        assert!(
+            core.min <= p.min * p.scale && p.max * p.scale <= core.max,
+            "{}",
+            p.name
+        );
     }
 }
 

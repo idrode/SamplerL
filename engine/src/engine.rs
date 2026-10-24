@@ -19,6 +19,7 @@ use crate::shift::Shift;
 use crate::slice::Slices;
 use crate::slice_fx::VoiceFx;
 use crate::status::{SharedStatus, Status};
+use crate::synth::{NoteEvent, Patch, SongClock, Synth};
 
 const COMMAND_CAPACITY: usize = 64;
 // A la basura solo va un `Arc` cuando el motor no guarda otra referencia al
@@ -134,6 +135,16 @@ enum Command {
         start: usize,
         end: usize,
         rate: f64,
+        gain: f32,
+        key: u8,
+    },
+    /// Nota en vivo de un sintetizador (pad o MIDI de entrada): `pitch`
+    /// semitonos sobre la raíz del patch, hasta su `NoteOff`. Lleva el
+    /// patch, así que suena también antes de que entre el patrón.
+    SynthOn {
+        track: usize,
+        patch: Patch,
+        semitones: f32,
         gain: f32,
         key: u8,
     },
@@ -674,6 +685,9 @@ pub enum SendError {
     InvalidInstrument(&'static str),
     /// Granos con parámetros fuera de rango.
     InvalidGranular(&'static str),
+    /// Sintetizador con parámetros fuera de rango (o en una pista que no
+    /// puede tenerlo).
+    InvalidSynth(&'static str),
     /// Arreglo (secciones y línea de tiempo) no válido.
     InvalidArrangement(&'static str),
     /// Etiqueta de patrón por encima de `MAX_TAG`.
@@ -691,6 +705,7 @@ impl fmt::Display for SendError {
             SendError::InvalidBus(reason) => write!(f, "envío: {reason}"),
             SendError::InvalidInstrument(reason) => write!(f, "instrumento: {reason}"),
             SendError::InvalidGranular(reason) => write!(f, "granos: {reason}"),
+            SendError::InvalidSynth(reason) => write!(f, "sintetizador: {reason}"),
             SendError::InvalidArrangement(reason) => write!(f, "arreglo: {reason}"),
             SendError::InvalidTag(tag) => {
                 write!(
@@ -853,6 +868,10 @@ struct Track {
     midi_notes: [Option<MidiHeld>; MIDI_HELD],
     /// Granos: la nube del último golpe y los granos que suenan.
     cloud: Cloud,
+    /// Sintetizador: sus voces y el patch con el que sigue sonando si el
+    /// patrón ya no lo tiene (el del último golpe o nota en vivo).
+    synth: Synth,
+    synth_patch: Option<Patch>,
 }
 
 /// Notas MIDI encendidas a la vez por pista de instrumento (si se llenan,
@@ -903,8 +922,8 @@ impl Retrig {
     }
 }
 
-impl Default for Track {
-    fn default() -> Self {
+impl Track {
+    fn new(sample_rate: u32) -> Self {
         Track {
             pattern: None,
             pending: None,
@@ -928,6 +947,8 @@ impl Default for Track {
             born: 0,
             midi_notes: [None; MIDI_HELD],
             cloud: Cloud::default(),
+            synth: Synth::new(sample_rate),
+            synth_patch: None,
         }
     }
 }
@@ -941,9 +962,19 @@ impl Track {
         self.live_solo || self.pattern.as_ref().is_some_and(|p| p.solo)
     }
 
-    /// Alguna nota del instrumento suena (o hace su fundido).
+    /// Alguna nota del instrumento o del sintetizador suena (o hace su
+    /// fundido).
     fn has_notes(&self) -> bool {
-        self.notes.iter().chain(&self.tails).any(Option::is_some)
+        self.notes.iter().chain(&self.tails).any(Option::is_some) || self.synth.is_active()
+    }
+
+    /// El patch con el que suena su sintetizador: el del patrón o, si ya no
+    /// lo tiene, el último que tocó.
+    fn patch(&self) -> Option<&Patch> {
+        self.pattern
+            .as_ref()
+            .and_then(|p| p.synth.as_ref())
+            .or(self.synth_patch.as_ref())
     }
 
     /// Algo suena en la pista: su voz, su fundido, notas o granos.
@@ -1075,7 +1106,7 @@ pub fn new_engine(sample_rate: u32) -> (Controller, Engine) {
             sample_rate,
             transport: Transport::new(),
             tracks: (0..MAX_TRACKS)
-                .map(|_| Track::default())
+                .map(|_| Track::new(sample_rate))
                 .collect::<Vec<_>>()
                 .into_boxed_slice()
                 .try_into()
@@ -1227,6 +1258,40 @@ impl Controller {
             key,
         };
         self.send(cmd, Some(start < end))
+    }
+
+    /// Toca ya una nota de un sintetizador en la pista `track` (un pad o
+    /// una nota MIDI de entrada): `semitones` sobre la raíz de `patch`, con
+    /// su volumen, hasta [`Controller::note_off`] con la misma `key`.
+    pub fn synth_note_on(
+        &mut self,
+        track: usize,
+        patch: Patch,
+        semitones: f32,
+        gain: f32,
+        key: u8,
+    ) -> Result<(), SendError> {
+        if track >= MAX_TRACKS {
+            return Err(SendError::NoSuchTrack(track));
+        }
+        let invalid = |reason| SendError::InvalidStep { step: 0, reason };
+        if !(0.0..=crate::sequencer::MAX_GAIN).contains(&gain) {
+            return Err(invalid("ganancia fuera de rango (0 a 4)"));
+        }
+        if !(-crate::sequencer::MAX_SEMITONES..=crate::sequencer::MAX_SEMITONES)
+            .contains(&semitones)
+        {
+            return Err(invalid("nota fuera de rango (-36 a 36 semitonos)"));
+        }
+        patch.validate().map_err(SendError::InvalidSynth)?;
+        let cmd = Command::SynthOn {
+            track,
+            patch,
+            semitones,
+            gain,
+            key,
+        };
+        self.send(cmd, Some(true))
     }
 
     /// Toca ya una nube de granos en la pista `track` (un pad o una nota
@@ -1821,6 +1886,31 @@ impl Engine {
                 self.choke(track);
                 self.discard(sample);
             }
+            Command::SynthOn {
+                track,
+                patch,
+                semitones,
+                gain,
+                key,
+            } => {
+                self.note_off(track, key);
+                let t = &mut self.tracks[track];
+                if !t.sounding() {
+                    t.fresh = true;
+                }
+                t.synth_patch = Some(patch);
+                let ev = NoteEvent {
+                    pitch: patch.root + semitones,
+                    gain,
+                    accent: false,
+                    slide: false,
+                    gate: crate::synth::HELD,
+                    key: Some(key),
+                };
+                t.synth.note_on(&patch, ev);
+                self.status.set_hit(track, 0);
+                self.choke(track);
+            }
             Command::NoteOff { track, key } => self.note_off(track, key),
             Command::GrainOn {
                 track,
@@ -1983,6 +2073,10 @@ impl Engine {
         let Some(pattern) = &self.tracks[t].pattern else {
             return;
         };
+        if let Some(patch) = pattern.synth {
+            self.play_synth(t, hit, gate, patch);
+            return;
+        }
         if let Some(instrument) = pattern.instrument {
             let sample = pattern.sample.clone();
             let midi = pattern.midi;
@@ -2134,6 +2228,38 @@ impl Engine {
         self.discard(sample);
     }
 
+    /// Un golpe de una pista con sintetizador: una nota por cada nota del
+    /// acorde (en un mono, solo hay una), con el accent y el slide del
+    /// paso; sus notas MIDI, como las de un instrumento.
+    fn play_synth(&mut self, t: usize, hit: Trigger, gate: usize, patch: Patch) {
+        let midi = self.tracks[t].pattern.as_ref().and_then(|p| p.midi);
+        let track = &mut self.tracks[t];
+        if !track.sounding() {
+            track.fresh = true;
+        }
+        track.synth_patch = Some(patch);
+        track.lock = hit.lock;
+        self.status.set_hit(t, hit.start);
+        let rates = std::iter::once(hit.playback.rate).chain(hit.chord.iter().flatten().copied());
+        for rate in rates {
+            let semitones = 12.0 * rate.log2();
+            let ev = NoteEvent {
+                pitch: patch.root + semitones as f32,
+                gain: hit.playback.gain,
+                accent: hit.accent,
+                slide: hit.slide,
+                gate: gate.max(1) as u64,
+                key: None,
+            };
+            let born = self.tracks[t].synth.note_on(&patch, ev);
+            if let Some((channel, root)) = midi {
+                let note = root as i32 + semitones.round() as i32;
+                self.instrument_midi_on(t, channel, note, hit.playback.gain, gate, born);
+            }
+        }
+        self.choke(t);
+    }
+
     /// Note on de una nota de un instrumento (en el frame del golpe) y su
     /// note off para dentro de `gate` frames. Si la pista no se oye, nada.
     fn instrument_midi_on(
@@ -2282,6 +2408,10 @@ impl Engine {
                 note.release_now();
             }
         }
+        let track = &mut self.tracks[t];
+        if let Some(patch) = track.patch().copied() {
+            track.synth.note_off(&patch, key);
+        }
     }
 
     /// Corta (con el fundido mínimo) las notas y los granos de una pista.
@@ -2289,6 +2419,7 @@ impl Engine {
         for note in self.tracks[t].notes.iter_mut().flatten() {
             note.kill();
         }
+        self.tracks[t].synth.kill();
         let fade = ((FADE_SECONDS * self.sample_rate as f32) as u32).max(1);
         if let Some(emission) = self.tracks[t].cloud.kill(fade) {
             self.discard(emission.sample);
@@ -2519,6 +2650,22 @@ impl Engine {
                 .count();
             for note in track.notes.iter_mut().chain(&mut track.tails).flatten() {
                 note.mix_into(buf);
+            }
+            let voices = voices + track.synth.voices();
+            if track.synth.is_active()
+                && let Some(patch) = track.patch().copied()
+            {
+                let curves = track
+                    .pattern
+                    .as_ref()
+                    .filter(|p| p.synth.is_some())
+                    .map_or([None; crate::synth::PARAM_COUNT], |p| p.synth_curves);
+                let at = SongClock {
+                    steps: clock.steps,
+                    seconds: clock.seconds,
+                    frames_per_step: clock.frames_per_step,
+                };
+                track.synth.mix_into(buf, &patch, &curves, &at);
             }
             let mut ended = None;
             let born = track.cloud.born;

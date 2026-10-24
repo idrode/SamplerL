@@ -81,9 +81,7 @@ impl Noise {
     pub fn new(seed: u64) -> Self {
         // Nunca 0 (el xorshift se quedaría ahí).
         let mixed = (seed ^ (seed >> 32)) as u32;
-        Noise {
-            state: mixed | 1,
-        }
+        Noise { state: mixed | 1 }
     }
 
     /// Muestra uniforme en [-1, 1).
@@ -175,7 +173,11 @@ impl Halfband {
     pub fn push(&mut self, x: f32) {
         self.buf[self.pos] = x;
         self.buf[self.pos + HALF_LEN] = x;
-        self.pos = if self.pos + 1 == HALF_LEN { 0 } else { self.pos + 1 };
+        self.pos = if self.pos + 1 == HALF_LEN {
+            0
+        } else {
+            self.pos + 1
+        };
     }
 
     /// La muestra de salida de la ventana actual (las últimas

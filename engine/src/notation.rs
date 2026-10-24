@@ -16,6 +16,10 @@
 //!   `r4` retrigger/stutter (el paso se repite 4 veces, de 1 a 16) y `~800`
 //!   corte del primer filtro de la pista en Hz desde ese golpe (parameter
 //!   lock).
+//! - En un sintetizador, `!` accent (la nota suena más fuerte y más
+//!   abierta) y `/` slide (la nota llega ligada desde la anterior, con
+//!   glide y sin volver a disparar las envolventes): `1^3!/`. En las demás
+//!   pistas no hacen nada (el script avisa con un error).
 //!
 //! - Efectos del golpe entre llaves, uno por par de llaves, detrás del
 //!   corte y en cualquier orden con los sufijos: `3{lp=800,q=4}{crush=6}`.
@@ -339,6 +343,7 @@ pub fn parse_step_with(
     let mut pitches = 0;
     let (mut seen_reverse, mut seen_gain) = (false, false);
     let (mut seen_retrig, mut seen_lock) = (false, false);
+    let (mut seen_accent, mut seen_slide) = (false, false);
     let mut written: Vec<WrittenFx> = Vec::new();
     while let Some(c) = rest.chars().next() {
         rest = &rest[c.len_utf8()..];
@@ -354,6 +359,14 @@ pub fn parse_step_with(
             '\'' => {
                 once(&mut seen_reverse, "reverse (')")?;
                 step.reverse = true;
+            }
+            '!' => {
+                once(&mut seen_accent, "accent (!)")?;
+                step.accent = true;
+            }
+            '/' => {
+                once(&mut seen_slide, "slide (/)")?;
+                step.slide = true;
             }
             '%' => {
                 if pitches > 0 {
@@ -406,7 +419,7 @@ pub fn parse_step_with(
                 return Err(format!(
                     "carácter inesperado '{other}' \
                      (efectos: ' reverse, ^n pitch, %n pitch sin cambiar la duración, \
-                     @n volumen, rN retrigger, ~Hz corte, {{efecto=valor}})"
+                     @n volumen, rN retrigger, ~Hz corte, ! accent, / slide, {{efecto=valor}})"
                 ));
             }
         }

@@ -17,6 +17,7 @@ use crate::instrument::Instrument;
 use crate::sample::Sample;
 use crate::slice::Slices;
 use crate::slice_fx::SliceFx;
+use crate::synth::{Patch, SynthCurves};
 
 /// Pasos por compás (semicorcheas en 4/4) y longitud por defecto de un
 /// patrón.
@@ -77,6 +78,12 @@ pub struct Step {
     /// Efectos de este golpe (`3{lp=800}`), que se juntan con los de su
     /// corte (manda el paso; ver [`SliceFx::with_step`]).
     pub fx: Option<SliceFx>,
+    /// Accent (`1!`): en un sintetizador, la nota suena más fuerte y más
+    /// abierta (ver [`crate::synth::Accent`]).
+    pub accent: bool,
+    /// Slide (`1/`): en un sintetizador, la nota llega ligada desde la
+    /// anterior (glide, sin volver a disparar las envolventes).
+    pub slide: bool,
 }
 
 impl Step {
@@ -93,6 +100,24 @@ impl Step {
             hold: 0,
             chord: [None; MAX_CHORD - 1],
             fx: None,
+            accent: false,
+            slide: false,
+        }
+    }
+
+    /// Con accent (`1!`).
+    pub fn accented(self) -> Self {
+        Step {
+            accent: true,
+            ..self
+        }
+    }
+
+    /// Con slide (`1/`).
+    pub fn slid(self) -> Self {
+        Step {
+            slide: true,
+            ..self
         }
     }
 
@@ -188,6 +213,9 @@ pub(crate) struct Trigger {
     /// Paso de la canción en que cae el golpe (lo pone el motor al
     /// dispararlo): ahí empiezan las rampas de golpe.
     pub origin: f64,
+    /// Accent y slide (solo en un sintetizador).
+    pub accent: bool,
+    pub slide: bool,
 }
 
 /// Patrón de una pista. Los pasos se resuelven a rangos de frames y
@@ -230,6 +258,10 @@ pub struct Pattern {
     pub(crate) instrument: Option<Instrument>,
     /// Toca el sample en granos (nube por golpe).
     pub(crate) granular: Option<Granular>,
+    /// Sintetizador: los golpes son notas de su banco de voces (el sample
+    /// no suena), con sus parámetros siguiendo `synth_curves`.
+    pub(crate) synth: Option<Patch>,
+    pub(crate) synth_curves: SynthCurves,
     /// Formantes de los pasos con `%`: `Some(0)` los mantiene, `Some(n)`
     /// los desplaza `n` semitonos; `None`, se mueven con el pitch.
     pub(crate) formant: Option<f32>,
@@ -312,6 +344,8 @@ impl Pattern {
             midi: None,
             instrument: None,
             granular: None,
+            synth: None,
+            synth_curves: [None; crate::synth::PARAM_COUNT],
             formant: None,
             pitch_curve: None,
             formant_curve: None,
@@ -325,6 +359,11 @@ impl Pattern {
     /// [`crate::instrument`]): cada uno abre una voz sin cortar las demás y
     /// dura su paso (más sus `_`) y su release.
     pub fn with_instrument(self, instrument: Option<Instrument>) -> Result<Self, SendError> {
+        if instrument.is_some() && self.synth.is_some() {
+            return Err(SendError::InvalidSynth(
+                "una pista con sintetizador no puede ser instrumento",
+            ));
+        }
         if let Some(i) = &instrument {
             i.validate(self.sample.frames())
                 .map_err(SendError::InvalidInstrument)?;
@@ -345,6 +384,63 @@ impl Pattern {
             }
         }
         Ok(Pattern { instrument, ..self })
+    }
+
+    /// Toca los golpes con un sintetizador (ver [`crate::synth`]): cada uno
+    /// es una nota (las de su acorde, si no es mono) con el accent y el
+    /// slide del paso; el sample no suena. Un golpe seguido de uno con
+    /// slide dura un paso más (sigue sonando hasta que llega el ligado).
+    /// `curves`: los parámetros continuos que siguen una curva.
+    pub fn with_synth(
+        mut self,
+        patch: Option<Patch>,
+        curves: SynthCurves,
+    ) -> Result<Self, SendError> {
+        let Some(p) = patch else {
+            return Ok(Pattern {
+                synth: None,
+                synth_curves: [None; crate::synth::PARAM_COUNT],
+                ..self
+            });
+        };
+        p.validate().map_err(SendError::InvalidSynth)?;
+        crate::synth::check_curves(&curves).map_err(SendError::InvalidSynth)?;
+        if self.instrument.is_some() || self.granular.is_some() {
+            return Err(SendError::InvalidSynth(
+                "una pista con sintetizador no toca su sample (ni instrumento ni granos)",
+            ));
+        }
+        if !self.slice_fx.is_empty() || !self.step_fx.is_empty() {
+            return Err(SendError::InvalidSynth(
+                "un sintetizador no tiene efectos por corte ni por paso (usa los de la pista)",
+            ));
+        }
+        if p.mono
+            && let Some(i) = self
+                .steps
+                .iter()
+                .position(|t| t.is_some_and(|t| t.chord.iter().any(Option::is_some)))
+        {
+            return Err(SendError::InvalidStep {
+                step: i % self.length,
+                reason: "un sintetizador monofónico no toca acordes",
+            });
+        }
+        // Lo que va ligado al siguiente: suena hasta que llega.
+        let total = self.steps.len();
+        for i in 0..total {
+            let Some(hit) = self.steps[i] else { continue };
+            let next = (i + 1 + hit.hold as usize) % total;
+            if self.steps[next].is_some_and(|t| t.slide)
+                && (hit.hold as usize) + 1 < MAX_STEPS
+                && let Some(t) = &mut self.steps[i]
+            {
+                t.hold += 1;
+            }
+        }
+        self.synth = Some(p);
+        self.synth_curves = curves;
+        Ok(self)
     }
 
     /// Formantes de los pasos con `%` (pitch sin cambiar la duración):
@@ -410,6 +506,11 @@ impl Pattern {
             if self.instrument.is_some() {
                 return Err(SendError::InvalidGranular(
                     "una pista con granos no puede ser instrumento",
+                ));
+            }
+            if self.synth.is_some() {
+                return Err(SendError::InvalidSynth(
+                    "una pista con sintetizador no toca su sample en granos",
                 ));
             }
             if !self.step_fx.is_empty() {
@@ -735,6 +836,8 @@ fn resolve_bar(
             chord: step.chord.map(|i| i.map(|i| rate(step.semitones + i))),
             fx,
             origin: 0.0,
+            accent: step.accent,
+            slide: step.slide,
         }));
     }
     Ok(())

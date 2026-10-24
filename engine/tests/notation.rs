@@ -61,7 +61,8 @@ fn rejects_malformed_steps_with_a_message() {
         "a",
         "3^1.2.3",
         "-3",
-        "3!",
+        "3?",
+        "3!!",
     ] {
         assert!(parse_step(bad).is_err(), "\"{bad}\" debería fallar");
     }
@@ -332,4 +333,37 @@ fn step_effects_are_read_and_handed_to_the_resolver() {
     let fail = |_: &[WrittenFx]| Err("no me gusta".to_string());
     let error = parse_pattern_with(". 1{zz=1}", 2, &[], Some(&fail)).unwrap_err();
     assert_eq!(error.to_string(), "paso 2 (\"1{zz=1}\"): no me gusta");
+}
+
+/// Accent (`!`) y slide (`/`): sufijos como los demás, en cualquier orden
+/// y una vez cada uno; con etiquetas y con los acordes también.
+#[test]
+fn accent_and_slide_suffixes() {
+    let steps = engine::notation::parse_pattern_labeled(
+        "1! 1/ 1^3!/ kick/'@0.5 . 1^0^4!",
+        6,
+        &[Some("kick".into())],
+    )
+    .unwrap();
+    let s = |i: usize| steps[i].unwrap();
+    assert!(s(0).accent && !s(0).slide);
+    assert!(s(1).slide && !s(1).accent);
+    assert!(s(2).accent && s(2).slide && s(2).semitones == 3.0);
+    assert!(s(3).slide && s(3).reverse && s(3).gain == 0.5);
+    assert!(steps[4].is_none());
+    assert!(s(5).accent && s(5).chord[0] == Some(4.0));
+    assert_eq!(Step::new(0).accented().slid(), {
+        let mut step = Step::new(0);
+        step.accent = true;
+        step.slide = true;
+        step
+    });
+    for (token, message) in [
+        ("1!!", "accent (!) repetido"),
+        ("1//", "slide (/) repetido"),
+    ] {
+        assert_eq!(parse_step(token).unwrap_err(), message);
+    }
+    // Sin ellos, todo como siempre.
+    assert!(!parse_step("3^7@0.5").unwrap().unwrap().accent);
 }

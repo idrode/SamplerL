@@ -90,6 +90,15 @@ impl Sample {
         })
     }
 
+    /// Un frame de silencio: el sample de una pista que no toca samples
+    /// (un sintetizador; ver `Pattern::with_synth`).
+    pub fn silence(sample_rate: u32) -> Self {
+        Sample {
+            data: vec![0.0; 2],
+            sample_rate,
+        }
+    }
+
     /// Sample desde estéreo entrelazado ya a la frecuencia del motor.
     pub(crate) fn from_raw(data: Vec<f32>, sample_rate: u32) -> Self {
         Sample { data, sample_rate }

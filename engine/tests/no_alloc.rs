@@ -2,7 +2,7 @@
 //! asignador global cuenta las reservas que hace este hilo mientras corre
 //! `Engine::process`, con retrasos (swing, humanize), retrigger, pitch,
 //! instrumentos (polifonía, ADSR, bucles), el EQ (suavizado y automatizado),
-//! el EQ dinámico con sidechain, efectos por corte (con sus colas), bucles de corte con fundido, nubes de granos en vivo, cambios de
+//! el EQ dinámico con sidechain, efectos por corte (con sus colas), bucles de corte con fundido, nubes de granos en vivo, sintetizadores (mono con accent y slide, polifónicos con unison, curvas y notas en vivo), cambios de
 //! patrón al compás, un patrón que se suelta a la cola de basura y el paso
 //! de cada pista y el retardo de salida que se publican para la interfaz.
 
@@ -1100,6 +1100,93 @@ fn the_audio_thread_never_allocates() {
         "reservas al quitar los efectos por paso con sus colas"
     );
     controller.collect_garbage();
+
+    // Sintetizadores: un acid mono con accents, slides y una rampa del
+    // corte, y uno polifónico con unison de 7, acordes y un LFO; notas en
+    // vivo y sus note off; choke entre los dos, y quitarlos.
+    let silence = Arc::new(Sample::silence(RATE));
+    let one = Slices::grid(&silence, 1);
+    let acid_steps: Vec<Option<Step>> = (0..STEPS)
+        .map(|k| {
+            let step = Step::new(0).with_pitch([0.0, 12.0, 3.0, -5.0][k % 4]);
+            let step = if k % 3 == 0 { step.accented() } else { step };
+            Some(if k % 4 == 1 { step.slid() } else { step })
+        })
+        .collect();
+    let mut curves = [None; engine::synth::PARAM_COUNT];
+    curves[engine::synth::CUTOFF] = Some(engine::Curve::Ramp {
+        from: 200.0,
+        to: 4000.0,
+        steps: 16.0,
+    });
+    let acid = Pattern::from_steps(silence.clone(), &one, acid_steps)
+        .unwrap()
+        .with_synth(Some(engine::synth::acid::patch(36.0)), curves)
+        .unwrap()
+        .with_choke(Some(3))
+        .unwrap()
+        .with_fx(&[Fx::lowpass(5000.0)])
+        .unwrap();
+    let mut poly = engine::synth::Patch::new()
+        .with(engine::synth::DETUNE, 20.0)
+        .with(engine::synth::SPREAD, 0.7)
+        .with(engine::synth::NOISE, 0.1)
+        .with(engine::synth::SUB, 0.3);
+    poly.unison = 7;
+    poly.voices = 8;
+    poly.filter = engine::synth::FilterMode::Ladder;
+    let mut lfo = [None; engine::synth::PARAM_COUNT];
+    lfo[engine::synth::RESONANCE] = Some(engine::Curve::Lfo {
+        min: 0.1,
+        max: 0.9,
+        rate: engine::LfoRate::Hz(3.0),
+    });
+    let chords: Vec<Option<Step>> = (0..STEPS)
+        .map(|k| (k % 2 == 0).then(|| Step::new(0).with_chord(&[3.0, 7.0, 10.0]).with_hold(1)))
+        .collect();
+    let pads = Pattern::from_steps(silence.clone(), &one, chords)
+        .unwrap()
+        .with_synth(Some(poly), lfo)
+        .unwrap()
+        .with_choke(Some(3))
+        .unwrap()
+        .with_midi(Some((2, 48)))
+        .unwrap();
+    controller.set_track_pattern(5, Some(acid)).unwrap();
+    controller.set_track_pattern(6, Some(pads)).unwrap();
+    let n = counted(|| {
+        for _ in 0..400 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas con sintetizadores");
+    let status = controller.status();
+    let voices = (status.tracks[5].voices, status.tracks[6].voices);
+    assert!(voices.0 == 1 && voices.1 >= 4, "voces: {voices:?}");
+    for key in 0..10 {
+        controller
+            .synth_note_on(7, poly, key as f32, 0.8, key)
+            .unwrap();
+    }
+    let n = counted(|| {
+        for _ in 0..100 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas con notas en vivo del sintetizador");
+    for key in 0..10 {
+        controller.note_off(7, key).unwrap();
+    }
+    controller.set_track_pattern(5, None).unwrap();
+    controller.set_track_pattern(6, None).unwrap();
+    let n = counted(|| {
+        for _ in 0..400 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas al soltar y quitar los sintetizadores");
+    controller.collect_garbage();
+    let _ = controller.midi_events().count();
 
     // Rampa de tempo y cambio de compás.
     controller

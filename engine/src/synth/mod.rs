@@ -29,7 +29,6 @@ use env::{Env, Rates, Stage};
 use filter::{Filter, soft, warp};
 use osc::{Halfband, Noise, Osc};
 
-
 /// Osciladores desafinados por voz como máximo (unison).
 pub const MAX_UNISON: usize = 7;
 /// Voces de un sintetizador como máximo.
@@ -893,7 +892,9 @@ impl Synth {
 
     /// Algún estado de algún filtro no es finito (para los tests).
     pub fn is_finite(&self) -> bool {
-        self.voices.iter().all(|v| v.filter.iter().all(Filter::is_finite))
+        self.voices
+            .iter()
+            .all(|v| v.filter.iter().all(Filter::is_finite))
     }
 }
 
@@ -916,7 +917,11 @@ pub fn render(
             synth.note_on(patch, notes[next].1);
             next += 1;
         }
-        let until = notes.get(next).map_or(frames, |n| n.0).min(at + chunk).min(frames);
+        let until = notes
+            .get(next)
+            .map_or(frames, |n| n.0)
+            .min(at + chunk)
+            .min(frames);
         // 120 BPM: 8 pasos por segundo.
         let frames_per_step = sample_rate as f64 / 8.0;
         let clock = SongClock {
