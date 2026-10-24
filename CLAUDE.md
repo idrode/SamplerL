@@ -4,7 +4,7 @@ Sampler + secuenciador para remixes con amen breaks, controlado por código en v
 
 Guía de uso (inicio rápido, atajos, mini-notación, API de Lua, recetas y problemas): [docs/GUIA.md](docs/GUIA.md). Sus bloques de Lua y las recetas de `scripts/ejemplos/` se comprueban en `script/tests/guide.rs`. La sección de la API se genera desde el registro `script/src/api.rs`: al cambiar la API, actualiza el registro y ejecuta `cargo run -p script --example guia`.
 
-Hoja de ruta (fases A-M después de los pasos 1-7, con sus reglas comunes; la F se hizo antes que la E y la J, EQ y choques de frecuencia entre pistas, después de la K): [docs/ROADMAP.md](docs/ROADMAP.md). Estado detallado y decisiones de cada fase: [docs/ESTADO.md](docs/ESTADO.md). Resumen abajo, en «Estado (resumen)».
+Hoja de ruta (fases A-O después de los pasos 1-7, con sus reglas comunes; la F se hizo antes que la E y la J, EQ y choques de frecuencia entre pistas, después de la K): [docs/ROADMAP.md](docs/ROADMAP.md). Estado detallado y decisiones de cada fase: [docs/ESTADO.md](docs/ESTADO.md). Resumen abajo, en «Estado (resumen)».
 
 ## Idea central
 
@@ -21,7 +21,7 @@ Hoja de ruta (fases A-M después de los pasos 1-7, con sus reglas comunes; la F 
 - Audio: `cpal`. Decodificación: `symphonia` (WAV, MP3, FLAC, OGG) y `hound`. Resampleo: `rubato`.
 - Interfaz: solo terminal (TUI) con `ratatui` 0.30 + `ratatui-textarea` 0.9 (la continuación de `tui-textarea` dentro de la organización de ratatui; `tui-textarea` 0.7 obligaba a quedarse en ratatui 0.29). Decisión del usuario: nada de GUI por ahora, experiencia 100% terminal.
 - Scripting: mini-notación para patrones (estilo Tidal) + Lua con `mlua` para la lógica. Recarga en caliente.
-- DSP: `fundsp` para synths y efectos cuando toque.
+- DSP: los synths con código propio (`engine::synth`: determinista y sin reservas; `fundsp` no, ver «Fase O» en `docs/ESTADO.md`); `fundsp` queda como opción para efectos.
 
 ## Reglas de arquitectura (no negociables)
 
@@ -48,7 +48,7 @@ Un paso cada vez; probar con tests (audio sintético, renderizado offline) antes
 ## Ideas para después
 
 - Deformar y modificar el sample al importarlo (pitch, time-stretch, granular, etc.) y tocar melodías con él.
-- Instrumentos propios (bajo y synths con osciladores, ADSR, filtro; evitar aliasing con PolyBLEP o wavetables).
+- Más instrumentos sobre el núcleo de síntesis de la fase O (pads, leads, wavetable).
 - MIDI: probar con dispositivos reales; enviar las notas con marca de tiempo (cola de ALSA) para quitar el jitter; reloj MIDI de salida; que los pads y las notas de entrada también se puedan grabar como `steps` (fase E).
 - Alojar plugins CLAP/LV2: solo si hiciera falta; es costoso.
 - Time-stretch de más calidad que el WSOLA de `sample:stretch()` para proporciones grandes o material tonal: Rubber Band tras una feature opcional.
@@ -94,13 +94,14 @@ El detalle de lo hecho (dónde está cada cosa en el código, cómo funciona, su
 - **Nube de granos en vivo**: en el modo tocar y por MIDI, una pista con granos abre una nube mientras se mantiene la tecla (la tecla elige el corte, o el pitch si la pista tiene uno solo); ver «Nube en vivo» en `docs/ESTADO.md`.
 - **Mejoras sueltas** (fuera de las fases; detalle en «Mejoras sueltas» de `docs/ESTADO.md`): portapapeles del sistema en el editor (OSC 52, `wl-copy`/`wl-paste`), tracker entero en cuanto cabe, fundido en el salto de los bucles de corte (`crossfade` en `cortes:set`), la ayuda del modo tocar sin «Esc editor» con el editor fuera, la navegación del editor (Ctrl-Inicio/Ctrl-Fin, ir a la línea con Alt-G, buscar con Ctrl-F y F6/F7) el tutorial «Tu primera canción» (sección 8 de la guía) y `tui --edit` con una ruta que no existe, error salvo con `--new`.
 - **Fase L hecha** (editor en ventana propia): el editor en otro proceso y otra terminal (`tui --edit x --split`, `tui --window-editor x`), unido a la principal por un socket Unix privado con un protocolo de líneas (si uno cae, el otro sigue); sin el editor, la principal llena la ventana con la forma de onda grande, el tracker con todas las pistas, el mezclador y la tabla del último análisis de choques; y el editor se saca y se vuelve a meter en caliente desde la paleta con su texto, cursor e historial.
+- **Fase O hecha** (síntesis): núcleo en `engine::synth` (osciladores con PolyBLEP al doble y diezmados, unison, SVF y ladder de 4 polos, ADSR, glide, accent; voces fijas por pista, deterministas con semilla) y el primer instrumento, `synth("acid", {...})`, con accent (`!`) y slide (`/`) en la mini-notación; se toca como un instrumento (melody, pads, MIDI) y sus parámetros admiten `ramp`/`lfo`.
 - **Fase N hecha** (automatización y efectos por paso en todo): todo lo continuo admite `ramp()`/`lfo()` (también `:gain()`, el `:pan()` nuevo, `:send()` y los buses) y el registro dice qué se puede automatizar y por qué no lo demás (`api::Auto`, tabla «Qué se puede automatizar» de la guía); por golpe lo que la voz lee al nacer (`:pitch()` nuevo, `:formant()` y la forma de `cortes:set`); efectos por paso en la mini-notación (`3{lp=800,q=4}{crush=6}`, con rampas del golpe `{lp=200>4000:4}`; manda el paso sobre su corte); y el tracker editable (paleta: cursor, Enter escribe los efectos del paso en su token del código, en un paso de deshacer, y carga).
 - **Comprobaciones que no hay que romper**:
   - `engine/tests/no_alloc.rs`: cero reservas en `Engine::process`; todo lo nuevo del motor entra ahí.
   - `script/tests/golden.rs`: huellas del audio (solo en x86_64); sin usar nada nuevo, idénticas bit a bit.
   - `script/tests/guide.rs`: la guía coincide con el registro (`cargo run -p script --example guia`) y sus bloques de Lua y las recetas de `scripts/ejemplos/` se ejecutan; el script del tutorial (bloques `lua entero`, `añade` y `cambia`) se reconstruye paso a paso y cada estado se carga. Las tablas de la paleta y de la configuración se reescriben con `ACTUALIZAR_GUIA=1 cargo test -p tui the_guide_lists_the_palette` (y `the_guide_lists_the_config`).
   - `script/tests/registry.rs`: cada función, efecto, parámetro y snippet del registro existe y funciona en Lua.
-- **Ver la interfaz sin terminal**: `cargo test -p tui pantalla -- --ignored --nocapture` (y `pantalla_autocompletado`, `pantalla_paleta`, `pantalla_bloques`, `pantalla_choques`, `pantalla_ventanas`).
+- **Ver la interfaz sin terminal**: `cargo test -p tui pantalla -- --ignored --nocapture` (y `pantalla_autocompletado`, `pantalla_paleta`, `pantalla_bloques`, `pantalla_choques`, `pantalla_ventanas`, `pantalla_acid`).
 - **Audio de prueba**: `scripts/render-demo.sh` genera un break sintético y lo renderiza a `renders/` sin tocar la tarjeta (ver `docs/ESTADO.md`).
 - **Pendiente conocido**: cpal avisa de un underrun al arrancar el stream (una vez, ~200 ms).
 

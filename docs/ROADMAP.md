@@ -412,6 +412,40 @@ sintaxis nueva; versión nueva del protocolo del socket si cambia.
    cargando; también con el editor en su ventana (protocolo sin cambios,
    versión 3).
 
+## Fase O: motor de síntesis y primer instrumento (acid) ✅
+
+Hechas las cuatro partes. Objetivo: un núcleo de síntesis en el motor que
+sirva para varios instrumentos (después: pads, leads y wavetable sobre el
+mismo núcleo, sin nada del 303 dentro) y el primero, un bajo ácido como el
+del 303. Detalle y decisiones en «Fase O» de [docs/ESTADO.md](ESTADO.md).
+
+Reglas de siempre: registro único de la API (autocompletado, ayuda,
+guía); el hilo de audio sin reservas (`no_alloc.rs` ampliado); `golden.rs`
+idéntico si no se usa nada nuevo; cambios por lotes atómicos al compás;
+error con la línea y sigue sonando lo anterior; portable (Rust puro).
+
+1. ✅ **Núcleo** (`engine::synth`, código propio y no `fundsp`):
+   osciladores sine, saw, square con PWM, triangle y ruido, suboscilador y
+   unison con detune; antialiasing con PolyBLEP al doble de frecuencia y
+   diezmado (la sierra a 4 kHz, por debajo de -50 dB en un test); filtros
+   paso bajo, alto y banda y un ladder de 4 polos con resonancia que
+   autooscila y saturación, sin clics al moverlo y con `ramp`/`lfo`; ADSR
+   de amplitud y de filtro; glide; voces reservadas al crear el motor;
+   fases y ruido deterministas con semilla.
+2. ✅ **En el motor**: `Pattern::with_synth`, accent (`!`) y slide (`/`)
+   en la mini-notación, mono con legato en los slides, notas en vivo,
+   paro, choke y MIDI de salida.
+3. ✅ **Acid en Lua**: `synth("acid", { cutoff, res, envmod, decay,
+   accent, dist, glide, wave, root, seed })` con `melody`, `scale`,
+   `every`, `chance`, curvas en lo continuo y errores con la línea; la
+   receta «Un bajo ácido» en la guía.
+4. ✅ **Interfaz**: tracker con `!` y `/`, paneles, pads y MIDI de
+   entrada, resaltado en vivo y autocompletado.
+
+Queda para después, sobre el mismo núcleo: pads (polifónico con unison,
+ataque y release largos), leads y wavetable; un instrumento que use el
+sub y el ruido; y medir el aliasing de la saturación del ladder.
+
 ## Mejoras sueltas
 
 Arreglos pequeños fuera de las fases, con las reglas de siempre. Detalle

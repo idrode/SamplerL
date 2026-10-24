@@ -3,7 +3,7 @@ bpm(132)
 local amen = sample("amen.wav"):slice(8)
 track("drums", amen)
   :steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
-  :gain(0.8)
+  :gain(0.6)
 
 local bass = synth("acid", {
   cutoff = 320, res = 0.82, envmod = 0.65, decay = 220, accent = 0.8,

@@ -428,6 +428,11 @@ fn cpu_cost_of_eight_voices_with_unison_of_seven() {
         100.0 * took / seconds as f64,
         100.0 * acid_took / seconds as f64
     );
+    println!(
+        "memoria: {} KiB por pista ({} KiB las 8 pistas), reservada al crear el motor",
+        std::mem::size_of::<synth::Synth>() / 1024,
+        8 * std::mem::size_of::<synth::Synth>() / 1024
+    );
 }
 
 /// Nivel del acid: con accent al máximo, la resonancia al máximo, el

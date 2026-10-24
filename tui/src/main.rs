@@ -453,12 +453,15 @@ fn render_script(
         eprintln!("aviso: {warning}");
     }
     for track in &song.tracks {
-        println!(
-            "pista \"{}\": {} ({} cortes)",
-            track.name,
-            track.path.display(),
-            track.slices.len()
-        );
+        match track.instrument.and_then(|i| i.synth) {
+            Some(synth) => println!("pista \"{}\": synth \"{}\"", track.name, synth.kind),
+            None => println!(
+                "pista \"{}\": {} ({} cortes)",
+                track.name,
+                track.path.display(),
+                track.slices.len()
+            ),
+        }
     }
     if !song.timeline.is_empty() {
         let line: Vec<String> = song
