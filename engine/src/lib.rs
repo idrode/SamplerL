@@ -22,6 +22,7 @@ mod slice;
 mod slice_fx;
 mod status;
 pub mod stretch;
+pub mod synth;
 
 pub use arrangement::{Arrangement, MAX_ENTRIES, MAX_SECTIONS};
 pub use automation::{
