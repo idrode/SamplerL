@@ -16,8 +16,8 @@ use crate::diagnose;
 use crate::editing;
 use crate::model::{
     BlockPickerView, BrowserView, ClashRow, ClashTableView, CompletionView, ErrorView,
-    InstrumentView, MasterView, PaletteView, SlotsView, TimelineView, TrackView, TransportView,
-    ViewModel, Waveform, error_line,
+    InstrumentView, MasterView, PaletteView, SlotsView, SynthView, TimelineView, TrackView,
+    TransportView, ViewModel, Waveform, error_line,
 };
 use crate::palette::{self, Action, Item};
 
@@ -2018,15 +2018,22 @@ impl App {
             track.name.clone(),
         );
         let note = script::patterns::note_name(instrument.root + semitones as i32);
-        match self.controller.note_on(
-            slot,
-            &sample,
-            range,
-            instrument.engine,
-            semitones,
-            gain,
-            key,
-        ) {
+        // Un sintetizador toca su patch; un instrumento, su sample.
+        let sent = match instrument.synth {
+            Some(synth) => self
+                .controller
+                .synth_note_on(slot, synth.patch, semitones, gain, key),
+            None => self.controller.note_on(
+                slot,
+                &sample,
+                range,
+                instrument.engine,
+                semitones,
+                gain,
+                key,
+            ),
+        };
+        match sent {
             Ok(()) => {
                 // La misma tecla otra vez (MIDI sin note off): la sustituye.
                 self.held.retain(|h| h.key != key);
@@ -3688,6 +3695,10 @@ impl App {
                                 root: i.root,
                                 voices: i.engine.voices,
                                 sounding: track_status.map_or(0, |ts| ts.voices),
+                            }),
+                            synth: t.instrument.and_then(|i| i.synth).map(|s| SynthView {
+                                kind: s.kind,
+                                params: crate::model::synth_text(&s),
                             }),
                             grains: t.granular.as_ref().map(crate::model::grains_text),
                             formant: t.formant.or(t.instrument.and_then(|i| i.engine.formant)),

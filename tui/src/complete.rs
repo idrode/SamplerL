@@ -320,6 +320,24 @@ fn string_context(
                     insert: b.name.into(),
                 })
                 .collect(),
+            ("synth", 0) => api::SYNTHS
+                .iter()
+                .map(|t| Candidate {
+                    label: t.name.into(),
+                    kind: "sintetizador".into(),
+                    signature: format!(
+                        "synth(\"{}\", {{ {} }})",
+                        t.name,
+                        t.params
+                            .iter()
+                            .map(|p| p.name)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                    description: t.summary.into(),
+                    insert: t.name.into(),
+                })
+                .collect(),
             ("track", 0) => track_names(all)
                 .into_iter()
                 .map(|n| Candidate {
@@ -673,7 +691,7 @@ impl Scan {
         };
         // La tabla de `fx("efecto", { ... })`, de `bus("delay", { ... })`, de
         // `cortes:set([i,] { ... })`, de `sample(ruta, { ... })` o de
-        // `sample:instrument({ ... })`.
+        // `sample:instrument({ ... })`, o de `synth("tipo", { ... })`.
         match (name.as_str(), *arg) {
             ("fx", 1) => api::effect(strings.first()?.as_deref()?),
             // `cortes:fx(cuál, "efecto", { ... })`.
@@ -682,6 +700,7 @@ impl Scan {
             ("set", 0 | 1) => Some(&api::SLICE_TABLE),
             ("sample", 1) => Some(&api::SAMPLE_TABLE),
             ("instrument", 0) => Some(&api::INSTRUMENT_TABLE),
+            ("synth", 1) => api::synth(strings.first()?.as_deref()?),
             ("grains", 0) | ("freeze", 1) => Some(&api::GRAINS_TABLE),
             _ => None,
         }
@@ -778,6 +797,8 @@ pub fn help_at(lines: &[String], row: usize, col: usize) -> Option<Help> {
             "pista:grains({ ... })".to_string()
         } else if api::bus(effect.name).is_some_and(|b| std::ptr::eq(b, effect)) {
             format!("bus(\"{}\", {{ ... }})", effect.name)
+        } else if api::synth(effect.name).is_some_and(|t| std::ptr::eq(t, effect)) {
+            format!("synth(\"{}\", {{ ... }})", effect.name)
         } else if matches!(
             scan.frames.iter().rev().nth(1),
             Some(Frame::Paren { arg: 2, .. })
@@ -1280,7 +1301,32 @@ mod tests {
         let c = at(&format!("{SONG}track(\"d\", amen):chance(0.2, \"|")).unwrap();
         assert_eq!(
             labels(&c),
-            ["retrig", "reverse", "pitch", "gain", "mute", "accent", "slide"]
+            [
+                "retrig", "reverse", "pitch", "gain", "mute", "accent", "slide"
+            ]
+        );
+    }
+
+    #[test]
+    fn synth_offers_its_types_parameters_and_values() {
+        let c = at(&format!("{SONG}local b = synth(\"|")).unwrap();
+        assert_eq!(labels(&c), ["acid"]);
+        let c = at(&format!("{SONG}local b = synth(\"acid\", {{ c|")).unwrap();
+        assert_eq!(labels(&c), ["cutoff"]);
+        let c = at(&format!("{SONG}local b = synth(\"acid\", {{ |")).unwrap();
+        let all = labels(&c);
+        assert!(all.contains(&"envmod".to_string()) && all.contains(&"glide".to_string()));
+        let c = at(&format!("{SONG}local b = synth(\"acid\", {{ wave = \"|")).unwrap();
+        assert_eq!(labels(&c), ["saw", "square"]);
+        let h = help(&format!(
+            "{SONG}local b = synth(\"acid\", {{ res = 0.|8 }})"
+        ))
+        .unwrap();
+        assert_eq!(h.signature, "synth(\"acid\", { ... })");
+        assert!(
+            h.description.starts_with("res: resonancia"),
+            "{}",
+            h.description
         );
     }
 

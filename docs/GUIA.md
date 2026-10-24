@@ -215,6 +215,7 @@ Abajo, una columna por pista. Cada una dice:
 | `· gate` | Modo gate (cada golpe dura su paso) |
 | `· MIDI 1/36` | Manda sus golpes por MIDI (canal y nota del corte 1; en un instrumento, solo el canal) |
 | `· ♪ C3 2/4` | Instrumento: su raíz, y las voces que suenan de las que tiene |
+| `· ♪ acid C2 1/1` | Sintetizador (`synth`): su tipo, su raíz y sus voces (el panel del sample enseña sus parámetros, `∿` en los que se mueven) |
 | `· formant 0`, `· formant -3` | Formantes al transponer con `%` |
 | `· ⁘ 80 ms · 20/s`, `· ❄ 0.4 · 120 ms · 25/s` | Granos (tamaño y densidad) o congelado (posición); `∿` si se mueve con `ramp`/`lfo` |
 | `· choke 1` | Grupo de choke |
@@ -696,7 +697,9 @@ foot, WezTerm, Ghostty), la nota dura hasta que la sueltas; si no (tmux y
 la mayoría), suena mientras llegan las repeticiones de la tecla
 mantenida y se suelta cuando dejan de llegar (unos 0,7 s tras una
 pulsación corta, 0,15 s tras la última repetición). Volver al editor o
-cambiar de pista suelta las notas de los pads.
+cambiar de pista suelta las notas de los pads. Una pista con un
+sintetizador (`synth("acid")`) se toca igual, desde su raíz; el acid es
+monofónico, así que una tecla nueva vuelve a empezar la nota que suena.
 
 **En una pista con granos** (`pista:grains()`, `pista:freeze()`), cada tecla
 abre una nube de granos que dura mientras la mantienes (se suelta como las
@@ -2612,7 +2615,10 @@ slide suena hasta que llega la ligada, aunque llegue tarde con swing; un
 slide después de un silencio es una nota normal. Los parámetros se mueven
 con `ramp()` y `lfo()` sin clics, y los efectos de la pista (`:fx`) van
 detrás. En el tracker, las notas salen por su nombre con sus marcas
-(`C2!`, `D#2/`).
+(`C2!`, `D#2/`); en lugar del sample, su panel enseña sus parámetros (con
+`∿` en los que siguen una curva) y el de efectos dice `♪ acid C2 1/1`.
+Los pads del modo tocar y el MIDI de entrada lo tocan en vivo, desde la
+raíz, y `:midi(canal)` manda sus notas fuera como las de un instrumento.
 
 ```lua
 -- 09-bajo-acido.lua

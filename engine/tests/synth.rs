@@ -429,3 +429,46 @@ fn cpu_cost_of_eight_voices_with_unison_of_seven() {
         100.0 * acid_took / seconds as f64
     );
 }
+
+/// Nivel del acid: con accent al máximo, la resonancia al máximo, el
+/// filtro y la envolvente abiertos y sin o con saturación, no pasa de -1
+/// dBFS (no satura el limitador); sin accent, suena bien por encima de -18
+/// dBFS.
+#[test]
+fn the_acid_leaves_headroom() {
+    let peak = |cutoff: f32, res: f32, accent: bool, dist: f32| {
+        let mut patch = acid::patch(36.0);
+        for (name, value) in [
+            ("cutoff", cutoff),
+            ("res", res),
+            ("envmod", 1.0),
+            ("accent", 1.0),
+            ("dist", dist),
+        ] {
+            acid::set(&mut patch, acid::param(name).unwrap(), value);
+        }
+        let notes: Vec<_> = [24.0, 36.0, 48.0, 60.0]
+            .iter()
+            .enumerate()
+            .map(|(i, &p)| {
+                let mut ev = NoteEvent::new(p, 6000);
+                ev.accent = accent;
+                (i * 6000, ev)
+            })
+            .collect();
+        let out = synth::render(&patch, &NO_CURVES, &notes, 24_000, RATE);
+        20.0 * out.iter().fold(0.0f32, |m, v| m.max(v.abs())).log10()
+    };
+    let mut worst = f32::MIN;
+    for cutoff in [100.0, 400.0, 2000.0, 20_000.0] {
+        for res in [0.0, 0.7, 1.0] {
+            for dist in [0.0, 0.5, 1.0] {
+                worst = worst.max(peak(cutoff, res, true, dist));
+            }
+        }
+    }
+    let plain = peak(400.0, 0.7, false, 0.0);
+    println!("acid: pico con accent {worst:.1} dBFS, sin él {plain:.1} dBFS");
+    assert!(worst < -1.0, "con accent: {worst:.1} dBFS");
+    assert!(plain > -18.0, "sin accent: {plain:.1} dBFS");
+}

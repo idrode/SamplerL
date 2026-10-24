@@ -231,10 +231,10 @@ impl App {
             return Err(format!(
                 "«{}» es {}: sus golpes no tienen efectos por paso (usa :fx)",
                 track.name,
-                if track.instrument.is_some() {
-                    "un instrumento"
-                } else {
-                    "de granos"
+                match track.instrument {
+                    Some(i) if i.synth.is_some() => "un sintetizador",
+                    Some(_) => "un instrumento",
+                    None => "de granos",
                 }
             ));
         }

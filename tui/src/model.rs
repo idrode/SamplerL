@@ -286,6 +286,9 @@ pub struct TrackView {
     pub solo: bool,
     /// Toca su sample como instrumento (`sample:instrument()`).
     pub instrument: Option<InstrumentView>,
+    /// Un sintetizador (`synth()`): su tipo y sus parámetros, en vez del
+    /// sample (ver [`synth_text`]).
+    pub synth: Option<SynthView>,
     /// Toca en granos (`:grains()`, `:freeze()`): su resumen
     /// ([`grains_text`]).
     pub grains: Option<String>,
@@ -314,6 +317,44 @@ pub fn grains_text(g: &engine::Granular) -> String {
         }
         _ => format!("⁘ {size} · {density}"),
     }
+}
+
+/// Una pista con sintetizador, para el panel del sample (que no tiene).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SynthView {
+    /// El tipo (`acid`).
+    pub kind: &'static str,
+    /// Sus parámetros ([`synth_text`]).
+    pub params: String,
+}
+
+/// Los parámetros de un sintetizador como se escriben en `synth()`, con
+/// `∿` en los que siguen una curva: `wave saw · cutoff 320 · res 0.82 ·
+/// envmod ∿ ...`.
+pub fn synth_text(def: &script::SynthDef) -> String {
+    let Some(registered) = script::api::synth(def.kind) else {
+        return String::new();
+    };
+    let round = |v: f32| ((v * 100.0).round() / 100.0).to_string();
+    registered
+        .params
+        .iter()
+        .filter_map(|p| match p.name {
+            "wave" => Some(format!("wave {}", def.patch.wave.name())),
+            "root" => Some(format!(
+                "root {}",
+                script::patterns::note_name(def.patch.root.round() as i32)
+            )),
+            name => {
+                let a = engine::synth::acid::param(name)?;
+                Some(match def.curves[a.param] {
+                    Some(_) => format!("{name} ∿"),
+                    None => format!("{name} {}", round(def.patch.params[a.param] / a.scale)),
+                })
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" · ")
 }
 
 /// Una pista con instrumento: su raíz y sus voces.
@@ -487,6 +528,13 @@ fn suffixes(step: &Step) -> String {
     if let Some(hz) = step.lock {
         text.push_str(&format!("~{hz}"));
     }
+    // Accent y slide (de los sintetizadores).
+    if step.accent {
+        text.push('!');
+    }
+    if step.slide {
+        text.push('/');
+    }
     // Efectos del paso: su nombre más corto del registro, con `∿` si algo
     // se mueve (`{lp∿,crush}`).
     if let Some(chain) = &step.fx {
@@ -647,6 +695,10 @@ mod tests {
         let low = Step::new(0).with_pitch(-13.0).with_retrig(2);
         assert_eq!(note_text(&Some(low), 48), "B1r2");
         assert_eq!(note_text(&None, 48), "---");
+        // Accent y slide, detrás (`C2!`, `D#2/`).
+        let tied = engine::notation::parse_step("1^3!/").unwrap();
+        assert_eq!(note_text(&tied, 36), "D#2!/");
+        assert_eq!(step_text(&tied, &[]), "01^3!/");
     }
 
     #[test]

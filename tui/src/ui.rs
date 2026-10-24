@@ -1143,8 +1143,12 @@ impl Widget for EnginePanel<'_> {
                 name,
                 Span::from(meter(track.level, 8)).fg(meter_color()),
                 Span::raw(format!(
-                    " ▶{slice}  {} cortes  ciclo {}{}  pista {}",
-                    track.slices.len(),
+                    " ▶{slice}  {}  ciclo {}{}  pista {}",
+                    // Un sintetizador no tiene cortes: su tipo.
+                    track.synth.as_ref().map_or_else(
+                        || format!("{} cortes", track.slices.len()),
+                        |s| format!("synth {}", s.kind)
+                    ),
                     track.cycle,
                     // Longitud distinta del compás: polirritmia.
                     if track.length == engine::STEPS || track.length == 0 {
@@ -1229,6 +1233,10 @@ impl Widget for SamplePanel<'_> {
                 .render(area, buf);
             return;
         };
+        if let Some(synth) = &track.synth {
+            synth_panel(track, synth, area, buf);
+            return;
+        }
         let block = Block::bordered().title(sample_title(view, track));
         let inner = block.inner(area);
         block.render(area, buf);
@@ -1239,6 +1247,21 @@ impl Widget for SamplePanel<'_> {
         // Los números, en lo alto de las marcas (encima de la onda).
         slice_numbers(track, view.selected_slice, false, inner, buf);
     }
+}
+
+/// Un sintetizador no tiene sample: en su lugar, su tipo y sus
+/// parámetros (`∿` en los que se mueven).
+fn synth_panel(
+    track: &crate::model::TrackView,
+    synth: &crate::model::SynthView,
+    area: Rect,
+    buf: &mut Buffer,
+) {
+    let title = format!(" sintetizador · {} · {} ", track.name, synth.kind);
+    Paragraph::new(Line::from(synth.params.clone()).fg(dim()))
+        .wrap(Wrap { trim: true })
+        .block(Block::bordered().title(title))
+        .render(area, buf);
 }
 
 /// Título del panel del sample: pista, archivo, duración, cortes y el
@@ -1380,6 +1403,10 @@ impl Widget for BigSamplePanel<'_> {
                 .render(area, buf);
             return;
         };
+        if let Some(synth) = &track.synth {
+            synth_panel(track, synth, area, buf);
+            return;
+        }
         let block = Block::bordered().title(sample_title(view, track));
         let inner = block.inner(area);
         block.render(area, buf);
@@ -1944,9 +1971,13 @@ impl Widget for FxPanel<'_> {
                 title.push(Span::from(text).fg(dim()));
             }
             if let Some(i) = track.instrument {
+                let kind = track
+                    .synth
+                    .as_ref()
+                    .map_or(String::new(), |s| format!("{} ", s.kind));
                 title.push(
                     Span::from(format!(
-                        " · ♪ {} {}/{}",
+                        " · ♪ {kind}{} {}/{}",
                         script::patterns::note_name(i.root),
                         i.sounding,
                         i.voices

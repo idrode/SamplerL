@@ -1,0 +1,105 @@
+//! El acid (`synth`) en la interfaz: notas con accent y slide en el
+//! tracker, su tipo y sus parámetros en lugar del sample, los pads y el
+//! MIDI tocan notas en vivo, y el resaltado en vivo.
+
+use super::*;
+use crate::midi::{MidiEvent, TimedEvent};
+use std::time::{Duration, Instant};
+
+const ACID: &str = r#"bpm(120)
+local bass = synth("acid", { cutoff = 320, res = 0.8, envmod = lfo("4 pasos", 0.2, 0.9) })
+track("bass", bass):melody("c c! eb/ .  . . . .  . . . .  . . . .")
+"#;
+
+fn rms(x: &[f32]) -> f32 {
+    (x.iter().map(|v| v * v).sum::<f32>() / x.len().max(1) as f32).sqrt()
+}
+
+#[test]
+fn the_tracker_writes_accents_and_slides_and_the_panels_name_the_synth() {
+    let (_, mut app, mut engine) = open("acid_view", Some(ACID));
+    assert!(app.view().error.is_none(), "{:?}", app.view().error);
+    let view = app.view();
+    let track = &view.tracks[0];
+    assert_eq!(track.cell_text(&track.steps[0]), "C2");
+    assert_eq!(track.cell_text(&track.steps[1]), "C2!");
+    assert_eq!(track.cell_text(&track.steps[2]), "D#2/");
+    let synth = track.synth.clone().unwrap();
+    assert_eq!(synth.kind, "acid");
+    assert!(synth.params.contains("cutoff 320") && synth.params.contains("envmod ∿"));
+    offline::render(&mut engine, STEP / 2, 2);
+    app.tick();
+    let screen = text(&draw(&mut app, 140, 40));
+    assert!(screen.contains("bass · ♪ acid C2 1/1"), "{screen}");
+    assert!(screen.contains("sintetizador · bass · acid"), "{screen}");
+    assert!(screen.contains("C2!"), "{screen}");
+}
+
+#[test]
+fn pads_and_midi_play_live_synth_notes() {
+    let quiet = "bpm(120)\ntrack(\"bass\", synth(\"acid\")):steps(\". . . .  . . . .  . . . .  . . . .\")\n";
+    let (_, mut app, mut engine) = open("acid_live", Some(quiet));
+    assert!(app.view().error.is_none(), "{:?}", app.view().error);
+    app.handle(esc());
+    let t0 = Instant::now();
+    // El pad 4: cuatro semitonos sobre la raíz (C2).
+    app.press_pad_at(4, t0);
+    assert_eq!(app.view().message, "♪ bass: E2");
+    let held = offline::render(&mut engine, STEP, 2);
+    assert!(rms(&held) > 0.01, "el pad no suena");
+    app.release_expired_pads(t0 + Duration::from_secs(1));
+    offline::render(&mut engine, STEP, 2);
+    let after = offline::render(&mut engine, STEP, 2);
+    assert!(rms(&after) < 1e-4, "no se suelta: {}", rms(&after));
+
+    // Una nota MIDI: a su altura, hasta su note off.
+    app.midi_event(TimedEvent {
+        micros: 0,
+        event: MidiEvent::NoteOn {
+            channel: 1,
+            note: 43,
+            velocity: 100,
+        },
+    });
+    assert_eq!(app.view().message, "♪ bass: G2");
+    assert!(rms(&offline::render(&mut engine, STEP, 2)) > 0.01);
+    app.midi_event(TimedEvent {
+        micros: 0,
+        event: MidiEvent::NoteOff {
+            channel: 1,
+            note: 43,
+        },
+    });
+    offline::render(&mut engine, STEP, 2);
+    assert!(rms(&offline::render(&mut engine, STEP, 2)) < 1e-4);
+}
+
+#[test]
+fn the_sounding_note_of_a_synth_lights_up() {
+    let (_, mut app, mut engine) = open("acid_highlight", Some(ACID));
+    offline::render(&mut engine, 100, 2);
+    app.tick();
+    let view = app.view();
+    assert_eq!(view.highlights.len(), 1, "{:?}", view.highlights);
+    let h = &view.highlights[0];
+    let line = &ACID.lines().nth(h.row).unwrap();
+    let token: String = line.chars().skip(h.cols.start).take(h.cols.len()).collect();
+    assert_eq!(token, "c");
+    // El paso 2, el ligado: su token entero, con la marca.
+    offline::render(&mut engine, 2 * STEP, 2);
+    app.tick();
+    let h = &app.view().highlights[0];
+    let token: String = line.chars().skip(h.cols.start).take(h.cols.len()).collect();
+    assert_eq!(token, "eb/");
+}
+
+/// La interfaz con un acid, para verla sin terminal:
+/// `cargo test -p tui pantalla_acid -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn pantalla_acid() {
+    let (_, mut app, mut engine) = open("acid_screen", Some(ACID));
+    offline::render(&mut engine, STEP + 100, 2);
+    app.tick();
+    println!("{}", text(&draw(&mut app, 140, 40)));
+}

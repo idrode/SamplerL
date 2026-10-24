@@ -11,6 +11,11 @@ use super::{
 use crate::Adsr;
 use crate::automation::Curve;
 
+/// Nivel de salida: una nota con accent, la resonancia al máximo y el
+/// filtro abierto se queda en unos -2 dBFS (medido en
+/// `engine/tests/synth.rs`); una sin accent, en unos -10.
+pub const LEVEL: f32 = 0.4;
+
 /// Octavas que abre la envolvente de filtro con `envmod` = 1.
 pub const ENVMOD_OCTAVES: f32 = 4.0;
 
@@ -128,6 +133,7 @@ pub fn patch(root: f32) -> Patch {
             sweep_ms: 120.0,
         },
         seed: 0,
+        level: LEVEL,
         params: super::PARAMS.map(|p| p.default),
     };
     for p in &PARAMS {

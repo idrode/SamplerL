@@ -291,6 +291,10 @@ pub struct Patch {
     pub accent: Accent,
     /// Semilla de las fases iniciales y del ruido.
     pub seed: u64,
+    /// Ganancia de salida de cada voz (lineal, de 0 a 4): deja sitio al
+    /// accent y a la resonancia (el volumen que se mueve es el de la
+    /// pista).
+    pub level: f32,
     /// Valores de los parámetros continuos ([`PARAMS`]).
     pub params: [f32; PARAM_COUNT],
 }
@@ -320,6 +324,7 @@ impl Patch {
             },
             accent: Accent::NONE,
             seed: 0,
+            level: 1.0,
             params: PARAMS.map(|p| p.default),
         }
     }
@@ -339,6 +344,9 @@ impl Patch {
         }
         if !(0.0..=127.0).contains(&self.root) {
             return Err("raíz fuera de rango (0 a 127)");
+        }
+        if !(0.0..=4.0).contains(&self.level) {
+            return Err("nivel de salida fuera de rango (0 a 4)");
         }
         for (value, p) in self.params.iter().zip(&PARAMS) {
             if !(p.min..=p.max).contains(value) {
@@ -678,6 +686,8 @@ impl Voice {
                 yl = soft(pre * yl) * post;
                 yr = soft(pre * yr) * post;
             }
+            yl *= patch.level;
+            yr *= patch.level;
             if let Some(left) = &mut self.killed {
                 let k = *left as f32 / b.fade as f32;
                 yl *= k;
