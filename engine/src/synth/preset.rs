@@ -30,6 +30,9 @@ pub enum Target {
     /// El sobremuestreo del filtro de la voz analógica
     /// ([`super::Analog::quality`]): 1 o 2.
     Quality,
+    /// Los ciclos del LFO por compás de la voz analógica
+    /// ([`super::Analog::lfo_sync`]; 0, libre): un entero.
+    LfoSync,
 }
 
 /// Un parámetro de un preset: su nombre, adónde va, cuánto se multiplica
@@ -70,6 +73,11 @@ impl PresetParam {
                     analog.quality = value.round() as u8;
                 }
             }
+            Target::LfoSync => {
+                if let Some(analog) = &mut patch.analog {
+                    analog.lfo_sync = value.round() as u8;
+                }
+            }
         }
     }
 
@@ -85,6 +93,7 @@ impl PresetParam {
             Target::Voices => patch.voices as f32,
             Target::Hpf => patch.analog.map_or(0.0, |a| a.hpf as f32),
             Target::Quality => patch.analog.map_or(1.0, |a| a.quality as f32),
+            Target::LfoSync => patch.analog.map_or(0.0, |a| a.lfo_sync as f32),
         };
         value / self.scale
     }

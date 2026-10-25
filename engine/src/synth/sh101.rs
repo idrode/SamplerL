@@ -10,8 +10,8 @@
 
 use super::preset::{Preset, PresetParam, Target, defaults, with_sub_block};
 use super::{
-    Accent, Analog, CUTOFF, ENV_AMOUNT, FilterMode, GLIDE, KBD, NOISE, PULSE, PW, Patch, RES_COMP,
-    RESONANCE, SAW, Wave,
+    Accent, Analog, CUTOFF, DRIFT, ENV_AMOUNT, FilterMode, GLIDE, KBD, LFO_FILTER, LFO_PITCH,
+    LFO_RATE, NOISE, PULSE, PW, PWM_AMOUNT, Patch, RES_COMP, RESONANCE, SAW, Wave,
 };
 use crate::Adsr;
 
@@ -25,9 +25,9 @@ pub const LEVEL: f32 = 0.8;
 pub const ENV_OCTAVES: f32 = 6.0;
 
 /// Los suyos y los del bloque sub ([`super::preset::SUB_BLOCK`]).
-pub const PARAMS: [PresetParam; 20] = with_sub_block(OWN);
+pub const PARAMS: [PresetParam; 26] = with_sub_block(OWN);
 
-const OWN: [PresetParam; 16] = [
+const OWN: [PresetParam; 22] = [
     PresetParam {
         name: "saw",
         target: Target::Param(SAW),
@@ -51,6 +51,14 @@ const OWN: [PresetParam; 16] = [
         min: 0.05,
         max: 0.95,
         default: 0.5,
+    },
+    PresetParam {
+        name: "pwm_amt",
+        target: Target::Param(PWM_AMOUNT),
+        scale: 1.0,
+        min: 0.0,
+        max: 1.0,
+        default: 0.0,
     },
     PresetParam {
         name: "noise",
@@ -115,6 +123,46 @@ const OWN: [PresetParam; 16] = [
         min: -1.0,
         max: 1.0,
         default: 0.4,
+    },
+    PresetParam {
+        name: "lfo_rate",
+        target: Target::Param(LFO_RATE),
+        scale: 1.0,
+        min: 0.05,
+        max: 30.0,
+        default: 5.0,
+    },
+    PresetParam {
+        name: "lfo_sync",
+        target: Target::LfoSync,
+        scale: 1.0,
+        min: 0.0,
+        max: super::MAX_LFO_SYNC as f32,
+        default: 0.0,
+    },
+    PresetParam {
+        name: "lfo_pitch",
+        target: Target::Param(LFO_PITCH),
+        scale: 1.0,
+        min: 0.0,
+        max: 12.0,
+        default: 0.0,
+    },
+    PresetParam {
+        name: "lfo_filter",
+        target: Target::Param(LFO_FILTER),
+        scale: 1.0,
+        min: 0.0,
+        max: 4.0,
+        default: 0.0,
+    },
+    PresetParam {
+        name: "drift",
+        target: Target::Param(DRIFT),
+        scale: 1.0,
+        min: 0.0,
+        max: 1.0,
+        default: 0.0,
     },
     PresetParam {
         name: "a",

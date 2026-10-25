@@ -205,8 +205,22 @@ pub const KBD: usize = 19;
 /// Compensación de la caída de graves del ladder de la voz analógica al
 /// subir la resonancia (0 ninguna, como el original; 1 toda).
 pub const RES_COMP: usize = 20;
+/// Cuánto mueve el ancho de pulso de una voz analógica su fuente
+/// ([`Analog::pwm`]): con 1, ±0,45.
+pub const PWM_AMOUNT: usize = 21;
+/// Velocidad del LFO de una voz analógica (Hz; sin [`Analog::lfo_sync`]).
+pub const LFO_RATE: usize = 22;
+/// Cuánto mueve el LFO la altura, en semitonos.
+pub const LFO_PITCH: usize = 23;
+/// Cuánto mueve el LFO el corte, en octavas.
+pub const LFO_FILTER: usize = 24;
+/// Deriva de afinación de una voz analógica (0 a 1; con 1, hasta ±
+/// [`DRIFT_CENTS`]).
+pub const DRIFT: usize = 25;
 /// Parámetros continuos.
-pub const PARAM_COUNT: usize = 21;
+pub const PARAM_COUNT: usize = 26;
+/// La deriva con [`DRIFT`] = 1, en cents.
+pub const DRIFT_CENTS: f32 = 10.0;
 /// Divisor del sub como mucho.
 pub const MAX_SUB_DIV: u8 = 16;
 
@@ -359,6 +373,41 @@ pub const PARAMS: [SynthParam; PARAM_COUNT] = [
         default: 0.0,
         log: false,
     },
+    SynthParam {
+        name: "pwm_amount",
+        min: 0.0,
+        max: 1.0,
+        default: 0.0,
+        log: false,
+    },
+    SynthParam {
+        name: "lfo_rate",
+        min: 0.05,
+        max: 30.0,
+        default: 5.0,
+        log: true,
+    },
+    SynthParam {
+        name: "lfo_pitch",
+        min: 0.0,
+        max: 12.0,
+        default: 0.0,
+        log: false,
+    },
+    SynthParam {
+        name: "lfo_filter",
+        min: 0.0,
+        max: 4.0,
+        default: 0.0,
+        log: false,
+    },
+    SynthParam {
+        name: "drift",
+        min: 0.0,
+        max: 1.0,
+        default: 0.0,
+        log: false,
+    },
 ];
 
 /// Lo que un paso cambia del sub de su nota (`{sub=0.5,sub_div=3}`): cada
@@ -506,6 +555,59 @@ impl VcaMode {
     }
 }
 
+/// Qué mueve el ancho de pulso de una voz analógica: nada (el de [`PW`]),
+/// el LFO o la envolvente, con [`PWM_AMOUNT`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PwmSource {
+    Manual,
+    Lfo,
+    Env,
+}
+
+impl PwmSource {
+    pub const ALL: [PwmSource; 3] = [PwmSource::Manual, PwmSource::Lfo, PwmSource::Env];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            PwmSource::Manual => "manual",
+            PwmSource::Lfo => "lfo",
+            PwmSource::Env => "env",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<PwmSource> {
+        PwmSource::ALL.into_iter().find(|m| m.name() == name)
+    }
+}
+
+/// Forma del LFO de una voz analógica: triangular, cuadrada o un valor al
+/// azar en cada ciclo (sample & hold).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LfoWave {
+    Tri,
+    Square,
+    Random,
+}
+
+impl LfoWave {
+    pub const ALL: [LfoWave; 3] = [LfoWave::Tri, LfoWave::Square, LfoWave::Random];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            LfoWave::Tri => "tri",
+            LfoWave::Square => "square",
+            LfoWave::Random => "random",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<LfoWave> {
+        LfoWave::ALL.into_iter().find(|m| m.name() == name)
+    }
+}
+
+/// Ciclos del LFO por compás con [`Analog::lfo_sync`], como mucho.
+pub const MAX_LFO_SYNC: u8 = 16;
+
 /// Voz analógica (la del `sh101`): un oscilador con la sierra y el pulso
 /// sumados ([`SAW`], [`PULSE`]), el bloque sub y ruido, por un paso bajo de
 /// 4 polos, con una sola envolvente para el filtro y el VCA (la de
@@ -523,6 +625,12 @@ pub struct Analog {
     /// Sobremuestreo del filtro: 1, a la frecuencia del motor (tras el
     /// diezmado de los osciladores); 2, al doble, antes del diezmado.
     pub quality: u8,
+    pub pwm: PwmSource,
+    pub lfo_wave: LfoWave,
+    /// 0: el LFO va a [`LFO_RATE`]; n: da n ciclos por compás, en fase con
+    /// él (aritmética entera sobre el reloj del compás; parado, sobre un
+    /// compás que empieza con la voz).
+    pub lfo_sync: u8,
 }
 
 impl Analog {
@@ -531,6 +639,9 @@ impl Analog {
         vca: VcaMode::Env,
         hpf: 0,
         quality: 2,
+        pwm: PwmSource::Manual,
+        lfo_wave: LfoWave::Tri,
+        lfo_sync: 0,
     };
 
     /// Comprueba los rangos.
@@ -540,6 +651,9 @@ impl Analog {
         }
         if !(1..=2).contains(&self.quality) {
             return Err("quality es 1 o 2");
+        }
+        if self.lfo_sync > MAX_LFO_SYNC {
+            return Err("lfo_sync va de 0 a 16");
         }
         Ok(())
     }
@@ -819,6 +933,22 @@ struct Voice {
     virtual_bar: u64,
     layer_fresh: bool,
     noise: Noise,
+    /// El LFO de la voz analógica: su fase, su valor al azar (el del ciclo
+    /// que suena), su generador y los frames desde que empezó la voz (el
+    /// compás de `lfo_sync` con el transporte parado).
+    lfo_phase: f64,
+    lfo_held: f32,
+    lfo_rng: Noise,
+    lfo_frames: u64,
+    /// La deriva: su generador, el valor (semitonos, sobre ±1) que sigue y
+    /// el que tiene ahora, y las muestras hasta el siguiente.
+    drift_rng: Noise,
+    drift_to: f32,
+    drift: f32,
+    drift_left: u32,
+    /// La altura que suena se ha movido de la nota (LFO o deriva) en la
+    /// muestra anterior.
+    bent: bool,
     /// Diezmado de los osciladores (van al doble de frecuencia de
     /// muestreo), por canal.
     down: [Halfband; 2],
@@ -862,6 +992,15 @@ impl Default for Voice {
             virtual_bar: 0,
             layer_fresh: false,
             noise: Noise::new(0),
+            lfo_phase: 0.0,
+            lfo_held: 0.0,
+            lfo_rng: Noise::new(0),
+            lfo_frames: 0,
+            drift_rng: Noise::new(0),
+            drift_to: 0.0,
+            drift: 0.0,
+            drift_left: 0,
+            bent: false,
             down: [Halfband::default(); 2],
             filter: [Filter::default(); 2],
             amp: Env::default(),
@@ -914,6 +1053,10 @@ impl Voice {
             self.layer_pan = layers.map(|l| l.pan);
         }
         self.noise = Noise::new(osc::splitmix(&mut rng));
+        // Lo de la voz analógica, después: lo de antes no cambia.
+        self.lfo_rng = Noise::new(osc::splitmix(&mut rng));
+        self.drift_rng = Noise::new(osc::splitmix(&mut rng));
+        self.lfo_held = self.lfo_rng.next();
         self.active = true;
         self.dt = cycles(self.pitch, sample_rate);
     }
@@ -1352,6 +1495,53 @@ impl Voice {
 }
 
 impl Voice {
+    /// El LFO de la voz analógica en la muestra `i` del bloque (-1 a 1), y
+    /// avanza: libre a `rate` Hz o, con `lfo_sync`, n ciclos por compás
+    /// sacados del frame en el compás con aritmética entera (sin deriva y
+    /// en fase con él; parado, con el compás que empieza con la voz).
+    fn lfo(&mut self, analog: &Analog, b: &Block, i: u64, rate: f32) -> f32 {
+        let at = self.lfo_phase;
+        self.lfo_phase = if analog.lfo_sync > 0 {
+            let n = analog.lfo_sync as u64;
+            let (pos, len) = match b.bar {
+                Some((start, len)) => ((b.frame + i).saturating_sub(start), len.max(1)),
+                None => (self.lfo_frames, b.bar_length.max(1)),
+            };
+            (pos % len * n % len) as f64 / len as f64
+        } else {
+            let next = at + rate as f64 / b.sample_rate as f64;
+            next - next.floor()
+        };
+        self.lfo_frames += 1;
+        if self.lfo_phase < at {
+            // Ciclo nuevo: otro valor al azar.
+            self.lfo_held = self.lfo_rng.next();
+        }
+        let t = self.lfo_phase as f32;
+        match analog.lfo_wave {
+            LfoWave::Tri => 1.0 - 4.0 * (t - 0.5).abs(),
+            LfoWave::Square => {
+                if t < 0.5 {
+                    1.0
+                } else {
+                    -1.0
+                }
+            }
+            LfoWave::Random => self.lfo_held,
+        }
+    }
+
+    /// Avanza la deriva: un valor al azar (de -1 a 1) cada cuarto de
+    /// segundo, al que la deriva se acerca despacio (un polo de ~0,4 s).
+    fn drift_step(&mut self, sample_rate: f32) {
+        if self.drift_left == 0 {
+            self.drift_to = self.drift_rng.next();
+            self.drift_left = (sample_rate / 4.0) as u32;
+        }
+        self.drift_left -= 1;
+        self.drift += (self.drift_to - self.drift) * (2.5 / sample_rate);
+    }
+
     /// Suma la voz analógica ([`Analog`]) en `out`: el oscilador (sierra
     /// y pulso de la misma fase), el sub y el ruido al doble de la
     /// frecuencia de muestreo y diezmados, el filtro y el VCA, con una sola
@@ -1381,12 +1571,24 @@ impl Voice {
                     self.gate -= 1;
                 }
             }
-            if self.pitch != self.target {
+            let moved = self.pitch != self.target;
+            if moved {
                 self.pitch += (self.target - self.pitch) * b.glide;
                 if (self.target - self.pitch).abs() < 1e-4 {
                     self.pitch = self.target;
                 }
-                self.dt = cycles(self.pitch, b.sample_rate);
+            }
+            let lfo = self.lfo(analog, b, i as u64, p(LFO_RATE));
+            let drift = p(DRIFT);
+            if drift > 0.0 {
+                self.drift_step(b.sample_rate);
+            }
+            // La altura que suena: la nota (con glide), el LFO y la deriva.
+            let lfo_pitch = p(LFO_PITCH);
+            if moved || lfo_pitch > 0.0 || drift > 0.0 || self.bent {
+                let bend = lfo_pitch * lfo + drift * DRIFT_CENTS / 100.0 * self.drift;
+                self.dt = cycles(self.pitch + bend, b.sample_rate);
+                self.bent = bend != 0.0;
             }
             let sub = self.sub_note;
             let (sub_on, stereo, sub_l, sub_r) = self.sub_gains(&p, b.smooth);
@@ -1416,7 +1618,8 @@ impl Voice {
             let octaves = log_from
                 + (log_to - log_from) * t
                 + p(ENV_AMOUNT) * env
-                + p(KBD) * (self.pitch - patch.root) / 12.0;
+                + p(KBD) * (self.pitch - patch.root) / 12.0
+                + p(LFO_FILTER) * lfo;
             let cutoff = octaves.exp2().min(0.45 * b.sample_rate);
             let (res, comp) = (p(RESONANCE), p(RES_COMP));
             // Con `quality` 2, el filtro va al doble, antes del diezmado:
@@ -1424,7 +1627,12 @@ impl Voice {
             let twice = analog.quality == 2;
             let g = warp(cutoff, if twice { 2.0 } else { 1.0 } * b.sample_rate);
             let (saw, pulse, noise) = (p(SAW), p(PULSE), p(NOISE));
-            let pw = (p(PW) as f64).clamp(0.05, 0.95);
+            let pwm = match analog.pwm {
+                PwmSource::Manual => 0.0,
+                PwmSource::Lfo => lfo,
+                PwmSource::Env => env,
+            };
+            let pw = ((p(PW) + 0.45 * p(PWM_AMOUNT) * pwm) as f64).clamp(0.05, 0.95);
             let dt = 0.5 * self.dt;
             for _ in 0..2 {
                 let at = self.osc[0].phase;

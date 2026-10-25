@@ -1,10 +1,12 @@
 //! El sh101: voz mono con prioridad a la última nota y legato,
 //! portamento (`off`, `on`, `auto`), una sola envolvente para el filtro y
-//! el VCA (o la puerta), y el sub en sus tres modos.
+//! el VCA (o la puerta), el sub en sus tres modos, el filtro (autooscila
+//! afinado, estable, `quality` 1 y 2, `res_comp`, `kbd`, `hpf`), el LFO
+//! (formas, destinos y `lfo_sync`), el PWM y la deriva.
 
 use engine::synth::{
-    self, CUTOFF, ENV_AMOUNT, GlideMode, HELD, NoteEvent, PARAM_COUNT, Patch, RESONANCE, SUB,
-    SongClock, Synth, SynthCurves, VcaMode, Wave, sh101,
+    self, CUTOFF, ENV_AMOUNT, GlideMode, HELD, LfoWave, NoteEvent, PARAM_COUNT, Patch, PwmSource,
+    RESONANCE, SUB, SongClock, Synth, SynthCurves, VcaMode, Wave, sh101,
 };
 
 const RATE: u32 = 48_000;
@@ -566,4 +568,199 @@ fn quality_2_aliases_less_than_1() {
         two < one - 5.0,
         "quality 1 {one:.1} dB, quality 2 {two:.1} dB"
     );
+}
+
+fn analog(patch: &mut Patch) -> &mut synth::Analog {
+    patch.analog.as_mut().expect("voz analógica")
+}
+
+/// Las alturas que suenan, en ventanas de `width` frames seguidas.
+fn pitch_trace(y: &[f32], from: usize, width: usize) -> Vec<f64> {
+    (from..y.len() - width)
+        .step_by(width)
+        .map(|at| pitch_at(y, at, width))
+        .collect()
+}
+
+/// El LFO triangular a la altura: ±1 semitono a 4 Hz alrededor de la nota;
+/// el cuadrado salta entre los dos extremos; el aleatorio da escalones que
+/// cambian (y los mismos con la misma semilla).
+#[test]
+fn the_lfo_moves_the_pitch() {
+    let frames = 2 * RATE as usize;
+    let notes = [(0, NoteEvent::new(57.0, HELD))];
+    let render = |wave: LfoWave| {
+        let mut p = open();
+        set(&mut p, "s", 1.0);
+        set(&mut p, "lfo_rate", 4.0);
+        set(&mut p, "lfo_pitch", 1.0);
+        analog(&mut p).lfo_wave = wave;
+        left(&synth::render(&p, &NO_CURVES, &notes, frames, RATE))
+    };
+    // Ventanas de 15 ms: más de 3 ciclos de 220 Hz, 16 por ciclo del LFO.
+    let width = 3 * RATE as usize / 200;
+    let tri = pitch_trace(&render(LfoWave::Tri), RATE as usize / 2, width);
+    let (lo, hi) = tri
+        .iter()
+        .fold((f64::MAX, f64::MIN), |(a, b), &v| (a.min(v), b.max(v)));
+    println!("LFO triangular: de {lo:.2} a {hi:.2}");
+    assert!(
+        (lo - 56.0).abs() < 0.15 && (hi - 58.0).abs() < 0.15,
+        "{lo:.2}..{hi:.2}"
+    );
+    let square = pitch_trace(&render(LfoWave::Square), RATE as usize / 2, width);
+    let near = |v: f64, to: f64| (v - to).abs() < 0.05;
+    let edges = square
+        .iter()
+        .filter(|&&v| !near(v, 56.0) && !near(v, 58.0))
+        .count();
+    assert!(
+        edges <= square.len() / 6,
+        "cuadrado: {edges} de {} fuera de los extremos",
+        square.len()
+    );
+    let random = render(LfoWave::Random);
+    let steps = pitch_trace(&random, RATE as usize / 2, width);
+    let distinct = {
+        let mut v: Vec<i64> = steps.iter().map(|p| (p * 20.0).round() as i64).collect();
+        v.sort();
+        v.dedup();
+        v.len()
+    };
+    assert!(distinct >= 4, "aleatorio: {distinct} valores distintos");
+    assert!(
+        random == render(LfoWave::Random),
+        "aleatorio: la misma semilla, lo mismo"
+    );
+}
+
+/// El LFO al corte: el filtro autooscilando sube y baja con él.
+#[test]
+fn the_lfo_moves_the_cutoff() {
+    let mut p = ringing(1000.0);
+    set(&mut p, "lfo_rate", 2.0);
+    set(&mut p, "lfo_filter", 1.0);
+    let notes = [(0, NoteEvent::new(36.0, HELD))];
+    let y = left(&synth::render(
+        &p,
+        &NO_CURVES,
+        &notes,
+        2 * RATE as usize,
+        RATE,
+    ));
+    let trace = pitch_trace(&y, RATE as usize / 2, RATE as usize / 50);
+    let (lo, hi) = trace
+        .iter()
+        .fold((f64::MAX, f64::MIN), |(a, b), &v| (a.min(v), b.max(v)));
+    // Una octava arriba y abajo de 1 kHz (nota 83,2): ±12 semitonos.
+    println!("LFO al corte: de {lo:.1} a {hi:.1}");
+    assert!(hi - lo > 20.0, "{lo:.1}..{hi:.1}");
+}
+
+/// Con `lfo_sync` = n, el LFO da n ciclos por compás, en fase con él: el
+/// cuadrado cambia exactamente en cada 1/(2n) del compás (en `render`, a
+/// 120 BPM, compases de 2 s).
+#[test]
+fn lfo_sync_locks_to_the_bar() {
+    let bar = 2 * RATE as usize;
+    for n in [1, 3, 4] {
+        let mut p = open();
+        set(&mut p, "s", 1.0);
+        set(&mut p, "lfo_pitch", 12.0);
+        set(&mut p, "lfo_rate", 0.05);
+        set(&mut p, "lfo_sync", n as f32);
+        analog(&mut p).lfo_wave = LfoWave::Square;
+        // La nota empieza a mitad de un compás: el LFO sigue al compás.
+        let notes = [(bar / 3, NoteEvent::new(57.0, HELD))];
+        let y = left(&synth::render(&p, &NO_CURVES, &notes, 2 * bar, RATE));
+        let half = bar / (2 * n);
+        // 30 ms: más de 3 ciclos de la nota más grave (110 Hz).
+        let probe = 3 * RATE as usize / 100;
+        for k in 1..(4 * n) {
+            let edge = k * half;
+            if edge < bar / 3 + 2 * probe {
+                continue;
+            }
+            let before = pitch_at(&y, edge - probe - 200, probe);
+            let after = pitch_at(&y, edge + 200, probe);
+            let up = if k % 2 == 0 { 69.0 } else { 45.0 };
+            let down = if k % 2 == 0 { 45.0 } else { 69.0 };
+            assert!(
+                (before - down).abs() < 0.2 && (after - up).abs() < 0.2,
+                "lfo_sync {n}, marca {k}: {before:.2} → {after:.2}"
+            );
+        }
+    }
+}
+
+/// El PWM: con `pwm_src` = lfo el ancho de pulso sube y baja; con env,
+/// sigue a la envolvente (ancho al disparar, estrecho al caer); con
+/// manual, `pwm_amt` no hace nada.
+#[test]
+fn pwm_follows_its_source() {
+    let frames = 2 * RATE as usize;
+    let notes = [(0, NoteEvent::new(45.0, HELD))];
+    let duty = |src: PwmSource| {
+        let mut p = open();
+        set(&mut p, "saw", 0.0);
+        set(&mut p, "pulse", 1.0);
+        set(&mut p, "pw", 0.5);
+        set(&mut p, "pwm_amt", 0.8);
+        set(&mut p, "lfo_rate", 2.0);
+        set(&mut p, "d", 2000.0);
+        set(&mut p, "s", 0.0);
+        analog(&mut p).pwm = src;
+        analog(&mut p).vca = VcaMode::Gate;
+        let y = left(&synth::render(&p, &NO_CURVES, &notes, frames, RATE));
+        // La fracción del periodo en alto, en ventanas de 50 ms.
+        let width = RATE as usize / 20;
+        (RATE as usize / 20..frames - width)
+            .step_by(width)
+            .map(|at| {
+                let w = &y[at..at + width];
+                let mean = w.iter().sum::<f32>() / w.len() as f32;
+                w.iter().filter(|&&v| v > mean).count() as f64 / w.len() as f64
+            })
+            .collect::<Vec<f64>>()
+    };
+    let span = |v: &[f64]| {
+        v.iter()
+            .fold((f64::MAX, f64::MIN), |(a, b), &x| (a.min(x), b.max(x)))
+    };
+    let (lo, hi) = span(&duty(PwmSource::Lfo));
+    println!(
+        "PWM por LFO: del {:.0} % al {:.0} %",
+        100.0 * lo,
+        100.0 * hi
+    );
+    assert!(lo < 0.25 && hi > 0.75, "lfo: {lo:.2}..{hi:.2}");
+    let env = duty(PwmSource::Env);
+    assert!(env[0] > 0.75 && env[env.len() - 1] < 0.55, "env: {env:.2?}");
+    let (lo, hi) = span(&duty(PwmSource::Manual));
+    assert!(hi - lo < 0.03, "manual: {lo:.2}..{hi:.2}");
+}
+
+/// La deriva: con 0, el audio es el de siempre bit a bit; con 1, la
+/// afinación se mueve despacio, nunca más de ±10 cents, y es la misma con
+/// la misma semilla.
+#[test]
+fn drift_is_small_slow_and_reproducible() {
+    let frames = 4 * RATE as usize;
+    let notes = [(0, NoteEvent::new(57.0, HELD))];
+    let mut p = open();
+    set(&mut p, "s", 1.0);
+    let plain = synth::render(&p, &NO_CURVES, &notes, frames, RATE);
+    set(&mut p, "drift", 0.0);
+    assert!(plain == synth::render(&p, &NO_CURVES, &notes, frames, RATE));
+    set(&mut p, "drift", 1.0);
+    let drifting = synth::render(&p, &NO_CURVES, &notes, frames, RATE);
+    assert!(drifting == synth::render(&p, &NO_CURVES, &notes, frames, RATE));
+    let trace = pitch_trace(&left(&drifting), RATE as usize / 2, RATE as usize / 10);
+    let cents: Vec<f64> = trace.iter().map(|v| 100.0 * (v - 57.0)).collect();
+    let (lo, hi) = cents
+        .iter()
+        .fold((f64::MAX, f64::MIN), |(a, b), &x| (a.min(x), b.max(x)));
+    println!("deriva: de {lo:+.1} a {hi:+.1} cents");
+    assert!(lo > -10.5 && hi < 10.5, "{lo:+.1}..{hi:+.1} cents");
+    assert!(hi - lo > 1.0, "se mueve: {lo:+.1}..{hi:+.1} cents");
 }

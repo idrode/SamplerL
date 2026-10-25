@@ -1257,8 +1257,9 @@ fn the_audio_thread_never_allocates() {
     let _ = controller.midi_events().count();
 
     // Un sh101, con el filtro a la frecuencia del motor y al doble: notas
-    // ligadas y separadas, el sub en pulso al 25 %, ruido y pulso; luego
-    // teclas en vivo que se ligan y vuelven a la anterior.
+    // ligadas y separadas, el sub en pulso al 25 %, ruido y pulso, el LFO
+    // (al azar, sincronizado al compás) al PWM, la altura y el corte, y la
+    // deriva; luego teclas en vivo que se ligan y vuelven a la anterior.
     for quality in [1.0, 2.0] {
         let mut sh = engine::synth::sh101::patch(36.0)
             .with(engine::synth::SUB, 0.6)
@@ -1268,6 +1269,11 @@ fn the_audio_thread_never_allocates() {
             ("noise", 0.2),
             ("glide", 60.0),
             ("quality", quality),
+            ("pwm_amt", 0.6),
+            ("lfo_pitch", 0.5),
+            ("lfo_filter", 1.0),
+            ("lfo_sync", 3.0),
+            ("drift", 1.0),
         ] {
             engine::synth::sh101::param(name)
                 .unwrap()
@@ -1275,7 +1281,10 @@ fn the_audio_thread_never_allocates() {
         }
         sh.sub_div = 4;
         sh.sub_wave = engine::synth::Wave::Pulse25;
-        sh.analog.as_mut().unwrap().glide = engine::synth::GlideMode::Auto;
+        let analog = sh.analog.as_mut().unwrap();
+        analog.glide = engine::synth::GlideMode::Auto;
+        analog.pwm = engine::synth::PwmSource::Lfo;
+        analog.lfo_wave = engine::synth::LfoWave::Random;
         let sh_steps: Vec<Option<Step>> = (0..STEPS)
             .map(|k| {
                 let step = Step::new(0).with_pitch([0.0, 12.0, 7.0, 3.0][k % 4]);
