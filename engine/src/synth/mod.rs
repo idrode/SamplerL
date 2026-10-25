@@ -199,8 +199,14 @@ pub const LAYER_DECAY: usize = 16;
 pub const SAW: usize = 17;
 /// Nivel del pulso de una voz analógica (su ancho, [`PW`]).
 pub const PULSE: usize = 18;
+/// Seguimiento de teclado del corte en una voz analógica: con 1, el corte
+/// sube una octava por octava de la nota sobre la raíz.
+pub const KBD: usize = 19;
+/// Compensación de la caída de graves del ladder de la voz analógica al
+/// subir la resonancia (0 ninguna, como el original; 1 toda).
+pub const RES_COMP: usize = 20;
 /// Parámetros continuos.
-pub const PARAM_COUNT: usize = 19;
+pub const PARAM_COUNT: usize = 21;
 /// Divisor del sub como mucho.
 pub const MAX_SUB_DIV: u8 = 16;
 
@@ -334,6 +340,20 @@ pub const PARAMS: [SynthParam; PARAM_COUNT] = [
     },
     SynthParam {
         name: "pulse",
+        min: 0.0,
+        max: 1.0,
+        default: 0.0,
+        log: false,
+    },
+    SynthParam {
+        name: "kbd",
+        min: 0.0,
+        max: 1.0,
+        default: 0.0,
+        log: false,
+    },
+    SynthParam {
+        name: "res_comp",
         min: 0.0,
         max: 1.0,
         default: 0.0,
@@ -497,14 +517,30 @@ impl VcaMode {
 pub struct Analog {
     pub glide: GlideMode,
     pub vca: VcaMode,
+    /// Paso alto tras el filtro: 0 apagado, 1 a 3 los cortes de
+    /// [`HPF_HZ`].
+    pub hpf: u8,
 }
 
 impl Analog {
     pub const DEFAULT: Analog = Analog {
         glide: GlideMode::Off,
         vca: VcaMode::Env,
+        hpf: 0,
     };
+
+    /// Comprueba los rangos.
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.hpf as usize > HPF_HZ.len() {
+            return Err("hpf va de 0 a 3");
+        }
+        Ok(())
+    }
 }
+
+/// Cortes del paso alto de la voz analógica ([`Analog::hpf`] 1 a 3), en
+/// Hz: quita el retumbe, adelgaza o deja solo el cuerpo de arriba.
+pub const HPF_HZ: [f32; 3] = [80.0, 180.0, 400.0];
 
 /// Teclas pulsadas que recuerda una voz analógica (para volver a la
 /// anterior al soltar la última).
@@ -650,8 +686,11 @@ impl Patch {
                 layer.validate()?;
             }
         }
-        if self.analog.is_some() && (!self.mono || self.layers.is_some()) {
-            return Err("una voz analógica es mono y sin capas");
+        if let Some(analog) = &self.analog {
+            if !self.mono || self.layers.is_some() {
+                return Err("una voz analógica es mono y sin capas");
+            }
+            analog.validate()?;
         }
         for (value, p) in self.params.iter().zip(&PARAMS) {
             if !(p.min..=p.max).contains(value) {
@@ -1315,6 +1354,13 @@ impl Voice {
         let frames = out.len() / 2;
         let step = 1.0 / frames as f32;
         let (log_from, log_to) = (b.from[CUTOFF].log2(), b.to[CUTOFF].log2());
+        let hp = match analog.hpf {
+            0 => None,
+            n => {
+                let g = warp(HPF_HZ[n as usize - 1], b.sample_rate);
+                Some(g / (1.0 + g))
+            }
+        };
         for (i, frame) in out.as_chunks_mut::<2>().0.iter_mut().enumerate() {
             if !self.active {
                 break;
@@ -1389,12 +1435,24 @@ impl Voice {
                 VcaMode::Env => env,
                 VcaMode::Gate => self.fenv.next(&b.gate),
             };
-            let octaves = log_from + (log_to - log_from) * t + p(ENV_AMOUNT) * env;
+            // El corte: el suyo, la envolvente y el teclado (desde la
+            // raíz).
+            let octaves = log_from
+                + (log_to - log_from) * t
+                + p(ENV_AMOUNT) * env
+                + p(KBD) * (self.pitch - patch.root) / 12.0;
             let g = warp(octaves.exp2(), b.sample_rate);
-            let res = p(RESONANCE);
-            let mut yl = self.filter[0].next(l, g, res, FilterMode::Ladder);
+            let (res, comp) = (p(RESONANCE), p(RES_COMP));
+            let filter = |f: &mut Filter, x: f32| {
+                let y = f.analog.next(x, g, res, comp);
+                match hp {
+                    Some(big_g) => f.hp.next(y, big_g),
+                    None => y,
+                }
+            };
+            let mut yl = filter(&mut self.filter[0], l);
             let mut yr = if stereo {
-                self.filter[1].next(r, g, res, FilterMode::Ladder)
+                filter(&mut self.filter[1], r)
             } else {
                 yl
             };

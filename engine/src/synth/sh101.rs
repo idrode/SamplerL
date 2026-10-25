@@ -1,29 +1,33 @@
 //! «sh101»: un monosynth de bajo y lead como el SH-101. Un oscilador con
 //! la sierra y el pulso sumados, el bloque sub (con sus tres modos del
 //! original: cuadrada una y dos octavas abajo y pulso al 25 % dos octavas
-//! abajo) y ruido, por un paso bajo de 4 polos, con una sola envolvente
-//! para el filtro y el VCA. Monofónico con prioridad a la última nota y
+//! abajo) y ruido, por un paso bajo de 4 polos con saturación en cada
+//! etapa que autooscila (y pierde graves al subir la resonancia, como el
+//! original, salvo con `res_comp`) y un paso alto fijo (`hpf`), con una
+//! sola envolvente para el filtro y el VCA. Monofónico con prioridad a la última nota y
 //! legato (ver [`super::Analog`]). Es solo una forma de llenar un
 //! [`Patch`] del núcleo ([`PRESET`]).
 
 use super::preset::{Preset, PresetParam, Target, defaults, with_sub_block};
 use super::{
-    Accent, Analog, CUTOFF, ENV_AMOUNT, FilterMode, GLIDE, NOISE, PULSE, PW, Patch, RESONANCE, SAW,
-    Wave,
+    Accent, Analog, CUTOFF, ENV_AMOUNT, FilterMode, GLIDE, KBD, NOISE, PULSE, PW, Patch, RES_COMP,
+    RESONANCE, SAW, Wave,
 };
 use crate::Adsr;
 
-/// Nivel de salida (medido en `engine/tests/synth.rs`).
-pub const LEVEL: f32 = 0.35;
+/// Nivel de salida: el preset por defecto pica en unos -9 dBFS y con todo
+/// el oscilador, el sub y la resonancia alta y compensada, en unos -5,6
+/// (medido en `engine/tests/sh101.rs`).
+pub const LEVEL: f32 = 0.8;
 
 /// Octavas que abre (o cierra, en negativo) la envolvente con `env_amt` =
 /// 1.
 pub const ENV_OCTAVES: f32 = 6.0;
 
 /// Los suyos y los del bloque sub ([`super::preset::SUB_BLOCK`]).
-pub const PARAMS: [PresetParam; 16] = with_sub_block(OWN);
+pub const PARAMS: [PresetParam; 19] = with_sub_block(OWN);
 
-const OWN: [PresetParam; 12] = [
+const OWN: [PresetParam; 15] = [
     PresetParam {
         name: "saw",
         target: Target::Param(SAW),
@@ -71,6 +75,30 @@ const OWN: [PresetParam; 12] = [
         min: 0.0,
         max: 1.0,
         default: 0.3,
+    },
+    PresetParam {
+        name: "kbd",
+        target: Target::Param(KBD),
+        scale: 1.0,
+        min: 0.0,
+        max: 1.0,
+        default: 0.0,
+    },
+    PresetParam {
+        name: "res_comp",
+        target: Target::Param(RES_COMP),
+        scale: 1.0,
+        min: 0.0,
+        max: 1.0,
+        default: 0.0,
+    },
+    PresetParam {
+        name: "hpf",
+        target: Target::Hpf,
+        scale: 1.0,
+        min: 0.0,
+        max: 3.0,
+        default: 0.0,
     },
     PresetParam {
         name: "env_amt",

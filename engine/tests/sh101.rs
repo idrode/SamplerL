@@ -318,3 +318,179 @@ fn the_preset_is_valid() {
         assert_eq!(patch.validate(), Ok(()), "{} al máximo", p.name);
     }
 }
+
+/// Amplitud de la componente de `hz` en `y` (una sola frecuencia de la
+/// DFT).
+fn amplitude(y: &[f32], hz: f64) -> f64 {
+    let w = std::f64::consts::TAU * hz / RATE as f64;
+    let (mut re, mut im) = (0.0, 0.0);
+    for (n, &v) in y.iter().enumerate() {
+        re += v as f64 * (w * n as f64).cos();
+        im -= v as f64 * (w * n as f64).sin();
+    }
+    2.0 * (re * re + im * im).sqrt() / y.len() as f64
+}
+
+fn db(x: f64) -> f64 {
+    20.0 * x.log10()
+}
+
+/// Un sh101 sin oscilador, con la resonancia al máximo y un poco de ruido
+/// que lo despierte: lo que suena es el filtro autooscilando en `hz`.
+fn ringing(hz: f32) -> Patch {
+    let mut p = open().with(CUTOFF, hz).with(RESONANCE, 1.0);
+    set(&mut p, "saw", 0.0);
+    set(&mut p, "noise", 0.01);
+    set(&mut p, "s", 1.0);
+    p
+}
+
+/// La frecuencia que suena en `y` (de sus cruces por cero subiendo).
+fn frequency(y: &[f32]) -> f64 {
+    let c = crossings(y);
+    RATE as f64 * (c.len() - 1) as f64 / (c[c.len() - 1] - c[0])
+}
+
+/// Con `res` = 1 el filtro autooscila cerca de su corte: en grave (110
+/// Hz), en medio (1 kHz) y cerca de Nyquist (18 kHz a 48 kHz), con el
+/// error de afinación acotado (y medido, en cents).
+#[test]
+fn the_filter_self_oscillates_at_its_cutoff() {
+    let notes = [(0, NoteEvent::new(36.0, HELD))];
+    let frames = RATE as usize;
+    for (hz, cents) in [(110.0, 25.0), (1000.0, 25.0), (18_000.0, 100.0)] {
+        let y = left(&synth::render(
+            &ringing(hz),
+            &NO_CURVES,
+            &notes,
+            frames,
+            RATE,
+        ));
+        let tail = &y[frames / 2..];
+        let measured = frequency(tail);
+        let error = 1200.0 * (measured / hz as f64).log2();
+        let level = db(peak(tail) as f64);
+        println!("autooscila a {hz} Hz: {measured:.1} Hz ({error:+.1} cents), {level:.1} dBFS");
+        assert!(error.abs() < cents, "{hz} Hz: {error:+.1} cents");
+        assert!(level > -30.0, "{hz} Hz: no suena ({level:.1} dBFS)");
+    }
+}
+
+/// Ningún NaN ni inf en los extremos: corte en 20 Hz y en 20 kHz (y más
+/// arriba con el teclado y la envolvente), resonancia al máximo, todo el
+/// oscilador, el sub saturado y ruido a la vez, notas muy agudas y muy
+/// graves.
+#[test]
+fn the_filter_is_stable_at_the_extremes() {
+    for cutoff in [20.0, 20_000.0] {
+        for env in [-1.0, 1.0] {
+            let mut p = open()
+                .with(CUTOFF, cutoff)
+                .with(RESONANCE, 1.0)
+                .with(SUB, 1.0)
+                .with(synth::SUB_DRIVE, 1.0);
+            for (name, value) in [
+                ("pulse", 1.0),
+                ("noise", 1.0),
+                ("kbd", 1.0),
+                ("res_comp", 1.0),
+                ("env_amt", env),
+                ("a", 0.0),
+                ("d", 5.0),
+            ] {
+                set(&mut p, name, value);
+            }
+            let notes = [
+                (0, NoteEvent::new(127.0, 6000)),
+                (6000, NoteEvent::new(0.0, 6000)),
+                (12_000, NoteEvent::new(100.0, 6000)),
+            ];
+            let y = synth::render(&p, &NO_CURVES, &notes, 20_000, RATE);
+            assert!(y.iter().all(|v| v.is_finite()), "corte {cutoff}, env {env}");
+            assert!(peak(&y) < 4.0, "corte {cutoff}, env {env}: {}", peak(&y));
+        }
+    }
+}
+
+/// Como en el original, los graves caen al subir la resonancia; con
+/// `res_comp` = 1 se quedan casi donde estaban.
+#[test]
+fn resonance_thins_the_bass_unless_compensated() {
+    let notes = [(0, NoteEvent::new(33.0, HELD))];
+    let fundamental = |res: f32, comp: f32| {
+        let mut p = open().with(CUTOFF, 800.0).with(RESONANCE, res);
+        set(&mut p, "res_comp", comp);
+        set(&mut p, "s", 1.0);
+        let y = left(&synth::render(&p, &NO_CURVES, &notes, RATE as usize, RATE));
+        amplitude(&y[RATE as usize / 2..], 55.0)
+    };
+    let drop = db(fundamental(0.8, 0.0) / fundamental(0.0, 0.0));
+    let kept = db(fundamental(0.8, 1.0) / fundamental(0.0, 1.0));
+    println!("55 Hz con res 0,8: {drop:+.1} dB sin compensar, {kept:+.1} dB con res_comp 1");
+    assert!(drop < -6.0, "sin compensar: {drop:+.1} dB");
+    assert!(kept.abs() < 2.0, "compensado: {kept:+.1} dB");
+}
+
+/// El paso alto: cada posición quita más de un grave de 55 Hz, y la 0 no
+/// toca nada.
+#[test]
+fn the_highpass_positions() {
+    let notes = [(0, NoteEvent::new(33.0, HELD))];
+    let at = |hpf: f32| {
+        let mut p = open();
+        set(&mut p, "hpf", hpf);
+        set(&mut p, "s", 1.0);
+        let y = left(&synth::render(&p, &NO_CURVES, &notes, RATE as usize, RATE));
+        amplitude(&y[RATE as usize / 2..], 55.0)
+    };
+    let levels: Vec<f64> = (0..4).map(|h| db(at(h as f32) / at(0.0))).collect();
+    println!("55 Hz con hpf 0 a 3: {levels:.1?} dB");
+    assert!(levels.windows(2).all(|w| w[1] < w[0] - 2.0), "{levels:?}");
+    assert!(levels[3] < -15.0, "{levels:?}");
+}
+
+/// El seguimiento de teclado: con `kbd` = 1, una octava más arriba de la
+/// raíz, el filtro autooscila una octava más arriba; con 0, igual.
+#[test]
+fn the_keyboard_tracks_the_cutoff() {
+    let frames = RATE as usize;
+    let at = |kbd: f32, note: f32| {
+        let mut p = ringing(500.0);
+        set(&mut p, "kbd", kbd);
+        let notes = [(0, NoteEvent::new(note, HELD))];
+        let y = left(&synth::render(&p, &NO_CURVES, &notes, frames, RATE));
+        frequency(&y[frames / 2..])
+    };
+    let root = at(1.0, 36.0);
+    let up = at(1.0, 48.0);
+    let fixed = at(0.0, 48.0);
+    assert!(
+        (up / root - 2.0).abs() < 0.02,
+        "kbd 1: {root:.1} → {up:.1} Hz"
+    );
+    assert!(
+        (fixed / root - 1.0).abs() < 0.01,
+        "kbd 0: {root:.1} → {fixed:.1} Hz"
+    );
+}
+
+/// El nivel: con todo el oscilador, el sub, la resonancia alta y
+/// compensada, el pico queda por debajo de -1 dBFS; el preset por
+/// defecto, por encima de -18.
+#[test]
+fn the_sh101_level() {
+    let notes = [
+        (0, NoteEvent::new(36.0, 30_000)),
+        (36_000, NoteEvent::new(48.0, 30_000)),
+    ];
+    let mut loud = sh101::patch(36.0).with(SUB, 1.0).with(RESONANCE, 0.9);
+    set(&mut loud, "pulse", 1.0);
+    set(&mut loud, "env_amt", 1.0);
+    set(&mut loud, "res_comp", 1.0);
+    let plain = sh101::patch(36.0);
+    let worst = db(peak(&synth::render(&loud, &NO_CURVES, &notes, 70_000, RATE)) as f64);
+    let quiet = db(peak(&synth::render(&plain, &NO_CURVES, &notes, 70_000, RATE)) as f64);
+    println!("sh101: pico {worst:.1} dBFS con todo, {quiet:.1} dBFS por defecto");
+    assert!(worst < -1.0, "con todo: {worst:.1} dBFS");
+    assert!(quiet > -18.0, "por defecto: {quiet:.1} dBFS");
+}

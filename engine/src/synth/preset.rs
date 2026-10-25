@@ -24,6 +24,9 @@ pub enum Target {
     SubDiv,
     /// Las voces ([`Patch::voices`]; con una, mono): un entero.
     Voices,
+    /// El paso alto de la voz analógica ([`super::Analog::hpf`]): un
+    /// entero.
+    Hpf,
 }
 
 /// Un parámetro de un preset: su nombre, adónde va, cuánto se multiplica
@@ -54,6 +57,11 @@ impl PresetParam {
                 patch.voices = value.round() as u8;
                 patch.mono = patch.voices == 1;
             }
+            Target::Hpf => {
+                if let Some(analog) = &mut patch.analog {
+                    analog.hpf = value.round() as u8;
+                }
+            }
         }
     }
 
@@ -67,6 +75,7 @@ impl PresetParam {
             Target::Release => patch.amp.release_ms,
             Target::SubDiv => patch.sub_div as f32,
             Target::Voices => patch.voices as f32,
+            Target::Hpf => patch.analog.map_or(0.0, |a| a.hpf as f32),
         };
         value / self.scale
     }

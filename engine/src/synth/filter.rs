@@ -9,6 +9,10 @@
 //!   en la misma muestra y pasa por una saturación suave antes de la
 //!   cascada: con la resonancia al máximo autooscila, pero la saturación
 //!   la acota (nunca diverge).
+//! - [`AnalogLadder`]: el de la voz analógica (el `sh101`), con la
+//!   saturación también en cada etapa y sin compensar la caída de los
+//!   graves al subir la resonancia (salvo que se pida).
+//! - [`OnePoleHp`]: paso alto de un polo, sin resonancia.
 
 use super::FilterMode;
 
@@ -98,11 +102,75 @@ impl Ladder {
     }
 }
 
+/// Realimentación del ladder analógico con `res` = 1: algo más de 4, así
+/// autooscila aunque la saturación de las etapas le quite ganancia.
+const ANALOG_MAX_K: f32 = 4.4;
+
+/// Paso bajo de 4 polos como [`Ladder`] (la realimentación resuelta en la
+/// misma muestra con la cascada lineal, la saturación en la entrada), con
+/// una saturación suave también a la entrada de cada etapa: la del
+/// transistor de cada par del original. La saturación de cada etapa se
+/// aplica sobre lo que le llega, sin iterar: cada etapa es un polo TPT
+/// con la entrada acotada a ±1, que no diverge nunca, sea cual sea el
+/// corte o la resonancia.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct AnalogLadder {
+    s: [f32; 4],
+}
+
+impl AnalogLadder {
+    /// Filtra `x` con el coeficiente `g` ([`warp`]), la resonancia `res`
+    /// (0 a 1; cerca de 1 autooscila) y la compensación de graves `comp`
+    /// (0, ninguna: los graves caen al subir la resonancia; 1, la que la
+    /// deja en su sitio).
+    #[inline]
+    pub fn next(&mut self, x: f32, g: f32, res: f32, comp: f32) -> f32 {
+        let k = ANALOG_MAX_K * res.clamp(0.0, 1.0);
+        let big_g = g / (1.0 + g);
+        let b = 1.0 - big_g;
+        let s = self.s;
+        let sum = ((s[0] * b * big_g + s[1] * b) * big_g + s[2] * b) * big_g + s[3] * b;
+        let g4 = big_g * big_g * big_g * big_g;
+        // En continua la ganancia es 1/(1+k): con `comp` = 1, se devuelve.
+        let x = (1.0 + comp.clamp(0.0, 1.0) * k) * x;
+        let y = (g4 * x + sum) / (1.0 + k * g4);
+        let mut input = soft(x - k * y);
+        for (i, state) in self.s.iter_mut().enumerate() {
+            let u = if i == 0 { input } else { soft(input) };
+            let v = (u - *state) * big_g;
+            let out = v + *state;
+            *state = out + v;
+            input = out;
+        }
+        input
+    }
+}
+
+/// Paso alto de un polo (TPT), sin resonancia.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct OnePoleHp {
+    s: f32,
+}
+
+impl OnePoleHp {
+    /// Filtra `x` con `big_g` = g/(1+g) ([`warp`] del corte).
+    #[inline]
+    pub fn next(&mut self, x: f32, big_g: f32) -> f32 {
+        let v = (x - self.s) * big_g;
+        let low = v + self.s;
+        self.s = low + v;
+        x - low
+    }
+}
+
 /// El filtro de una voz (uno por canal).
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct Filter {
     svf: Svf,
     ladder: Ladder,
+    /// Los de la voz analógica.
+    pub analog: AnalogLadder,
+    pub hp: OnePoleHp,
 }
 
 impl Filter {
@@ -118,6 +186,8 @@ impl Filter {
     /// tests).
     pub fn is_finite(&self) -> bool {
         self.ladder.s.iter().all(|v| v.is_finite())
+            && self.analog.s.iter().all(|v| v.is_finite())
+            && self.hp.s.is_finite()
             && self.svf.ic1.is_finite()
             && self.svf.ic2.is_finite()
     }
