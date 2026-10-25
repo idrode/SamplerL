@@ -63,7 +63,9 @@ la sección 4 (con sus parámetros, rangos y un ejemplo cada una).
   (`pista:formant`).
 - Sintetizadores sin sample (`synth`): el bajo ácido del 303
   (`synth("acid", {...})`) y un subgrave limpio (`synth("sub", {...})`),
-  con accent (`!`) y slide (`/`) por paso.
+  con accent (`!`) y slide (`/`) por paso, y en cualquiera de ellos un sub
+  dividido de su oscilador (`sub`, `sub_div`...; también por paso:
+  `{sub=0.5,sub_div=3}`).
 - Texturas con granos y congelar un instante (`pista:grains`,
   `pista:freeze`).
 - Ver dónde se pisan las pistas en frecuencia y que el EQ sugerido se
@@ -1155,6 +1157,7 @@ compases).
 | `{efecto=valor,clave=valor}` | Un efecto solo en este golpe, con sus parámetros; varios, cada uno en sus llaves | `3{lp=800,q=4}{crush=6}` |
 | `!` | Accent (solo en un sintetizador): la nota suena más fuerte (en el acid, también más abierta) | `1!`, en `melody` `c!` |
 | `/` | Slide (solo en un sintetizador): la nota llega ligada desde la anterior, deslizándose hasta su altura sin volver a disparar las envolventes | `1^3/`, en `melody` `eb/` |
+| `{sub=n,sub_div=n,...}` | El sub de esta nota (solo en un sintetizador): manda sobre el de su tabla mientras suena; claves `sub`, `sub_div`, `sub_wave`, `sub_pan` y `sub_drive`, en sus propias llaves (sin efectos) | `1{sub=0.8,sub_div=3}`, en `melody` `c{sub=0}` |
 
 Los sufijos se combinan en cualquier orden, cada uno una vez (salvo `^`,
 que repetido hace un acorde): `3'^7@0.5r2` es el corte 3, al revés, una quinta arriba, a media
@@ -2715,6 +2718,36 @@ Para oírlo bien hacen falta unos auriculares o un altavoz con graves: en
 el render, mira el medidor de la pista. `tone` y `drive` admiten `ramp()`
 y `lfo()` (un sub que se va abriendo); `attack` y `release` no (la
 envolvente se fija al cargar).
+
+### Un sub dentro del bajo (bloque sub)
+
+Cualquier sintetizador de bajo (`acid`, `sub`) tiene debajo un **sub**:
+una onda a la frecuencia de su oscilador dividida por `sub_div` (2, una
+octava abajo; 3, una octava y una quinta; 4, dos octavas...). No es otro
+oscilador: sale de la fase del suyo contando cuántas veces vuelve a
+empezar, así que siempre está en fase con él, también al deslizarse con
+`/`. `sub` es su nivel (0, apagado: el instrumento suena exactamente como
+sin él), `sub_wave` su forma (`"square"`, la de siempre, con los saltos
+suavizados para que no aliase; `"tri"` o `"sine"`, más redondas),
+`sub_pan` su pan (de potencia constante: abierto a un lado no pierde ni
+gana fuerza) y `sub_drive` satura la suma antes del filtro. En la tabla,
+`sub`, `sub_pan` y `sub_drive` admiten `ramp()` y `lfo()`; `sub_div` y
+`sub_wave` no (son un entero y un nombre). Y por paso, entre llaves, lo
+que cambia en esa nota: `{sub=0}` la deja sin sub, `{sub_div=3}` la baja
+una quinta más.
+
+```lua
+bpm(128)
+local bass = synth("acid", {
+  cutoff = 500, res = 0.75, envmod = 0.5,
+  sub = 0.5, sub_div = 2, sub_wave = "sine", sub_pan = 0.3,
+})
+track("bass", bass)
+  :melody("c c! eb{sub=0} c/  . c{sub_div=3} bb1 c  g1! . c c/  eb f/{sub=0.8} eb c")
+```
+
+El tracker marca las notas con su propio sub (`C2{sub}`) y el panel del
+sintetizador enseña el bloque sub solo cuando suena.
 
 ### Una caja más grave que dura lo mismo
 
