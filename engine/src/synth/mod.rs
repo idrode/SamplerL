@@ -23,6 +23,7 @@ mod env;
 mod filter;
 mod osc;
 pub mod preset;
+pub mod sh101;
 pub mod sub;
 pub mod subharm;
 
@@ -47,6 +48,14 @@ const KILL_SECONDS: f32 = 0.0015;
 const MIN_AMP_MS: f32 = 1.5;
 /// Lo más corto de un tramo de la envolvente de filtro, en ms.
 const MIN_FILTER_MS: f32 = 0.5;
+/// La puerta del VCA de una voz analógica: se abre y se cierra con el
+/// fundido mínimo, sin decay.
+const GATE: Adsr = Adsr {
+    attack_ms: MIN_AMP_MS,
+    decay_ms: 0.0,
+    sustain: 1.0,
+    release_ms: 3.0,
+};
 /// `gate` de una nota que suena hasta su note off.
 pub const HELD: u64 = u64::MAX;
 
@@ -186,8 +195,12 @@ pub const SUB_DRIVE: usize = 14;
 pub const LAYER_ATTACK: usize = 15;
 /// Decay de la envolvente de cada capa (ms), hasta 0.
 pub const LAYER_DECAY: usize = 16;
+/// Nivel de la sierra de una voz analógica ([`Patch::analog`]).
+pub const SAW: usize = 17;
+/// Nivel del pulso de una voz analógica (su ancho, [`PW`]).
+pub const PULSE: usize = 18;
 /// Parámetros continuos.
-pub const PARAM_COUNT: usize = 17;
+pub const PARAM_COUNT: usize = 19;
 /// Divisor del sub como mucho.
 pub const MAX_SUB_DIV: u8 = 16;
 
@@ -312,6 +325,20 @@ pub const PARAMS: [SynthParam; PARAM_COUNT] = [
         default: 800.0,
         log: true,
     },
+    SynthParam {
+        name: "saw",
+        min: 0.0,
+        max: 1.0,
+        default: 1.0,
+        log: false,
+    },
+    SynthParam {
+        name: "pulse",
+        min: 0.0,
+        max: 1.0,
+        default: 0.0,
+        log: false,
+    },
 ];
 
 /// Lo que un paso cambia del sub de su nota (`{sub=0.5,sub_div=3}`): cada
@@ -410,6 +437,79 @@ pub(crate) fn constant_power(pan: f32) -> (f32, f32) {
     )
 }
 
+/// Portamento de una voz analógica: nunca, siempre (también entre notas
+/// separadas, desde la anterior) o solo en las ligadas.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GlideMode {
+    Off,
+    On,
+    Auto,
+}
+
+impl GlideMode {
+    pub const ALL: [GlideMode; 3] = [GlideMode::Off, GlideMode::On, GlideMode::Auto];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            GlideMode::Off => "off",
+            GlideMode::On => "on",
+            GlideMode::Auto => "auto",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<GlideMode> {
+        GlideMode::ALL.into_iter().find(|m| m.name() == name)
+    }
+}
+
+/// Qué abre el VCA de una voz analógica: la envolvente (la misma que mueve
+/// el filtro) o la puerta de la nota (abierta mientras suena, con un
+/// fundido mínimo contra los clics).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VcaMode {
+    Env,
+    Gate,
+}
+
+impl VcaMode {
+    pub const ALL: [VcaMode; 2] = [VcaMode::Env, VcaMode::Gate];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            VcaMode::Env => "env",
+            VcaMode::Gate => "gate",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<VcaMode> {
+        VcaMode::ALL.into_iter().find(|m| m.name() == name)
+    }
+}
+
+/// Voz analógica (la del `sh101`): un oscilador con la sierra y el pulso
+/// sumados ([`SAW`], [`PULSE`]), el bloque sub y ruido, por un paso bajo de
+/// 4 polos, con una sola envolvente para el filtro y el VCA (la de
+/// amplitud, [`Patch::amp`]). Monofónica con prioridad a la última nota:
+/// una nota que empieza con otra tecla aún pulsada (o con slide) se liga,
+/// sin volver a disparar la envolvente; al soltarla, vuelve a la que siga
+/// pulsada.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Analog {
+    pub glide: GlideMode,
+    pub vca: VcaMode,
+}
+
+impl Analog {
+    pub const DEFAULT: Analog = Analog {
+        glide: GlideMode::Off,
+        vca: VcaMode::Env,
+    };
+}
+
+/// Teclas pulsadas que recuerda una voz analógica (para volver a la
+/// anterior al soltar la última).
+const HELD_KEYS: usize = 16;
+
 /// Una curva (o ninguna) por parámetro continuo.
 pub type SynthCurves = [Option<Curve>; PARAM_COUNT];
 
@@ -479,6 +579,8 @@ pub struct Patch {
     /// (sacados de su fase como el sub, sin unison ni bloque sub), cada
     /// capa con su nivel y su pan. Ver [`Layer`].
     pub layers: Option<[Layer; LAYERS]>,
+    /// Voz analógica (el `sh101`; ver [`Analog`]).
+    pub analog: Option<Analog>,
     /// Valores de los parámetros continuos ([`PARAMS`]).
     pub params: [f32; PARAM_COUNT],
 }
@@ -513,6 +615,7 @@ impl Patch {
             sub_div: 2,
             sub_wave: Wave::Square,
             layers: None,
+            analog: None,
             params: PARAMS.map(|p| p.default),
         }
     }
@@ -546,6 +649,9 @@ impl Patch {
             for layer in layers {
                 layer.validate()?;
             }
+        }
+        if self.analog.is_some() && (!self.mono || self.layers.is_some()) {
+            return Err("una voz analógica es mono y sin capas");
         }
         for (value, p) in self.params.iter().zip(&PARAMS) {
             if !(p.min..=p.max).contains(value) {
@@ -845,6 +951,8 @@ struct Block<'a> {
     /// primera muestra del bloque, el compás que suena (en marcha) y lo que
     /// dura un compás (el virtual, parado).
     layer_rates: Rates,
+    /// La puerta del VCA de una voz analógica con [`VcaMode::Gate`].
+    gate: Rates,
     frame: u64,
     bar: Option<(u64, u64)>,
     bar_length: u64,
@@ -984,9 +1092,61 @@ impl Voice {
 }
 
 impl Voice {
+    /// El nivel y el pan del sub hacia los del paso (o los del patch, `p`),
+    /// suavizados: si suena, si se abre en estéreo y sus ganancias
+    /// izquierda y derecha.
+    #[inline]
+    fn sub_gains(&mut self, p: &impl Fn(usize) -> f32, smooth: f32) -> (bool, bool, f32, f32) {
+        let sub = &self.sub_note;
+        let level_to = sub.level.unwrap_or_else(|| p(SUB));
+        let pan_to = sub.pan.unwrap_or_else(|| p(SUB_PAN));
+        self.sub_level += (level_to - self.sub_level) * smooth;
+        self.sub_pan += (pan_to - self.sub_pan) * smooth;
+        if (level_to - self.sub_level).abs() < 1e-6 {
+            self.sub_level = level_to;
+        }
+        if (pan_to - self.sub_pan).abs() < 1e-6 {
+            self.sub_pan = pan_to;
+        }
+        let sub_on = self.sub_level > 0.0 || level_to > 0.0;
+        let sub_wide = sub_on && (self.sub_pan != 0.0 || pan_to != 0.0);
+        let (sub_l, sub_r) = if sub_wide {
+            let (gl, gr) = constant_power(self.sub_pan);
+            (self.sub_level * gl, self.sub_level * gr)
+        } else {
+            (self.sub_level, self.sub_level)
+        };
+        (sub_on, sub_wide, sub_l, sub_r)
+    }
+
+    /// La muestra del sub (0 si no suena) del oscilador `center`, que
+    /// estaba en la fase `at` antes de avanzar: sale de esa fase y de
+    /// cuántas veces ha vuelto a empezar (módulo el divisor), siempre en
+    /// fase con él, también con glide.
+    #[inline]
+    fn sub_tick(&mut self, center: usize, at: f64, div: u32, dt: f64, wave: Wave, on: bool) -> f32 {
+        if self.sub_count >= div {
+            self.sub_count %= div;
+        }
+        let y = if on {
+            let phase = (self.sub_count as f64 + at) / div as f64;
+            osc::shape(wave, phase, dt, 0.5) as f32
+        } else {
+            0.0
+        };
+        if self.osc[center].phase < at {
+            self.sub_count = (self.sub_count + 1) % div;
+        }
+        y
+    }
+
     /// Suma `frames` frames de la voz en `out` (estéreo entrelazado).
     fn render(&mut self, out: &mut [f32], b: &Block) {
         let patch = b.patch;
+        if let Some(analog) = &patch.analog {
+            self.render_analog(out, b, analog);
+            return;
+        }
         let n = patch.unison as usize;
         let norm = 1.0 / (n as f32).sqrt();
         let frames = out.len() / 2;
@@ -1025,20 +1185,8 @@ impl Voice {
                     (l, r, true, false, SubNote::default())
                 }
                 None => {
-                    // Sub: el nivel y el pan del paso (o los del patch), suavizados.
-                    let sub = &self.sub_note;
-                    let level_to = sub.level.unwrap_or_else(|| p(SUB));
-                    let pan_to = sub.pan.unwrap_or_else(|| p(SUB_PAN));
-                    self.sub_level += (level_to - self.sub_level) * b.smooth;
-                    self.sub_pan += (pan_to - self.sub_pan) * b.smooth;
-                    if (level_to - self.sub_level).abs() < 1e-6 {
-                        self.sub_level = level_to;
-                    }
-                    if (pan_to - self.sub_pan).abs() < 1e-6 {
-                        self.sub_pan = pan_to;
-                    }
-                    let sub_on = self.sub_level > 0.0 || level_to > 0.0;
-                    let sub_wide = sub_on && (self.sub_pan != 0.0 || pan_to != 0.0);
+                    let sub = self.sub_note;
+                    let (sub_on, sub_wide, sub_l, sub_r) = self.sub_gains(&p, b.smooth);
                     let stereo = b.stereo || sub_wide;
                     if stereo && !self.was_stereo && !b.stereo {
                         // El pan del sub abre la voz: hasta aquí la derecha era la
@@ -1047,12 +1195,6 @@ impl Voice {
                         self.filter[1] = self.filter[0];
                     }
                     self.was_stereo = stereo;
-                    let (sub_l, sub_r) = if sub_wide {
-                        let (gl, gr) = constant_power(self.sub_pan);
-                        (self.sub_level * gl, self.sub_level * gr)
-                    } else {
-                        (self.sub_level, self.sub_level)
-                    };
                     let div = sub.div.unwrap_or(patch.sub_div).max(1) as u32;
                     let sub_wave = sub.wave.unwrap_or(patch.sub_wave);
                     // Osciladores, al doble de la frecuencia de muestreo y
@@ -1064,13 +1206,7 @@ impl Voice {
                     let center = n / 2;
                     for _ in 0..2 {
                         let (mut l, mut r) = (0.0f32, 0.0f32);
-                        // El sub sale de la fase del central y de cuántas veces ha
-                        // vuelto a empezar (módulo el divisor): siempre en fase con
-                        // él, también con glide.
                         let at = self.osc[center].phase;
-                        if self.sub_count >= div {
-                            self.sub_count %= div;
-                        }
                         let sub_dt = dt * b.ratio[center] / div as f64;
                         for u in 0..n {
                             let y = self.osc[u].next(patch.wave, dt * b.ratio[u], pw);
@@ -1081,15 +1217,7 @@ impl Voice {
                                 l += y;
                             }
                         }
-                        let sub_y = if sub_on {
-                            let phase = (self.sub_count as f64 + at) / div as f64;
-                            osc::shape(sub_wave, phase, sub_dt, 0.5) as f32
-                        } else {
-                            0.0
-                        };
-                        if self.osc[center].phase < at {
-                            self.sub_count = (self.sub_count + 1) % div;
-                        }
+                        let sub_y = self.sub_tick(center, at, div, sub_dt, sub_wave, sub_on);
                         let mut extra = 0.0;
                         if noise > 0.0 {
                             extra += noise * self.noise.next();
@@ -1108,7 +1236,7 @@ impl Voice {
                     }
                     let l = self.down[0].output();
                     let r = if stereo { self.down[1].output() } else { l };
-                    (l, r, stereo, sub_on, *sub)
+                    (l, r, stereo, sub_on, sub)
                 }
             };
             let sub_drive = if sub_on {
@@ -1177,6 +1305,131 @@ impl Voice {
     }
 }
 
+impl Voice {
+    /// Suma la voz analógica ([`Analog`]) en `out`: el oscilador (sierra
+    /// y pulso de la misma fase), el sub y el ruido al doble de la
+    /// frecuencia de muestreo y diezmados, el filtro y el VCA, con una sola
+    /// envolvente para los dos.
+    fn render_analog(&mut self, out: &mut [f32], b: &Block, analog: &Analog) {
+        let patch = b.patch;
+        let frames = out.len() / 2;
+        let step = 1.0 / frames as f32;
+        let (log_from, log_to) = (b.from[CUTOFF].log2(), b.to[CUTOFF].log2());
+        for (i, frame) in out.as_chunks_mut::<2>().0.iter_mut().enumerate() {
+            if !self.active {
+                break;
+            }
+            let t = i as f32 * step;
+            let p = |k: usize| b.from[k] + (b.to[k] - b.from[k]) * t;
+            if self.gate != HELD {
+                if self.gate == 0 {
+                    self.release(false);
+                } else {
+                    self.gate -= 1;
+                }
+            }
+            if self.pitch != self.target {
+                self.pitch += (self.target - self.pitch) * b.glide;
+                if (self.target - self.pitch).abs() < 1e-4 {
+                    self.pitch = self.target;
+                }
+                self.dt = cycles(self.pitch, b.sample_rate);
+            }
+            let sub = self.sub_note;
+            let (sub_on, stereo, sub_l, sub_r) = self.sub_gains(&p, b.smooth);
+            if stereo && !self.was_stereo {
+                // El pan del sub abre la voz: la derecha era la izquierda.
+                self.down[1] = self.down[0];
+                self.filter[1] = self.filter[0];
+            }
+            self.was_stereo = stereo;
+            let div = sub.div.unwrap_or(patch.sub_div).max(1) as u32;
+            let sub_wave = sub.wave.unwrap_or(patch.sub_wave);
+            let sub_drive = if sub_on {
+                sub.drive.unwrap_or_else(|| p(SUB_DRIVE))
+            } else {
+                0.0
+            };
+            let (saw, pulse, noise) = (p(SAW), p(PULSE), p(NOISE));
+            let pw = (p(PW) as f64).clamp(0.05, 0.95);
+            let dt = 0.5 * self.dt;
+            for _ in 0..2 {
+                let at = self.osc[0].phase;
+                let mut x = 0.0f32;
+                if saw > 0.0 {
+                    x += saw * osc::shape(Wave::Saw, at, dt, pw) as f32;
+                }
+                if pulse > 0.0 {
+                    x += pulse * osc::shape(Wave::Square, at, dt, pw) as f32;
+                }
+                let next = at + dt;
+                self.osc[0].phase = if next >= 1.0 { next - 1.0 } else { next };
+                let sub_y = self.sub_tick(0, at, div, dt / div as f64, sub_wave, sub_on);
+                if noise > 0.0 {
+                    x += noise * self.noise.next();
+                }
+                let (mut l, mut r) = (x + sub_y * sub_l, x + sub_y * sub_r);
+                if sub_drive > 0.0 {
+                    let gain = 1.0 + 15.0 * sub_drive * sub_drive;
+                    let post = 1.0 / soft(gain);
+                    l = soft(gain * l) * post;
+                    r = soft(gain * r) * post;
+                }
+                self.down[0].push(l);
+                if stereo {
+                    self.down[1].push(r);
+                }
+            }
+            let l = self.down[0].output();
+            let r = if stereo { self.down[1].output() } else { l };
+            // Una envolvente para el filtro y el VCA (o la puerta, que usa
+            // el estado de la envolvente de filtro, aquí libre).
+            let env = self.amp.next(&b.amp);
+            let vca = match analog.vca {
+                VcaMode::Env => env,
+                VcaMode::Gate => self.fenv.next(&b.gate),
+            };
+            let octaves = log_from + (log_to - log_from) * t + p(ENV_AMOUNT) * env;
+            let g = warp(octaves.exp2(), b.sample_rate);
+            let res = p(RESONANCE);
+            let mut yl = self.filter[0].next(l, g, res, FilterMode::Ladder);
+            let mut yr = if stereo {
+                self.filter[1].next(r, g, res, FilterMode::Ladder)
+            } else {
+                yl
+            };
+            let level = vca * self.gain * patch.level;
+            yl *= level;
+            yr *= level;
+            let drive = p(DRIVE);
+            if drive > 0.0 {
+                let pre = 1.0 + 15.0 * drive * drive;
+                let post = 1.0 / soft(pre);
+                yl = soft(pre * yl) * post;
+                yr = soft(pre * yr) * post;
+            }
+            if let Some(left) = &mut self.killed {
+                let k = *left as f32 / b.fade as f32;
+                yl *= k;
+                yr *= k;
+                *left = left.saturating_sub(1);
+                if *left == 0 {
+                    self.active = false;
+                }
+            }
+            frame[0] += yl;
+            frame[1] += yr;
+            let closed = match analog.vca {
+                VcaMode::Env => self.amp.is_idle(),
+                VcaMode::Gate => self.fenv.is_idle(),
+            };
+            if closed {
+                self.active = false;
+            }
+        }
+    }
+}
+
 /// Un sintetizador en una pista: sus voces y el valor de sus parámetros.
 pub struct Synth {
     voices: [Voice; POOL],
@@ -1190,6 +1443,10 @@ pub struct Synth {
     primed: bool,
     /// Altura de la última nota (para el slide de un polifónico).
     last_pitch: Option<f32>,
+    /// Voz analógica: las teclas pulsadas (tecla y altura, la última al
+    /// final) y cuántas.
+    held: [(u8, f32); HELD_KEYS],
+    held_len: usize,
 }
 
 /// Dónde está la canción al empezar un trozo (lo que siguen las curvas y
@@ -1234,6 +1491,8 @@ impl Synth {
             values: PARAMS.map(|p| p.default),
             primed: false,
             last_pitch: None,
+            held: [(0, 0.0); HELD_KEYS],
+            held_len: 0,
         }
     }
 
@@ -1255,6 +1514,9 @@ impl Synth {
     /// [`NoteEvent::slide`]). Devuelve el número de la nota (orden de
     /// llegada).
     pub fn note_on(&mut self, patch: &Patch, ev: NoteEvent) -> u64 {
+        if let Some(analog) = &patch.analog {
+            return self.analog_note_on(patch, analog, ev);
+        }
         self.born += 1;
         let born = self.born;
         let sr = self.sample_rate;
@@ -1302,8 +1564,98 @@ impl Synth {
         born
     }
 
+    /// Quita la tecla `key` de las pulsadas; `true` si estaba.
+    fn unhold(&mut self, key: u8) -> bool {
+        let held = &mut self.held[..self.held_len];
+        let Some(i) = held.iter().position(|&(k, _)| k == key) else {
+            return false;
+        };
+        held.copy_within(i + 1.., i);
+        self.held_len -= 1;
+        true
+    }
+
+    /// Una nota en la voz analógica: con otra tecla aún pulsada o con
+    /// slide, y la voz sonando, se liga (solo cambia la altura, con glide
+    /// en `on` y `auto`); si no, vuelve a disparar la envolvente desde su
+    /// nivel (con glide desde la nota anterior solo en `on`).
+    fn analog_note_on(&mut self, patch: &Patch, analog: &Analog, ev: NoteEvent) -> u64 {
+        self.born += 1;
+        let born = self.born;
+        let sr = self.sample_rate;
+        let mut other_held = false;
+        if let Some(key) = ev.key {
+            self.unhold(key);
+            other_held = self.held_len > 0;
+            if self.held_len == HELD_KEYS {
+                // Sin sitio, se olvida la más antigua.
+                self.held.copy_within(1.., 0);
+                self.held_len -= 1;
+            }
+            self.held[self.held_len] = (key, ev.pitch);
+            self.held_len += 1;
+        }
+        let last = self.last_pitch;
+        self.last_pitch = Some(ev.pitch);
+        let current = (0..POOL).find(|&v| self.voices[v].is_voice());
+        if let Some(v) = current {
+            let voice = &mut self.voices[v];
+            // Ligada: la anterior aún no se ha soltado.
+            let held = !matches!(voice.amp.stage, Stage::Idle | Stage::Release);
+            if held && (ev.slide || other_held) {
+                voice.tie(&ev, born);
+                if analog.glide == GlideMode::Off {
+                    voice.pitch = voice.target;
+                    voice.dt = cycles(voice.pitch, sr);
+                }
+            } else {
+                let from = (analog.glide == GlideMode::On).then_some(voice.pitch);
+                voice.play(&ev, born, from, sr);
+            }
+            return born;
+        }
+        let slot = (0..POOL)
+            .find(|&v| !self.voices[v].active)
+            .unwrap_or_else(|| {
+                (0..POOL)
+                    .filter(|&v| !self.voices[v].is_voice())
+                    .min_by_key(|&v| self.voices[v].killed.unwrap_or(u32::MAX))
+                    .unwrap_or(0)
+            });
+        let from = last.filter(|_| analog.glide == GlideMode::On);
+        let voice = &mut self.voices[slot];
+        voice.start(patch, born, sr);
+        voice.play(&ev, born, from, sr);
+        born
+    }
+
     /// Suelta las notas de la tecla `key` (empiezan su release).
     pub fn note_off(&mut self, patch: &Patch, key: u8) {
+        if let Some(analog) = &patch.analog {
+            self.unhold(key);
+            // Prioridad a la última: si queda otra pulsada, la voz vuelve
+            // a ella sin redisparar.
+            if let Some(&(back, pitch)) = self.held[..self.held_len].last() {
+                let sr = self.sample_rate;
+                for voice in self.voices.iter_mut().filter(|v| v.is_voice()) {
+                    if voice.key == Some(key) {
+                        let ev = NoteEvent {
+                            key: Some(back),
+                            gain: voice.gain,
+                            sub: voice.sub_note,
+                            ..NoteEvent::new(pitch, HELD)
+                        };
+                        let born = voice.born;
+                        voice.tie(&ev, born);
+                        if analog.glide == GlideMode::Off {
+                            voice.pitch = voice.target;
+                            voice.dt = cycles(voice.pitch, sr);
+                        }
+                    }
+                }
+                return;
+            }
+        }
         let free_filter = patch.filter_env.sustain == 0.0;
         for voice in self.voices.iter_mut().filter(|v| v.active) {
             if voice.key == Some(key) {
@@ -1315,6 +1667,7 @@ impl Synth {
 
     /// Corta todas las voces con el fundido mínimo.
     pub fn kill(&mut self) {
+        self.held_len = 0;
         let fade = self.fade();
         for voice in self.voices.iter_mut().filter(|v| v.active) {
             voice.kill(fade);
@@ -1398,6 +1751,7 @@ impl Synth {
                     sr,
                     MIN_FILTER_MS,
                 ),
+                gate: Rates::new(&GATE, 0.0, sr, MIN_AMP_MS),
                 frame: clock.frame + (k * block) as u64,
                 bar: clock.bar,
                 bar_length: clock.bar_length,

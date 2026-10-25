@@ -73,10 +73,9 @@ pub fn sub_note(written: &[WrittenFx]) -> Result<SubNote, String> {
                     let FxValue::Word(name) = value else {
                         return Err(format!("{who}: sub_wave es square, tri, sine o pulse25"));
                     };
-                    sub.wave = Some(
-                        sub_wave(name)
-                            .ok_or_else(|| format!("{who}: sub_wave es square, tri, sine o pulse25"))?,
-                    );
+                    sub.wave = Some(sub_wave(name).ok_or_else(|| {
+                        format!("{who}: sub_wave es square, tri, sine o pulse25")
+                    })?);
                 }
                 _ => unreachable!("solo claves del sub"),
             }

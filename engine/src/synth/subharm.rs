@@ -150,6 +150,7 @@ pub fn patch(root: f32) -> Patch {
         sub_div: 2,
         sub_wave: Wave::Square,
         layers: Some(DEFAULT_LAYERS),
+        analog: None,
         params: super::PARAMS.map(|p| p.default),
     };
     patch.params[ACCENT] = 1.0;

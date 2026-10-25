@@ -668,7 +668,10 @@ fn the_sh101_sub_modes() {
         let high = second.iter().filter(|&&y| y > 0.0).count() as f64 / second.len() as f64;
         let mean = second.iter().map(|&y| y as f64).sum::<f64>() / second.len() as f64;
         let duty = if wave == Wave::Pulse25 { 0.25 } else { 0.5 };
-        assert!((high - duty).abs() < 0.02, "{wave:?} ÷{div}: alto {high:.3}");
+        assert!(
+            (high - duty).abs() < 0.02,
+            "{wave:?} ÷{div}: alto {high:.3}"
+        );
         assert!(mean.abs() < 0.01, "{wave:?} ÷{div}: continua {mean:.4}");
     }
 }

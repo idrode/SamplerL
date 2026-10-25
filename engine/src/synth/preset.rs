@@ -14,6 +14,10 @@ pub enum Target {
     Param(usize),
     /// El ataque de la envolvente de amplitud (ms).
     Attack,
+    /// El decay de la envolvente de amplitud (ms).
+    Decay,
+    /// El sustain de la envolvente de amplitud (0 a 1).
+    Sustain,
     /// El release de la envolvente de amplitud (ms).
     Release,
     /// El divisor del sub ([`Patch::sub_div`]): un entero.
@@ -42,6 +46,8 @@ impl PresetParam {
         match self.target {
             Target::Param(i) => patch.params[i] = value,
             Target::Attack => patch.amp.attack_ms = value,
+            Target::Decay => patch.amp.decay_ms = value,
+            Target::Sustain => patch.amp.sustain = value,
             Target::Release => patch.amp.release_ms = value,
             Target::SubDiv => patch.sub_div = value.round() as u8,
             Target::Voices => {
@@ -56,6 +62,8 @@ impl PresetParam {
         let value = match self.target {
             Target::Param(i) => patch.params[i],
             Target::Attack => patch.amp.attack_ms,
+            Target::Decay => patch.amp.decay_ms,
+            Target::Sustain => patch.amp.sustain,
             Target::Release => patch.amp.release_ms,
             Target::SubDiv => patch.sub_div as f32,
             Target::Voices => patch.voices as f32,
