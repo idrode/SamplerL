@@ -1389,7 +1389,7 @@ mod tests {
         let c = at(&format!("{SONG}local s = subharm{{ s|")).unwrap();
         assert_eq!(labels(&c), ["s1", "s2", "s3", "s4", "seed"]);
         let c = at(&format!("{SONG}local s = subharm{{ o1 = {{ |")).unwrap();
-        assert_eq!(labels(&c), ["div", "pan", "level"]);
+        assert_eq!(labels(&c), ["div", "rdiv", "pan", "level"]);
         let c = at(&format!("{SONG}local s = synth(\"subharm\", {{ s2 = {{ d|")).unwrap();
         assert_eq!(labels(&c), ["div"]);
         let h = help(&format!(

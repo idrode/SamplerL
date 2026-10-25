@@ -8,8 +8,8 @@
 
 use super::preset::{Preset, PresetParam, Target, defaults};
 use super::{
-    ACCENT, Accent, CUTOFF, DRIVE, ENV_AMOUNT, FILTER_DECAY, FilterMode, GLIDE, LAYERS, Layer,
-    Patch, RESONANCE, Wave,
+    ACCENT, Accent, CUTOFF, DRIVE, ENV_AMOUNT, FILTER_DECAY, FilterMode, GLIDE, LAYER_ATTACK,
+    LAYER_DECAY, LAYERS, Layer, Patch, RESONANCE, Wave,
 };
 use crate::Adsr;
 
@@ -30,7 +30,7 @@ pub const DEFAULT_LAYERS: [Layer; LAYERS] = [
     Layer::new(4, 0.0),
 ];
 
-pub const PARAMS: [PresetParam; 7] = [
+pub const PARAMS: [PresetParam; 9] = [
     PresetParam {
         name: "cutoff",
         target: Target::Param(CUTOFF),
@@ -78,6 +78,22 @@ pub const PARAMS: [PresetParam; 7] = [
         min: 0.0,
         max: 1.0,
         default: 0.0,
+    },
+    PresetParam {
+        name: "attack",
+        target: Target::Param(LAYER_ATTACK),
+        scale: 1.0,
+        min: 0.5,
+        max: 2000.0,
+        default: 2.0,
+    },
+    PresetParam {
+        name: "decay",
+        target: Target::Param(LAYER_DECAY),
+        scale: 1.0,
+        min: 10.0,
+        max: 10_000.0,
+        default: 800.0,
     },
     PresetParam {
         name: "voices",

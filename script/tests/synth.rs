@@ -496,11 +496,11 @@ fn sub_block_errors_say_the_line() {
 #[test]
 fn the_subharm_sounds_like_the_engine() {
     let source = "{\n\
-                    o1 = { div = 1, pan = -0.6 },\n\
-                    o2 = { div = 2, level = 0.5, pan = 0.4 },\n\
-                    s1 = { div = 3, pan = 0.5, level = 0.7 },\n\
+                    o1 = { div = 1, rdiv = 4, pan = -0.6 },\n\
+                    o2 = { div = 2, level = 0.5, pan = 0.4, rdiv = 3 },\n\
+                    s1 = { div = 3, pan = 0.5, level = 0.7, rdiv = 7 },\n\
                     s4 = { div = 5, level = 0.3 },\n\
-                    cutoff = 900, res = 0.4, seed = 2,\n\
+                    cutoff = 900, res = 0.4, seed = 2, attack = 5, decay = 250,\n\
                   }";
     let braced = song_ok(&format!(
         "track(\"sh\", subharm{source}):melody(\"c _ _ _  _ _ _ _  eb _ _ g/  _ _ _ _\")"
@@ -519,15 +519,16 @@ fn the_subharm_sounds_like_the_engine() {
     let mut patch = synth::subharm::patch(36.0);
     let layers = patch.layers.as_mut().unwrap();
     layers[0].pan = -0.6;
+    layers[0].rdiv = 4;
     layers[1] = synth::Layer {
         div: 2,
-        rdiv: 1,
+        rdiv: 3,
         pan: 0.4,
         level: 0.5,
     };
     layers[2] = synth::Layer {
         div: 3,
-        rdiv: 1,
+        rdiv: 7,
         pan: 0.5,
         level: 0.7,
     };
@@ -537,6 +538,12 @@ fn the_subharm_sounds_like_the_engine() {
         .unwrap()
         .set(&mut patch, 900.0);
     synth::subharm::param("res").unwrap().set(&mut patch, 0.4);
+    synth::subharm::param("attack")
+        .unwrap()
+        .set(&mut patch, 5.0);
+    synth::subharm::param("decay")
+        .unwrap()
+        .set(&mut patch, 250.0);
     patch.seed = 2;
     assert_eq!(synth_def.patch, patch);
     let steps = engine::notation::parse_steps("1 _ _ _  _ _ _ _  1^3 _ _ 1^7/  _ _ _ _").unwrap();
@@ -572,6 +579,18 @@ fn subharm_errors_say_the_line() {
             "s2.div es un entero de 1 a 16",
         ),
         ("subharm{ o2 = { pan = 2 } }", "o2.pan va de -1 a 1"),
+        (
+            "subharm{ o1 = { rdiv = 0 } }",
+            "o1.rdiv es un entero de 1 a 16",
+        ),
+        (
+            "subharm{ s1 = { rdiv = 3.5 } }",
+            "s1.rdiv es un entero de 1 a 16",
+        ),
+        (
+            "subharm{ decay = 5 }",
+            "decay = 5 fuera de rango (10 a 10000)",
+        ),
         ("subharm{ s3 = { level = -1 } }", "s3.level va de 0 a 1"),
         (
             "subharm{ s4 = { tono = 1 } }",

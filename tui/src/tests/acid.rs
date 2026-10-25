@@ -143,13 +143,13 @@ fn the_sub_shows_its_params() {
 #[test]
 fn the_subharm_shows_its_layers() {
     let song = "bpm(120)\n\
-                track(\"sh\", subharm{ s1 = { div = 3, pan = 0.5, level = 0.7 } })\n  \
+                track(\"sh\", subharm{ s1 = { div = 3, rdiv = 4, pan = 0.5, level = 0.7 } })\n  \
                   :melody(\"c _ _ _  . . . .  . . . .  . . . .\")\n";
     let (_, mut app, mut engine) = open("subharm_view", Some(song));
     assert!(app.view().error.is_none(), "{:?}", app.view().error);
     let params = app.view().tracks[0].synth.clone().unwrap().params;
     assert!(
-        params.ends_with("o1 ÷1 · s1 ÷3 pan 0.5 level 0.7"),
+        params.ends_with("o1 ÷1 · s1 ÷3 ↻4 pan 0.5 level 0.7"),
         "{params}"
     );
     offline::render(&mut engine, STEP / 2, 2);

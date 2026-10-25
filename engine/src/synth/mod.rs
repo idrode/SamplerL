@@ -171,8 +171,13 @@ pub const SUB_PAN: usize = 13;
 /// Saturación de la suma de los osciladores y el sub, antes del filtro (0
 /// sin ella; solo con el sub sonando).
 pub const SUB_DRIVE: usize = 14;
+/// Ataque de la envolvente de cada capa (ms): la que se redispara cada
+/// 1/`rdiv` del compás.
+pub const LAYER_ATTACK: usize = 15;
+/// Decay de la envolvente de cada capa (ms), hasta 0.
+pub const LAYER_DECAY: usize = 16;
 /// Parámetros continuos.
-pub const PARAM_COUNT: usize = 15;
+pub const PARAM_COUNT: usize = 17;
 /// Divisor del sub como mucho.
 pub const MAX_SUB_DIV: u8 = 16;
 
@@ -282,6 +287,20 @@ pub const PARAMS: [SynthParam; PARAM_COUNT] = [
         max: 1.0,
         default: 0.0,
         log: false,
+    },
+    SynthParam {
+        name: "layer_attack",
+        min: 0.5,
+        max: 2000.0,
+        default: 2.0,
+        log: true,
+    },
+    SynthParam {
+        name: "layer_decay",
+        min: 10.0,
+        max: 10_000.0,
+        default: 800.0,
+        log: true,
     },
 ];
 
@@ -625,6 +644,18 @@ struct Voice {
     layer_count: [u32; LAYERS],
     layer_level: [f32; LAYERS],
     layer_pan: [f32; LAYERS],
+    /// El ritmo de las capas: la envolvente de cada una, cuántas veces ha
+    /// sonado en este compás y el frame (en el compás) en que vuelve a
+    /// sonar; el compás que siguen (su inicio, o el número del virtual) y,
+    /// con el transporte parado, la posición en el compás virtual que
+    /// empieza con la nota. `layer_fresh`: la nota acaba de empezar.
+    layer_env: [Env; LAYERS],
+    layer_index: [u64; LAYERS],
+    layer_next: [u64; LAYERS],
+    layer_bar: u64,
+    virtual_pos: u64,
+    virtual_bar: u64,
+    layer_fresh: bool,
     noise: Noise,
     /// Diezmado de los osciladores (van al doble de frecuencia de
     /// muestreo), por canal.
@@ -661,6 +692,13 @@ impl Default for Voice {
             layer_count: [0; LAYERS],
             layer_level: [0.0; LAYERS],
             layer_pan: [0.0; LAYERS],
+            layer_env: [Env::default(); LAYERS],
+            layer_index: [0; LAYERS],
+            layer_next: [0; LAYERS],
+            layer_bar: u64::MAX,
+            virtual_pos: 0,
+            virtual_bar: 0,
+            layer_fresh: false,
             noise: Noise::new(0),
             down: [Halfband::default(); 2],
             filter: [Filter::default(); 2],
@@ -732,6 +770,10 @@ impl Voice {
         self.sub_note = ev.sub;
         self.amp.trigger();
         self.fenv.trigger();
+        // Las capas suenan con la nota y su compás virtual empieza aquí.
+        self.layer_fresh = true;
+        self.virtual_pos = 0;
+        self.virtual_bar = self.virtual_bar.wrapping_add(1);
     }
 
     /// Liga la nota a la que suena: va a su altura con glide, con su gate
@@ -789,6 +831,13 @@ struct Block<'a> {
     stereo: bool,
     /// Coeficiente del suavizado por muestra del nivel y el pan del sub.
     smooth: f32,
+    /// La envolvente de las capas, y su reloj: frame del transporte de la
+    /// primera muestra del bloque, el compás que suena (en marcha) y lo que
+    /// dura un compás (el virtual, parado).
+    layer_rates: Rates,
+    frame: u64,
+    bar: Option<(u64, u64)>,
+    bar_length: u64,
     sample_rate: f32,
     fade: u32,
 }
@@ -803,6 +852,65 @@ fn follow(ms: f32, sample_rate: f32) -> f32 {
 }
 
 impl Voice {
+    /// El redisparo de las capas en la muestra `i` del bloque: cada una
+    /// vuelve a sonar (su envolvente, desde su nivel) cada 1/`rdiv` del
+    /// compás, en el frame `inicio + j·longitud/rdiv` (aritmética entera:
+    /// sin deriva, y todas a la vez al empezar cada compás). Con el
+    /// transporte parado, sobre un compás virtual que empieza con la nota.
+    fn layer_rhythm(&mut self, layers: &[Layer; LAYERS], b: &Block, i: u64) {
+        let (bar, pos, len) = match b.bar {
+            Some((start, len)) => {
+                let len = len.max(1);
+                let frame = b.frame + i;
+                let start = start + frame.saturating_sub(start) / len * len;
+                (start, frame.saturating_sub(start), len)
+            }
+            None => {
+                let len = b.bar_length.max(1);
+                if self.virtual_pos >= len {
+                    self.virtual_pos = 0;
+                    self.virtual_bar = self.virtual_bar.wrapping_add(1);
+                }
+                let pos = self.virtual_pos;
+                self.virtual_pos += 1;
+                // Los compases virtuales, aparte de los del transporte.
+                (u64::MAX - self.virtual_bar, pos, len)
+            }
+        };
+        let next = |j: u64, rdiv: u64| (j + 1) * len / rdiv;
+        if self.layer_fresh {
+            // La nota: todas suenan ya y siguen la rejilla desde aquí.
+            self.layer_fresh = false;
+            self.layer_bar = bar;
+            for (k, layer) in layers.iter().enumerate() {
+                let rdiv = layer.rdiv.max(1) as u64;
+                let j = pos * rdiv / len;
+                self.layer_index[k] = j;
+                self.layer_next[k] = next(j, rdiv);
+                self.layer_env[k].trigger();
+            }
+            return;
+        }
+        if bar != self.layer_bar {
+            // Compás nuevo: todas, en su marca 0.
+            self.layer_bar = bar;
+            for (k, layer) in layers.iter().enumerate() {
+                self.layer_index[k] = 0;
+                self.layer_next[k] = next(0, layer.rdiv.max(1) as u64);
+                self.layer_env[k].trigger();
+            }
+            return;
+        }
+        for (k, layer) in layers.iter().enumerate() {
+            if pos >= self.layer_next[k] {
+                let rdiv = layer.rdiv.max(1) as u64;
+                self.layer_index[k] += 1;
+                self.layer_next[k] = next(self.layer_index[k], rdiv);
+                self.layer_env[k].trigger();
+            }
+        }
+    }
+
     /// Una muestra de salida de las capas (estéreo, ya diezmada): los dos
     /// osciladores principales a la nota dividida por su `div` y los subs
     /// de cada uno sacados de su fase, cada capa con su nivel y su pan
@@ -810,6 +918,7 @@ impl Voice {
     fn layers_sample(&mut self, layers: &[Layer; LAYERS], wave: Wave, b: &Block) -> (f32, f32) {
         let mut gains = [(0.0f32, 0.0f32); LAYERS];
         for (i, layer) in layers.iter().enumerate() {
+            let env = self.layer_env[i].next(&b.layer_rates);
             self.layer_level[i] += (layer.level - self.layer_level[i]) * b.smooth;
             self.layer_pan[i] += (layer.pan - self.layer_pan[i]) * b.smooth;
             if (layer.level - self.layer_level[i]).abs() < 1e-6 {
@@ -819,7 +928,8 @@ impl Voice {
                 self.layer_pan[i] = layer.pan;
             }
             let (gl, gr) = constant_power(self.layer_pan[i]);
-            gains[i] = (gl * self.layer_level[i], gr * self.layer_level[i]);
+            let level = self.layer_level[i] * env;
+            gains[i] = (gl * level, gr * level);
         }
         let dt = 0.5 * self.dt;
         for _ in 0..2 {
@@ -900,6 +1010,7 @@ impl Voice {
             }
             let (mut l, mut r, stereo, sub_on, sub) = match &patch.layers {
                 Some(layers) => {
+                    self.layer_rhythm(layers, b, i as u64);
                     let (l, r) = self.layers_sample(layers, patch.wave, b);
                     (l, r, true, false, SubNote::default())
                 }
@@ -1071,12 +1182,36 @@ pub struct Synth {
     last_pitch: Option<f32>,
 }
 
-/// Dónde está la canción al empezar un trozo (lo que siguen las curvas).
+/// Dónde está la canción al empezar un trozo (lo que siguen las curvas y
+/// el redisparo de las capas).
 #[derive(Debug, Clone, Copy)]
 pub struct SongClock {
     pub steps: f64,
     pub seconds: f64,
     pub frames_per_step: f64,
+    /// Frame del transporte al empezar el trozo.
+    pub frame: u64,
+    /// Con el transporte en marcha, el compás que suena: su primer frame y
+    /// su longitud. Parado, `None`: las capas cuentan un compás virtual
+    /// desde su nota.
+    pub bar: Option<(u64, u64)>,
+    /// Lo que dura un compás al tempo de ahora (el del compás virtual).
+    pub bar_length: u64,
+}
+
+impl SongClock {
+    /// Un reloj parado al principio (para tests y medidas), con compases de
+    /// `bar_length` frames.
+    pub fn stopped(frames_per_step: f64, bar_length: u64) -> SongClock {
+        SongClock {
+            steps: 0.0,
+            seconds: 0.0,
+            frames_per_step,
+            frame: 0,
+            bar: None,
+            bar_length,
+        }
+    }
 }
 
 impl Synth {
@@ -1242,6 +1377,20 @@ impl Synth {
                 pan,
                 stereo: n > 1 && (to[SPREAD] > 0.0 || from[SPREAD] > 0.0),
                 smooth: 1.0 - (-1.0 / (crate::engine::GAIN_SMOOTHING_SECONDS * sr)).exp(),
+                layer_rates: Rates::new(
+                    &Adsr {
+                        attack_ms: to[LAYER_ATTACK],
+                        decay_ms: to[LAYER_DECAY],
+                        sustain: 0.0,
+                        release_ms: to[LAYER_DECAY],
+                    },
+                    to[LAYER_DECAY],
+                    sr,
+                    MIN_FILTER_MS,
+                ),
+                frame: clock.frame + (k * block) as u64,
+                bar: clock.bar,
+                bar_length: clock.bar_length,
                 sample_rate: sr,
                 fade: self.fade(),
             };
@@ -1278,17 +1427,25 @@ pub fn render(
             synth.note_on(patch, notes[next].1);
             next += 1;
         }
+        // 120 BPM: 8 pasos por segundo; compases de 16 pasos, como un
+        // transporte en marcha desde el frame 0 (los trozos se parten en
+        // los compases, como en el motor).
+        let frames_per_step = sample_rate as f64 / 8.0;
+        let bar_length = (16.0 * frames_per_step).round() as u64;
+        let bar_start = at as u64 / bar_length * bar_length;
         let until = notes
             .get(next)
             .map_or(frames, |n| n.0)
             .min(at + chunk)
-            .min(frames);
-        // 120 BPM: 8 pasos por segundo.
-        let frames_per_step = sample_rate as f64 / 8.0;
+            .min(frames)
+            .min((bar_start + bar_length) as usize);
         let clock = SongClock {
             steps: at as f64 / frames_per_step,
             seconds: at as f64 / sample_rate as f64,
             frames_per_step,
+            frame: at as u64,
+            bar: Some((bar_start, bar_length)),
+            bar_length,
         };
         synth.mix_into(&mut out[2 * at..2 * until], patch, curves, &clock);
         at = until;

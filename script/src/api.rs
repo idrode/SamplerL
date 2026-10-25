@@ -1198,25 +1198,29 @@ pub const FUNCTIONS: &[Function] = &[
         receiver: Receiver::Global,
         signature: "subharm{ opciones }",
         returns: Some(Receiver::Instrument),
-        summary: "Inspirado en el Subharmonicon: seis capas que dividen la frecuencia (f/n).",
+        summary: "Inspirado en el Subharmonicon: seis capas que dividen la frecuencia (f/n) y el compás (1/n).",
         doc: "Lo mismo que `synth(\"subharm\", { ... })`. Dos osciladores de sierra \
               (`o1`, `o2`), cada uno a la nota dividida por su `div`, y dos subs de \
               cada uno (`s1`, `s2` de `o1`; `s3`, `s4` de `o2`), a la frecuencia de su \
               oscilador dividida por el suyo y sacados de su fase (siempre en fase). \
-              Cada capa tiene su `pan` (de potencia constante) y su `level`. Todo \
+              Cada capa tiene su `pan` (de potencia constante) y su `level`, y \
+              vuelve a sonar (su envolvente, con `attack` y `decay`) cada 1/`rdiv` \
+              del compás: todas siguen el mismo reloj, así que los ritmos (3 contra \
+              4, 5 contra 7...) vuelven a coincidir al empezar cada compás; con el \
+              transporte parado (pads, MIDI), el compás empieza con la nota. Todo \
               pasa por un paso bajo de \
               4 polos. Se toca como cualquier instrumento (`melody`, pads, MIDI, `!` \
               y `/`); sus capas cambian con el patrón, al compás.",
         params: &[Param {
             name: "opciones",
-            description: "tabla con las capas (`o1`...`s4`, cada una `{ div, pan, level }`) y el resto de parámetros (ver abajo)",
+            description: "tabla con las capas (`o1`...`s4`, cada una `{ div, rdiv, pan, level }`) y el resto de parámetros (ver abajo)",
         }],
-        template: "subharm{ o1 = { div = ${1}, pan = ${-0.6} }, s1 = { div = ${3}, pan = ${0.5} } }",
+        template: "subharm{ o1 = { div = ${1}, rdiv = ${4}, pan = ${-0.6} }, s1 = { div = ${3}, rdiv = ${3}, pan = ${0.5} } }",
         example: Some(
             "bpm(110)\n\
              local sh = subharm{\n  \
-             o1 = { div = 1, pan = -0.6 },\n  \
-             s1 = { div = 3, pan = 0.5, level = 0.7 },\n  \
+             o1 = { div = 1, rdiv = 4, pan = -0.6 },\n  \
+             s1 = { div = 3, rdiv = 3, pan = 0.5, level = 0.7 },\n  \
              cutoff = 900, res = 0.4,\n\
              }\n\
              track(\"sh\", sh):melody(\"c _ _ _  _ _ _ _  eb _ _ _  g _ _ _\")\n",
@@ -2854,7 +2858,7 @@ const SUB_OWN: [FxParam; 7] = [
 ];
 
 /// Las claves de la tabla de cada capa de `subharm` (`o1 = { div = 1,
-/// pan = -0.6 }`).
+/// rdiv = 4, pan = -0.6 }`).
 pub const LAYER_PARAMS: &[FxParam] = &[
     FxParam {
         name: "div",
@@ -2863,6 +2867,15 @@ pub const LAYER_PARAMS: &[FxParam] = &[
         valid: "entero de 1 a 16",
         values: &[],
         template: "div = ${2}",
+        automate: Auto::No(LAYER),
+    },
+    FxParam {
+        name: "rdiv",
+        description: "divisor rítmico: la capa vuelve a sonar (su envolvente, con `attack` y `decay`) cada 1/rdiv del compás; todas a la vez al empezar cada compás",
+        default: Some("1"),
+        valid: "entero de 1 a 16",
+        values: &[],
+        template: "rdiv = ${4}",
         automate: Auto::No(LAYER),
     },
     FxParam {
@@ -2890,9 +2903,9 @@ pub const LAYER_PARAMS: &[FxParam] = &[
 pub const LAYER_TABLE: Effect = Effect {
     name: "capa",
     aliases: &[],
-    summary: "Una capa del subharm: divisor de frecuencia, pan y nivel.",
+    summary: "Una capa del subharm: divisor de frecuencia, divisor rítmico, pan y nivel.",
     params: LAYER_PARAMS,
-    template: "{ div = ${1}, pan = ${0}, level = ${0.8} }",
+    template: "{ div = ${1}, rdiv = ${4}, pan = ${0} }",
 };
 
 /// Parámetros de `subharm{ ... }` (los numéricos, con los rangos y valores
@@ -2900,11 +2913,11 @@ pub const LAYER_TABLE: Effect = Effect {
 pub const SUBHARM_PARAMS: &[FxParam] = &[
     FxParam {
         name: "o1",
-        description: "el primer oscilador de sierra: tabla con `div`, `pan` y `level` (ver la tabla de capa)",
+        description: "el primer oscilador de sierra: tabla con `div`, `rdiv`, `pan` y `level` (ver la tabla de capa)",
         default: Some("{ div = 1, level = 1 }"),
         valid: "tabla de capa",
         values: &[],
-        template: "o1 = { div = ${1}, pan = ${-0.6} }",
+        template: "o1 = { div = ${1}, rdiv = ${4}, pan = ${-0.6} }",
         automate: Auto::No(LAYER),
     },
     FxParam {
@@ -2913,7 +2926,7 @@ pub const SUBHARM_PARAMS: &[FxParam] = &[
         default: Some("{ div = 1, level = 0 }"),
         valid: "tabla de capa",
         values: &[],
-        template: "o2 = { div = ${2}, pan = ${0.6} }",
+        template: "o2 = { div = ${2}, rdiv = ${3}, pan = ${0.6} }",
         automate: Auto::No(LAYER),
     },
     FxParam {
@@ -2922,7 +2935,7 @@ pub const SUBHARM_PARAMS: &[FxParam] = &[
         default: Some("{ div = 2, level = 0.6 }"),
         valid: "tabla de capa",
         values: &[],
-        template: "s1 = { div = ${3}, pan = ${0.5} }",
+        template: "s1 = { div = ${3}, rdiv = ${3}, pan = ${0.5} }",
         automate: Auto::No(LAYER),
     },
     FxParam {
@@ -2931,7 +2944,7 @@ pub const SUBHARM_PARAMS: &[FxParam] = &[
         default: Some("{ div = 3, level = 0 }"),
         valid: "tabla de capa",
         values: &[],
-        template: "s2 = { div = ${4}, level = ${0.5} }",
+        template: "s2 = { div = ${4}, rdiv = ${5}, level = ${0.5} }",
         automate: Auto::No(LAYER),
     },
     FxParam {
@@ -2940,7 +2953,7 @@ pub const SUBHARM_PARAMS: &[FxParam] = &[
         default: Some("{ div = 2, level = 0 }"),
         valid: "tabla de capa",
         values: &[],
-        template: "s3 = { div = ${2}, level = ${0.5} }",
+        template: "s3 = { div = ${2}, rdiv = ${7}, level = ${0.5} }",
         automate: Auto::No(LAYER),
     },
     FxParam {
@@ -2949,7 +2962,7 @@ pub const SUBHARM_PARAMS: &[FxParam] = &[
         default: Some("{ div = 4, level = 0 }"),
         valid: "tabla de capa",
         values: &[],
-        template: "s4 = { div = ${5}, level = ${0.5} }",
+        template: "s4 = { div = ${5}, rdiv = ${2}, level = ${0.5} }",
         automate: Auto::No(LAYER),
     },
     FxParam {
@@ -3025,6 +3038,24 @@ pub const SUBHARM_PARAMS: &[FxParam] = &[
         automate: Auto::Smooth,
     },
     FxParam {
+        name: "attack",
+        description: "ataque de la envolvente de cada capa (la que se redispara con su `rdiv`), en ms",
+        default: Some("2"),
+        valid: "0.5–2000",
+        values: &[],
+        template: "attack = ${2}",
+        automate: Auto::Smooth,
+    },
+    FxParam {
+        name: "decay",
+        description: "lo que tarda en apagarse cada capa tras sonar, en ms: corto, golpes; largo, notas que se solapan",
+        default: Some("800"),
+        valid: "10–10000",
+        values: &[],
+        template: "decay = ${300}",
+        automate: Auto::Smooth,
+    },
+    FxParam {
         name: "voices",
         description: "notas a la vez (1: mono, las notas se ligan; más: polifónico, cada voz con sus seis capas)",
         default: Some("1"),
@@ -3064,9 +3095,9 @@ pub const SYNTHS: &[Effect] = &[
     Effect {
         name: "subharm",
         aliases: &[],
-        summary: "Inspirado en el Subharmonicon: dos osciladores y dos subs de cada uno, seis capas que dividen la frecuencia.",
+        summary: "Inspirado en el Subharmonicon: dos osciladores y dos subs de cada uno, seis capas que dividen la frecuencia y el compás.",
         params: SUBHARM_PARAMS,
-        template: "{ o1 = { div = ${1} }, s1 = { div = ${3} } }",
+        template: "{ o1 = { div = ${1}, rdiv = ${4} }, s1 = { div = ${3}, rdiv = ${3} } }",
     },
 ];
 

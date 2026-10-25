@@ -276,3 +276,175 @@ fn invalid_synths_are_rejected() {
             .is_err()
     );
 }
+
+/// Un subharm que se oye tal cual (senos, paso alto a 20 Hz, sostenido),
+/// con las capas `on` (capa, rdiv) sonando y una envolvente de capa corta
+/// (sube en 0,5 ms y se apaga en 20): cada redisparo es un golpe aislado.
+fn rhythmic(on: &[(usize, u8)]) -> Patch {
+    let mut p = synth::subharm::patch(69.0)
+        .with(CUTOFF, 20.0)
+        .with(RESONANCE, 0.0)
+        .with(ENV_AMOUNT, 0.0)
+        .with(synth::LAYER_ATTACK, 0.5)
+        .with(synth::LAYER_DECAY, 20.0);
+    p.wave = Wave::Sine;
+    p.filter = FilterMode::Highpass;
+    p.amp.sustain = 1.0;
+    let mut layers = synth::subharm::DEFAULT_LAYERS.map(|l| synth::Layer { level: 0.0, ..l });
+    for &(i, rdiv) in on {
+        layers[i].level = 1.0;
+        layers[i].rdiv = rdiv;
+        layers[i].div = 1;
+    }
+    p.layers = Some(layers);
+    p
+}
+
+/// Frames donde empieza cada golpe: la primera muestra que pasa de una
+/// milésima del pico tras 800 frames de silencio (un golpe tarda unos
+/// 1400 en bajar de ahí: los más juntos, en 5 contra 7, están a 2742).
+fn onsets(y: &[f32]) -> Vec<usize> {
+    let peak = y.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+    let mut out = Vec::new();
+    let mut quiet = 0usize;
+    for (i, v) in y.iter().enumerate() {
+        if v.abs() > 1e-3 * peak {
+            if quiet > 800 || out.is_empty() {
+                out.push(i);
+            }
+            quiet = 0;
+        } else {
+            quiet += 1;
+        }
+    }
+    out
+}
+
+/// Lo que tarda un golpe en asomar: el diezmado (unos 16 frames) y el
+/// ataque de 0,5 ms.
+const LATENCY: usize = 48;
+
+/// Comprueba que los golpes de `y` caen en `expected` (cada uno, como
+/// mucho `LATENCY` frames después) y que no hay más.
+fn check_onsets(y: &[f32], expected: &[usize], what: &str) {
+    let got = onsets(y);
+    assert_eq!(
+        got.len(),
+        expected.len(),
+        "{what}: golpes {got:?}, se esperaban {expected:?}"
+    );
+    for (g, e) in got.iter().zip(expected) {
+        assert!(
+            *g >= *e && *g <= e + LATENCY,
+            "{what}: golpe en {g}, se esperaba en {e}"
+        );
+    }
+}
+
+/// Una nota que dura dos compases (una por compás, la segunda pegada).
+fn two_bars() -> Vec<Option<Step>> {
+    steps(&[(0, Step::new(0).with_hold(15))])
+}
+
+/// Con `rdiv = r`, la capa vuelve a sonar en cada `j · compás / r` (con
+/// enteros), en los dos compases: 3, 4, 5 y 7.
+#[test]
+fn layers_retrigger_at_bar_over_rdiv() {
+    let bar = 16 * STEP;
+    for r in [3u8, 4, 5, 7] {
+        let y = render(pattern(rhythmic(&[(0, r)]), NO_CURVES, two_bars()), 2 * bar);
+        let expected: Vec<usize> = (0..2)
+            .flat_map(|b| (0..r as usize).map(move |j| b * bar + j * bar / r as usize))
+            .collect();
+        check_onsets(&y, &expected, &format!("rdiv {r}"));
+    }
+}
+
+/// Dos capas en poliritmo (3 contra 4, 5 contra 7) siguen el mismo reloj:
+/// sus golpes son la unión de los de cada una y vuelven a coincidir al
+/// empezar cada compás, sin deriva, durante cuatro compases.
+#[test]
+fn polyrhythms_meet_at_every_bar() {
+    let bar = 16 * STEP;
+    for (a, b) in [(3u8, 4u8), (5, 7)] {
+        let y = render(
+            pattern(rhythmic(&[(0, a), (1, b)]), NO_CURVES, two_bars()),
+            4 * bar,
+        );
+        let mut expected: Vec<usize> = (0..4)
+            .flat_map(|k| {
+                let pulses = |r: u8| (0..r as usize).map(move |j| k * bar + j * bar / r as usize);
+                pulses(a).chain(pulses(b)).collect::<Vec<_>>()
+            })
+            .collect();
+        expected.sort();
+        expected.dedup();
+        check_onsets(&y, &expected, &format!("{a} contra {b}"));
+    }
+}
+
+/// Con el transporte parado (una nota en vivo), el compás es virtual y
+/// empieza con la nota: los golpes caen en `nota + j · compás / r`, con el
+/// compás del tempo de ahora.
+#[test]
+fn a_live_note_counts_a_virtual_bar_from_its_note_on() {
+    let (mut controller, mut engine) = new_engine(RATE);
+    let silence = offline::render(&mut engine, 1234, 2);
+    assert!(silence.iter().all(|v| *v == 0.0));
+    controller
+        .synth_note_on(0, rhythmic(&[(0, 4)]), 0.0, 1.0, 60)
+        .unwrap();
+    let bar = 16 * STEP;
+    let y: Vec<f32> = offline::render(&mut engine, 2 * bar, 2)
+        .iter()
+        .step_by(2)
+        .copied()
+        .collect();
+    let expected: Vec<usize> = (0..8).map(|j| j * bar / 4).collect();
+    check_onsets(&y, &expected, "nota en vivo, rdiv 4");
+}
+
+/// Una nota que empieza a medio compás suena ya y sigue la rejilla del
+/// compás (no la suya): con `rdiv = 4`, en el paso 6 suena, y luego en el
+/// 8 y el 12.
+#[test]
+fn a_note_in_the_middle_of_a_bar_joins_the_grid() {
+    let bar = 16 * STEP;
+    let y = render(
+        pattern(
+            rhythmic(&[(0, 4)]),
+            NO_CURVES,
+            steps(&[(6, Step::new(0).with_hold(9))]),
+        ),
+        bar,
+    );
+    check_onsets(&y, &[6 * STEP, 8 * STEP, 12 * STEP], "a medio compás");
+}
+
+/// Cambiar el `rdiv` entra con el patrón, al empezar el compás siguiente:
+/// el primer compás sigue en 3 y el segundo pasa a 5.
+#[test]
+fn an_rdiv_change_waits_for_the_next_bar() {
+    let bar = 16 * STEP;
+    let (mut controller, mut engine) = new_engine(RATE);
+    controller
+        .set_pattern(pattern(rhythmic(&[(0, 3)]), NO_CURVES, two_bars()))
+        .unwrap();
+    controller.start().unwrap();
+    let mut y: Vec<f32> = offline::render(&mut engine, bar / 3 + 100, 2)
+        .iter()
+        .step_by(2)
+        .copied()
+        .collect();
+    controller
+        .set_pattern(pattern(rhythmic(&[(0, 5)]), NO_CURVES, two_bars()))
+        .unwrap();
+    y.extend(
+        offline::render(&mut engine, 2 * bar - y.len(), 2)
+            .iter()
+            .step_by(2),
+    );
+    let mut expected: Vec<usize> = (0..3).map(|j| j * bar / 3).collect();
+    expected.extend((0..5).map(|j| bar + j * bar / 5));
+    check_onsets(&y, &expected, "de 3 a 5");
+}

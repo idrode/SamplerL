@@ -1609,7 +1609,7 @@ track("drums", amen)
 | `:grains` | `size` (por grano), `density` (por grano), `pos` (por grano), `speed` (por grano), `jitter` (por grano), `pitch` (por grano), `spread` (por grano) |
 | `synth("acid")` | `cutoff` (continuo), `res` (continuo), `envmod` (continuo), `decay` (continuo), `accent` (continuo), `dist` (continuo), `glide` (continuo), `sub` (continuo), `sub_pan` (continuo), `sub_drive` (continuo) |
 | `synth("sub")` | `tone` (continuo), `drive` (continuo), `glide` (continuo), `sub` (continuo), `sub_pan` (continuo), `sub_drive` (continuo) |
-| `synth("subharm")` | `cutoff` (continuo), `res` (continuo), `envmod` (continuo), `fdecay` (continuo), `glide` (continuo), `drive` (continuo) |
+| `synth("subharm")` | `cutoff` (continuo), `res` (continuo), `envmod` (continuo), `fdecay` (continuo), `glide` (continuo), `drive` (continuo), `attack` (continuo), `decay` (continuo) |
 
 | Dónde | No admiten curva | Por qué |
 | --- | --- | --- |
@@ -1800,7 +1800,7 @@ Un instrumento sintetizado, sin sample: osciladores, filtro y envolventes. Se to
 |  | `sub_wave` | forma de onda del sub: cuadrada (con PolyBLEP en sus saltos), triangular o seno | `"square"` | `"square"`, `"tri"` o `"sine"` |
 |  | `sub_pan` | pan del sub, de potencia constante (en el centro suena igual en los dos lados) | `0` | -1–1 |
 |  | `sub_drive` | saturación suave de la suma del oscilador y el sub, antes del filtro (solo con el sub sonando) | `0` | 0–1 |
-| `"subharm"` | `o1` | el primer oscilador de sierra: tabla con `div`, `pan` y `level` (ver la tabla de capa) | `{ div = 1, level = 1 }` | tabla de capa |
+| `"subharm"` | `o1` | el primer oscilador de sierra: tabla con `div`, `rdiv`, `pan` y `level` (ver la tabla de capa) | `{ div = 1, level = 1 }` | tabla de capa |
 |  | `o2` | el segundo oscilador de sierra | `{ div = 1, level = 0 }` | tabla de capa |
 |  | `s1` | primer sub de `o1` (su frecuencia entre `div`) | `{ div = 2, level = 0.6 }` | tabla de capa |
 |  | `s2` | segundo sub de `o1` | `{ div = 3, level = 0 }` | tabla de capa |
@@ -1814,6 +1814,8 @@ Un instrumento sintetizado, sin sample: osciladores, filtro y envolventes. Se to
 |  | `fdecay` | lo que tarda en cerrarse la envolvente del filtro de cada nota, en ms | `400` | 10–5000 |
 |  | `glide` | lo que tarda el `/` de un paso en llegar a su nota, en ms | `0` | 0–1000 |
 |  | `drive` | saturación a la salida (0, limpio) | `0` | 0–1 |
+|  | `attack` | ataque de la envolvente de cada capa (la que se redispara con su `rdiv`), en ms | `2` | 0.5–2000 |
+|  | `decay` | lo que tarda en apagarse cada capa tras sonar, en ms: corto, golpes; largo, notas que se solapan | `800` | 10–10000 |
 |  | `voices` | notas a la vez (1: mono, las notas se ligan; más: polifónico, cada voz con sus seis capas) | `1` | 1–8 |
 |  | `seed` | semilla de la fase de los osciladores al empezar desde el silencio; sin ella, una sacada del nombre de la pista | `del nombre` | entero de 0 en adelante |
 
@@ -1831,21 +1833,22 @@ track("sub", synth("sub", { tone = 200, release = 120 }))
 
 Devuelve: instrumento.
 
-Inspirado en el Subharmonicon: seis capas que dividen la frecuencia (f/n). Lo mismo que `synth("subharm", { ... })`. Dos osciladores de sierra (`o1`, `o2`), cada uno a la nota dividida por su `div`, y dos subs de cada uno (`s1`, `s2` de `o1`; `s3`, `s4` de `o2`), a la frecuencia de su oscilador dividida por el suyo y sacados de su fase (siempre en fase). Cada capa tiene su `pan` (de potencia constante) y su `level`. Todo pasa por un paso bajo de 4 polos. Se toca como cualquier instrumento (`melody`, pads, MIDI, `!` y `/`); sus capas cambian con el patrón, al compás.
+Inspirado en el Subharmonicon: seis capas que dividen la frecuencia (f/n) y el compás (1/n). Lo mismo que `synth("subharm", { ... })`. Dos osciladores de sierra (`o1`, `o2`), cada uno a la nota dividida por su `div`, y dos subs de cada uno (`s1`, `s2` de `o1`; `s3`, `s4` de `o2`), a la frecuencia de su oscilador dividida por el suyo y sacados de su fase (siempre en fase). Cada capa tiene su `pan` (de potencia constante) y su `level`, y vuelve a sonar (su envolvente, con `attack` y `decay`) cada 1/`rdiv` del compás: todas siguen el mismo reloj, así que los ritmos (3 contra 4, 5 contra 7...) vuelven a coincidir al empezar cada compás; con el transporte parado (pads, MIDI), el compás empieza con la nota. Todo pasa por un paso bajo de 4 polos. Se toca como cualquier instrumento (`melody`, pads, MIDI, `!` y `/`); sus capas cambian con el patrón, al compás.
 
-- `opciones`: tabla con las capas (`o1`...`s4`, cada una `{ div, pan, level }`) y el resto de parámetros (ver abajo)
+- `opciones`: tabla con las capas (`o1`...`s4`, cada una `{ div, rdiv, pan, level }`) y el resto de parámetros (ver abajo)
 
 | Tabla | Parámetro | Qué es | Por defecto | Valores |
 | --- | --- | --- | --- | --- |
 | `"capa"` | `div` | divisor de frecuencia: en `o1` y `o2`, de la nota (1 la nota, 2 una octava abajo, 3 una octava y una quinta...); en los subs, de su oscilador | `o1, o2: 1; s1: 2; s2: 3; s3: 2; s4: 4` | entero de 1 a 16 |
+|  | `rdiv` | divisor rítmico: la capa vuelve a sonar (su envolvente, con `attack` y `decay`) cada 1/rdiv del compás; todas a la vez al empezar cada compás | `1` | entero de 1 a 16 |
 |  | `pan` | pan de la capa, de potencia constante | `0` | -1–1 |
 |  | `level` | nivel de la capa (0, callada) | `o1: 1; s1: 0.6; las demás: 0` | 0–1 |
 
 ```lua
 bpm(110)
 local sh = subharm{
-  o1 = { div = 1, pan = -0.6 },
-  s1 = { div = 3, pan = 0.5, level = 0.7 },
+  o1 = { div = 1, rdiv = 4, pan = -0.6 },
+  s1 = { div = 3, rdiv = 3, pan = 0.5, level = 0.7 },
   cutoff = 900, res = 0.4,
 }
 track("sh", sh):melody("c _ _ _  _ _ _ _  eb _ _ _  g _ _ _")

@@ -2666,6 +2666,9 @@ impl Engine {
                     steps: clock.steps,
                     seconds: clock.seconds,
                     frames_per_step: clock.frames_per_step,
+                    frame: self.transport.frame,
+                    bar: self.transport.running.then(|| self.transport.current_bar()),
+                    bar_length: self.transport.bar_length(rate),
                 };
                 track.synth.mix_into(buf, &patch, &curves, &at);
             }

@@ -924,8 +924,12 @@ pub(crate) struct Transport {
     pub running: bool,
     /// Frames desde que arrancó el transporte.
     pub frame: u64,
-    /// Frame en que empezó el compás actual.
+    /// Frame en que empieza el compás siguiente al último paso disparado
+    /// (durante el último paso de un compás, ya el del siguiente).
     bar_start: u64,
+    /// El compás que suena: su primer frame y su longitud (se fijan al
+    /// disparar su paso 0). Lo siguen las capas del subharm.
+    current_bar: (u64, u64),
     /// Siguiente paso a disparar dentro del compás.
     step: usize,
     /// Compases completos desde que arrancó el transporte.
@@ -948,6 +952,7 @@ impl Transport {
             running: false,
             frame: 0,
             bar_start: 0,
+            current_bar: (0, 0),
             step: 0,
             bar: 0,
             steps_before: 0,
@@ -965,6 +970,7 @@ impl Transport {
         self.running = true;
         self.frame = 0;
         self.bar_start = 0;
+        self.current_bar = (0, 0);
         self.step = 0;
         self.bar = 0;
         self.steps_before = 0;
@@ -977,6 +983,18 @@ impl Transport {
     /// Compás que está sonando.
     pub fn meter(&self) -> Meter {
         self.meter
+    }
+
+    /// El compás que suena: su primer frame y su longitud en frames
+    /// (enteros: sus pasos caen donde los dispara el transporte).
+    pub fn current_bar(&self) -> (u64, u64) {
+        self.current_bar
+    }
+
+    /// Lo que dura ahora un compás, en frames (con el tempo y el compás
+    /// que suenan).
+    pub fn bar_length(&self, sample_rate: u32) -> u64 {
+        step_offset(self.meter.steps, self.bpm, sample_rate)
     }
 
     /// Tempo que está sonando.
@@ -1021,6 +1039,10 @@ impl Transport {
             if let Some((ramp, start)) = self.ramp {
                 self.bpm = ramp.bpm_at(bar - start);
             }
+            self.current_bar = (
+                self.bar_start,
+                step_offset(self.meter.steps, self.bpm, sample_rate),
+            );
         }
         let global = self.steps_before + step as u64;
         self.step += 1;

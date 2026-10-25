@@ -295,11 +295,7 @@ fn a_patch_change_mid_note_does_not_click() {
     let mut low = raw(Wave::Sine).with(CUTOFF, 100.0).with(RESONANCE, 0.0);
     low.filter = FilterMode::Ladder;
     let high = low.with(CUTOFF, 4000.0);
-    let clock = synth::SongClock {
-        steps: 0.0,
-        seconds: 0.0,
-        frames_per_step: 6000.0,
-    };
+    let clock = synth::SongClock::stopped(6000.0, 96_000);
     let half = RATE as usize / 2;
     let mut s = synth::Synth::new(RATE);
     s.note_on(&low, NoteEvent::new(midi(110.0), HELD));
@@ -522,6 +518,27 @@ fn cpu_cost_of_eight_voices_with_unison_of_seven() {
         RATE,
     );
     let sub_took = started.elapsed().as_secs_f64();
+    // El subharm a plena carga: 8 voces con las seis capas sonando y
+    // redisparándose (poliritmos), el ladder abierto.
+    let mut harm = synth::subharm::patch(36.0).with(CUTOFF, 4000.0);
+    synth::subharm::param("voices").unwrap().set(&mut harm, 8.0);
+    harm.layers = Some(std::array::from_fn(|i| synth::Layer {
+        div: [1, 2, 3, 5, 7, 16][i],
+        rdiv: [4, 3, 5, 7, 2, 16][i],
+        pan: [-0.8, 0.8, -0.4, 0.4, -1.0, 1.0][i],
+        level: 1.0,
+    }));
+    let chord: Vec<_> = (0..8)
+        .map(|i| (i * 64, NoteEvent::new(36.0 + 3.0 * i as f32, HELD)))
+        .collect();
+    let started = Instant::now();
+    let _ = synth::render(&harm, &NO_CURVES, &chord, frames, RATE);
+    let harm_took = started.elapsed().as_secs_f64();
+    println!(
+        "subharm, 8 voces × 6 capas: {:.1} % de un núcleo ({:.2} % por voz)",
+        100.0 * harm_took / seconds as f64,
+        100.0 * harm_took / seconds as f64 / 8.0
+    );
     println!(
         "8 voces × unison 7: {:.1} % de un núcleo ({took:.2} s por {seconds} s); acid: {:.2} %; sub: {:.2} %",
         100.0 * took / seconds as f64,
@@ -775,7 +792,8 @@ fn the_square_sub_is_band_limited() {
 /// resonancia, sostenido) con solo las capas `on` sonando, cada una con
 /// su divisor.
 fn layered(on: &[(usize, u8)]) -> Patch {
-    let mut p = raw(Wave::Sine);
+    // La envolvente de las capas, tan larga que no decae en el render.
+    let mut p = raw(Wave::Sine).with(synth::LAYER_DECAY, 10_000.0);
     let mut layers = synth::subharm::DEFAULT_LAYERS.map(|l| synth::Layer { level: 0.0, ..l });
     for &(i, div) in on {
         layers[i].div = div;
@@ -898,11 +916,7 @@ fn layer_changes_mid_note_do_not_click() {
     let layers = b.layers.as_mut().unwrap();
     layers[0].pan = -1.0;
     layers[0].level = 0.3;
-    let clock = synth::SongClock {
-        steps: 0.0,
-        seconds: 0.0,
-        frames_per_step: 6000.0,
-    };
+    let clock = synth::SongClock::stopped(6000.0, 96_000);
     let mut s = synth::Synth::new(RATE);
     s.note_on(&a, NoteEvent::new(57.0, HELD));
     let mut out = vec![0.0f32; 2 * RATE as usize];
