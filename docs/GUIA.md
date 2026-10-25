@@ -61,8 +61,9 @@ la sección 4 (con sus parámetros, rangos y un ejemplo cada una).
 - Instrumentos con polifonía y ADSR (`sample:instrument`), transponer sin
   cambiar la duración (`%`, `keep`) y conservar los formantes
   (`pista:formant`).
-- Sintetizadores sin sample (`synth`): de momento el bajo ácido del 303
-  (`synth("acid", {...})`), con accent (`!`) y slide (`/`) por paso.
+- Sintetizadores sin sample (`synth`): el bajo ácido del 303
+  (`synth("acid", {...})`) y un subgrave limpio (`synth("sub", {...})`),
+  con accent (`!`) y slide (`/`) por paso.
 - Texturas con granos y congelar un instante (`pista:grains`,
   `pista:freeze`).
 - Ver dónde se pisan las pistas en frecuencia y que el EQ sugerido se
@@ -1152,7 +1153,7 @@ compases).
 | `rN` | Retrigger / stutter: el paso se divide en N partes y el corte vuelve a empezar en cada una (de 1 a 16) | `3r4` |
 | `~Hz` | Corte del primer filtro de la pista desde este golpe hasta el siguiente (parameter lock, de 20 a 20000 Hz); un golpe sin `~` vuelve al corte de `:fx` | `3~800` |
 | `{efecto=valor,clave=valor}` | Un efecto solo en este golpe, con sus parámetros; varios, cada uno en sus llaves | `3{lp=800,q=4}{crush=6}` |
-| `!` | Accent (solo en un sintetizador): la nota suena más fuerte y más abierta | `1!`, en `melody` `c!` |
+| `!` | Accent (solo en un sintetizador): la nota suena más fuerte (en el acid, también más abierta) | `1!`, en `melody` `c!` |
 | `/` | Slide (solo en un sintetizador): la nota llega ligada desde la anterior, deslizándose hasta su altura sin volver a disparar las envolventes | `1^3/`, en `melody` `eb/` |
 
 Los sufijos se combinan en cualquier orden, cada uno una vez (salvo `^`,
@@ -1604,6 +1605,7 @@ track("drums", amen)
 | `cortes:set` | `attack` (por golpe), `release` (por golpe), `pan` (por golpe), `length` (por golpe), `crossfade` (por golpe) |
 | `:grains` | `size` (por grano), `density` (por grano), `pos` (por grano), `speed` (por grano), `jitter` (por grano), `pitch` (por grano), `spread` (por grano) |
 | `synth("acid")` | `cutoff` (continuo), `res` (continuo), `envmod` (continuo), `decay` (continuo), `accent` (continuo), `dist` (continuo), `glide` (continuo) |
+| `synth("sub")` | `tone` (continuo), `drive` (continuo), `glide` (continuo) |
 
 | Dónde | No admiten curva | Por qué |
 | --- | --- | --- |
@@ -1622,6 +1624,9 @@ track("drums", amen)
 | `synth("acid")` | `wave` | elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer |
 | `synth("acid")` | `root` | cada nota lo lee al nacer y el instrumento se valida entero al cargar; para cambiar la nota, la del paso (`^`) |
 | `synth("acid")` | `seed` | es la semilla del azar: entre dos semillas no hay nada continuo |
+| `synth("sub")` | `wave` | elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer |
+| `synth("sub")` | `root` | cada nota lo lee al nacer y el instrumento se valida entero al cargar; para cambiar la nota, la del paso (`^`) |
+| `synth("sub")` | `attack`, `release` | la envolvente se fija con el sintetizador al cargar; para mover el volumen en el tiempo, el de la pista (`:gain()` con `ramp()` o `lfo()`) |
 | `sample` | `trim`, `normalize`, `fade_in`, `fade_out` | se aplica al cargar, en el hilo de control (el sample o el bucle se preparan una vez): no suena en el tiempo |
 
 ### `scale(nombre [, tónica])`
@@ -1750,9 +1755,9 @@ track("lead", piano):melody("c _ e _  g _ e _  c+e+g _ _ _  . . b2 .")
 
 Devuelve: instrumento.
 
-Un instrumento sintetizado, sin sample: osciladores, filtro y envolventes. Se toca como un instrumento de sample (`track(nombre, synth(...))`, `:melody()`, `scale`, los pads del modo tocar y el MIDI de entrada): el pitch de cada paso son semitonos sobre su `root`. Los parámetros continuos admiten `ramp()` y `lfo()` (se mueven también dentro de una nota, sin clics) y los efectos de la pista van detrás. En sus pasos, dos sufijos más: `!` accent (la nota suena más fuerte y más abierta) y `/` slide (la nota llega ligada desde la anterior: se desliza hasta su altura en `glide` ms sin volver a disparar las envolventes; la anterior sigue sonando hasta que llega). En `melody` van detrás de la nota: `"c!"`, `"eb/"`, `"g!/"`. De momento hay un tipo, `"acid"`: el bajo del 303 (un oscilador de sierra o cuadrada, paso bajo de 4 polos con mucha resonancia, monofónico).
+Un instrumento sintetizado, sin sample: osciladores, filtro y envolventes. Se toca como un instrumento de sample (`track(nombre, synth(...))`, `:melody()`, `scale`, los pads del modo tocar y el MIDI de entrada): el pitch de cada paso son semitonos sobre su `root`. Los parámetros continuos admiten `ramp()` y `lfo()` (se mueven también dentro de una nota, sin clics) y los efectos de la pista van detrás. En sus pasos, dos sufijos más: `!` accent (la nota suena más fuerte y más abierta) y `/` slide (la nota llega ligada desde la anterior: se desliza hasta su altura en `glide` ms sin volver a disparar las envolventes; la anterior sigue sonando hasta que llega). En `melody` van detrás de la nota: `"c!"`, `"eb/"`, `"g!/"`. Hay dos tipos, los dos monofónicos: `"acid"`, el bajo del 303 (un oscilador de sierra o cuadrada, paso bajo de 4 polos con mucha resonancia; en él, el accent también abre el filtro), y `"sub"` (o `"subbass"`), un subgrave limpio para dar profundidad (un seno por un paso bajo suave que empieza cada nota en el cruce por cero y sigue su fase de una nota a la siguiente: sin golpes al arrancar ni clics entre notas; en él, el accent es un 40 % más fuerte).
 
-- `tipo`: `"acid"`
+- `tipo`: `"acid"` o `"sub"`
 - `opciones`: tabla con sus parámetros (ver abajo)
 
 | Tipo | Parámetro | Qué es | Por defecto | Valores |
@@ -1767,12 +1772,22 @@ Un instrumento sintetizado, sin sample: osciladores, filtro y envolventes. Se to
 |  | `dist` | saturación a la salida (0, limpio) | `0` | 0–1 |
 |  | `glide` | lo que tarda el `/` de un paso en llegar a su nota, en ms | `60` | 0–1000 |
 |  | `seed` | semilla de la fase del oscilador al empezar desde el silencio: con la misma, el mismo audio; sin ella, una sacada del nombre de la pista | `del nombre` | entero de 0 en adelante |
+| `"sub"` (o `"subbass"`) | `wave` | forma de onda: el seno es el subgrave limpio; la triangular añade algún armónico impar (se oye algo más en altavoces pequeños) | `"sine"` | `"sine"` o `"triangle"` |
+|  | `root` | la nota que suena con 0 semitonos (`melody` sin octava toca en la suya); C1 son 32,7 Hz | `"C1"` | una nota (`"C1"`, `"F#1"`) o un número MIDI (0–127) |
+|  | `tone` | corte del paso bajo suave (12 dB/oct, sin resonancia), en Hz: más bajo, más redondo; más alto, deja pasar los armónicos de `drive` | `250` | 40–2000 |
+|  | `drive` | saturación antes del filtro: le da armónicos graves para que se oiga en altavoces pequeños (0, un seno limpio) | `0` | 0–1 |
+|  | `glide` | lo que tarda el `/` de un paso en llegar a su nota, en ms | `40` | 0–1000 |
+|  | `attack` | lo que tarda en subir cada nota que empieza desde el silencio, en ms (las pegadas no vuelven a subir) | `5` | 0–2000 |
+|  | `release` | lo que tarda en apagarse al acabar la nota, en ms | `80` | 0–5000 |
 
 ```lua
 bpm(130)
 local bass = synth("acid", { cutoff = 350, res = 0.8, envmod = 0.7, decay = 250 })
 track("acid", bass)
   :melody("c c! eb c/  . c bb2 c/  g2! . c c/  eb! f/ eb c")
+-- Debajo, un subgrave en C1 que sigue la tónica.
+track("sub", synth("sub", { tone = 200, release = 120 }))
+  :melody("c _ _ _  _ _ _ _  ab0 _ _ _  bb0 _ g0/ _")
 ```
 
 ### `sample:slice(n)`
@@ -2643,6 +2658,51 @@ Para que el filtro se abra poco a poco a lo largo de la canción, una
 rampa en `cutoff` (o en `envmod`): `cutoff = ramp(200, 2000, "16
 compases")`. Y para variar los accents sin escribirlos, `:chance(0.3,
 "accent")` (con `"slide"`, igual).
+
+### Un subgrave limpio
+
+`synth("sub", {...})` (o `"subbass"`) da profundidad sin ocupar los
+medios: un seno por un paso bajo suave (`tone`), monofónico, con la raíz
+en C1 (32,7 Hz), así que `melody("c")` ya suena en la octava del sub y
+`ab0`, `bb0` y `g0` bajan de ahí. Está hecho para no hacer ruido: cada
+nota que empieza desde el silencio arranca en el cruce por cero (sin el
+golpe sordo que haría un seno a media onda) y sube en `attack` ms; una
+nota pegada a la anterior sigue su fase, sin volver a subir (sin clic al
+cambiar de altura); `/` la desliza en `glide` ms y `!` la hace un 40 %
+más fuerte. Un seno puro casi no se oye en los altavoces de un portátil:
+`drive` lo satura un poco *antes* del filtro, y esos armónicos graves
+(los que deja pasar `tone`) lo hacen oír sin ensuciarlo por arriba; la
+triangular (`wave = "triangle"`) hace algo parecido. Con un bombo, que el
+sub le deje sitio: un EQ dinámico con sidechain baja sus graves mientras
+pega el bombo.
+
+```lua
+-- 10-subgrave.lua
+bpm(170)
+local amen = sample("amen.wav"):slice(8)
+
+track("kick", amen:slice_at(1))
+  :steps("x . . .  . . . .  x . x .  . . . .")
+  :gain(0.4)
+
+track("drums", amen)
+  :steps(". . 2 .  3 . 4 .  . 6 2 .  7 . 8 .")
+  :gain(0.4)
+
+-- Un subgrave en C1: notas largas, una ligada (/) y un accent (!).
+local sub = synth("sub", { tone = 200, drive = 0.2, release = 120 })
+track("sub", sub)
+  :melody("c _ _ _  _ _ _ _  ab0 _ _ _  bb0! _ g0/ _")
+  -- Deja sitio al bombo: sus graves bajan mientras suena.
+  :fx("dyneq", { freq = 60, q = 0.7, range = 8, threshold = -30,
+                 attack = 2, release = 90, sidechain = "kick" })
+  :gain(0.7)
+```
+
+Para oírlo bien hacen falta unos auriculares o un altavoz con graves: en
+el render, mira el medidor de la pista. `tone` y `drive` admiten `ramp()`
+y `lfo()` (un sub que se va abriendo); `attack` y `release` no (la
+envolvente se fija al cargar).
 
 ### Una caja más grave que dura lo mismo
 

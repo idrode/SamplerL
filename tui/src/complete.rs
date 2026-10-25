@@ -1310,7 +1310,9 @@ mod tests {
     #[test]
     fn synth_offers_its_types_parameters_and_values() {
         let c = at(&format!("{SONG}local b = synth(\"|")).unwrap();
-        assert_eq!(labels(&c), ["acid"]);
+        assert_eq!(labels(&c), ["acid", "sub"]);
+        let c = at(&format!("{SONG}local b = synth(\"sub\", {{ wave = \"|")).unwrap();
+        assert_eq!(labels(&c), ["sine", "triangle"]);
         let c = at(&format!("{SONG}local b = synth(\"acid\", {{ c|")).unwrap();
         assert_eq!(labels(&c), ["cutoff"]);
         let c = at(&format!("{SONG}local b = synth(\"acid\", {{ |")).unwrap();

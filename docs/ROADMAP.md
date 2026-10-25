@@ -441,10 +441,14 @@ error con la línea y sigue sonando lo anterior; portable (Rust puro).
    receta «Un bajo ácido» en la guía.
 4. ✅ **Interfaz**: tracker con `!` y `/`, paneles, pads y MIDI de
    entrada, resaltado en vivo y autocompletado.
+5. ✅ **Sub** (después, a petición): `synth("sub", {...})` (alias
+   `"subbass"`), un subgrave limpio (seno por un paso bajo suave, mono,
+   que arranca en el cruce por cero, con `tone`, `drive` antes del filtro,
+   `glide`, `attack` y `release`), sobre presets genéricos en el motor.
 
 Queda para después, sobre el mismo núcleo: pads (polifónico con unison,
 ataque y release largos), leads y wavetable; un instrumento que use el
-sub y el ruido; y medir el aliasing de la saturación del ladder.
+suboscilador y el ruido; y medir el aliasing de la saturación del ladder.
 
 ## Mejoras sueltas
 

@@ -22,6 +22,8 @@ pub mod acid;
 mod env;
 mod filter;
 mod osc;
+pub mod preset;
+pub mod sub;
 
 use crate::Adsr;
 use crate::automation::{Curve, mix};
@@ -72,6 +74,17 @@ impl Wave {
 
     pub fn from_name(name: &str) -> Option<Wave> {
         Wave::ALL.into_iter().find(|w| w.name() == name)
+    }
+
+    /// Fase (0 a 1) en la que la onda cruza el cero subiendo: donde empieza
+    /// una nota de un patch con [`Patch::zero_phase`]. La cuadrada no lo
+    /// cruza (salta): empieza en 0.
+    pub fn zero_phase(self) -> f64 {
+        match self {
+            Wave::Sine | Wave::Square => 0.0,
+            Wave::Saw => 0.5,
+            Wave::Triangle => 0.75,
+        }
     }
 }
 
@@ -148,8 +161,11 @@ pub const NOISE: usize = 10;
 /// Apertura estéreo del unison (0 en el centro, 1 los extremos a cada
 /// lado).
 pub const SPREAD: usize = 11;
+/// Saturación de los osciladores antes del filtro (0 sin ella): añade
+/// armónicos que el filtro deja pasar o no.
+pub const PRE_DRIVE: usize = 12;
 /// Parámetros continuos.
-pub const PARAM_COUNT: usize = 12;
+pub const PARAM_COUNT: usize = 13;
 
 /// Los parámetros continuos, por su índice.
 pub const PARAMS: [SynthParam; PARAM_COUNT] = [
@@ -237,6 +253,13 @@ pub const PARAMS: [SynthParam; PARAM_COUNT] = [
         default: 0.0,
         log: false,
     },
+    SynthParam {
+        name: "pre_drive",
+        min: 0.0,
+        max: 1.0,
+        default: 0.0,
+        log: false,
+    },
 ];
 
 /// Una curva (o ninguna) por parámetro continuo.
@@ -295,6 +318,10 @@ pub struct Patch {
     /// accent y a la resonancia (el volumen que se mueve es el de la
     /// pista).
     pub level: f32,
+    /// Cada voz que empieza desde el silencio lo hace donde su onda cruza
+    /// el cero subiendo ([`Wave::zero_phase`]), sin fase al azar: una nota
+    /// grave no empieza con un salto (un golpe sordo).
+    pub zero_phase: bool,
     /// Valores de los parámetros continuos ([`PARAMS`]).
     pub params: [f32; PARAM_COUNT],
 }
@@ -325,6 +352,7 @@ impl Patch {
             accent: Accent::NONE,
             seed: 0,
             level: 1.0,
+            zero_phase: false,
             params: PARAMS.map(|p| p.default),
         }
     }
@@ -507,6 +535,12 @@ impl Voice {
             osc.phase = osc::unit(&mut rng);
         }
         self.sub.phase = osc::unit(&mut rng);
+        if patch.zero_phase {
+            for osc in &mut self.osc {
+                osc.phase = patch.wave.zero_phase();
+            }
+            self.sub.phase = 0.0;
+        }
         self.noise = Noise::new(osc::splitmix(&mut rng));
         self.active = true;
         self.dt = cycles(self.pitch, sample_rate);
@@ -656,8 +690,15 @@ impl Voice {
                     self.down[1].push(r * norm + extra);
                 }
             }
-            let l = self.down[0].output();
-            let r = if b.stereo { self.down[1].output() } else { l };
+            let mut l = self.down[0].output();
+            let mut r = if b.stereo { self.down[1].output() } else { l };
+            let pre = p(PRE_DRIVE);
+            if pre > 0.0 {
+                let gain = 1.0 + 15.0 * pre * pre;
+                let post = 1.0 / soft(gain);
+                l = soft(gain * l) * post;
+                r = soft(gain * r) * post;
+            }
             // Filtro, con su envolvente y el accent (y su memoria).
             let fenv = self.fenv.next(fenv_rates);
             let accent = self.accent * p(ACCENT);

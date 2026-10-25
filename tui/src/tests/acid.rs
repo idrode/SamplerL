@@ -103,3 +103,28 @@ fn pantalla_acid() {
     app.tick();
     println!("{}", text(&draw(&mut app, 140, 40)));
 }
+
+/// El sub en los paneles: su tipo, su raíz (C1) y sus parámetros,
+/// también los de la envolvente; el tracker, por su nombre.
+#[test]
+fn the_sub_shows_its_params() {
+    let song = "bpm(120)\n\
+                track(\"sub\", synth(\"subbass\", { tone = 180, release = 120 }))\n\
+                  :melody(\"c _ _ _  . . g0/ _  . . . .  . . . .\")\n";
+    let (_, mut app, mut engine) = open("sub_view", Some(song));
+    assert!(app.view().error.is_none(), "{:?}", app.view().error);
+    let view = app.view();
+    let track = &view.tracks[0];
+    assert_eq!(track.cell_text(&track.steps[0]), "C1");
+    assert_eq!(track.cell_text(&track.steps[6]), "G0/");
+    let synth = track.synth.clone().unwrap();
+    assert_eq!(synth.kind, "sub");
+    assert_eq!(
+        synth.params,
+        "wave sine · root C1 · tone 180 · drive 0 · glide 40 · attack 5 · release 120"
+    );
+    offline::render(&mut engine, STEP / 2, 2);
+    app.tick();
+    let screen = text(&draw(&mut app, 140, 40));
+    assert!(screen.contains("sub · ♪ sub C1 1/1"), "{screen}");
+}

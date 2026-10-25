@@ -50,7 +50,7 @@ fn the_script_sounds_like_the_engine() {
         ("dist", 0.3),
         ("glide", 80.0),
     ] {
-        acid::set(&mut patch, acid::param(name).unwrap(), value);
+        acid::param(name).unwrap().set(&mut patch, value);
     }
     assert_eq!(def.synth.unwrap().patch, patch);
     let steps =
@@ -227,7 +227,10 @@ fn synth_notes_go_out_by_midi() {
 fn errors_say_the_line() {
     let acid = "synth(\"acid\")";
     let cases = [
-        ("synth(\"moog\")", "no hay ese sintetizador (hay: acid)"),
+        (
+            "synth(\"moog\")",
+            "no hay ese sintetizador (hay: acid, sub)",
+        ),
         (
             "synth(\"acid\", { cutof = 300 })",
             "clave desconocida \"cutof\"",
@@ -266,6 +269,19 @@ fn errors_say_the_line() {
             "track(\"b\", synth(\"acid\")):melody(\"c+e . . .  . . . .  . . . .  . . . .\")",
             "es un sintetizador monofónico",
         ),
+        (
+            "synth(\"sub\", { wave = \"saw\" })",
+            "wave es \"sine\" o \"triangle\"",
+        ),
+        (
+            "synth(\"sub\", { tone = 10 })",
+            "tone = 10 fuera de rango (40 a 2000)",
+        ),
+        (
+            "synth(\"sub\", { attack = ramp(1, 50, \"1 compás\") })",
+            "attack no admite ramp() ni lfo(): la envolvente se fija",
+        ),
+        ("synth(\"sub\", { seed = 1 })", "clave desconocida \"seed\""),
         (
             "synth(\"acid\"):fx(\"lowpass\", {})",
             "los efectos de un sintetizador van en la pista",
@@ -329,4 +345,50 @@ fn an_invalid_synth_keeps_the_previous_song() {
         .synth
         .unwrap();
     assert_eq!(kept.patch.params[CUTOFF], 300.0);
+}
+
+/// El sub de un script (con su alias) y el mismo patch a mano en el
+/// motor: los mismos pasos y el mismo audio; su raíz por defecto es C1.
+#[test]
+fn the_sub_sounds_like_the_engine() {
+    let song = song_ok(
+        "local sub = synth(\"subbass\", {\n\
+           tone = 180, drive = 0.2, glide = 60, attack = 8, release = 150, wave = \"triangle\",\n\
+         })\n\
+         track(\"sub\", sub):melody(\"c _ _ c!  . . g0/ _  c _ eb .  f/ _ _ _\")",
+    );
+    let def = song.tracks[0].instrument.unwrap();
+    assert_eq!(def.root, 24);
+    let synth_def = def.synth.unwrap();
+    assert_eq!(synth_def.kind, "sub");
+    let mut patch = synth::sub::patch(24.0);
+    patch.wave = synth::Wave::Triangle;
+    for (name, value) in [
+        ("tone", 180.0),
+        ("drive", 0.2),
+        ("glide", 60.0),
+        ("attack", 8.0),
+        ("release", 150.0),
+    ] {
+        synth::sub::param(name).unwrap().set(&mut patch, value);
+    }
+    patch.seed = synth_def.patch.seed;
+    assert_eq!(synth_def.patch, patch);
+    let steps =
+        engine::notation::parse_steps("1 _ _ 1!  . . 1^-5/ _  1 _ 1^3 .  1^5/ _ _ _").unwrap();
+    let silence = std::sync::Arc::new(Sample::silence(RATE));
+    let slices = Slices::grid(&silence, 1);
+    let pattern = Pattern::from_steps(silence, &slices, steps)
+        .unwrap()
+        .with_synth(Some(patch), [None; synth::PARAM_COUNT])
+        .unwrap();
+    let (mut controller, mut engine) = new_engine(RATE);
+    controller.set_bpm(120.0).unwrap();
+    controller.set_track_pattern(0, Some(pattern)).unwrap();
+    controller.start().unwrap();
+    let frames = 2 * engine::bar_frames(120.0, RATE) as usize;
+    let direct = offline::render(&mut engine, frames, 2);
+    let scripted = song.render(RATE, 2).unwrap();
+    assert!(direct.iter().any(|v| v.abs() > 0.1), "no suena");
+    assert!(scripted == direct, "el script no suena como el motor");
 }

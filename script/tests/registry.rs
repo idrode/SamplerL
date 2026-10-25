@@ -345,30 +345,36 @@ fn every_synth_parameter_is_accepted() {
     }
 }
 
-/// Los parámetros continuos del acid en el registro tienen el rango y el
-/// valor por defecto del motor, y los que no están en el motor no admiten
-/// curvas.
+/// Los parámetros numéricos de cada sintetizador del registro tienen el
+/// rango y el valor por defecto de su preset del motor; admiten curvas los
+/// que el motor mueve, y los demás no.
 #[test]
-fn the_acid_registry_matches_the_engine() {
-    let acid = api::synth("acid").unwrap();
-    for p in acid.params {
-        match engine::synth::acid::param(p.name) {
-            Some(e) => {
-                assert_eq!(p.valid, format!("{}–{}", e.min, e.max), "{}", p.name);
-                assert_eq!(
-                    p.default,
-                    Some(e.default.to_string().as_str()),
-                    "{}",
-                    p.name
-                );
-                assert!(p.automate.curves(), "{}", p.name);
+fn every_synth_registry_matches_the_engine() {
+    for synth in api::SYNTHS {
+        let preset = engine::synth::preset::preset(synth.name)
+            .unwrap_or_else(|| panic!("{} no está en el motor", synth.name));
+        for p in synth.params {
+            let what = format!("{}.{}", synth.name, p.name);
+            match preset.param(p.name) {
+                Some(e) => {
+                    assert_eq!(p.valid, format!("{}–{}", e.min, e.max), "{what}");
+                    assert_eq!(p.default, Some(e.default.to_string().as_str()), "{what}");
+                    assert_eq!(p.automate.curves(), e.moves(), "{what}");
+                }
+                None => assert!(!p.automate.curves(), "{what}"),
             }
-            None => assert!(!p.automate.curves(), "{}", p.name),
         }
+        let numeric = synth
+            .params
+            .iter()
+            .filter(|p| preset.param(p.name).is_some())
+            .count();
+        assert_eq!(numeric, preset.params.len(), "{}", synth.name);
     }
     assert_eq!(
-        acid.params.iter().filter(|p| p.automate.curves()).count(),
-        engine::synth::acid::PARAMS.len()
+        api::SYNTHS.len(),
+        engine::synth::preset::PRESETS.len(),
+        "cada preset del motor, en el registro"
     );
 }
 

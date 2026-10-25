@@ -2979,8 +2979,10 @@ fn synth_options(lua: &Lua, kind: &str, table: Option<&Table>) -> mlua::Result<I
             ),
         ));
     };
-    let mut root = 36;
-    let mut patch = engine::synth::acid::patch(root as f32);
+    let preset = engine::synth::preset::preset(registered.name)
+        .expect("cada sintetizador del registro está en el motor");
+    let mut root = preset.root;
+    let mut patch = preset.patch(root as f32);
     let mut curves = [None; engine::synth::PARAM_COUNT];
     let mut seed = None;
     if let Some(table) = table {
@@ -3012,11 +3014,17 @@ fn synth_options(lua: &Lua, kind: &str, table: Option<&Table>) -> mlua::Result<I
                 "wave" => {
                     let wave = match &value {
                         Value::String(w) => engine::synth::Wave::from_name(w.to_str()?.as_ref())
-                            .filter(|w| engine::synth::acid::WAVES.contains(w)),
+                            .filter(|w| preset.waves.contains(w)),
                         _ => None,
                     };
-                    patch.wave = wave
-                        .ok_or_else(|| fail(lua, format!("{who}: wave es \"saw\" o \"square\"")))?;
+                    patch.wave = wave.ok_or_else(|| {
+                        let waves: Vec<String> = preset
+                            .waves
+                            .iter()
+                            .map(|w| format!("\"{}\"", w.name()))
+                            .collect();
+                        fail(lua, format!("{who}: wave es {}", waves.join(" o ")))
+                    })?;
                 }
                 "root" => {
                     root = match &value {
@@ -3052,8 +3060,9 @@ fn synth_options(lua: &Lua, kind: &str, table: Option<&Table>) -> mlua::Result<I
                     }
                 },
                 name => {
-                    let p = engine::synth::acid::param(name)
-                        .expect("cada parámetro continuo del registro está en el motor");
+                    let p = preset
+                        .param(name)
+                        .expect("cada parámetro numérico del registro está en el motor");
                     let (fixed, curve) = number_or_curve(
                         lua,
                         &format!("{who}: {name}"),
@@ -3070,8 +3079,10 @@ fn synth_options(lua: &Lua, kind: &str, table: Option<&Table>) -> mlua::Result<I
                             ),
                         ));
                     }
-                    engine::synth::acid::set(&mut patch, p, fixed);
-                    curves[p.param] = curve.map(|c| engine::synth::acid::curve(p, c));
+                    p.set(&mut patch, fixed);
+                    if let Some((index, curve)) = curve.and_then(|c| p.curve(c)) {
+                        curves[index] = Some(curve);
+                    }
                 }
             }
         }

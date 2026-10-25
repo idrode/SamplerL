@@ -143,6 +143,7 @@ const STRUCTURE: &str =
     "cambia cuántas cosas suenan, no cómo suenan: entra con el patrón al compás";
 const SEED: &str = "es la semilla del azar: entre dos semillas no hay nada continuo";
 const INSTRUMENT: &str = "cada nota lo lee al nacer y el instrumento se valida entero al cargar; para cambiar la nota, la del paso (`^`)";
+const ENVELOPE: &str = "la envolvente se fija con el sintetizador al cargar; para mover el volumen en el tiempo, el de la pista (`:gain()` con `ramp()` o `lfo()`)";
 const DELAY_TIME: &str = "es una figura (\"1/8\"), no un número; además, mover el retardo de una línea con repeticiones dentro suena a cambio de pitch";
 
 /// Efecto de pista para `:fx(nombre, parámetros)`.
@@ -1159,13 +1160,18 @@ pub const FUNCTIONS: &[Function] = &[
               y `/` slide (la nota llega ligada desde la anterior: se desliza hasta \
               su altura en `glide` ms sin volver a disparar las envolventes; la \
               anterior sigue sonando hasta que llega). En `melody` van detrás de la \
-              nota: `\"c!\"`, `\"eb/\"`, `\"g!/\"`. De momento hay un tipo, \
-              `\"acid\"`: el bajo del 303 (un oscilador de sierra o cuadrada, paso \
-              bajo de 4 polos con mucha resonancia, monofónico).",
+              nota: `\"c!\"`, `\"eb/\"`, `\"g!/\"`. Hay dos tipos, los dos \
+              monofónicos: `\"acid\"`, el bajo del 303 (un oscilador de sierra o \
+              cuadrada, paso bajo de 4 polos con mucha resonancia; en él, el accent \
+              también abre el filtro), y `\"sub\"` (o `\"subbass\"`), un subgrave \
+              limpio para dar profundidad (un seno por un paso bajo suave que \
+              empieza cada nota en el cruce por cero y sigue su fase de una nota a \
+              la siguiente: sin golpes al arrancar ni clics entre notas; en él, el \
+              accent es un 40 % más fuerte).",
         params: &[
             Param {
                 name: "tipo",
-                description: "`\"acid\"`",
+                description: "`\"acid\"` o `\"sub\"`",
             },
             Param {
                 name: "opciones",
@@ -1177,7 +1183,10 @@ pub const FUNCTIONS: &[Function] = &[
             "bpm(130)\n\
              local bass = synth(\"acid\", { cutoff = 350, res = 0.8, envmod = 0.7, decay = 250 })\n\
              track(\"acid\", bass)\n  \
-             :melody(\"c c! eb c/  . c bb2 c/  g2! . c c/  eb! f/ eb c\")\n",
+             :melody(\"c c! eb c/  . c bb2 c/  g2! . c c/  eb! f/ eb c\")\n\
+             -- Debajo, un subgrave en C1 que sigue la tónica.\n\
+             track(\"sub\", synth(\"sub\", { tone = 200, release = 120 }))\n  \
+             :melody(\"c _ _ _  _ _ _ _  ab0 _ _ _  bb0 _ g0/ _\")\n",
         ),
     },
     Function {
@@ -2668,19 +2677,99 @@ pub const ACID_PARAMS: &[FxParam] = &[
     },
 ];
 
+/// Parámetros de `synth("sub", { ... })` (los rangos y los valores por
+/// defecto de los numéricos son los de `engine::synth::sub::PARAMS`; un
+/// test lo comprueba).
+pub const SUB_PARAMS: &[FxParam] = &[
+    FxParam {
+        name: "wave",
+        description: "forma de onda: el seno es el subgrave limpio; la triangular añade algún armónico impar (se oye algo más en altavoces pequeños)",
+        default: Some("\"sine\""),
+        valid: "`\"sine\"` o `\"triangle\"`",
+        values: &["sine", "triangle"],
+        template: "wave = \"${triangle}\"",
+        automate: Auto::No(DISCRETE),
+    },
+    FxParam {
+        name: "root",
+        description: "la nota que suena con 0 semitonos (`melody` sin octava toca en la suya); C1 son 32,7 Hz",
+        default: Some("\"C1\""),
+        valid: "una nota (`\"C1\"`, `\"F#1\"`) o un número MIDI (0–127)",
+        values: &[],
+        template: "root = \"${C1}\"",
+        automate: Auto::No(INSTRUMENT),
+    },
+    FxParam {
+        name: "tone",
+        description: "corte del paso bajo suave (12 dB/oct, sin resonancia), en Hz: más bajo, más redondo; más alto, deja pasar los armónicos de `drive`",
+        default: Some("250"),
+        valid: "40–2000",
+        values: &[],
+        template: "tone = ${250}",
+        automate: Auto::Smooth,
+    },
+    FxParam {
+        name: "drive",
+        description: "saturación antes del filtro: le da armónicos graves para que se oiga en altavoces pequeños (0, un seno limpio)",
+        default: Some("0"),
+        valid: "0–1",
+        values: &[],
+        template: "drive = ${0.3}",
+        automate: Auto::Smooth,
+    },
+    FxParam {
+        name: "glide",
+        description: "lo que tarda el `/` de un paso en llegar a su nota, en ms",
+        default: Some("40"),
+        valid: "0–1000",
+        values: &[],
+        template: "glide = ${40}",
+        automate: Auto::Smooth,
+    },
+    FxParam {
+        name: "attack",
+        description: "lo que tarda en subir cada nota que empieza desde el silencio, en ms (las pegadas no vuelven a subir)",
+        default: Some("5"),
+        valid: "0–2000",
+        values: &[],
+        template: "attack = ${5}",
+        automate: Auto::No(ENVELOPE),
+    },
+    FxParam {
+        name: "release",
+        description: "lo que tarda en apagarse al acabar la nota, en ms",
+        default: Some("80"),
+        valid: "0–5000",
+        values: &[],
+        template: "release = ${80}",
+        automate: Auto::No(ENVELOPE),
+    },
+];
+
 /// Los tipos de `synth(tipo, { ... })`, como efectos (para el
 /// autocompletado, la ayuda y la guía).
-pub const SYNTHS: &[Effect] = &[Effect {
-    name: "acid",
-    aliases: &[],
-    summary: "Bajo del 303: un oscilador por un paso bajo de 4 polos resonante, mono, con accent y slide.",
-    params: ACID_PARAMS,
-    template: "{ cutoff = ${400}, res = ${0.7}, envmod = ${0.6}, decay = ${300} }",
-}];
+pub const SYNTHS: &[Effect] = &[
+    Effect {
+        name: "acid",
+        aliases: &[],
+        summary: "Bajo del 303: un oscilador por un paso bajo de 4 polos resonante, mono, con accent y slide.",
+        params: ACID_PARAMS,
+        template: "{ cutoff = ${400}, res = ${0.7}, envmod = ${0.6}, decay = ${300} }",
+    },
+    Effect {
+        name: "sub",
+        aliases: &["subbass"],
+        summary: "Subgrave limpio: un seno por un paso bajo suave, mono, sin clics al empezar ni entre notas.",
+        params: SUB_PARAMS,
+        template: "{ tone = ${250}, release = ${80} }",
+    },
+];
 
-/// El tipo de sintetizador `name`.
+/// El tipo de sintetizador `name` (o uno de sus alias).
 pub fn synth(name: &str) -> Option<&'static Effect> {
-    SYNTHS.iter().find(|s| s.name == name)
+    SYNTHS
+        .iter()
+        .find(|s| s.name == name || s.aliases.contains(&name))
 }
 
 /// La tabla de `sample:instrument()`, como un efecto (para el

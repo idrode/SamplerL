@@ -1152,6 +1152,29 @@ fn the_audio_thread_never_allocates() {
         .unwrap()
         .with_midi(Some((2, 48)))
         .unwrap();
+    // Un sub: notas pegadas y ligadas, saturación antes del filtro y una
+    // rampa de `tone`.
+    let mut sub = engine::synth::sub::patch(24.0);
+    engine::synth::sub::param("drive")
+        .unwrap()
+        .set(&mut sub, 0.5);
+    let mut tone = [None; engine::synth::PARAM_COUNT];
+    tone[engine::synth::CUTOFF] = Some(engine::Curve::Ramp {
+        from: 80.0,
+        to: 1500.0,
+        steps: 8.0,
+    });
+    let sub_steps: Vec<Option<Step>> = (0..STEPS)
+        .map(|k| {
+            let step = Step::new(0).with_pitch([0.0, 7.0, 12.0, 5.0][k % 4]);
+            Some(if k % 4 == 2 { step.slid() } else { step })
+        })
+        .collect();
+    let sub = Pattern::from_steps(silence.clone(), &one, sub_steps)
+        .unwrap()
+        .with_synth(Some(sub), tone)
+        .unwrap();
+    controller.set_track_pattern(4, Some(sub)).unwrap();
     controller.set_track_pattern(5, Some(acid)).unwrap();
     controller.set_track_pattern(6, Some(pads)).unwrap();
     let n = counted(|| {
@@ -1161,6 +1184,8 @@ fn the_audio_thread_never_allocates() {
     });
     assert_eq!(n, 0, "reservas con sintetizadores");
     let status = controller.status();
+    // La pista 4 aún suelta lo que tocaba antes: al menos la voz del sub.
+    assert!(status.tracks[4].voices >= 1, "el sub suena");
     let voices = (status.tracks[5].voices, status.tracks[6].voices);
     assert!(voices.0 == 1 && voices.1 >= 4, "voces: {voices:?}");
     for key in 0..10 {
@@ -1177,6 +1202,7 @@ fn the_audio_thread_never_allocates() {
     for key in 0..10 {
         controller.note_off(7, key).unwrap();
     }
+    controller.set_track_pattern(4, None).unwrap();
     controller.set_track_pattern(5, None).unwrap();
     controller.set_track_pattern(6, None).unwrap();
     let n = counted(|| {

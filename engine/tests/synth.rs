@@ -386,21 +386,110 @@ fn eight_voices_with_unison_stay_within_one_after_the_limiter() {
     assert!(ratio_db.abs() < 3.0, "unison de 7: {ratio_db:.1} dB");
 }
 
-/// El acid: sus parámetros caben en los del núcleo y su patch es válido.
+/// Cada preset: su patch es válido y sus parámetros caben en los del
+/// núcleo; el acid es mono con el ladder, el sub mono con el paso bajo.
 #[test]
-fn the_acid_patch_is_valid() {
-    let patch = acid::patch(36.0);
-    patch.validate().unwrap();
-    assert!(patch.mono);
-    assert_eq!(patch.filter, FilterMode::Ladder);
-    for p in &acid::PARAMS {
-        let core = &synth::PARAMS[p.param];
-        assert!(
-            core.min <= p.min * p.scale && p.max * p.scale <= core.max,
-            "{}",
-            p.name
-        );
+fn the_presets_are_valid() {
+    for preset in synth::preset::PRESETS {
+        let patch = preset.patch(preset.root as f32);
+        patch.validate().unwrap();
+        assert!(patch.mono, "{}", preset.name);
+        assert_eq!(patch.wave, preset.waves[0]);
+        for p in preset.params {
+            assert_eq!(p.get(&patch), p.default, "{}.{}", preset.name, p.name);
+            if let synth::preset::Target::Param(i) = p.target {
+                let core = &synth::PARAMS[i];
+                assert!(
+                    core.min <= p.min * p.scale && p.max * p.scale <= core.max,
+                    "{}.{}",
+                    preset.name,
+                    p.name
+                );
+            }
+        }
     }
+    assert_eq!(acid::patch(36.0).filter, FilterMode::Ladder);
+    assert_eq!(synth::sub::patch(24.0).filter, FilterMode::Lowpass);
+}
+
+/// El sub, limpio: un seno de 55 Hz con sus armónicos 2 a 5 por debajo
+/// de -60 dB. Con `drive`, el 3 sube (se oye en altavoces pequeños) pero
+/// lo que pasa de `tone` sigue cayendo.
+#[test]
+fn the_sub_is_clean_and_drive_adds_low_harmonics() {
+    let frames = 1 << 16;
+    let hz = 55.0;
+    let clean = steady(&synth::sub::patch(24.0), hz, frames, RATE);
+    for k in 2..=5 {
+        let level = harmonic(&clean, hz, k, RATE);
+        assert!(level < -60.0, "armónico {k}: {level:.1} dB");
+    }
+    let mut driven = synth::sub::patch(24.0);
+    synth::sub::param("drive").unwrap().set(&mut driven, 0.6);
+    let driven = steady(&driven, hz, frames, RATE);
+    let third = harmonic(&driven, hz, 3, RATE);
+    let high = harmonic(&driven, hz, 21, RATE);
+    println!("sub con drive 0.6: armónico 3 {third:.1} dB, 21 (1155 Hz) {high:.1} dB");
+    assert!(third > -30.0, "armónico 3: {third:.1} dB");
+    assert!(high < third - 30.0, "armónico 21: {high:.1} dB");
+}
+
+/// Una línea de sub con silencios, notas pegadas sin slide (otra altura,
+/// la misma voz), una ligada y la última que suelta: ninguna muestra salta
+/// más que lo que sube un seno de la nota más aguda (con un 20 % de
+/// margen): ni el arranque desde el silencio (en el cruce por cero) ni el
+/// cambio de nota (sigue su fase) ni el release hacen clic.
+#[test]
+fn the_sub_starts_and_changes_notes_without_clicks() {
+    let patch = synth::sub::patch(24.0);
+    let step = 6000;
+    let pitches = [24.0, 24.0, 31.0, 36.0, 29.0];
+    let mut notes = vec![(0, NoteEvent::new(pitches[0], step as u64))];
+    // Pegadas: cada una empieza cuando acaba la anterior.
+    for (i, &p) in pitches.iter().enumerate().skip(1) {
+        let mut ev = NoteEvent::new(p, step as u64);
+        ev.slide = i == 3;
+        notes.push((2 * step + i * step, ev));
+    }
+    let y = left(&synth::render(&patch, &NO_CURVES, &notes, 9 * step, RATE));
+    let peak = y.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+    let top = 440.0 * ((36.0f32 - 69.0) / 12.0).exp2();
+    let bound = std::f32::consts::TAU * top / RATE as f32 * peak;
+    let step_max = max_step(&y);
+    assert!(
+        step_max < 1.2 * bound,
+        "salto {step_max} (un seno: {bound})"
+    );
+    // Empieza en silencio y sube poco a poco (la primera muestra, casi 0).
+    assert!(y[0].abs() < 1e-3 && y[1].abs() < 1e-3);
+    // Con la fase al azar (el núcleo por defecto) sí saltaría.
+    let mut random = patch;
+    random.zero_phase = false;
+    random.seed = 11;
+    let jumpy = left(&synth::render(&random, &NO_CURVES, &notes[..1], step, RATE));
+    let first = max_step(&jumpy[..480]);
+    let calm = max_step(&y[..480]);
+    assert!(first > calm, "al azar {first}, en el cero {calm}");
+}
+
+/// Nivel del sub: sin accent, el pico en unos -6,5 dBFS (el paso bajo de
+/// `tone` le quita medio decibelio a 65 Hz); con él, unos 3 dB más (y por
+/// debajo de 0 con `drive` al máximo).
+#[test]
+fn the_sub_level() {
+    let peak_db = |accent: bool, drive: f32| {
+        let mut patch = synth::sub::patch(24.0);
+        synth::sub::param("drive").unwrap().set(&mut patch, drive);
+        let mut ev = NoteEvent::new(36.0, HELD);
+        ev.accent = accent;
+        let out = synth::render(&patch, &NO_CURVES, &[(0, ev)], RATE as usize / 2, RATE);
+        20.0 * out.iter().fold(0.0f32, |m, v| m.max(v.abs())).log10()
+    };
+    let (plain, accented, driven) = (peak_db(false, 0.0), peak_db(true, 0.0), peak_db(true, 1.0));
+    println!("sub: pico {plain:.1} dBFS, con accent {accented:.1}, con drive {driven:.1}");
+    assert!((plain + 6.5).abs() < 0.5, "{plain:.1} dBFS");
+    assert!((accented - plain - 2.9).abs() < 0.5, "{accented:.1} dBFS");
+    assert!(driven < 0.0, "{driven:.1} dBFS");
 }
 
 /// Coste de CPU: 8 voces con unison de 7 por el ladder, 10 segundos.
@@ -423,10 +512,21 @@ fn cpu_cost_of_eight_voices_with_unison_of_seven() {
     let started = Instant::now();
     let _ = synth::render(&mono, &NO_CURVES, &mono_notes, frames, RATE);
     let acid_took = started.elapsed().as_secs_f64();
+    let sub = synth::sub::patch(24.0);
+    let started = Instant::now();
+    let _ = synth::render(
+        &sub,
+        &NO_CURVES,
+        &[(0, NoteEvent::new(24.0, HELD))],
+        frames,
+        RATE,
+    );
+    let sub_took = started.elapsed().as_secs_f64();
     println!(
-        "8 voces × unison 7: {:.1} % de un núcleo ({took:.2} s por {seconds} s); acid: {:.2} %",
+        "8 voces × unison 7: {:.1} % de un núcleo ({took:.2} s por {seconds} s); acid: {:.2} %; sub: {:.2} %",
         100.0 * took / seconds as f64,
-        100.0 * acid_took / seconds as f64
+        100.0 * acid_took / seconds as f64,
+        100.0 * sub_took / seconds as f64
     );
     println!(
         "memoria: {} KiB por pista ({} KiB las 8 pistas), reservada al crear el motor",
@@ -450,7 +550,7 @@ fn the_acid_leaves_headroom() {
             ("accent", 1.0),
             ("dist", dist),
         ] {
-            acid::set(&mut patch, acid::param(name).unwrap(), value);
+            acid::param(name).unwrap().set(&mut patch, value);
         }
         let notes: Vec<_> = [24.0, 36.0, 48.0, 60.0]
             .iter()

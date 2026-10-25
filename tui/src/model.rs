@@ -346,10 +346,15 @@ pub fn synth_text(def: &script::SynthDef) -> String {
                 script::patterns::note_name(def.patch.root.round() as i32)
             )),
             name => {
-                let a = engine::synth::acid::param(name)?;
-                Some(match def.curves[a.param] {
-                    Some(_) => format!("{name} ∿"),
-                    None => format!("{name} {}", round(def.patch.params[a.param] / a.scale)),
+                let p = engine::synth::preset::preset(def.kind)?.param(name)?;
+                let moving = match p.target {
+                    engine::synth::preset::Target::Param(i) => def.curves[i].is_some(),
+                    _ => false,
+                };
+                Some(if moving {
+                    format!("{name} ∿")
+                } else {
+                    format!("{name} {}", round(p.get(&def.patch)))
                 })
             }
         })

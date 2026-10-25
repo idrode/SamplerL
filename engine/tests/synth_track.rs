@@ -104,7 +104,7 @@ fn notes_sound_at_their_pitch() {
 #[test]
 fn an_accent_is_louder_and_brighter() {
     let mut patch = acid::patch(45.0);
-    acid::set(&mut patch, acid::param("accent").unwrap(), 1.0);
+    acid::param("accent").unwrap().set(&mut patch, 1.0);
     let plain = render(pattern(patch, NO_CURVES, steps(&[(0, Step::new(0))])), STEP);
     let accented = render(
         pattern(patch, NO_CURVES, steps(&[(0, Step::new(0).accented())])),
@@ -193,7 +193,7 @@ fn stop_cuts_the_synth() {
 #[test]
 fn a_cutoff_ramp_opens_the_filter() {
     let mut patch = acid::patch(45.0);
-    acid::set(&mut patch, acid::param("envmod").unwrap(), 0.0);
+    acid::param("envmod").unwrap().set(&mut patch, 0.0);
     let mut curves = NO_CURVES;
     curves[CUTOFF] = Some(Curve::Ramp {
         from: 100.0,
