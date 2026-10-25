@@ -648,6 +648,31 @@ fn the_sub_sounds_at_f_over_div() {
     }
 }
 
+/// Los tres subs del SH-101: cuadrada una octava abajo (`sub_div = 2`),
+/// cuadrada dos octavas abajo (4) y el pulso al 25 % dos octavas abajo:
+/// suenan a f/2, f/4 y f/4, el pulso alto un cuarto del periodo y sin
+/// continua.
+#[test]
+fn the_sh101_sub_modes() {
+    let frames = 2 * RATE as usize;
+    let notes = [(0, NoteEvent::new(69.0, HELD))];
+    for (div, wave) in [(2, Wave::Square), (4, Wave::Square), (4, Wave::Pulse25)] {
+        let sub = left(&sub_alone(&with_sub(0.8, div, wave), &notes, frames));
+        let second = &sub[RATE as usize / 2..RATE as usize / 2 + RATE as usize];
+        let expected = 440.0 / div as f64;
+        let measured = ups(second) as f64;
+        assert!(
+            (measured - expected).abs() <= 1.0,
+            "{wave:?} ÷{div}: {measured} ciclos en un segundo, no {expected:.1}"
+        );
+        let high = second.iter().filter(|&&y| y > 0.0).count() as f64 / second.len() as f64;
+        let mean = second.iter().map(|&y| y as f64).sum::<f64>() / second.len() as f64;
+        let duty = if wave == Wave::Pulse25 { 0.25 } else { 0.5 };
+        assert!((high - duty).abs() < 0.02, "{wave:?} ÷{div}: alto {high:.3}");
+        assert!(mean.abs() < 0.01, "{wave:?} ÷{div}: continua {mean:.4}");
+    }
+}
+
 /// Con glide (de A3 a A4 en 300 ms), el sub sigue al oscilador: cuelga de
 /// su fase, así que en cada trozo hace exactamente 1/n de sus ciclos.
 #[test]
@@ -762,30 +787,33 @@ fn sub_changes_between_notes_do_not_click() {
 
 /// La cuadrada del sub lleva PolyBLEP en sus saltos: un sub de 2 kHz (una
 /// nota de 4 kHz dividida por 2) queda por debajo de -50 dB de aliasing
-/// (medido: -56).
+/// (medido: -56), y el pulso al 25 % de 1 kHz (dividida por 4) también.
 #[test]
 fn the_square_sub_is_band_limited() {
     let rate = 44_100;
     let frames = 1 << 16;
-    let patch = with_sub(1.0, 2, Wave::Square);
     let notes = [(0, NoteEvent::new(midi(4000.0), HELD))];
     let skip = rate as usize / 4;
-    let sub: Vec<f32> = {
-        let off = Patch {
-            params: {
-                let mut p = patch.params;
-                p[synth::SUB] = 0.0;
-                p
-            },
-            ..patch
+    for (div, wave) in [(2, Wave::Square), (4, Wave::Pulse25)] {
+        let patch = with_sub(1.0, div, wave);
+        let sub: Vec<f32> = {
+            let off = Patch {
+                params: {
+                    let mut p = patch.params;
+                    p[synth::SUB] = 0.0;
+                    p
+                },
+                ..patch
+            };
+            let on = synth::render(&patch, &NO_CURVES, &notes, skip + frames, rate);
+            let off = synth::render(&off, &NO_CURVES, &notes, skip + frames, rate);
+            on.iter().zip(&off).map(|(a, b)| a - b).step_by(2).collect()
         };
-        let on = synth::render(&patch, &NO_CURVES, &notes, skip + frames, rate);
-        let off = synth::render(&off, &NO_CURVES, &notes, skip + frames, rate);
-        on.iter().zip(&off).map(|(a, b)| a - b).step_by(2).collect()
-    };
-    let alias = worst_alias(&sub[skip..], 2000.0, rate);
-    println!("sub cuadrado a 2 kHz: {alias:.1} dB");
-    assert!(alias < -50.0, "{alias:.1} dB");
+        let f0 = 4000.0 / div as f64;
+        let alias = worst_alias(&sub[skip..], f0, rate);
+        println!("sub {wave:?} a {f0} Hz: {alias:.1} dB");
+        assert!(alias < -50.0, "{wave:?}: {alias:.1} dB");
+    }
 }
 
 /// Un patch de capas que se oye tal cual (senos, paso alto a 20 Hz sin

@@ -1788,7 +1788,7 @@ Un instrumento sintetizado, sin sample: osciladores, filtro y envolventes. Se to
 |  | `seed` | semilla de la fase del oscilador al empezar desde el silencio: con la misma, el mismo audio; sin ella, una sacada del nombre de la pista | `del nombre` | entero de 0 en adelante |
 |  | `sub` | nivel del sub: una onda a la frecuencia de la nota dividida por `sub_div`, sacada de la fase del oscilador (siempre en fase, también con glide); 0 lo apaga | `0` | 0–1 |
 |  | `sub_div` | divisor de frecuencia del sub: 2 una octava abajo, 3 una octava y una quinta, 4 dos octavas... | `2` | 1–16 |
-|  | `sub_wave` | forma de onda del sub: cuadrada (con PolyBLEP en sus saltos), triangular o seno | `"square"` | `"square"`, `"tri"` o `"sine"` |
+|  | `sub_wave` | forma de onda del sub: cuadrada (con PolyBLEP en sus saltos), triangular, seno o el pulso estrecho al 25 % del SH-101 (con `sub_div = 4`, dos octavas abajo) | `"square"` | `"square"`, `"tri"`, `"sine"` o `"pulse25"` |
 |  | `sub_pan` | pan del sub, de potencia constante (en el centro suena igual en los dos lados) | `0` | -1–1 |
 |  | `sub_drive` | saturación suave de la suma del oscilador y el sub, antes del filtro (solo con el sub sonando) | `0` | 0–1 |
 | `"sub"` (o `"subbass"`) | `wave` | forma de onda: el seno es el subgrave limpio; la triangular añade algún armónico impar (se oye algo más en altavoces pequeños) | `"sine"` | `"sine"` o `"triangle"` |
@@ -1800,7 +1800,7 @@ Un instrumento sintetizado, sin sample: osciladores, filtro y envolventes. Se to
 |  | `release` | lo que tarda en apagarse al acabar la nota, en ms | `80` | 0–5000 |
 |  | `sub` | nivel del sub: una onda a la frecuencia de la nota dividida por `sub_div`, sacada de la fase del oscilador (siempre en fase, también con glide); 0 lo apaga | `0` | 0–1 |
 |  | `sub_div` | divisor de frecuencia del sub: 2 una octava abajo, 3 una octava y una quinta, 4 dos octavas... | `2` | 1–16 |
-|  | `sub_wave` | forma de onda del sub: cuadrada (con PolyBLEP en sus saltos), triangular o seno | `"square"` | `"square"`, `"tri"` o `"sine"` |
+|  | `sub_wave` | forma de onda del sub: cuadrada (con PolyBLEP en sus saltos), triangular, seno o el pulso estrecho al 25 % del SH-101 (con `sub_div = 4`, dos octavas abajo) | `"square"` | `"square"`, `"tri"`, `"sine"` o `"pulse25"` |
 |  | `sub_pan` | pan del sub, de potencia constante (en el centro suena igual en los dos lados) | `0` | -1–1 |
 |  | `sub_drive` | saturación suave de la suma del oscilador y el sub, antes del filtro (solo con el sub sonando) | `0` | 0–1 |
 | `"subharm"` | `o1` | el primer oscilador de sierra: tabla con `div`, `rdiv`, `pan` y `level` (ver la tabla de capa) | `{ div = 1, level = 1 }` | tabla de capa |

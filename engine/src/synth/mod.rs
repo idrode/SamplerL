@@ -58,10 +58,19 @@ pub enum Wave {
     /// Pulso con el ancho de [`PW`].
     Square,
     Triangle,
+    /// Pulso estrecho, alto un 25 % del periodo (el sub del SH-101), sin
+    /// continua: vale 1,5 y -0,5.
+    Pulse25,
 }
 
 impl Wave {
-    pub const ALL: [Wave; 4] = [Wave::Sine, Wave::Saw, Wave::Square, Wave::Triangle];
+    pub const ALL: [Wave; 5] = [
+        Wave::Sine,
+        Wave::Saw,
+        Wave::Square,
+        Wave::Triangle,
+        Wave::Pulse25,
+    ];
 
     /// Nombre en el script.
     pub fn name(self) -> &'static str {
@@ -70,6 +79,7 @@ impl Wave {
             Wave::Saw => "saw",
             Wave::Square => "square",
             Wave::Triangle => "triangle",
+            Wave::Pulse25 => "pulse25",
         }
     }
 
@@ -82,7 +92,7 @@ impl Wave {
     /// cruza (salta): empieza en 0.
     pub fn zero_phase(self) -> f64 {
         match self {
-            Wave::Sine | Wave::Square => 0.0,
+            Wave::Sine | Wave::Square | Wave::Pulse25 => 0.0,
             Wave::Saw => 0.5,
             Wave::Triangle => 0.75,
         }
@@ -316,7 +326,7 @@ pub struct SubNote {
 }
 
 /// Formas de onda del sub.
-pub const SUB_WAVES: [Wave; 3] = [Wave::Square, Wave::Triangle, Wave::Sine];
+pub const SUB_WAVES: [Wave; 4] = [Wave::Square, Wave::Triangle, Wave::Sine, Wave::Pulse25];
 
 /// Capas de un patch de capas ([`Patch::layers`], el del `subharm`): los
 /// dos osciladores principales y dos subs de cada uno.
@@ -383,7 +393,7 @@ impl SubNote {
             return Err("sub_div va de 1 a 16");
         }
         if self.wave.is_some_and(|w| !SUB_WAVES.contains(&w)) {
-            return Err("sub_wave es square, tri o sine");
+            return Err("sub_wave es square, tri, sine o pulse25");
         }
         Ok(())
     }

@@ -442,7 +442,7 @@ fn sub_block_errors_say_the_line() {
         ),
         (
             "synth(\"acid\", { sub_wave = \"saw\" })",
-            "sub_wave es \"square\", \"tri\" o \"sine\"",
+            "sub_wave es \"square\", \"tri\", \"sine\" o \"pulse25\"",
         ),
         (
             "synth(\"acid\", { sub_div = ramp(1, 4, \"1 compás\") })",
@@ -462,7 +462,7 @@ fn sub_block_errors_say_the_line() {
         ),
         (
             "track(\"b\", synth(\"acid\")):steps(\"1{sub_wave=saw} . . .  . . . .  . . . .  . . . .\")",
-            "sub_wave es square, tri o sine",
+            "sub_wave es square, tri, sine o pulse25",
         ),
     ];
     for (line, expected) in cases {

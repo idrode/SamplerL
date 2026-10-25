@@ -3081,7 +3081,7 @@ fn synth_options(lua: &Lua, kind: &str, table: Option<&Table>) -> mlua::Result<I
                     patch.sub_wave = wave.ok_or_else(|| {
                         fail(
                             lua,
-                            format!("{who}: sub_wave es \"square\", \"tri\" o \"sine\""),
+                            format!("{who}: sub_wave es \"square\", \"tri\", \"sine\" o \"pulse25\""),
                         )
                     })?;
                 }

@@ -2644,10 +2644,10 @@ const SUB_BLOCK: [FxParam; 5] = [
     },
     FxParam {
         name: "sub_wave",
-        description: "forma de onda del sub: cuadrada (con PolyBLEP en sus saltos), triangular o seno",
+        description: "forma de onda del sub: cuadrada (con PolyBLEP en sus saltos), triangular, seno o el pulso estrecho al 25 % del SH-101 (con `sub_div = 4`, dos octavas abajo)",
         default: Some("\"square\""),
-        valid: "`\"square\"`, `\"tri\"` o `\"sine\"`",
-        values: &["square", "tri", "sine"],
+        valid: "`\"square\"`, `\"tri\"`, `\"sine\"` o `\"pulse25\"`",
+        values: &["square", "tri", "sine", "pulse25"],
         template: "sub_wave = \"${tri}\"",
         automate: Auto::No(DISCRETE),
     },

@@ -1,6 +1,6 @@
 //! Osciladores con antialiasing: sierra y cuadrada con PolyBLEP (el salto
 //! de cada periodo se sustituye por un escalón de banda limitada de dos
-//! muestras), triangular con PolyBLAMP (lo mismo con el cambio de
+//! muestras; también el pulso estrecho del sub), triangular con PolyBLAMP (lo mismo con el cambio de
 //! pendiente), seno y ruido blanco.
 //!
 //! La fase va en f64 (de 0 a 1): a 20 Hz y 48 kHz el incremento es 4e-4 y
@@ -55,6 +55,10 @@ pub(crate) fn shape(wave: Wave, t: f64, dt: f64, pw: f64) -> f64 {
             let naive = if t < pw { 1.0 } else { -1.0 };
             let fall = (t - pw).rem_euclid(1.0);
             naive + blep(t, dt) - blep(fall, dt)
+        }
+        Wave::Pulse25 => {
+            // El pulso al 25 % tiene de media -0,5: se le quita.
+            shape(Wave::Square, t, dt, 0.25) + 0.5
         }
         Wave::Triangle => {
             // 1 en t = 0, -1 en t = 0,5: los picos se redondean.
