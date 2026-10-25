@@ -352,62 +352,68 @@ fn frequency(y: &[f32]) -> f64 {
 }
 
 /// Con `res` = 1 el filtro autooscila cerca de su corte: en grave (110
-/// Hz), en medio (1 kHz) y cerca de Nyquist (18 kHz a 48 kHz), con el
-/// error de afinación acotado (y medido, en cents).
+/// Hz), en medio (1 kHz) y cerca de Nyquist (18 kHz a 48 kHz), con
+/// `quality` 1 y 2, con el error de afinación acotado (y medido, en
+/// cents).
 #[test]
 fn the_filter_self_oscillates_at_its_cutoff() {
     let notes = [(0, NoteEvent::new(36.0, HELD))];
     let frames = RATE as usize;
-    for (hz, cents) in [(110.0, 25.0), (1000.0, 25.0), (18_000.0, 100.0)] {
-        let y = left(&synth::render(
-            &ringing(hz),
-            &NO_CURVES,
-            &notes,
-            frames,
-            RATE,
-        ));
-        let tail = &y[frames / 2..];
-        let measured = frequency(tail);
-        let error = 1200.0 * (measured / hz as f64).log2();
-        let level = db(peak(tail) as f64);
-        println!("autooscila a {hz} Hz: {measured:.1} Hz ({error:+.1} cents), {level:.1} dBFS");
-        assert!(error.abs() < cents, "{hz} Hz: {error:+.1} cents");
-        assert!(level > -30.0, "{hz} Hz: no suena ({level:.1} dBFS)");
+    for quality in [1.0, 2.0] {
+        for (hz, cents) in [(110.0, 25.0), (1000.0, 25.0), (18_000.0, 100.0)] {
+            let mut patch = ringing(hz);
+            set(&mut patch, "quality", quality);
+            let y = left(&synth::render(&patch, &NO_CURVES, &notes, frames, RATE));
+            let tail = &y[frames / 2..];
+            let measured = frequency(tail);
+            let error = 1200.0 * (measured / hz as f64).log2();
+            let level = db(peak(tail) as f64);
+            println!(
+                "quality {quality}: autooscila a {hz} Hz: {measured:.1} Hz ({error:+.1} cents), {level:.1} dBFS"
+            );
+            let who = format!("quality {quality}, {hz} Hz");
+            assert!(error.abs() < cents, "{who}: {error:+.1} cents");
+            assert!(level > -30.0, "{who}: no suena ({level:.1} dBFS)");
+        }
     }
 }
 
 /// Ningún NaN ni inf en los extremos: corte en 20 Hz y en 20 kHz (y más
 /// arriba con el teclado y la envolvente), resonancia al máximo, todo el
 /// oscilador, el sub saturado y ruido a la vez, notas muy agudas y muy
-/// graves.
+/// graves; con `quality` 1 y 2.
 #[test]
 fn the_filter_is_stable_at_the_extremes() {
-    for cutoff in [20.0, 20_000.0] {
-        for env in [-1.0, 1.0] {
-            let mut p = open()
-                .with(CUTOFF, cutoff)
-                .with(RESONANCE, 1.0)
-                .with(SUB, 1.0)
-                .with(synth::SUB_DRIVE, 1.0);
-            for (name, value) in [
-                ("pulse", 1.0),
-                ("noise", 1.0),
-                ("kbd", 1.0),
-                ("res_comp", 1.0),
-                ("env_amt", env),
-                ("a", 0.0),
-                ("d", 5.0),
-            ] {
-                set(&mut p, name, value);
+    for quality in [1.0, 2.0] {
+        for cutoff in [20.0, 20_000.0] {
+            for env in [-1.0, 1.0] {
+                let mut p = open()
+                    .with(CUTOFF, cutoff)
+                    .with(RESONANCE, 1.0)
+                    .with(SUB, 1.0)
+                    .with(synth::SUB_DRIVE, 1.0);
+                for (name, value) in [
+                    ("pulse", 1.0),
+                    ("noise", 1.0),
+                    ("kbd", 1.0),
+                    ("res_comp", 1.0),
+                    ("env_amt", env),
+                    ("a", 0.0),
+                    ("d", 5.0),
+                    ("quality", quality),
+                ] {
+                    set(&mut p, name, value);
+                }
+                let notes = [
+                    (0, NoteEvent::new(127.0, 6000)),
+                    (6000, NoteEvent::new(0.0, 6000)),
+                    (12_000, NoteEvent::new(100.0, 6000)),
+                ];
+                let y = synth::render(&p, &NO_CURVES, &notes, 20_000, RATE);
+                let who = format!("quality {quality}, corte {cutoff}, env {env}");
+                assert!(y.iter().all(|v| v.is_finite()), "{who}");
+                assert!(peak(&y) < 4.0, "{who}: {}", peak(&y));
             }
-            let notes = [
-                (0, NoteEvent::new(127.0, 6000)),
-                (6000, NoteEvent::new(0.0, 6000)),
-                (12_000, NoteEvent::new(100.0, 6000)),
-            ];
-            let y = synth::render(&p, &NO_CURVES, &notes, 20_000, RATE);
-            assert!(y.iter().all(|v| v.is_finite()), "corte {cutoff}, env {env}");
-            assert!(peak(&y) < 4.0, "corte {cutoff}, env {env}: {}", peak(&y));
         }
     }
 }
@@ -493,4 +499,71 @@ fn the_sh101_level() {
     println!("sh101: pico {worst:.1} dBFS con todo, {quiet:.1} dBFS por defecto");
     assert!(worst < -1.0, "con todo: {worst:.1} dBFS");
     assert!(quiet > -18.0, "por defecto: {quiet:.1} dBFS");
+}
+
+/// Fracción (en dB) de la energía de `y` que no está en los armónicos de
+/// `f0`: lo que la saturación ha plegado. Cada armónico ocupa ±30 bins
+/// (±22 Hz): el barrido los ensancha.
+fn inharmonic_db(y: &[f32], f0: f64) -> f64 {
+    use rustfft::{FftPlanner, num_complex::Complex};
+    let n = y.len();
+    let mut buf: Vec<Complex<f64>> = y
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| {
+            let x = std::f64::consts::TAU * i as f64 / n as f64;
+            let w =
+                0.35875 - 0.48829 * x.cos() + 0.14128 * (2.0 * x).cos() - 0.01168 * (3.0 * x).cos();
+            Complex::new(v as f64 * w, 0.0)
+        })
+        .collect();
+    FftPlanner::new().plan_fft_forward(n).process(&mut buf);
+    let bin = RATE as f64 / n as f64;
+    let (mut total, mut off) = (0.0, 0.0);
+    for (i, c) in buf[1..n / 2].iter().enumerate() {
+        let hz = (i + 1) as f64 * bin;
+        let p = c.norm_sqr();
+        total += p;
+        let nearest = (hz / f0).round() * f0;
+        if (hz - nearest).abs() > 30.0 * bin {
+            off += p;
+        }
+    }
+    10.0 * (off / total).log10()
+}
+
+/// Con `quality` 2 el filtro pliega menos: un barrido del corte de 500 Hz a
+/// 12 kHz con la resonancia alta y la entrada caliente (sierra, pulso y
+/// la compensación de graves, que la satura) en una nota de 2,3 kHz deja
+/// menos energía fuera de los armónicos que con 1 (medido: -25,1 dB con 1
+/// y -32,8 con 2).
+#[test]
+fn quality_2_aliases_less_than_1() {
+    let frames = 1 << 16;
+    let note = 69.0 + 12.0 * (2345.6f32 / 440.0).log2();
+    // La altura exacta de la nota en f32.
+    let f0 = 440.0 * ((note as f64 - 69.0) / 12.0).exp2();
+    let mut curves = NO_CURVES;
+    curves[CUTOFF] = Some(engine::Curve::Ramp {
+        from: 500.0,
+        to: 12_000.0,
+        steps: 10.0,
+    });
+    let skip = RATE as usize / 10;
+    let alias = |quality: f32| {
+        let mut patch = open().with(RESONANCE, 0.9);
+        for (name, value) in [("pulse", 1.0), ("pw", 0.3), ("res_comp", 1.0), ("s", 1.0)] {
+            set(&mut patch, name, value);
+        }
+        set(&mut patch, "quality", quality);
+        let notes = [(0, NoteEvent::new(note, HELD))];
+        let y = left(&synth::render(&patch, &curves, &notes, skip + frames, RATE));
+        inharmonic_db(&y[skip..], f0)
+    };
+    let (one, two) = (alias(1.0), alias(2.0));
+    println!("energía fuera de los armónicos: quality 1 {one:.1} dB, quality 2 {two:.1} dB");
+    assert!(
+        two < one - 5.0,
+        "quality 1 {one:.1} dB, quality 2 {two:.1} dB"
+    );
 }

@@ -27,6 +27,9 @@ pub enum Target {
     /// El paso alto de la voz analógica ([`super::Analog::hpf`]): un
     /// entero.
     Hpf,
+    /// El sobremuestreo del filtro de la voz analógica
+    /// ([`super::Analog::quality`]): 1 o 2.
+    Quality,
 }
 
 /// Un parámetro de un preset: su nombre, adónde va, cuánto se multiplica
@@ -62,6 +65,11 @@ impl PresetParam {
                     analog.hpf = value.round() as u8;
                 }
             }
+            Target::Quality => {
+                if let Some(analog) = &mut patch.analog {
+                    analog.quality = value.round() as u8;
+                }
+            }
         }
     }
 
@@ -76,6 +84,7 @@ impl PresetParam {
             Target::SubDiv => patch.sub_div as f32,
             Target::Voices => patch.voices as f32,
             Target::Hpf => patch.analog.map_or(0.0, |a| a.hpf as f32),
+            Target::Quality => patch.analog.map_or(1.0, |a| a.quality as f32),
         };
         value / self.scale
     }

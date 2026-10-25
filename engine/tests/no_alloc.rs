@@ -1256,65 +1256,76 @@ fn the_audio_thread_never_allocates() {
     controller.collect_garbage();
     let _ = controller.midi_events().count();
 
-    // Un sh101: notas ligadas y separadas, el sub en pulso al 25 %, ruido
-    // y pulso; luego teclas en vivo que se ligan y vuelven a la anterior.
-    let mut sh = engine::synth::sh101::patch(36.0)
-        .with(engine::synth::SUB, 0.6)
-        .with(engine::synth::RESONANCE, 0.9);
-    for (name, value) in [("pulse", 0.5), ("noise", 0.2), ("glide", 60.0)] {
-        engine::synth::sh101::param(name)
+    // Un sh101, con el filtro a la frecuencia del motor y al doble: notas
+    // ligadas y separadas, el sub en pulso al 25 %, ruido y pulso; luego
+    // teclas en vivo que se ligan y vuelven a la anterior.
+    for quality in [1.0, 2.0] {
+        let mut sh = engine::synth::sh101::patch(36.0)
+            .with(engine::synth::SUB, 0.6)
+            .with(engine::synth::RESONANCE, 0.9);
+        for (name, value) in [
+            ("pulse", 0.5),
+            ("noise", 0.2),
+            ("glide", 60.0),
+            ("quality", quality),
+        ] {
+            engine::synth::sh101::param(name)
+                .unwrap()
+                .set(&mut sh, value);
+        }
+        sh.sub_div = 4;
+        sh.sub_wave = engine::synth::Wave::Pulse25;
+        sh.analog.as_mut().unwrap().glide = engine::synth::GlideMode::Auto;
+        let sh_steps: Vec<Option<Step>> = (0..STEPS)
+            .map(|k| {
+                let step = Step::new(0).with_pitch([0.0, 12.0, 7.0, 3.0][k % 4]);
+                Some(if k % 4 == 1 { step.slid() } else { step })
+            })
+            .collect();
+        let mut sweep = [None; engine::synth::PARAM_COUNT];
+        sweep[engine::synth::CUTOFF] = Some(engine::Curve::Ramp {
+            from: 100.0,
+            to: 18_000.0,
+            steps: 16.0,
+        });
+        let pattern = Pattern::from_steps(silence.clone(), &one, sh_steps)
             .unwrap()
-            .set(&mut sh, value);
-    }
-    sh.sub_div = 4;
-    sh.sub_wave = engine::synth::Wave::Pulse25;
-    sh.analog.as_mut().unwrap().glide = engine::synth::GlideMode::Auto;
-    let sh_steps: Vec<Option<Step>> = (0..STEPS)
-        .map(|k| {
-            let step = Step::new(0).with_pitch([0.0, 12.0, 7.0, 3.0][k % 4]);
-            Some(if k % 4 == 1 { step.slid() } else { step })
-        })
-        .collect();
-    let mut sweep = [None; engine::synth::PARAM_COUNT];
-    sweep[engine::synth::CUTOFF] = Some(engine::Curve::Ramp {
-        from: 100.0,
-        to: 18_000.0,
-        steps: 16.0,
-    });
-    let pattern = Pattern::from_steps(silence.clone(), &one, sh_steps)
-        .unwrap()
-        .with_synth(Some(sh), sweep)
-        .unwrap();
-    controller.set_track_pattern(3, Some(pattern)).unwrap();
-    let n = counted(|| {
-        for _ in 0..400 {
-            engine.process(&mut out, 2);
-        }
-    });
-    assert_eq!(n, 0, "reservas con un sh101");
-    // (La pista 3 aún suelta las voces del subharm.)
-    assert!(controller.status().tracks[3].voices >= 1, "el sh101 suena");
-    controller.set_track_pattern(3, None).unwrap();
-    for key in 0..20 {
-        controller
-            .synth_note_on(7, sh, key as f32, 0.8, key)
+            .with_synth(Some(sh), sweep)
             .unwrap();
-    }
-    let n = counted(|| {
-        for _ in 0..100 {
-            engine.process(&mut out, 2);
+        controller.set_track_pattern(3, Some(pattern)).unwrap();
+        let n = counted(|| {
+            for _ in 0..400 {
+                engine.process(&mut out, 2);
+            }
+        });
+        assert_eq!(n, 0, "reservas con un sh101 (quality {quality})");
+        // (La pista 3 aún suelta las voces del subharm.)
+        assert!(controller.status().tracks[3].voices >= 1, "el sh101 suena");
+        controller.set_track_pattern(3, None).unwrap();
+        for key in 0..20 {
+            controller
+                .synth_note_on(7, sh, key as f32, 0.8, key)
+                .unwrap();
         }
-    });
-    for key in (0..20).rev() {
-        controller.note_off(7, key).unwrap();
-    }
-    let n = n + counted(|| {
-        for _ in 0..200 {
-            engine.process(&mut out, 2);
+        let n = counted(|| {
+            for _ in 0..100 {
+                engine.process(&mut out, 2);
+            }
+        });
+        for key in (0..20).rev() {
+            controller.note_off(7, key).unwrap();
         }
-    });
-    assert_eq!(n, 0, "reservas con notas en vivo del sh101");
-    controller.collect_garbage();
+        let n = n + counted(|| {
+            for _ in 0..200 {
+                engine.process(&mut out, 2);
+            }
+        });
+        assert_eq!(
+            n, 0,
+            "reservas con notas en vivo del sh101 (quality {quality})"
+        );
+        controller.collect_garbage();
+    }
 
     // Rampa de tempo y cambio de compás.
     controller

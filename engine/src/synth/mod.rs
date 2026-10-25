@@ -520,6 +520,9 @@ pub struct Analog {
     /// Paso alto tras el filtro: 0 apagado, 1 a 3 los cortes de
     /// [`HPF_HZ`].
     pub hpf: u8,
+    /// Sobremuestreo del filtro: 1, a la frecuencia del motor (tras el
+    /// diezmado de los osciladores); 2, al doble, antes del diezmado.
+    pub quality: u8,
 }
 
 impl Analog {
@@ -527,12 +530,16 @@ impl Analog {
         glide: GlideMode::Off,
         vca: VcaMode::Env,
         hpf: 0,
+        quality: 2,
     };
 
     /// Comprueba los rangos.
     pub fn validate(&self) -> Result<(), &'static str> {
         if self.hpf as usize > HPF_HZ.len() {
             return Err("hpf va de 0 a 3");
+        }
+        if !(1..=2).contains(&self.quality) {
+            return Err("quality es 1 o 2");
         }
         Ok(())
     }
@@ -1396,6 +1403,26 @@ impl Voice {
             } else {
                 0.0
             };
+            // Una envolvente para el filtro y el VCA (o la puerta, que usa
+            // el estado de la envolvente de filtro, aquí libre).
+            let env = self.amp.next(&b.amp);
+            let vca = match analog.vca {
+                VcaMode::Env => env,
+                VcaMode::Gate => self.fenv.next(&b.gate),
+            };
+            // El corte: el suyo, la envolvente y el teclado (desde la
+            // raíz), como mucho el 45 % de la frecuencia de muestreo
+            // también al doble (los dos modos afinan igual).
+            let octaves = log_from
+                + (log_to - log_from) * t
+                + p(ENV_AMOUNT) * env
+                + p(KBD) * (self.pitch - patch.root) / 12.0;
+            let cutoff = octaves.exp2().min(0.45 * b.sample_rate);
+            let (res, comp) = (p(RESONANCE), p(RES_COMP));
+            // Con `quality` 2, el filtro va al doble, antes del diezmado:
+            // lo que su saturación pliega queda por encima de lo audible.
+            let twice = analog.quality == 2;
+            let g = warp(cutoff, if twice { 2.0 } else { 1.0 } * b.sample_rate);
             let (saw, pulse, noise) = (p(SAW), p(PULSE), p(NOISE));
             let pw = (p(PW) as f64).clamp(0.05, 0.95);
             let dt = 0.5 * self.dt;
@@ -1421,6 +1448,12 @@ impl Voice {
                     l = soft(gain * l) * post;
                     r = soft(gain * r) * post;
                 }
+                if twice {
+                    l = self.filter[0].analog.next(l, g, res, comp);
+                    if stereo {
+                        r = self.filter[1].analog.next(r, g, res, comp);
+                    }
+                }
                 self.down[0].push(l);
                 if stereo {
                     self.down[1].push(r);
@@ -1428,23 +1461,12 @@ impl Voice {
             }
             let l = self.down[0].output();
             let r = if stereo { self.down[1].output() } else { l };
-            // Una envolvente para el filtro y el VCA (o la puerta, que usa
-            // el estado de la envolvente de filtro, aquí libre).
-            let env = self.amp.next(&b.amp);
-            let vca = match analog.vca {
-                VcaMode::Env => env,
-                VcaMode::Gate => self.fenv.next(&b.gate),
-            };
-            // El corte: el suyo, la envolvente y el teclado (desde la
-            // raíz).
-            let octaves = log_from
-                + (log_to - log_from) * t
-                + p(ENV_AMOUNT) * env
-                + p(KBD) * (self.pitch - patch.root) / 12.0;
-            let g = warp(octaves.exp2(), b.sample_rate);
-            let (res, comp) = (p(RESONANCE), p(RES_COMP));
             let filter = |f: &mut Filter, x: f32| {
-                let y = f.analog.next(x, g, res, comp);
+                let y = if twice {
+                    x
+                } else {
+                    f.analog.next(x, g, res, comp)
+                };
                 match hp {
                     Some(big_g) => f.hp.next(y, big_g),
                     None => y,

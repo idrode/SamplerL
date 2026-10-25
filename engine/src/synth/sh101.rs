@@ -25,9 +25,9 @@ pub const LEVEL: f32 = 0.8;
 pub const ENV_OCTAVES: f32 = 6.0;
 
 /// Los suyos y los del bloque sub ([`super::preset::SUB_BLOCK`]).
-pub const PARAMS: [PresetParam; 19] = with_sub_block(OWN);
+pub const PARAMS: [PresetParam; 20] = with_sub_block(OWN);
 
-const OWN: [PresetParam; 15] = [
+const OWN: [PresetParam; 16] = [
     PresetParam {
         name: "saw",
         target: Target::Param(SAW),
@@ -99,6 +99,14 @@ const OWN: [PresetParam; 15] = [
         min: 0.0,
         max: 3.0,
         default: 0.0,
+    },
+    PresetParam {
+        name: "quality",
+        target: Target::Quality,
+        scale: 1.0,
+        min: 1.0,
+        max: 2.0,
+        default: 2.0,
     },
     PresetParam {
         name: "env_amt",

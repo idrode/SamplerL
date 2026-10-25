@@ -545,6 +545,31 @@ fn cpu_cost_of_eight_voices_with_unison_of_seven() {
         100.0 * acid_took / seconds as f64,
         100.0 * sub_took / seconds as f64
     );
+    // El sh101 con todo sonando (sierra, pulso, sub, ruido, resonancia y
+    // paso alto), con el filtro a la frecuencia del motor y al doble.
+    for quality in [1.0, 2.0] {
+        let mut sh = synth::sh101::patch(36.0).with(SUB, 0.7);
+        for (name, value) in [("pulse", 0.5), ("noise", 0.1), ("res", 0.8), ("hpf", 1.0)] {
+            synth::sh101::param(name).unwrap().set(&mut sh, value);
+        }
+        synth::sh101::param("s").unwrap().set(&mut sh, 1.0);
+        synth::sh101::param("quality")
+            .unwrap()
+            .set(&mut sh, quality);
+        let started = Instant::now();
+        let _ = synth::render(
+            &sh,
+            &NO_CURVES,
+            &[(0, NoteEvent::new(36.0, HELD))],
+            frames,
+            RATE,
+        );
+        let took = started.elapsed().as_secs_f64();
+        println!(
+            "sh101, quality {quality}: {:.2} % de un núcleo",
+            100.0 * took / seconds as f64
+        );
+    }
     println!(
         "memoria: {} KiB por pista ({} KiB las 8 pistas), reservada al crear el motor",
         std::mem::size_of::<synth::Synth>() / 1024,
