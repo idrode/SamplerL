@@ -17,7 +17,7 @@ use crate::instrument::Instrument;
 use crate::sample::Sample;
 use crate::slice::Slices;
 use crate::slice_fx::SliceFx;
-use crate::synth::{Patch, SynthCurves};
+use crate::synth::{Patch, SubNote, SynthCurves};
 
 /// Pasos por compás (semicorcheas en 4/4) y longitud por defecto de un
 /// patrón.
@@ -84,6 +84,9 @@ pub struct Step {
     /// Slide (`1/`): en un sintetizador, la nota llega ligada desde la
     /// anterior (glide, sin volver a disparar las envolventes).
     pub slide: bool,
+    /// Lo que cambia del sub de su nota (`1{sub=0.5,sub_div=3}`; solo en
+    /// un sintetizador).
+    pub sub: Option<SubNote>,
 }
 
 impl Step {
@@ -102,6 +105,7 @@ impl Step {
             fx: None,
             accent: false,
             slide: false,
+            sub: None,
         }
     }
 
@@ -213,9 +217,10 @@ pub(crate) struct Trigger {
     /// Paso de la canción en que cae el golpe (lo pone el motor al
     /// dispararlo): ahí empiezan las rampas de golpe.
     pub origin: f64,
-    /// Accent y slide (solo en un sintetizador).
+    /// Accent, slide y el sub de la nota (solo en un sintetizador).
     pub accent: bool,
     pub slide: bool,
+    pub sub: Option<SubNote>,
 }
 
 /// Patrón de una pista. Los pasos se resuelven a rangos de frames y
@@ -797,6 +802,9 @@ fn resolve_bar(
                 "nota del acorde fuera de rango (-36 a 36 semitonos)",
             ));
         }
+        if let Some(sub) = &step.sub {
+            sub.validate().map_err(invalid)?;
+        }
         if step.hold as usize >= MAX_STEPS {
             return Err(invalid("golpe alargado (_) más que el patrón más largo"));
         }
@@ -838,6 +846,7 @@ fn resolve_bar(
             origin: 0.0,
             accent: step.accent,
             slide: step.slide,
+            sub: step.sub,
         }));
     }
     Ok(())

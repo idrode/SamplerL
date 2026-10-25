@@ -6,7 +6,7 @@
 //! lo hacen oír en altavoces pequeños sin ensuciarlo por arriba. Es solo
 //! una forma de llenar un [`Patch`] del núcleo ([`PRESET`]).
 
-use super::preset::{Preset, PresetParam, Target, defaults};
+use super::preset::{Preset, PresetParam, Target, defaults, with_sub_block};
 use super::{Accent, CUTOFF, FilterMode, GLIDE, PRE_DRIVE, Patch, RESONANCE, Wave};
 use crate::Adsr;
 
@@ -15,7 +15,10 @@ use crate::Adsr;
 /// `engine/tests/synth.rs`).
 pub const LEVEL: f32 = 0.5;
 
-pub const PARAMS: [PresetParam; 5] = [
+/// Los suyos y los del bloque sub ([`super::preset::SUB_BLOCK`]).
+pub const PARAMS: [PresetParam; 9] = with_sub_block(OWN);
+
+const OWN: [PresetParam; 5] = [
     PresetParam {
         name: "tone",
         target: Target::Param(CUTOFF),
@@ -103,6 +106,8 @@ pub fn patch(root: f32) -> Patch {
         seed: 0,
         level: LEVEL,
         zero_phase: true,
+        sub_div: 2,
+        sub_wave: Wave::Square,
         params: super::PARAMS.map(|p| p.default),
     };
     patch.params[RESONANCE] = 0.0;

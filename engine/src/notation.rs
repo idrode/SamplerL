@@ -38,6 +38,7 @@ use std::fmt;
 
 use crate::sequencer::{MAX_CHORD, MAX_STEPS, STEPS, Step};
 use crate::slice_fx::SliceFx;
+use crate::synth::SubNote;
 
 /// Un efecto escrito en un paso (`{lp=800,q=4}`), tal como se escribió.
 #[derive(Debug, Clone, PartialEq)]
@@ -64,9 +65,21 @@ pub enum FxValue {
     Word(String),
 }
 
-/// Quien sabe convertir los efectos escritos en un paso en una cadena (el
-/// script, con el registro de la API).
-pub type FxResolver<'a> = &'a dyn Fn(&[WrittenFx]) -> Result<SliceFx, String>;
+/// Lo que dicen las llaves de un paso: efectos (en una pista de cortes) o
+/// lo que cambia del sub de la nota (en un sintetizador:
+/// `{sub=0.5,sub_div=3}`).
+// Solo vive en el hilo de control, mientras se lee un patrón: el tamaño de
+// la cadena de efectos no importa.
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, Clone, PartialEq)]
+pub enum StepBraces {
+    Fx(SliceFx),
+    Sub(SubNote),
+}
+
+/// Quien sabe convertir lo escrito entre las llaves de un paso (el script,
+/// con el registro de la API).
+pub type FxResolver<'a> = &'a dyn Fn(&[WrittenFx]) -> Result<StepBraces, String>;
 
 /// Los pasos de un patrón: columnas (en caracteres) de inicio y fin de
 /// cada uno, separados por espacios que no estén dentro de llaves.
@@ -428,7 +441,10 @@ pub fn parse_step_with(
         let resolve = fx.ok_or(
             "las llaves ({...}) solo valen en steps(\"...\") de una pista de cortes, en un script",
         )?;
-        step.fx = Some(resolve(&written)?);
+        match resolve(&written)? {
+            StepBraces::Fx(chain) => step.fx = Some(chain),
+            StepBraces::Sub(sub) => step.sub = Some(sub),
+        }
     }
     Ok(Some(step))
 }

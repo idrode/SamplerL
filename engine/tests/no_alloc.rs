@@ -2,7 +2,7 @@
 //! asignador global cuenta las reservas que hace este hilo mientras corre
 //! `Engine::process`, con retrasos (swing, humanize), retrigger, pitch,
 //! instrumentos (polifonía, ADSR, bucles), el EQ (suavizado y automatizado),
-//! el EQ dinámico con sidechain, efectos por corte (con sus colas), bucles de corte con fundido, nubes de granos en vivo, sintetizadores (mono con accent y slide, polifónicos con unison, curvas y notas en vivo), cambios de
+//! el EQ dinámico con sidechain, efectos por corte (con sus colas), bucles de corte con fundido, nubes de granos en vivo, sintetizadores (mono con accent, slide y el sub de cada nota, polifónicos con unison y sub abierto, curvas y notas en vivo), cambios de
 //! patrón al compás, un patrón que se suelta a la cola de basura y el paso
 //! de cada pista y el retardo de salida que se publican para la interfaz.
 
@@ -1109,7 +1109,17 @@ fn the_audio_thread_never_allocates() {
     let acid_steps: Vec<Option<Step>> = (0..STEPS)
         .map(|k| {
             let step = Step::new(0).with_pitch([0.0, 12.0, 3.0, -5.0][k % 4]);
-            let step = if k % 3 == 0 { step.accented() } else { step };
+            let mut step = if k % 3 == 0 { step.accented() } else { step };
+            // El sub de algunas notas: nivel, divisor, forma y pan.
+            if k % 4 == 2 {
+                step.sub = Some(engine::synth::SubNote {
+                    level: Some(0.7),
+                    div: Some(3),
+                    wave: Some(engine::synth::Wave::Sine),
+                    pan: Some(-0.5),
+                    drive: Some(0.4),
+                });
+            }
             Some(if k % 4 == 1 { step.slid() } else { step })
         })
         .collect();
@@ -1131,7 +1141,11 @@ fn the_audio_thread_never_allocates() {
         .with(engine::synth::DETUNE, 20.0)
         .with(engine::synth::SPREAD, 0.7)
         .with(engine::synth::NOISE, 0.1)
-        .with(engine::synth::SUB, 0.3);
+        .with(engine::synth::SUB, 0.3)
+        .with(engine::synth::SUB_PAN, 0.6)
+        .with(engine::synth::SUB_DRIVE, 0.3);
+    poly.sub_div = 3;
+    poly.sub_wave = engine::synth::Wave::Triangle;
     poly.unison = 7;
     poly.voices = 8;
     poly.filter = engine::synth::FilterMode::Ladder;

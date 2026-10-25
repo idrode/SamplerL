@@ -577,3 +577,196 @@ fn the_acid_leaves_headroom() {
     assert!(worst < -1.0, "con accent: {worst:.1} dBFS");
     assert!(plain > -18.0, "sin accent: {plain:.1} dBFS");
 }
+
+/// Un seno sin filtro que oiga, mono, que empieza en el cero, con su sub
+/// (seno) al nivel `level` y dividido por `div`.
+fn with_sub(level: f32, div: u8, wave: Wave) -> Patch {
+    let mut p = raw(Wave::Sine).with(synth::SUB, level);
+    p.zero_phase = true;
+    p.mono = true;
+    p.voices = 1;
+    p.sub_div = div;
+    p.sub_wave = wave;
+    p
+}
+
+/// Lo que aporta el sub: la diferencia entre el patch con él y sin él (el
+/// paso alto sin resonancia es lineal: la suma se separa).
+fn sub_alone(patch: &Patch, notes: &[(usize, NoteEvent)], frames: usize) -> Vec<f32> {
+    let off = Patch {
+        params: {
+            let mut p = patch.params;
+            p[synth::SUB] = 0.0;
+            p
+        },
+        ..*patch
+    };
+    let on = synth::render(patch, &NO_CURVES, notes, frames, RATE);
+    let off = synth::render(&off, &NO_CURVES, notes, frames, RATE);
+    on.iter().zip(&off).map(|(a, b)| a - b).collect()
+}
+
+/// Cruces por cero hacia arriba de `y`.
+fn ups(y: &[f32]) -> usize {
+    y.windows(2).filter(|w| w[0] <= 0.0 && w[1] > 0.0).count()
+}
+
+/// Con `sub_div = n`, el sub suena a f/n: cuenta sus cruces por cero.
+#[test]
+fn the_sub_sounds_at_f_over_div() {
+    let frames = 2 * RATE as usize;
+    let notes = [(0, NoteEvent::new(69.0, HELD))];
+    for div in [1, 2, 3, 5, 7, 16] {
+        for wave in [Wave::Sine, Wave::Square] {
+            let sub = left(&sub_alone(&with_sub(0.8, div, wave), &notes, frames));
+            // Un segundo, pasado el ataque: 440/n ciclos.
+            let second = &sub[RATE as usize / 2..RATE as usize / 2 + RATE as usize];
+            let expected = 440.0 / div as f64;
+            let measured = ups(second) as f64;
+            assert!(
+                (measured - expected).abs() <= 1.0,
+                "sub_div {div} ({wave:?}): {measured} ciclos en un segundo, no {expected:.1}"
+            );
+        }
+    }
+}
+
+/// Con glide (de A3 a A4 en 300 ms), el sub sigue al oscilador: cuelga de
+/// su fase, así que en cada trozo hace exactamente 1/n de sus ciclos.
+#[test]
+fn the_sub_follows_the_glide() {
+    let mut patch = with_sub(0.8, 3, Wave::Sine).with(synth::GLIDE, 300.0);
+    patch.amp.release_ms = 5.0;
+    let mut second = NoteEvent::new(69.0, HELD);
+    second.slide = true;
+    let notes = [(0, NoteEvent::new(57.0, HELD)), (12_000, second)];
+    let frames = RATE as usize * 3 / 2;
+    let sub = left(&sub_alone(&patch, &notes, frames));
+    let main = {
+        let mut off = patch;
+        off.params[synth::SUB] = 0.0;
+        left(&synth::render(&off, &NO_CURVES, &notes, frames, RATE))
+    };
+    let window = 12_000..frames;
+    let (m, s) = (ups(&main[window.clone()]), ups(&sub[window]));
+    assert!(m.abs_diff(3 * s) <= 3, "oscilador {m} ciclos, sub {s}");
+}
+
+/// Con `sub = 0`, nada del sub cambia nada: el divisor, la forma, el pan y
+/// su saturación dan el mismo audio bit a bit que el patch por defecto.
+#[test]
+fn a_silent_sub_changes_nothing() {
+    let notes = [
+        (0, NoteEvent::new(45.0, 20_000)),
+        (24_000, NoteEvent::new(52.0, 9000)),
+    ];
+    for base in [acid::patch(36.0), synth::sub::patch(24.0), Patch::new()] {
+        let mut odd = base
+            .with(synth::SUB, 0.0)
+            .with(synth::SUB_PAN, 0.8)
+            .with(synth::SUB_DRIVE, 0.9);
+        odd.sub_div = 7;
+        odd.sub_wave = Wave::Sine;
+        let a = synth::render(&base, &NO_CURVES, &notes, 40_000, RATE);
+        let b = synth::render(&odd, &NO_CURVES, &notes, 40_000, RATE);
+        assert!(a.iter().zip(&b).all(|(x, y)| x.to_bits() == y.to_bits()));
+    }
+}
+
+/// El pan del sub es de potencia constante: L² + R² no cambia al moverlo
+/// (y en el centro, los dos lados como sin pan).
+#[test]
+fn the_sub_pan_keeps_its_power() {
+    let notes = [(0, NoteEvent::new(45.0, HELD))];
+    let power = |pan: f32| {
+        let patch = with_sub(0.8, 2, Wave::Sine).with(synth::SUB_PAN, pan);
+        let sub = sub_alone(&patch, &notes, RATE as usize);
+        let tail = &sub[RATE as usize / 2..];
+        let (mut l, mut r) = (0.0f64, 0.0f64);
+        for f in tail.chunks(2) {
+            l += (f[0] as f64).powi(2);
+            r += (f[1] as f64).powi(2);
+        }
+        (l, r)
+    };
+    let (cl, cr) = power(0.0);
+    assert!((cl / cr - 1.0).abs() < 1e-6);
+    for pan in [-1.0, -0.6, -0.2, 0.3, 0.7, 1.0] {
+        let (l, r) = power(pan);
+        let total = (l + r) / (cl + cr);
+        assert!((total - 1.0).abs() < 0.01, "pan {pan}: potencia {total:.4}");
+        assert_eq!(l > r, pan < 0.0, "pan {pan}");
+    }
+    let (l, r) = power(1.0);
+    assert!(l < 1e-6 * r, "a la derecha del todo, nada a la izquierda");
+}
+
+/// Una nota con sub y la siguiente (pegada, en la misma voz) sin él: el
+/// nivel se suaviza, sin salto (no más que el de la nota sola, con un 20 %
+/// de margen). Y abrir el pan del sub a media nota tampoco salta.
+#[test]
+fn sub_changes_between_notes_do_not_click() {
+    let patch = with_sub(0.0, 2, Wave::Sine);
+    let mut loud = NoteEvent::new(45.0, 6000);
+    loud.sub = synth::SubNote {
+        level: Some(1.0),
+        ..Default::default()
+    };
+    let mut quiet = NoteEvent::new(45.0, 6000);
+    quiet.sub = synth::SubNote {
+        level: Some(0.0),
+        pan: Some(0.0),
+        ..Default::default()
+    };
+    let mut wide = NoteEvent::new(45.0, 6000);
+    wide.sub = synth::SubNote {
+        level: Some(1.0),
+        pan: Some(-1.0),
+        ..Default::default()
+    };
+    let notes = [(0, loud), (6000, quiet), (12_000, loud), (18_000, wide)];
+    let out = synth::render(&patch, &NO_CURVES, &notes, 24_000, RATE);
+    let steady = {
+        let only = [(0, loud)];
+        let y = synth::render(&patch, &NO_CURVES, &only, 6000, RATE);
+        max_step(&left(&y)[1000..])
+    };
+    for channel in [0, 1] {
+        let y: Vec<f32> = out.iter().skip(channel).step_by(2).copied().collect();
+        // En el pan abierto, la izquierda sube hasta √2.
+        let margin = if channel == 0 { 1.5 } else { 1.2 };
+        let step = max_step(&y[1000..]);
+        assert!(
+            step < margin * steady,
+            "canal {channel}: salto {step} (la nota sola, {steady})"
+        );
+    }
+}
+
+/// La cuadrada del sub lleva PolyBLEP en sus saltos: un sub de 2 kHz (una
+/// nota de 4 kHz dividida por 2) queda por debajo de -50 dB de aliasing
+/// (medido: -56).
+#[test]
+fn the_square_sub_is_band_limited() {
+    let rate = 44_100;
+    let frames = 1 << 16;
+    let patch = with_sub(1.0, 2, Wave::Square);
+    let notes = [(0, NoteEvent::new(midi(4000.0), HELD))];
+    let skip = rate as usize / 4;
+    let sub: Vec<f32> = {
+        let off = Patch {
+            params: {
+                let mut p = patch.params;
+                p[synth::SUB] = 0.0;
+                p
+            },
+            ..patch
+        };
+        let on = synth::render(&patch, &NO_CURVES, &notes, skip + frames, rate);
+        let off = synth::render(&off, &NO_CURVES, &notes, skip + frames, rate);
+        on.iter().zip(&off).map(|(a, b)| a - b).step_by(2).collect()
+    };
+    let alias = worst_alias(&sub[skip..], 2000.0, rate);
+    println!("sub cuadrado a 2 kHz: {alias:.1} dB");
+    assert!(alias < -50.0, "{alias:.1} dB");
+}

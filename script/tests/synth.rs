@@ -392,3 +392,101 @@ fn the_sub_sounds_like_the_engine() {
     assert!(direct.iter().any(|v| v.abs() > 0.1), "no suena");
     assert!(scripted == direct, "el script no suena como el motor");
 }
+
+/// El bloque sub: en la tabla de cualquier synth (con curvas en lo
+/// continuo) y por paso entre llaves, que manda sobre la tabla en su nota.
+#[test]
+fn the_sub_block_in_the_table_and_per_step() {
+    let song = song_ok(
+        "local bass = synth(\"acid\", {\n\
+           sub = lfo(\"4 pasos\", 0, 0.8), sub_div = 3, sub_wave = \"tri\",\n\
+           sub_pan = -0.4, sub_drive = 0.2,\n\
+         })\n\
+         track(\"bass\", bass)\n\
+           :melody(\"c c{sub=0} eb{sub=0.9,sub_div=2}{sub_wave=sine} .  . . . .  . . . .  . . . .\")",
+    );
+    let def = song.tracks[0].instrument.unwrap().synth.unwrap();
+    assert_eq!(def.patch.sub_div, 3);
+    assert_eq!(def.patch.sub_wave, synth::Wave::Triangle);
+    assert_eq!(def.patch.params[synth::SUB_PAN], -0.4);
+    assert!(def.curves[synth::SUB].is_some());
+    let bar = &song.tracks[0].bars[0];
+    assert_eq!(bar[0].unwrap().sub, None);
+    assert_eq!(bar[1].unwrap().sub.unwrap().level, Some(0.0));
+    let third = bar[2].unwrap().sub.unwrap();
+    assert_eq!(
+        (third.level, third.div, third.wave),
+        (Some(0.9), Some(2), Some(synth::Wave::Sine))
+    );
+    // Con el sub, suena distinto que sin él.
+    let plain =
+        song_ok("track(\"bass\", synth(\"acid\")):melody(\"c c eb .  . . . .  . . . .  . . . .\")");
+    assert_ne!(
+        song.render(RATE, 1).unwrap(),
+        plain.render(RATE, 1).unwrap()
+    );
+}
+
+/// Lo que no vale del bloque sub dice la línea.
+#[test]
+fn sub_block_errors_say_the_line() {
+    let cases = [
+        (
+            "synth(\"acid\", { sub = 2 })",
+            "sub = 2 fuera de rango (0 a 1)",
+        ),
+        ("synth(\"acid\", { sub_div = 2.5 })", "sub_div es un entero"),
+        (
+            "synth(\"acid\", { sub_div = 17 })",
+            "fuera de rango (1 a 16)",
+        ),
+        (
+            "synth(\"acid\", { sub_wave = \"saw\" })",
+            "sub_wave es \"square\", \"tri\" o \"sine\"",
+        ),
+        (
+            "synth(\"acid\", { sub_div = ramp(1, 4, \"1 compás\") })",
+            "sub_div no admite ramp() ni lfo()",
+        ),
+        (
+            "track(\"b\", synth(\"acid\")):steps(\"1{sub_div=2.5} . . .  . . . .  . . . .  . . . .\")",
+            "sub_div es un entero de 1 a 16",
+        ),
+        (
+            "track(\"b\", synth(\"acid\")):steps(\"1{sub=0.5,lp=800} . . .  . . . .  . . . .  . . . .\")",
+            "el sub de la nota va en sus propias llaves",
+        ),
+        (
+            "track(\"b\", synth(\"acid\")):steps(\"1{sub=0>1} . . .  . . . .  . . . .  . . . .\")",
+            "sub no admite rampas",
+        ),
+        (
+            "track(\"b\", synth(\"acid\")):steps(\"1{sub_wave=saw} . . .  . . . .  . . . .  . . . .\")",
+            "sub_wave es square, tri o sine",
+        ),
+    ];
+    for (line, expected) in cases {
+        let Err(err) = song(&format!("local x = 1\n{line}")) else {
+            panic!("{line}: debería fallar");
+        };
+        assert!(err.contains("song.lua:3:"), "{line}: {err}");
+        assert!(err.contains(expected), "{line}: {err}");
+    }
+    // En una pista de cortes, el sub de un paso no vale.
+    let dir = std::env::temp_dir();
+    let wav = dir.join("sub-block-errors.wav");
+    offline::write_wav(&wav, &vec![0.25f32; 4800], 1, RATE).unwrap();
+    let (mut controller, _engine) = new_engine(RATE);
+    let mut host = ScriptHost::new(RATE);
+    let source = "bpm(120)\nlocal s = sample(\"sub-block-errors.wav\"):slice(1)\n\
+                  track(\"d\", s):steps(\"1{sub=0.5} . . .  . . . .  . . . .  . . . .\")";
+    let err = host
+        .load(&mut controller, source, "song.lua", &dir)
+        .map(|_| ())
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("song.lua:3:") && err.contains("{sub=...} es de los sintetizadores"),
+        "{err}"
+    );
+}

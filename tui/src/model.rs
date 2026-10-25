@@ -336,11 +336,16 @@ pub fn synth_text(def: &script::SynthDef) -> String {
         return String::new();
     };
     let round = |v: f32| ((v * 100.0).round() / 100.0).to_string();
+    // El bloque sub, solo si suena (o se mueve).
+    let sub_on =
+        def.patch.params[engine::synth::SUB] > 0.0 || def.curves[engine::synth::SUB].is_some();
     registered
         .params
         .iter()
+        .filter(|p| sub_on || !p.name.starts_with("sub"))
         .filter_map(|p| match p.name {
             "wave" => Some(format!("wave {}", def.patch.wave.name())),
+            "sub_wave" => Some(format!("sub_wave {}", def.patch.sub_wave.name())),
             "root" => Some(format!(
                 "root {}",
                 script::patterns::note_name(def.patch.root.round() as i32)
@@ -533,7 +538,10 @@ fn suffixes(step: &Step) -> String {
     if let Some(hz) = step.lock {
         text.push_str(&format!("~{hz}"));
     }
-    // Accent y slide (de los sintetizadores).
+    // El sub de la nota, accent y slide (de los sintetizadores).
+    if step.sub.is_some() {
+        text.push_str("{sub}");
+    }
     if step.accent {
         text.push('!');
     }
@@ -704,6 +712,10 @@ mod tests {
         let tied = engine::notation::parse_step("1^3!/").unwrap();
         assert_eq!(note_text(&tied, 36), "D#2!/");
         assert_eq!(step_text(&tied, &[]), "01^3!/");
+        let sub =
+            engine::notation::parse_step_with("1{sub=0.5}!", &[], Some(&script::step_fx::resolve))
+                .unwrap();
+        assert_eq!(note_text(&sub, 36), "C2{sub}!");
     }
 
     #[test]

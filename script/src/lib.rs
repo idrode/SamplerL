@@ -3050,6 +3050,18 @@ fn synth_options(lua: &Lua, kind: &str, table: Option<&Table>) -> mlua::Result<I
                         }
                     }
                 }
+                "sub_wave" => {
+                    let wave = match &value {
+                        Value::String(w) => step_fx::sub_wave(w.to_str()?.as_ref()),
+                        _ => None,
+                    };
+                    patch.sub_wave = wave.ok_or_else(|| {
+                        fail(
+                            lua,
+                            format!("{who}: sub_wave es \"square\", \"tri\" o \"sine\""),
+                        )
+                    })?;
+                }
                 "seed" => match value {
                     Value::Integer(n) if n >= 0 => seed = Some(n as u64),
                     _ => {
@@ -3077,6 +3089,12 @@ fn synth_options(lua: &Lua, kind: &str, table: Option<&Table>) -> mlua::Result<I
                                 "{who}: {name} = {fixed} fuera de rango ({} a {})",
                                 p.min, p.max
                             ),
+                        ));
+                    }
+                    if p.target == engine::synth::preset::Target::SubDiv && fixed.fract() != 0.0 {
+                        return Err(fail(
+                            lua,
+                            format!("{who}: sub_div es un entero (1 a 16), no {fixed}"),
                         ));
                     }
                     p.set(&mut patch, fixed);
@@ -4327,6 +4345,15 @@ fn checked_steps(
                 format!(
                     "steps: \"{track}\" es {what}: sus notas no tienen efectos por paso \
                      ({{...}}); usa los de la pista (:fx)"
+                ),
+            ));
+        }
+        if !matches!(plays, Plays::Synth { .. }) && step.sub.is_some() {
+            return Err(fail(
+                lua,
+                format!(
+                    "steps: {{sub=...}} es de los sintetizadores (\"{track}\" no lo es); \
+                     usa synth(\"acid\", {{...}}) o synth(\"sub\", {{...}})"
                 ),
             ));
         }

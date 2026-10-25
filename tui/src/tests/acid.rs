@@ -123,6 +123,16 @@ fn the_sub_shows_its_params() {
         synth.params,
         "wave sine · root C1 · tone 180 · drive 0 · glide 40 · attack 5 · release 120"
     );
+    // Con el sub sonando, también el bloque sub.
+    let song = "bpm(120)\n\
+                track(\"b\", synth(\"acid\", { sub = 0.5, sub_div = 3, sub_wave = \"sine\" }))\n\
+                  :melody(\"c . . .  . . . .  . . . .  . . . .\")\n";
+    let (_, with_sub, _with_sub_engine) = open("sub_block_view", Some(song));
+    let params = with_sub.view().tracks[0].synth.clone().unwrap().params;
+    assert!(
+        params.ends_with("sub 0.5 · sub_div 3 · sub_wave sine · sub_pan 0 · sub_drive 0"),
+        "{params}"
+    );
     offline::render(&mut engine, STEP / 2, 2);
     app.tick();
     let screen = text(&draw(&mut app, 140, 40));

@@ -4,15 +4,104 @@
 //! que `:fx`). Un valor puede ser una rampa del golpe (`200>4000` dura el
 //! paso, `200>4000:4` cuatro pasos) si el parámetro admite curvas.
 
-use engine::notation::{FxValue, WrittenFx};
+use engine::notation::{FxValue, StepBraces, WrittenFx};
+use engine::synth::SubNote;
 use engine::{Automation, Curve, SliceFx};
 
 use crate::api;
 use crate::{FxArg, build_fx};
 
-/// La cadena de efectos de un paso, o el error (sin línea: la pone quien
-/// lee el patrón).
-pub fn resolve(written: &[WrittenFx]) -> Result<SliceFx, String> {
+/// Lo de las llaves de un paso, o el error (sin línea: la pone quien lee
+/// el patrón): si todas las claves son del bloque sub (`sub`, `sub_div`,
+/// `sub_wave`, `sub_pan`, `sub_drive`), lo que cambia del sub de su nota
+/// (de un sintetizador; [`sub_note`]); si no, una cadena de efectos
+/// ([`effects`]). Qué vale en cada pista lo dice la carga.
+pub fn resolve(written: &[WrittenFx]) -> Result<StepBraces, String> {
+    let keys = || {
+        written.iter().flat_map(|w| {
+            std::iter::once(w.name.as_str()).chain(w.params.iter().map(|(k, _)| k.as_str()))
+        })
+    };
+    let is_sub = |k: &str| api::SUB_BLOCK_PARAMS.iter().any(|p| p.name == k);
+    if keys().all(is_sub) {
+        return sub_note(written).map(StepBraces::Sub);
+    }
+    if let Some(k) = keys().find(|k| is_sub(k)) {
+        return Err(format!(
+            "{{{k}}}: el sub de la nota va en sus propias llaves, sin efectos ({{sub=0.5,sub_div=3}})"
+        ));
+    }
+    effects(written).map(StepBraces::Fx)
+}
+
+/// Lo que cambia del sub de una nota (`{sub=0.5,sub_div=3}`), con los
+/// rangos del motor.
+pub fn sub_note(written: &[WrittenFx]) -> Result<SubNote, String> {
+    let mut sub = SubNote::default();
+    let mut seen: Vec<String> = Vec::new();
+    for w in written {
+        let values = w
+            .main
+            .iter()
+            .map(|v| (w.name.as_str(), v))
+            .chain(w.params.iter().map(|(k, v)| (k.as_str(), v)));
+        for (key, value) in values {
+            let who = format!("{{{key}}}");
+            if seen.iter().any(|k| k == key) {
+                return Err(format!("{who}: {key} repetido"));
+            }
+            seen.push(key.to_string());
+            let number = || match value {
+                FxValue::Number(n) => Ok(*n),
+                FxValue::Ramp { .. } => Err(format!(
+                    "{who}: {key} no admite rampas: cada nota lo lee al nacer"
+                )),
+                FxValue::Word(w) => Err(format!("{who}: {key} es un número, no \"{w}\"")),
+            };
+            match key {
+                "sub" => sub.level = Some(number()?),
+                "sub_pan" => sub.pan = Some(number()?),
+                "sub_drive" => sub.drive = Some(number()?),
+                "sub_div" => {
+                    let n = number()?;
+                    if n.fract() != 0.0 || !(1.0..=engine::synth::MAX_SUB_DIV as f32).contains(&n) {
+                        return Err(format!("{who}: sub_div es un entero de 1 a 16"));
+                    }
+                    sub.div = Some(n as u8);
+                }
+                "sub_wave" => {
+                    let FxValue::Word(name) = value else {
+                        return Err(format!("{who}: sub_wave es square, tri o sine"));
+                    };
+                    sub.wave = Some(
+                        sub_wave(name)
+                            .ok_or_else(|| format!("{who}: sub_wave es square, tri o sine"))?,
+                    );
+                }
+                _ => unreachable!("solo claves del sub"),
+            }
+            if key == "sub" && !w.params.is_empty() && w.name != "sub" {
+                unreachable!();
+            }
+        }
+    }
+    sub.validate().map_err(|e| format!("{{sub}}: {e}"))?;
+    Ok(sub)
+}
+
+/// La forma de onda del sub por su nombre (`tri` o `triangle`).
+pub fn sub_wave(name: &str) -> Option<engine::synth::Wave> {
+    use engine::synth::Wave;
+    match name {
+        "square" => Some(Wave::Square),
+        "tri" | "triangle" => Some(Wave::Triangle),
+        "sine" => Some(Wave::Sine),
+        _ => None,
+    }
+}
+
+/// La cadena de efectos de un paso, o el error.
+pub fn effects(written: &[WrittenFx]) -> Result<SliceFx, String> {
     let mut chain = Vec::new();
     let mut automation = Vec::new();
     for w in written {

@@ -1906,6 +1906,7 @@ impl Engine {
                     slide: false,
                     gate: crate::synth::HELD,
                     key: Some(key),
+                    sub: Default::default(),
                 };
                 t.synth.note_on(&patch, ev);
                 self.status.set_hit(track, 0);
@@ -2250,6 +2251,7 @@ impl Engine {
                 slide: hit.slide,
                 gate: gate.max(1) as u64,
                 key: None,
+                sub: hit.sub.unwrap_or_default(),
             };
             let born = self.tracks[t].synth.note_on(&patch, ev);
             if let Some((channel, root)) = midi {

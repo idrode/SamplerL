@@ -1604,8 +1604,8 @@ track("drums", amen)
 | `bus("reverb")` | `size` (continuo), `damp` (continuo), `level` (continuo) |
 | `cortes:set` | `attack` (por golpe), `release` (por golpe), `pan` (por golpe), `length` (por golpe), `crossfade` (por golpe) |
 | `:grains` | `size` (por grano), `density` (por grano), `pos` (por grano), `speed` (por grano), `jitter` (por grano), `pitch` (por grano), `spread` (por grano) |
-| `synth("acid")` | `cutoff` (continuo), `res` (continuo), `envmod` (continuo), `decay` (continuo), `accent` (continuo), `dist` (continuo), `glide` (continuo) |
-| `synth("sub")` | `tone` (continuo), `drive` (continuo), `glide` (continuo) |
+| `synth("acid")` | `cutoff` (continuo), `res` (continuo), `envmod` (continuo), `decay` (continuo), `accent` (continuo), `dist` (continuo), `glide` (continuo), `sub` (continuo), `sub_pan` (continuo), `sub_drive` (continuo) |
+| `synth("sub")` | `tone` (continuo), `drive` (continuo), `glide` (continuo), `sub` (continuo), `sub_pan` (continuo), `sub_drive` (continuo) |
 
 | Dónde | No admiten curva | Por qué |
 | --- | --- | --- |
@@ -1621,12 +1621,14 @@ track("drums", amen)
 | `instrument` | `loop`, `crossfade` | se aplica al cargar, en el hilo de control (el sample o el bucle se preparan una vez): no suena en el tiempo |
 | `instrument` | `voices` | cambia cuántas cosas suenan, no cómo suenan: entra con el patrón al compás |
 | `instrument` | `keep` | elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer |
-| `synth("acid")` | `wave` | elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer |
+| `synth("acid")` | `wave`, `sub_wave` | elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer |
 | `synth("acid")` | `root` | cada nota lo lee al nacer y el instrumento se valida entero al cargar; para cambiar la nota, la del paso (`^`) |
 | `synth("acid")` | `seed` | es la semilla del azar: entre dos semillas no hay nada continuo |
-| `synth("sub")` | `wave` | elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer |
+| `synth("acid")` | `sub_div` | es un divisor entero: entre dividir por 2 y por 3 no hay nada que recorrer |
+| `synth("sub")` | `wave`, `sub_wave` | elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer |
 | `synth("sub")` | `root` | cada nota lo lee al nacer y el instrumento se valida entero al cargar; para cambiar la nota, la del paso (`^`) |
 | `synth("sub")` | `attack`, `release` | la envolvente se fija con el sintetizador al cargar; para mover el volumen en el tiempo, el de la pista (`:gain()` con `ramp()` o `lfo()`) |
+| `synth("sub")` | `sub_div` | es un divisor entero: entre dividir por 2 y por 3 no hay nada que recorrer |
 | `sample` | `trim`, `normalize`, `fade_in`, `fade_out` | se aplica al cargar, en el hilo de control (el sample o el bucle se preparan una vez): no suena en el tiempo |
 
 ### `scale(nombre [, tónica])`
@@ -1772,6 +1774,11 @@ Un instrumento sintetizado, sin sample: osciladores, filtro y envolventes. Se to
 |  | `dist` | saturación a la salida (0, limpio) | `0` | 0–1 |
 |  | `glide` | lo que tarda el `/` de un paso en llegar a su nota, en ms | `60` | 0–1000 |
 |  | `seed` | semilla de la fase del oscilador al empezar desde el silencio: con la misma, el mismo audio; sin ella, una sacada del nombre de la pista | `del nombre` | entero de 0 en adelante |
+|  | `sub` | nivel del sub: una onda a la frecuencia de la nota dividida por `sub_div`, sacada de la fase del oscilador (siempre en fase, también con glide); 0 lo apaga | `0` | 0–1 |
+|  | `sub_div` | divisor de frecuencia del sub: 2 una octava abajo, 3 una octava y una quinta, 4 dos octavas... | `2` | 1–16 |
+|  | `sub_wave` | forma de onda del sub: cuadrada (con PolyBLEP en sus saltos), triangular o seno | `"square"` | `"square"`, `"tri"` o `"sine"` |
+|  | `sub_pan` | pan del sub, de potencia constante (en el centro suena igual en los dos lados) | `0` | -1–1 |
+|  | `sub_drive` | saturación suave de la suma del oscilador y el sub, antes del filtro (solo con el sub sonando) | `0` | 0–1 |
 | `"sub"` (o `"subbass"`) | `wave` | forma de onda: el seno es el subgrave limpio; la triangular añade algún armónico impar (se oye algo más en altavoces pequeños) | `"sine"` | `"sine"` o `"triangle"` |
 |  | `root` | la nota que suena con 0 semitonos (`melody` sin octava toca en la suya); C1 son 32,7 Hz | `"C1"` | una nota (`"C1"`, `"F#1"`) o un número MIDI (0–127) |
 |  | `tone` | corte del paso bajo suave (12 dB/oct, sin resonancia), en Hz: más bajo, más redondo; más alto, deja pasar los armónicos de `drive` | `250` | 40–2000 |
@@ -1779,6 +1786,11 @@ Un instrumento sintetizado, sin sample: osciladores, filtro y envolventes. Se to
 |  | `glide` | lo que tarda el `/` de un paso en llegar a su nota, en ms | `40` | 0–1000 |
 |  | `attack` | lo que tarda en subir cada nota que empieza desde el silencio, en ms (las pegadas no vuelven a subir) | `5` | 0–2000 |
 |  | `release` | lo que tarda en apagarse al acabar la nota, en ms | `80` | 0–5000 |
+|  | `sub` | nivel del sub: una onda a la frecuencia de la nota dividida por `sub_div`, sacada de la fase del oscilador (siempre en fase, también con glide); 0 lo apaga | `0` | 0–1 |
+|  | `sub_div` | divisor de frecuencia del sub: 2 una octava abajo, 3 una octava y una quinta, 4 dos octavas... | `2` | 1–16 |
+|  | `sub_wave` | forma de onda del sub: cuadrada (con PolyBLEP en sus saltos), triangular o seno | `"square"` | `"square"`, `"tri"` o `"sine"` |
+|  | `sub_pan` | pan del sub, de potencia constante (en el centro suena igual en los dos lados) | `0` | -1–1 |
+|  | `sub_drive` | saturación suave de la suma del oscilador y el sub, antes del filtro (solo con el sub sonando) | `0` | 0–1 |
 
 ```lua
 bpm(130)

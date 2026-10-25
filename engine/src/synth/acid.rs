@@ -4,7 +4,7 @@
 //! núcleo ([`PRESET`]): sus parámetros son los del núcleo con otro nombre
 //! y otra escala (ver [`PARAMS`]).
 
-use super::preset::{Preset, PresetParam, Target, defaults};
+use super::preset::{Preset, PresetParam, Target, defaults, with_sub_block};
 use super::{
     ACCENT, Accent, CUTOFF, DRIVE, ENV_AMOUNT, FILTER_DECAY, FilterMode, GLIDE, Patch, RESONANCE,
     Wave,
@@ -19,7 +19,10 @@ pub const LEVEL: f32 = 0.4;
 /// Octavas que abre la envolvente de filtro con `envmod` = 1.
 pub const ENVMOD_OCTAVES: f32 = 4.0;
 
-pub const PARAMS: [PresetParam; 7] = [
+/// Los suyos y los del bloque sub ([`super::preset::SUB_BLOCK`]).
+pub const PARAMS: [PresetParam; 11] = with_sub_block(OWN);
+
+const OWN: [PresetParam; 7] = [
     PresetParam {
         name: "cutoff",
         target: Target::Param(CUTOFF),
@@ -125,6 +128,8 @@ pub fn patch(root: f32) -> Patch {
         seed: 0,
         level: LEVEL,
         zero_phase: false,
+        sub_div: 2,
+        sub_wave: Wave::Square,
         params: super::PARAMS.map(|p| p.default),
     };
     defaults(&mut patch, &PARAMS);

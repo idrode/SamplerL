@@ -143,6 +143,8 @@ const STRUCTURE: &str =
     "cambia cuántas cosas suenan, no cómo suenan: entra con el patrón al compás";
 const SEED: &str = "es la semilla del azar: entre dos semillas no hay nada continuo";
 const INSTRUMENT: &str = "cada nota lo lee al nacer y el instrumento se valida entero al cargar; para cambiar la nota, la del paso (`^`)";
+const SUB_DIVIDER: &str =
+    "es un divisor entero: entre dividir por 2 y por 3 no hay nada que recorrer";
 const ENVELOPE: &str = "la envolvente se fija con el sintetizador al cargar; para mover el volumen en el tiempo, el de la pista (`:gain()` con `ramp()` o `lfo()`)";
 const DELAY_TIME: &str = "es una figura (\"1/8\"), no un número; además, mover el retardo de una línea con repeticiones dentro suena a cambio de pitch";
 
@@ -2581,10 +2583,82 @@ pub const INSTRUMENT_PARAMS: &[FxParam] = &[
     },
 ];
 
+/// El bloque sub, en cualquier bajo sintetizado (la tabla de `synth()` y
+/// las llaves de un paso: `{sub=0.5,sub_div=3}`). Los rangos y los valores
+/// por defecto de los numéricos son los de
+/// `engine::synth::preset::SUB_BLOCK` (un test lo comprueba).
+pub const SUB_BLOCK_PARAMS: &[FxParam] = &SUB_BLOCK;
+const SUB_BLOCK: [FxParam; 5] = [
+    FxParam {
+        name: "sub",
+        description: "nivel del sub: una onda a la frecuencia de la nota dividida por `sub_div`, sacada de la fase del oscilador (siempre en fase, también con glide); 0 lo apaga",
+        default: Some("0"),
+        valid: "0–1",
+        values: &[],
+        template: "sub = ${0.5}",
+        automate: Auto::Smooth,
+    },
+    FxParam {
+        name: "sub_div",
+        description: "divisor de frecuencia del sub: 2 una octava abajo, 3 una octava y una quinta, 4 dos octavas...",
+        default: Some("2"),
+        valid: "1–16",
+        values: &[],
+        template: "sub_div = ${2}",
+        automate: Auto::No(SUB_DIVIDER),
+    },
+    FxParam {
+        name: "sub_wave",
+        description: "forma de onda del sub: cuadrada (con PolyBLEP en sus saltos), triangular o seno",
+        default: Some("\"square\""),
+        valid: "`\"square\"`, `\"tri\"` o `\"sine\"`",
+        values: &["square", "tri", "sine"],
+        template: "sub_wave = \"${tri}\"",
+        automate: Auto::No(DISCRETE),
+    },
+    FxParam {
+        name: "sub_pan",
+        description: "pan del sub, de potencia constante (en el centro suena igual en los dos lados)",
+        default: Some("0"),
+        valid: "-1–1",
+        values: &[],
+        template: "sub_pan = ${-0.5}",
+        automate: Auto::Smooth,
+    },
+    FxParam {
+        name: "sub_drive",
+        description: "saturación suave de la suma del oscilador y el sub, antes del filtro (solo con el sub sonando)",
+        default: Some("0"),
+        valid: "0–1",
+        values: &[],
+        template: "sub_drive = ${0.3}",
+        automate: Auto::Smooth,
+    },
+];
+
+/// Los parámetros propios de un sintetizador seguidos de los del bloque
+/// sub (`C` = `A` + 5).
+const fn with_sub_block<const A: usize, const C: usize>(own: [FxParam; A]) -> [FxParam; C] {
+    assert!(C == A + SUB_BLOCK.len());
+    let mut out = [SUB_BLOCK[0]; C];
+    let mut i = 0;
+    while i < A {
+        out[i] = own[i];
+        i += 1;
+    }
+    while i < C {
+        out[i] = SUB_BLOCK[i - A];
+        i += 1;
+    }
+    out
+}
+
 /// Parámetros de `synth("acid", { ... })` (los rangos y los valores por
 /// defecto de los continuos son los de `engine::synth::acid::PARAMS`; un
 /// test lo comprueba).
-pub const ACID_PARAMS: &[FxParam] = &[
+pub const ACID_PARAMS: &[FxParam] = &ACID_ALL;
+const ACID_ALL: [FxParam; 10 + 5] = with_sub_block(ACID_OWN);
+const ACID_OWN: [FxParam; 10] = [
     FxParam {
         name: "wave",
         description: "forma de onda del oscilador",
@@ -2680,7 +2754,9 @@ pub const ACID_PARAMS: &[FxParam] = &[
 /// Parámetros de `synth("sub", { ... })` (los rangos y los valores por
 /// defecto de los numéricos son los de `engine::synth::sub::PARAMS`; un
 /// test lo comprueba).
-pub const SUB_PARAMS: &[FxParam] = &[
+pub const SUB_PARAMS: &[FxParam] = &SUB_ALL;
+const SUB_ALL: [FxParam; 7 + 5] = with_sub_block(SUB_OWN);
+const SUB_OWN: [FxParam; 7] = [
     FxParam {
         name: "wave",
         description: "forma de onda: el seno es el subgrave limpio; la triangular añade algún armónico impar (se oye algo más en altavoces pequeños)",

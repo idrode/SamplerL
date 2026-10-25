@@ -290,7 +290,9 @@ fn step_effects_are_read_and_handed_to_the_resolver() {
     let seen = std::cell::RefCell::new(Vec::new());
     let resolve = |written: &[WrittenFx]| {
         seen.borrow_mut().push(written.to_vec());
-        Ok(engine::SliceFx::new(&[engine::Fx::gain(0.5)], &[]).unwrap())
+        Ok(engine::notation::StepBraces::Fx(
+            engine::SliceFx::new(&[engine::Fx::gain(0.5)], &[]).unwrap(),
+        ))
     };
     let steps = parse_pattern_with(
         "1{lp=200>4000:4, q=2}{crush} . 2'{eq,gain2=-3,type2=lowshelf}^7 .",
@@ -330,7 +332,9 @@ fn step_effects_are_read_and_handed_to_the_resolver() {
         ]
     );
     // El error del que resuelve sale con el paso y el token.
-    let fail = |_: &[WrittenFx]| Err("no me gusta".to_string());
+    let fail = |_: &[WrittenFx]| -> Result<engine::notation::StepBraces, String> {
+        Err("no me gusta".to_string())
+    };
     let error = parse_pattern_with(". 1{zz=1}", 2, &[], Some(&fail)).unwrap_err();
     assert_eq!(error.to_string(), "paso 2 (\"1{zz=1}\"): no me gusta");
 }

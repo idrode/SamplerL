@@ -16,6 +16,8 @@ pub enum Target {
     Attack,
     /// El release de la envolvente de amplitud (ms).
     Release,
+    /// El divisor del sub ([`Patch::sub_div`]): un entero.
+    SubDiv,
 }
 
 /// Un parámetro de un preset: su nombre, adónde va, cuánto se multiplica
@@ -39,6 +41,7 @@ impl PresetParam {
             Target::Param(i) => patch.params[i] = value,
             Target::Attack => patch.amp.attack_ms = value,
             Target::Release => patch.amp.release_ms = value,
+            Target::SubDiv => patch.sub_div = value.round() as u8,
         }
     }
 
@@ -48,6 +51,7 @@ impl PresetParam {
             Target::Param(i) => patch.params[i],
             Target::Attack => patch.amp.attack_ms,
             Target::Release => patch.amp.release_ms,
+            Target::SubDiv => patch.sub_div as f32,
         };
         value / self.scale
     }
@@ -126,6 +130,63 @@ impl Preset {
     pub fn param(&self, name: &str) -> Option<&'static PresetParam> {
         self.params.iter().find(|p| p.name == name)
     }
+}
+
+/// El bloque sub, en cualquier bajo: nivel, divisor, pan y saturación
+/// (su forma de onda, `sub_wave`, es un nombre: la lee el script). Ver
+/// [`super::SubNote`].
+pub const SUB_BLOCK: [PresetParam; 4] = [
+    PresetParam {
+        name: "sub",
+        target: Target::Param(super::SUB),
+        scale: 1.0,
+        min: 0.0,
+        max: 1.0,
+        default: 0.0,
+    },
+    PresetParam {
+        name: "sub_div",
+        target: Target::SubDiv,
+        scale: 1.0,
+        min: 1.0,
+        max: super::MAX_SUB_DIV as f32,
+        default: 2.0,
+    },
+    PresetParam {
+        name: "sub_pan",
+        target: Target::Param(super::SUB_PAN),
+        scale: 1.0,
+        min: -1.0,
+        max: 1.0,
+        default: 0.0,
+    },
+    PresetParam {
+        name: "sub_drive",
+        target: Target::Param(super::SUB_DRIVE),
+        scale: 1.0,
+        min: 0.0,
+        max: 1.0,
+        default: 0.0,
+    },
+];
+
+/// Los parámetros propios de un preset seguidos de los del bloque sub
+/// (`C` = `A` + 4).
+pub(crate) const fn with_sub_block<const A: usize, const C: usize>(
+    own: [PresetParam; A],
+) -> [PresetParam; C] {
+    assert!(C == A + SUB_BLOCK.len());
+    let mut out = [SUB_BLOCK[0]; C];
+    let mut i = 0;
+    while i < A {
+        out[i] = own[i];
+        i += 1;
+    }
+    while i < C {
+        out[i] = SUB_BLOCK[i - A];
+        i += 1;
+    }
+    out
 }
 
 /// Los instrumentos sintetizados.

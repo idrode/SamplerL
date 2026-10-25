@@ -43,28 +43,35 @@ pub(crate) struct Osc {
     pub phase: f64,
 }
 
+/// La onda `wave` en la fase `t` (0 a 1) con incremento `dt` por muestra
+/// (para el antialiasing; amplitud ±1; `pw`, el ancho de pulso de la
+/// cuadrada, de 0 a 1).
+#[inline]
+pub(crate) fn shape(wave: Wave, t: f64, dt: f64, pw: f64) -> f64 {
+    match wave {
+        Wave::Sine => (std::f64::consts::TAU * t).sin(),
+        Wave::Saw => 2.0 * t - 1.0 - blep(t, dt),
+        Wave::Square => {
+            let naive = if t < pw { 1.0 } else { -1.0 };
+            let fall = (t - pw).rem_euclid(1.0);
+            naive + blep(t, dt) - blep(fall, dt)
+        }
+        Wave::Triangle => {
+            // 1 en t = 0, -1 en t = 0,5: los picos se redondean.
+            let naive = 4.0 * (t - 0.5).abs() - 1.0;
+            let valley = (t + 0.5).rem_euclid(1.0);
+            naive - 4.0 * dt * (blamp(t, dt) - blamp(valley, dt))
+        }
+    }
+}
+
 impl Osc {
-    /// La muestra de ahora con la forma `wave` (amplitud ±1; `pw`, el ancho
-    /// de pulso de la cuadrada, de 0 a 1) y avanza `dt` (frecuencia /
-    /// frecuencia de muestreo, menos de 0,5).
+    /// La muestra de ahora con la forma `wave` (ver [`shape`]) y avanza
+    /// `dt` (frecuencia / frecuencia de muestreo, menos de 0,5).
     #[inline]
     pub fn next(&mut self, wave: Wave, dt: f64, pw: f64) -> f32 {
         let t = self.phase;
-        let y = match wave {
-            Wave::Sine => (std::f64::consts::TAU * t).sin(),
-            Wave::Saw => 2.0 * t - 1.0 - blep(t, dt),
-            Wave::Square => {
-                let naive = if t < pw { 1.0 } else { -1.0 };
-                let fall = (t - pw).rem_euclid(1.0);
-                naive + blep(t, dt) - blep(fall, dt)
-            }
-            Wave::Triangle => {
-                // 1 en t = 0, -1 en t = 0,5: los picos se redondean.
-                let naive = 4.0 * (t - 0.5).abs() - 1.0;
-                let valley = (t + 0.5).rem_euclid(1.0);
-                naive - 4.0 * dt * (blamp(t, dt) - blamp(valley, dt))
-            }
-        };
+        let y = shape(wave, t, dt, pw);
         let next = t + dt;
         self.phase = if next >= 1.0 { next - 1.0 } else { next };
         y as f32

@@ -290,8 +290,9 @@ fn braces_in_a_melody_say_where_they_belong() {
         assert!(
             message.contains("paso 1 (\"c{lp=800}\")")
                 && message.contains(
-                    "las llaves ({...}) solo valen en steps(\"...\") de una pista de cortes, \
-                     no en melody() ni en un instrumento: usa los efectos de la pista (:fx)"
+                    "los efectos entre llaves ({lp=800}) solo valen en steps(\"...\") de una \
+                     pista de cortes, no en melody() ni en un instrumento: usa los efectos de la \
+                     pista (:fx); en melody() solo va el sub de la nota de un sintetizador"
                 )
                 && !message.contains("desde el script"),
             "{source}\n→ {message}"
