@@ -835,11 +835,15 @@ Hechas las cuatro partes, una por commit: el núcleo de síntesis en el motor, s
 - **El sub, limpio por construcción**: seno y un paso bajo sin resonancia (nada de lo que hace el acid: sin envolvente de filtro, sin pico), fase en el cero al arrancar (un seno que empieza a media onda da un golpe sordo, más grave cuanto más grave es la nota) y mono reutilizando la voz (una nota pegada sigue la fase de la anterior y no vuelve a subir: nada que haga clic). La saturación va antes del filtro (`PRE_DRIVE`, nuevo en el núcleo) para que `tone` decida cuántos armónicos pasan; la del acid (`DRIVE`) va a la salida y no sirve para esto. Raíz en C1 para que `melody("c")` ya esté en el registro del sub. `"subbass"` como alias porque es como lo llamó el usuario; el nombre corto es el de la tabla.
 - **Sin verificar de oído**: si el acid suena a 303 (el carácter del filtro con mucha resonancia, el «chirrido» del accent y su acumulación, la curva del glide y el tiempo del slide de 60 ms), si la saturación del ladder y `dist` suenan bien, el equilibrio entre una nota con accent y sin él, si la triangular y el pulso estrecho suenan limpios, y si el ruido y el sub del núcleo (sin instrumento todavía que los use) sirven. Ni las notas en vivo por la tarjeta (solo con render offline y el motor de tests).
 
-## Fase P: sub-armónicos (en curso)
+## Fase P: sub-armónicos ✅
 
-Partes 1 y 2 hechas: el bloque sub y su documentación. Antes de empezar se
-decidió con el usuario lo que chocaba con la arquitectura (ver la fase P
-de [docs/ROADMAP.md](ROADMAP.md)).
+Hechas las cinco partes, una por commit: el bloque sub, su documentación,
+el núcleo de `subharm`, su redisparo rítmico y sus presets y guía. Antes
+de empezar se decidió con el usuario lo que chocaba con la arquitectura
+(ver la fase P de [docs/ROADMAP.md](ROADMAP.md)): el sub solo en los
+sintetizadores, `{sub=...}` por paso como parámetros de la nota (sin
+«por corte»), `div` divide también en los osciladores principales y, con
+el transporte parado, `rdiv` cuenta un compás virtual desde la nota.
 
 ### Parte 1: el bloque sub
 
@@ -859,6 +863,31 @@ de [docs/ROADMAP.md](ROADMAP.md)).
 
 - Guía: la fila de `{sub=...}` en la tabla de la mini-notación, «Un sub dentro del bajo (bloque sub)» en las recetas (el bloque de Lua lo carga `guide.rs`) y la sección generada de la API.
 
+### Parte 3: `subharm`, núcleo
+
+- **Capas** (`engine/src/synth/mod.rs`): `Patch::layers: Option<[Layer; LAYERS]>` (`LAYERS` = 6, `LAYER_NAMES` `o1 o2 s1 s2 s3 s4`, `LAYER_PARENT`), `Layer { div, rdiv, pan, level }`. Con capas, `Voice::layers_sample` toca, en cada muestra del doble de frecuencia, `osc[0]` y `osc[1]` a `dt / div` (la nota dividida: `div` divide también aquí) y los subs de cada uno con la fase `(cuenta + fase del oscilador) / div`, la cuenta de sus reinicios por sub (`layer_count`), como el bloque sub: siempre en fase con su oscilador, también con glide. Cada capa, con su nivel y su pan suavizados por muestra (`layer_level`, `layer_pan`, el polo de 5 ms) y pan de potencia constante; la voz es siempre estéreo; luego el camino de siempre (filtro por canal, amplitud, saturación). Sin unison ni bloque sub. El camino sin capas no cambia (el código está en la otra rama del `match`).
+- **Preset** (`engine/src/synth/subharm.rs`): sierra (o cuadrada), ladder, raíz C2, `DEFAULT_LAYERS` (`o1` a la nota, `s1` una octava abajo a 0,6; las demás calladas con divisores de partida), `level` 0,3, accent +50 % y una octava de filtro. Parámetros: `cutoff`, `res`, `envmod`, `fdecay`, `glide`, `drive`, `attack`, `decay` y `voices` (`Target::Voices`: con 1, mono; hasta 8, polifónico, cada voz con sus seis capas).
+- **Lua**: `subharm{ ... }` (y `synth("subharm", { ... })`): `layer_options` lee cada tabla de capa (`div` y `rdiv` enteros de 1 a 16, `pan` y `level`), con errores con la línea; las capas no admiten curvas (`LAYER`: cambian con el patrón, al compás). Un `{sub=...}` en un subharm, error (sus subs son las capas). Registro: la función `subharm`, `SUBHARM_PARAMS` y `LAYER_PARAMS`/`LAYER_TABLE` (la guía genera su tabla). El autocompletado entiende `nombre{ ... }` como una llamada (`Frame::Paren::braced`) y ofrece las capas y, dentro de una, sus claves. El panel enseña las capas que suenan (`s1 ÷3 ↻3 pan 0.5 level 0.7`).
+- **Tests**: `engine/tests/synth.rs` (cada capa a su frecuencia, contando cruces, con siete combinaciones de capa y divisores; los subs atados a su oscilador durante un glide de una octava; pan de potencia constante en las seis capas; cambios de capas a media nota sin saltos; 8 voces con todo a tope dentro de ±1 tras el limitador), `no_alloc.rs` (un subharm de 8 voces con las seis capas, divisores y `rdiv` distintos, acordes), `script/tests/synth.rs` (`subharm{}` igual que `synth("subharm")` e igual que el motor; quince errores con la línea), `tui` (autocompletado y panel).
+
+### Parte 4: redisparo rítmico (`rdiv`)
+
+- **El reloj del compás** (`engine/src/sequencer.rs`): `Transport::current_bar` (su primer frame y su longitud, enteros) se fija al disparar el paso 0 de cada compás, con el tempo y el compás que entran ahí (rampas y otros compases incluidos); `bar_length` es lo que dura un compás al tempo de ahora. `SongClock` lleva al sintetizador el frame del transporte, el compás que suena (en marcha) y esa longitud (parado). El motor parte el audio en los pasos, así que un trozo nunca cruza dos compases (y aun así la voz lo aguanta).
+- **En la voz** (`Voice::layer_rhythm`, en cada muestra): cada capa tiene su envolvente (`layer_env`: ataque y decay hasta 0, `LAYER_ATTACK` y `LAYER_DECAY`, parámetros continuos nuevos con curvas; `PARAM_COUNT` = 17) que vuelve a sonar desde su nivel cuando la posición en el compás llega a `(j + 1) · longitud / rdiv` (enteros: sin deriva). Al empezar un compás, todas en su marca 0. Una nota nueva las hace sonar a todas y sigue la rejilla desde su posición (`j = pos · rdiv / longitud`). Con el transporte parado, un compás virtual (`virtual_pos`, `virtual_bar`) que empieza con la nota, al tempo de ahora. Es redisparo de envolvente, sin memoria de audio: nada de delay.
+- **Lote atómico**: el `rdiv` (y el `div`, el pan y el nivel) van en el patch del patrón, que entra al compás.
+- **Tests** (`engine/tests/synth_track.rs`): con el motor de verdad, los golpes de una capa caen en `j · compás / rdiv` con `rdiv` 3, 4, 5 y 7 en dos compases (cada uno entre su frame y 48 frames después: lo que tardan el diezmado y el ataque de 0,5 ms en asomar), 3 contra 4 y 5 contra 7 durante cuatro compases (la unión de los dos, sin deriva), una nota en vivo con el transporte parado (compás virtual desde la nota), una nota a medio compás (suena ya y sigue la rejilla) y un `rdiv` nuevo que entra al compás siguiente.
+
+### Parte 5: presets, guía y documentación
+
+- Receta «Poliritmos de subarmónicos» (`scripts/ejemplos/11-subharm.lua`: tres contra cuatro con un bombo), con un fragmento de tutorial paso a paso (de una capa a cuatro, y acordes); todo lo carga `guide.rs`. La receta renderizada pica en -3,7 dBFS sin entrar en el limitador.
+
+### Decisiones (subharm)
+
+- **Capas en el patch, no instrumentos aparte**: el banco de voces, el robo, el mono con legato, el filtro, las curvas y la integración (melody, pads, MIDI, tracker, resaltado) ya estaban; las capas solo cambian lo que suena dentro de la voz.
+- **El reloj, del transporte**: la voz no sabe del secuenciador, así que el motor le pasa el compás que suena en cada trozo. Las marcas se calculan desde su inicio con enteros y cada compás vuelve a empezar: los poliritmos cuadran al final de cada compás aunque cambie el tempo.
+- **Una nota a medio compás suena ya** (todas sus capas) y luego sigue la rejilla del compás, no una rejilla propia: así varias notas y varias pistas comparten el mismo ritmo.
+- **Polifonía**: cada voz lleva sus seis capas con todo su estado en el `Track` (medido: 23 KiB por pista, 4 KiB más que antes de la fase P, unos 250 bytes por ranura de voz; 186 KiB las 8 pistas, reservados al crear el motor). Medido (release, i7-7500U): 8 voces con las seis capas sonando y redisparándose, 11,7 % de un núcleo (1,47 % por voz). No hace falta bajar el límite de 8 voces por pista; lo que no cabe en este portátil son muchas pistas así a la vez (8 pistas × 8 voces llegarían a casi un núcleo entero).
+- **Sin verificar de oído**: si los ritmos se oyen como se espera (con auriculares), el equilibrio entre capas y el nivel por defecto, si el ataque de 2 ms y el decay de 800 ms son buenos de partida, y cómo suenan los subs muy divididos (`div` 11-16, por debajo de lo audible con notas graves).
 ## Mejoras sueltas
 
 - **Pegado multilínea**: ya lo hacían el pegado con bracketed paste (`App::paste`, `editing::burst_text` para terminales sin él) y la parte 1 de la fase L en la ventana del editor; verificado con sus tests (`pasting_keeps_the_lines_and_the_indent_and_undoes_at_once`, `pasting_with_the_completion_open_accepts_nothing`, `a_burst_of_keys_with_line_breaks_is_a_paste`, `split::pasting_in_the_editor_window_keeps_the_indent_and_undoes_at_once`): líneas y sangría tal cual, sin autocompletado ni sangrado automático, un solo Ctrl-Z.

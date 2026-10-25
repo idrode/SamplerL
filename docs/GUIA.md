@@ -66,6 +66,9 @@ la sección 4 (con sus parámetros, rangos y un ejemplo cada una).
   con accent (`!`) y slide (`/`) por paso, y en cualquiera de ellos un sub
   dividido de su oscilador (`sub`, `sub_div`...; también por paso:
   `{sub=0.5,sub_div=3}`).
+- `subharm{...}`, inspirado en el Subharmonicon: seis capas que dividen la
+  frecuencia de la nota (`div`) y el compás (`rdiv`), para poliritmos de
+  subarmónicos.
 - Texturas con granos y congelar un instante (`pista:grains`,
   `pista:freeze`).
 - Ver dónde se pisan las pistas en frecuencia y que el EQ sugerido se
@@ -2797,6 +2800,93 @@ track("bass", bass)
 
 El tracker marca las notas con su propio sub (`C2{sub}`) y el panel del
 sintetizador enseña el bloque sub solo cuando suena.
+
+### Poliritmos de subarmónicos (subharm)
+
+`subharm{...}` toma la idea del Subharmonicon de Moog: dos osciladores de
+sierra (`o1`, `o2`) y dos subs de cada uno (`s1`, `s2` de `o1`; `s3`, `s4`
+de `o2`), seis capas que dividen dos cosas. La frecuencia: cada oscilador
+suena a la nota entre su `div`, y cada sub, a la de su oscilador entre el
+suyo (2 una octava abajo, 3 una octava y una quinta, 4 dos octavas, 5 dos
+octavas y una tercera...: la serie subarmónica). Y el tiempo: cada capa
+vuelve a sonar (su envolvente, con `attack` y `decay`) cada 1/`rdiv` del
+compás. Todas siguen el mismo reloj, el del compás, así que `rdiv = 3` en
+una y `rdiv = 4` en otra hacen un tres contra cuatro que vuelve a coincidir
+al empezar cada compás. No hay delay ni memoria de audio: es la envolvente
+de cada capa la que se redispara. Cada capa tiene también su `pan` (de
+potencia constante) y su `level`; todo pasa por un paso bajo de 4 polos
+(`cutoff`, `res`, `envmod`, `fdecay`).
+
+```lua
+-- 11-subharm.lua
+bpm(110)
+local amen = sample("amen.wav"):slice(8)
+track("kick", amen:slice_at(1))
+  :steps("x . . .  x . . .  x . . .  x . . .")
+  :gain(0.5)
+
+-- Tres contra cuatro: o1 suena cuatro veces por compás y su sub s1 (una
+-- octava y una quinta abajo), tres; s2, dos octavas abajo, una vez al
+-- compás, larga.
+local sh = subharm{
+  o1 = { div = 1, rdiv = 4, pan = -0.5, level = 0.8 },
+  s1 = { div = 3, rdiv = 3, pan = 0.5, level = 0.7 },
+  s2 = { div = 4, rdiv = 1, level = 0.5 },
+  cutoff = 1100, res = 0.45, envmod = 0.3, decay = 350,
+}
+track("sh", sh)
+  :melody("c _ _ _  _ _ _ _  _ _ _ _  _ _ _ _")
+  :every(2, function(c) c:melody("ab1 _ _ _  _ _ _ _  bb1 _ _ _  _ _ _ _") end)
+  :gain(0.8)
+```
+
+Una nota larga deja oír el ritmo de las capas; una nota nueva las hace
+sonar a todas y siguen la rejilla del compás desde ahí (también a medio
+compás). Con el transporte parado (los pads o el MIDI), el compás empieza
+con la nota. Las capas cambian con el patrón, al compás: un `rdiv` nuevo
+entra al empezar el siguiente. El panel del sintetizador enseña las capas
+que suenan (`s1 ÷3 ↻3 pan 0.5 level 0.7`).
+
+#### Paso a paso
+
+Para entenderlo, mejor de capa en capa. Primero, un solo oscilador que
+suena cuatro veces por compás:
+
+```lua
+bpm(110)
+track("sh", subharm{ o1 = { rdiv = 4 }, s1 = { level = 0 } })
+  :melody("c _ _ _  _ _ _ _  _ _ _ _  _ _ _ _")
+```
+
+Su sub, una octava y una quinta abajo, tres veces por compás: ya es un
+tres contra cuatro (ábrelos a los lados para oír cuál es cuál):
+
+```lua
+bpm(110)
+track("sh", subharm{
+  o1 = { rdiv = 4, pan = -0.6 },
+  s1 = { div = 3, rdiv = 3, pan = 0.6, level = 0.7 },
+})
+  :melody("c _ _ _  _ _ _ _  _ _ _ _  _ _ _ _")
+```
+
+El segundo oscilador, una octava abajo, cinco contra siete con su sub, y
+un `decay` más corto para que los golpes se separen:
+
+```lua
+bpm(110)
+track("sh", subharm{
+  o1 = { rdiv = 4, pan = -0.6 },
+  s1 = { div = 3, rdiv = 3, pan = 0.6, level = 0.7 },
+  o2 = { div = 2, rdiv = 5, level = 0.6 },
+  s3 = { div = 3, rdiv = 7, level = 0.5 },
+  decay = 250, cutoff = 1500, res = 0.4,
+})
+  :melody("c _ _ _  _ _ _ _  _ _ _ _  _ _ _ _")
+```
+
+Y con `voices = 3` toca acordes: cada voz con sus seis capas (cuesta
+alrededor de un 1,5 % de un núcleo por voz).
 
 ### Una caja más grave que dura lo mismo
 

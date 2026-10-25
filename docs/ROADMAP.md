@@ -450,7 +450,7 @@ Queda para después, sobre el mismo núcleo: pads (polifónico con unison,
 ataque y release largos), leads y wavetable; un instrumento que use el
 suboscilador y el ruido; y medir el aliasing de la saturación del ladder.
 
-## Fase P: sub-armónicos
+## Fase P: sub-armónicos ✅
 
 Dos capas: un bloque sub general en los sintetizadores de bajo y un
 synth propio, `subharm`, inspirado en el Moog Subharmonicon (dos ejes de
@@ -474,10 +474,11 @@ con el transporte parado, `rdiv` cuenta un compás virtual desde la nota.
    `sub_wave`, `sub_pan`, `sub_drive`, sacado de la fase del oscilador con
    un contador, con PolyBLEP en la cuadrada; en la tabla y por paso.
 2. ✅ **Documentación** del bloque sub.
-3. **`subharm`, núcleo**: 2 osciladores de sierra y 2 subs por oscilador
-   (6 capas), cada una con `div`, `level` y `pan`.
-4. **Redisparo rítmico** (`rdiv`) y poliritmos sobre el reloj del compás.
-5. **Presets, guía y documentación** de `subharm`.
+3. ✅ **`subharm`, núcleo**: 2 osciladores de sierra y 2 subs por
+   oscilador (6 capas), cada una con `div`, `level` y `pan`.
+4. ✅ **Redisparo rítmico** (`rdiv`) y poliritmos sobre el reloj del
+   compás.
+5. ✅ **Presets, guía y documentación** de `subharm`.
 
 ## Mejoras sueltas
 

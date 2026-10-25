@@ -201,7 +201,7 @@ fn every_example_runs_and_matches_the_guide() {
         .filter(|p| p.extension().is_some_and(|e| e == "lua"))
         .collect();
     examples.sort();
-    assert_eq!(examples.len(), 10, "una por receta");
+    assert_eq!(examples.len(), 11, "una por receta");
     for path in &examples {
         let source = std::fs::read_to_string(path).unwrap();
         let name = path.file_name().unwrap().to_string_lossy();
