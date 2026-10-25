@@ -145,6 +145,7 @@ const SEED: &str = "es la semilla del azar: entre dos semillas no hay nada conti
 const INSTRUMENT: &str = "cada nota lo lee al nacer y el instrumento se valida entero al cargar; para cambiar la nota, la del paso (`^`)";
 const SUB_DIVIDER: &str =
     "es un divisor entero: entre dividir por 2 y por 3 no hay nada que recorrer";
+const LAYER: &str = "es una capa del subharm: sus divisores son enteros y su nivel y su pan entran con el patrón al compás";
 const ENVELOPE: &str = "la envolvente se fija con el sintetizador al cargar; para mover el volumen en el tiempo, el de la pista (`:gain()` con `ramp()` o `lfo()`)";
 const DELAY_TIME: &str = "es una figura (\"1/8\"), no un número; además, mover el retardo de una línea con repeticiones dentro suena a cambio de pitch";
 
@@ -1169,11 +1170,12 @@ pub const FUNCTIONS: &[Function] = &[
               limpio para dar profundidad (un seno por un paso bajo suave que \
               empieza cada nota en el cruce por cero y sigue su fase de una nota a \
               la siguiente: sin golpes al arrancar ni clics entre notas; en él, el \
-              accent es un 40 % más fuerte).",
+              accent es un 40 % más fuerte). Y `\"subharm\"`, dos osciladores con dos \
+              subs cada uno que dividen la frecuencia y el compás (ver `subharm`).",
         params: &[
             Param {
                 name: "tipo",
-                description: "`\"acid\"` o `\"sub\"`",
+                description: "`\"acid\"`, `\"sub\"` o `\"subharm\"`",
             },
             Param {
                 name: "opciones",
@@ -1189,6 +1191,35 @@ pub const FUNCTIONS: &[Function] = &[
              -- Debajo, un subgrave en C1 que sigue la tónica.\n\
              track(\"sub\", synth(\"sub\", { tone = 200, release = 120 }))\n  \
              :melody(\"c _ _ _  _ _ _ _  ab0 _ _ _  bb0 _ g0/ _\")\n",
+        ),
+    },
+    Function {
+        name: "subharm",
+        receiver: Receiver::Global,
+        signature: "subharm{ opciones }",
+        returns: Some(Receiver::Instrument),
+        summary: "Inspirado en el Subharmonicon: seis capas que dividen la frecuencia (f/n).",
+        doc: "Lo mismo que `synth(\"subharm\", { ... })`. Dos osciladores de sierra \
+              (`o1`, `o2`), cada uno a la nota dividida por su `div`, y dos subs de \
+              cada uno (`s1`, `s2` de `o1`; `s3`, `s4` de `o2`), a la frecuencia de su \
+              oscilador dividida por el suyo y sacados de su fase (siempre en fase). \
+              Cada capa tiene su `pan` (de potencia constante) y su `level`. Todo \
+              pasa por un paso bajo de \
+              4 polos. Se toca como cualquier instrumento (`melody`, pads, MIDI, `!` \
+              y `/`); sus capas cambian con el patrón, al compás.",
+        params: &[Param {
+            name: "opciones",
+            description: "tabla con las capas (`o1`...`s4`, cada una `{ div, pan, level }`) y el resto de parámetros (ver abajo)",
+        }],
+        template: "subharm{ o1 = { div = ${1}, pan = ${-0.6} }, s1 = { div = ${3}, pan = ${0.5} } }",
+        example: Some(
+            "bpm(110)\n\
+             local sh = subharm{\n  \
+             o1 = { div = 1, pan = -0.6 },\n  \
+             s1 = { div = 3, pan = 0.5, level = 0.7 },\n  \
+             cutoff = 900, res = 0.4,\n\
+             }\n\
+             track(\"sh\", sh):melody(\"c _ _ _  _ _ _ _  eb _ _ _  g _ _ _\")\n",
         ),
     },
     Function {
@@ -2822,6 +2853,197 @@ const SUB_OWN: [FxParam; 7] = [
     },
 ];
 
+/// Las claves de la tabla de cada capa de `subharm` (`o1 = { div = 1,
+/// pan = -0.6 }`).
+pub const LAYER_PARAMS: &[FxParam] = &[
+    FxParam {
+        name: "div",
+        description: "divisor de frecuencia: en `o1` y `o2`, de la nota (1 la nota, 2 una octava abajo, 3 una octava y una quinta...); en los subs, de su oscilador",
+        default: Some("o1, o2: 1; s1: 2; s2: 3; s3: 2; s4: 4"),
+        valid: "entero de 1 a 16",
+        values: &[],
+        template: "div = ${2}",
+        automate: Auto::No(LAYER),
+    },
+    FxParam {
+        name: "pan",
+        description: "pan de la capa, de potencia constante",
+        default: Some("0"),
+        valid: "-1–1",
+        values: &[],
+        template: "pan = ${-0.5}",
+        automate: Auto::No(LAYER),
+    },
+    FxParam {
+        name: "level",
+        description: "nivel de la capa (0, callada)",
+        default: Some("o1: 1; s1: 0.6; las demás: 0"),
+        valid: "0–1",
+        values: &[],
+        template: "level = ${0.8}",
+        automate: Auto::No(LAYER),
+    },
+];
+
+/// La tabla de una capa de `subharm`, como un efecto (para el
+/// autocompletado y la ayuda de sus claves).
+pub const LAYER_TABLE: Effect = Effect {
+    name: "capa",
+    aliases: &[],
+    summary: "Una capa del subharm: divisor de frecuencia, pan y nivel.",
+    params: LAYER_PARAMS,
+    template: "{ div = ${1}, pan = ${0}, level = ${0.8} }",
+};
+
+/// Parámetros de `subharm{ ... }` (los numéricos, con los rangos y valores
+/// por defecto de `engine::synth::subharm::PARAMS`; un test lo comprueba).
+pub const SUBHARM_PARAMS: &[FxParam] = &[
+    FxParam {
+        name: "o1",
+        description: "el primer oscilador de sierra: tabla con `div`, `pan` y `level` (ver la tabla de capa)",
+        default: Some("{ div = 1, level = 1 }"),
+        valid: "tabla de capa",
+        values: &[],
+        template: "o1 = { div = ${1}, pan = ${-0.6} }",
+        automate: Auto::No(LAYER),
+    },
+    FxParam {
+        name: "o2",
+        description: "el segundo oscilador de sierra",
+        default: Some("{ div = 1, level = 0 }"),
+        valid: "tabla de capa",
+        values: &[],
+        template: "o2 = { div = ${2}, pan = ${0.6} }",
+        automate: Auto::No(LAYER),
+    },
+    FxParam {
+        name: "s1",
+        description: "primer sub de `o1` (su frecuencia entre `div`)",
+        default: Some("{ div = 2, level = 0.6 }"),
+        valid: "tabla de capa",
+        values: &[],
+        template: "s1 = { div = ${3}, pan = ${0.5} }",
+        automate: Auto::No(LAYER),
+    },
+    FxParam {
+        name: "s2",
+        description: "segundo sub de `o1`",
+        default: Some("{ div = 3, level = 0 }"),
+        valid: "tabla de capa",
+        values: &[],
+        template: "s2 = { div = ${4}, level = ${0.5} }",
+        automate: Auto::No(LAYER),
+    },
+    FxParam {
+        name: "s3",
+        description: "primer sub de `o2`",
+        default: Some("{ div = 2, level = 0 }"),
+        valid: "tabla de capa",
+        values: &[],
+        template: "s3 = { div = ${2}, level = ${0.5} }",
+        automate: Auto::No(LAYER),
+    },
+    FxParam {
+        name: "s4",
+        description: "segundo sub de `o2`",
+        default: Some("{ div = 4, level = 0 }"),
+        valid: "tabla de capa",
+        values: &[],
+        template: "s4 = { div = ${5}, level = ${0.5} }",
+        automate: Auto::No(LAYER),
+    },
+    FxParam {
+        name: "wave",
+        description: "forma de onda de todas las capas",
+        default: Some("\"saw\""),
+        valid: "`\"saw\"` o `\"square\"`",
+        values: &["saw", "square"],
+        template: "wave = \"${square}\"",
+        automate: Auto::No(DISCRETE),
+    },
+    FxParam {
+        name: "root",
+        description: "la nota que suena con 0 semitonos (`melody` sin octava toca en la suya)",
+        default: Some("\"C2\""),
+        valid: "una nota (`\"C2\"`) o un número MIDI (0–127)",
+        values: &[],
+        template: "root = \"${C2}\"",
+        automate: Auto::No(INSTRUMENT),
+    },
+    FxParam {
+        name: "cutoff",
+        description: "corte del paso bajo de 4 polos, en Hz",
+        default: Some("1200"),
+        valid: "20–20000",
+        values: &[],
+        template: "cutoff = ${1200}",
+        automate: Auto::Smooth,
+    },
+    FxParam {
+        name: "res",
+        description: "resonancia del filtro",
+        default: Some("0.3"),
+        valid: "0–1",
+        values: &[],
+        template: "res = ${0.3}",
+        automate: Auto::Smooth,
+    },
+    FxParam {
+        name: "envmod",
+        description: "cuánto abre la envolvente del filtro el corte en cada nota (1: cuatro octavas)",
+        default: Some("0.3"),
+        valid: "0–1",
+        values: &[],
+        template: "envmod = ${0.3}",
+        automate: Auto::Smooth,
+    },
+    FxParam {
+        name: "fdecay",
+        description: "lo que tarda en cerrarse la envolvente del filtro de cada nota, en ms",
+        default: Some("400"),
+        valid: "10–5000",
+        values: &[],
+        template: "fdecay = ${400}",
+        automate: Auto::Smooth,
+    },
+    FxParam {
+        name: "glide",
+        description: "lo que tarda el `/` de un paso en llegar a su nota, en ms",
+        default: Some("0"),
+        valid: "0–1000",
+        values: &[],
+        template: "glide = ${60}",
+        automate: Auto::Smooth,
+    },
+    FxParam {
+        name: "drive",
+        description: "saturación a la salida (0, limpio)",
+        default: Some("0"),
+        valid: "0–1",
+        values: &[],
+        template: "drive = ${0.3}",
+        automate: Auto::Smooth,
+    },
+    FxParam {
+        name: "voices",
+        description: "notas a la vez (1: mono, las notas se ligan; más: polifónico, cada voz con sus seis capas)",
+        default: Some("1"),
+        valid: "1–8",
+        values: &[],
+        template: "voices = ${1}",
+        automate: Auto::No(STRUCTURE),
+    },
+    FxParam {
+        name: "seed",
+        description: "semilla de la fase de los osciladores al empezar desde el silencio; sin ella, una sacada del nombre de la pista",
+        default: Some("del nombre"),
+        valid: "entero de 0 en adelante",
+        values: &[],
+        template: "seed = ${1}",
+        automate: Auto::No(SEED),
+    },
+];
+
 /// Los tipos de `synth(tipo, { ... })`, como efectos (para el
 /// autocompletado, la ayuda y la guía).
 pub const SYNTHS: &[Effect] = &[
@@ -2838,6 +3060,13 @@ pub const SYNTHS: &[Effect] = &[
         summary: "Subgrave limpio: un seno por un paso bajo suave, mono, sin clics al empezar ni entre notas.",
         params: SUB_PARAMS,
         template: "{ tone = ${250}, release = ${80} }",
+    },
+    Effect {
+        name: "subharm",
+        aliases: &[],
+        summary: "Inspirado en el Subharmonicon: dos osciladores y dos subs de cada uno, seis capas que dividen la frecuencia.",
+        params: SUBHARM_PARAMS,
+        template: "{ o1 = { div = ${1} }, s1 = { div = ${3} } }",
     },
 ];
 
@@ -3452,6 +3681,9 @@ pub fn guide_markdown() -> String {
             (Receiver::Track, "fx") => out.push_str(&params_table("Efecto", EFFECTS)),
             (Receiver::Global, "bus") => out.push_str(&params_table("Bus", BUSES)),
             (Receiver::Global, "synth") => out.push_str(&params_table("Tipo", SYNTHS)),
+            (Receiver::Global, "subharm") => {
+                out.push_str(&params_table("Tabla", std::slice::from_ref(&LAYER_TABLE)))
+            }
             (Receiver::Slices, "set")
             | (Receiver::Global, "sample")
             | (Receiver::Sample, "instrument")
@@ -3632,7 +3864,9 @@ mod tests {
     fn every_template_starts_with_its_name() {
         for f in FUNCTIONS {
             let (text, _) = expand_template(f.template);
-            assert!(text.starts_with(&format!("{}(", f.name)), "{}", f.name);
+            // `nombre(...)` o, con una tabla, `nombre{...}`.
+            let call = [format!("{}(", f.name), format!("{}{{", f.name)];
+            assert!(call.iter().any(|c| text.starts_with(c)), "{}", f.name);
         }
         for e in EFFECTS {
             for p in e.params {

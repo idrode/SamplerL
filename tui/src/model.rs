@@ -363,6 +363,23 @@ pub fn synth_text(def: &script::SynthDef) -> String {
                 })
             }
         })
+        .chain(def.patch.layers.iter().flat_map(|layers| {
+            // Las capas que suenan: `o1 ÷1`, `s1 ÷3 pan 0.5 level 0.7`.
+            layers
+                .iter()
+                .zip(engine::synth::LAYER_NAMES)
+                .filter(|(l, _)| l.level > 0.0)
+                .map(move |(l, name)| {
+                    let mut text = format!("{name} ÷{}", l.div);
+                    if l.pan != 0.0 {
+                        text.push_str(&format!(" pan {}", round(l.pan)));
+                    }
+                    if l.level != 1.0 {
+                        text.push_str(&format!(" level {}", round(l.level)));
+                    }
+                    text
+                })
+        }))
         .collect::<Vec<_>>()
         .join(" · ")
 }

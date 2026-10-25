@@ -108,6 +108,7 @@ pub fn patch(root: f32) -> Patch {
         zero_phase: true,
         sub_div: 2,
         sub_wave: Wave::Square,
+        layers: None,
         params: super::PARAMS.map(|p| p.default),
     };
     patch.params[RESONANCE] = 0.0;

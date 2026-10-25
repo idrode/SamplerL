@@ -130,6 +130,7 @@ pub fn patch(root: f32) -> Patch {
         zero_phase: false,
         sub_div: 2,
         sub_wave: Wave::Square,
+        layers: None,
         params: super::PARAMS.map(|p| p.default),
     };
     defaults(&mut patch, &PARAMS);

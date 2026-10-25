@@ -229,7 +229,7 @@ fn errors_say_the_line() {
     let cases = [
         (
             "synth(\"moog\")",
-            "no hay ese sintetizador (hay: acid, sub)",
+            "no hay ese sintetizador (hay: acid, sub, subharm)",
         ),
         (
             "synth(\"acid\", { cutof = 300 })",
@@ -488,5 +488,119 @@ fn sub_block_errors_say_the_line() {
     assert!(
         err.contains("song.lua:3:") && err.contains("{sub=...} es de los sintetizadores"),
         "{err}"
+    );
+}
+
+/// `subharm{...}` es `synth("subharm", {...})`, sus capas llegan al patch
+/// y suena igual que el motor con lo mismo.
+#[test]
+fn the_subharm_sounds_like_the_engine() {
+    let source = "{\n\
+                    o1 = { div = 1, pan = -0.6 },\n\
+                    o2 = { div = 2, level = 0.5, pan = 0.4 },\n\
+                    s1 = { div = 3, pan = 0.5, level = 0.7 },\n\
+                    s4 = { div = 5, level = 0.3 },\n\
+                    cutoff = 900, res = 0.4, seed = 2,\n\
+                  }";
+    let braced = song_ok(&format!(
+        "track(\"sh\", subharm{source}):melody(\"c _ _ _  _ _ _ _  eb _ _ g/  _ _ _ _\")"
+    ));
+    let called = song_ok(&format!(
+        "track(\"sh\", synth(\"subharm\", {source})):melody(\"c _ _ _  _ _ _ _  eb _ _ g/  _ _ _ _\")"
+    ));
+    let def = braced.tracks[0].instrument.unwrap();
+    assert_eq!(def.root, 36);
+    let synth_def = def.synth.unwrap();
+    assert_eq!(synth_def.kind, "subharm");
+    assert_eq!(
+        synth_def.patch,
+        called.tracks[0].instrument.unwrap().synth.unwrap().patch
+    );
+    let mut patch = synth::subharm::patch(36.0);
+    let layers = patch.layers.as_mut().unwrap();
+    layers[0].pan = -0.6;
+    layers[1] = synth::Layer {
+        div: 2,
+        rdiv: 1,
+        pan: 0.4,
+        level: 0.5,
+    };
+    layers[2] = synth::Layer {
+        div: 3,
+        rdiv: 1,
+        pan: 0.5,
+        level: 0.7,
+    };
+    layers[5].level = 0.3;
+    layers[5].div = 5;
+    synth::subharm::param("cutoff")
+        .unwrap()
+        .set(&mut patch, 900.0);
+    synth::subharm::param("res").unwrap().set(&mut patch, 0.4);
+    patch.seed = 2;
+    assert_eq!(synth_def.patch, patch);
+    let steps = engine::notation::parse_steps("1 _ _ _  _ _ _ _  1^3 _ _ 1^7/  _ _ _ _").unwrap();
+    let silence = std::sync::Arc::new(Sample::silence(RATE));
+    let slices = Slices::grid(&silence, 1);
+    let pattern = Pattern::from_steps(silence, &slices, steps)
+        .unwrap()
+        .with_synth(Some(patch), [None; synth::PARAM_COUNT])
+        .unwrap();
+    let (mut controller, mut engine) = new_engine(RATE);
+    controller.set_bpm(120.0).unwrap();
+    controller.set_track_pattern(0, Some(pattern)).unwrap();
+    controller.start().unwrap();
+    let frames = 2 * engine::bar_frames(120.0, RATE) as usize;
+    let direct = offline::render(&mut engine, frames, 2);
+    let scripted = braced.render(RATE, 2).unwrap();
+    assert!(direct.iter().any(|v| v.abs() > 0.05), "no suena");
+    assert!(scripted == direct, "el script no suena como el motor");
+}
+
+/// Lo que no vale de `subharm` dice la línea.
+#[test]
+fn subharm_errors_say_the_line() {
+    let cases = [
+        ("subharm{ o3 = { div = 2 } }", "clave desconocida \"o3\""),
+        ("subharm{ o1 = 2 }", "o1 es una tabla"),
+        (
+            "subharm{ s1 = { div = 2.5 } }",
+            "s1.div es un entero de 1 a 16",
+        ),
+        (
+            "subharm{ s2 = { div = 17 } }",
+            "s2.div es un entero de 1 a 16",
+        ),
+        ("subharm{ o2 = { pan = 2 } }", "o2.pan va de -1 a 1"),
+        ("subharm{ s3 = { level = -1 } }", "s3.level va de 0 a 1"),
+        (
+            "subharm{ s4 = { tono = 1 } }",
+            "s4: clave desconocida \"tono\"",
+        ),
+        (
+            "subharm{ o1 = { level = lfo(1, 0, 1) } }",
+            "o1.level no admite ramp() ni lfo()",
+        ),
+        ("subharm{ voices = 2.5 }", "voices es un entero (1 a 8)"),
+        ("subharm{ sub = 0.5 }", "clave desconocida \"sub\""),
+        (
+            "track(\"s\", subharm{}):steps(\"1{sub=0.5} . . .  . . . .  . . . .  . . . .\")",
+            "es un subharm: no tiene bloque sub",
+        ),
+        (
+            "track(\"s\", subharm{}):steps(\"1^0^7 . . .  . . . .  . . . .  . . . .\")",
+            "es un sintetizador monofónico",
+        ),
+    ];
+    for (line, expected) in cases {
+        let Err(err) = song(&format!("local x = 1\n{line}")) else {
+            panic!("{line}: debería fallar");
+        };
+        assert!(err.contains("song.lua:3:"), "{line}: {err}");
+        assert!(err.contains(expected), "{line}: {err}");
+    }
+    // Con varias voces, acordes sí.
+    song_ok(
+        "track(\"s\", subharm{ voices = 3 }):steps(\"1^0^7 . . .  . . . .  . . . .  . . . .\")",
     );
 }

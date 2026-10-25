@@ -2,7 +2,7 @@
 //! asignador global cuenta las reservas que hace este hilo mientras corre
 //! `Engine::process`, con retrasos (swing, humanize), retrigger, pitch,
 //! instrumentos (polifonía, ADSR, bucles), el EQ (suavizado y automatizado),
-//! el EQ dinámico con sidechain, efectos por corte (con sus colas), bucles de corte con fundido, nubes de granos en vivo, sintetizadores (mono con accent, slide y el sub de cada nota, polifónicos con unison y sub abierto, curvas y notas en vivo), cambios de
+//! el EQ dinámico con sidechain, efectos por corte (con sus colas), bucles de corte con fundido, nubes de granos en vivo, sintetizadores (mono con accent, slide y el sub de cada nota, polifónicos con unison y sub abierto, un subharm de 8 voces con sus seis capas, curvas y notas en vivo), cambios de
 //! patrón al compás, un patrón que se suelta a la cola de basura y el paso
 //! de cada pista y el retardo de salida que se publican para la interfaz.
 
@@ -1189,6 +1189,32 @@ fn the_audio_thread_never_allocates() {
         .with_synth(Some(sub), tone)
         .unwrap();
     controller.set_track_pattern(4, Some(sub)).unwrap();
+    // Un subharm a plena carga: 8 voces, las seis capas sonando, abiertas
+    // y con divisores distintos, con acordes y notas ligadas.
+    let mut full = engine::synth::subharm::patch(36.0);
+    engine::synth::subharm::param("voices")
+        .unwrap()
+        .set(&mut full, 8.0);
+    full.layers = Some(std::array::from_fn(|i| engine::synth::Layer {
+        div: [1, 2, 3, 5, 7, 16][i],
+        rdiv: [4, 3, 5, 7, 2, 16][i],
+        pan: [-0.8, 0.8, -0.4, 0.4, -1.0, 1.0][i],
+        level: 1.0,
+    }));
+    let harm_steps: Vec<Option<Step>> = (0..STEPS)
+        .map(|k| {
+            Some(
+                Step::new(0)
+                    .with_chord(&[0.0, 7.0, 12.0, 19.0])
+                    .with_hold(if k % 2 == 0 { 1 } else { 0 }),
+            )
+        })
+        .collect();
+    let harm = Pattern::from_steps(silence.clone(), &one, harm_steps)
+        .unwrap()
+        .with_synth(Some(full), [None; engine::synth::PARAM_COUNT])
+        .unwrap();
+    controller.set_track_pattern(3, Some(harm)).unwrap();
     controller.set_track_pattern(5, Some(acid)).unwrap();
     controller.set_track_pattern(6, Some(pads)).unwrap();
     let n = counted(|| {
@@ -1198,6 +1224,7 @@ fn the_audio_thread_never_allocates() {
     });
     assert_eq!(n, 0, "reservas con sintetizadores");
     let status = controller.status();
+    assert_eq!(status.tracks[3].voices, 8, "el subharm, con sus 8 voces");
     // La pista 4 aún suelta lo que tocaba antes: al menos la voz del sub.
     assert!(status.tracks[4].voices >= 1, "el sub suena");
     let voices = (status.tracks[5].voices, status.tracks[6].voices);
@@ -1216,6 +1243,7 @@ fn the_audio_thread_never_allocates() {
     for key in 0..10 {
         controller.note_off(7, key).unwrap();
     }
+    controller.set_track_pattern(3, None).unwrap();
     controller.set_track_pattern(4, None).unwrap();
     controller.set_track_pattern(5, None).unwrap();
     controller.set_track_pattern(6, None).unwrap();

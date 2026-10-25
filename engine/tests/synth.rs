@@ -770,3 +770,186 @@ fn the_square_sub_is_band_limited() {
     println!("sub cuadrado a 2 kHz: {alias:.1} dB");
     assert!(alias < -50.0, "{alias:.1} dB");
 }
+
+/// Un patch de capas que se oye tal cual (senos, paso alto a 20 Hz sin
+/// resonancia, sostenido) con solo las capas `on` sonando, cada una con
+/// su divisor.
+fn layered(on: &[(usize, u8)]) -> Patch {
+    let mut p = raw(Wave::Sine);
+    let mut layers = synth::subharm::DEFAULT_LAYERS.map(|l| synth::Layer { level: 0.0, ..l });
+    for &(i, div) in on {
+        layers[i].div = div;
+        layers[i].level = 1.0;
+    }
+    p.layers = Some(layers);
+    p.mono = true;
+    p.voices = 1;
+    p
+}
+
+/// Cada capa suena a su frecuencia: `o1` y `o2` a la nota entre su `div`,
+/// y cada sub a la de su oscilador entre el suyo (`s1`, `s2` de `o1`; `s3`,
+/// `s4` de `o2`).
+#[test]
+fn each_layer_sounds_at_its_division() {
+    let notes = [(0, NoteEvent::new(81.0, HELD))]; // 880 Hz
+    let frames = RATE as usize * 3 / 2;
+    // (capa, su div, el div de su oscilador si es un sub)
+    for (layer, div, parent_div) in [
+        (0, 1, 1),
+        (0, 4, 4),
+        (1, 3, 3),
+        (2, 2, 1),
+        (3, 5, 2),
+        (4, 7, 1),
+        (5, 16, 3),
+    ] {
+        let parent = synth::LAYER_PARENT[layer];
+        let mut on = vec![(layer, div)];
+        if layer >= 2 {
+            // El oscilador del sub, callado pero con su divisor.
+            on.push((parent, parent_div));
+        }
+        let mut patch = layered(&on);
+        if layer >= 2 {
+            patch.layers.as_mut().unwrap()[parent].level = 0.0;
+        }
+        let y = left(&synth::render(&patch, &NO_CURVES, &notes, frames, RATE));
+        let second = &y[RATE as usize / 2..RATE as usize / 2 + RATE as usize];
+        let expected = if layer < 2 {
+            880.0 / div as f64
+        } else {
+            880.0 / parent_div as f64 / div as f64
+        };
+        let measured = ups(second) as f64;
+        assert!(
+            (measured - expected).abs() <= 1.0,
+            "capa {}: {measured} ciclos, no {expected:.1}",
+            synth::LAYER_NAMES[layer]
+        );
+    }
+}
+
+/// Los subs van atados a su oscilador: con `o1` a f/3 y `s1` a la mitad de
+/// él, en todo el render (con un glide de una octava por medio) `o1` hace
+/// exactamente el doble de ciclos que `s1`.
+#[test]
+fn layer_subs_stay_locked_to_their_oscillator() {
+    let mut patch = layered(&[(0, 3), (2, 2)]).with(synth::GLIDE, 200.0);
+    patch.layers.as_mut().unwrap()[2].level = 0.0;
+    let mut slid = NoteEvent::new(69.0, HELD);
+    slid.slide = true;
+    let notes = [(0, NoteEvent::new(57.0, HELD)), (20_000, slid)];
+    let frames = 2 * RATE as usize;
+    let main = left(&synth::render(&patch, &NO_CURVES, &notes, frames, RATE));
+    let mut only_sub = patch;
+    let layers = only_sub.layers.as_mut().unwrap();
+    layers[0].level = 0.0;
+    layers[2].level = 1.0;
+    let sub = left(&synth::render(&only_sub, &NO_CURVES, &notes, frames, RATE));
+    let (m, s) = (ups(&main[4000..]), ups(&sub[4000..]));
+    assert!(m.abs_diff(2 * s) <= 2, "o1 {m} ciclos, s1 {s}");
+}
+
+/// Pan de potencia constante en las seis capas: L² + R² igual con
+/// cualquier pan, y en el centro, igual en los dos lados.
+#[test]
+fn every_layer_pans_with_constant_power() {
+    let notes = [(0, NoteEvent::new(57.0, HELD))];
+    for layer in 0..synth::LAYERS {
+        let power = |pan: f32| {
+            let mut on = vec![(layer, 2)];
+            if layer >= 2 {
+                on.push((synth::LAYER_PARENT[layer], 1));
+            }
+            let mut patch = layered(&on);
+            let layers = patch.layers.as_mut().unwrap();
+            if layer >= 2 {
+                layers[synth::LAYER_PARENT[layer]].level = 0.0;
+            }
+            layers[layer].pan = pan;
+            let out = synth::render(&patch, &NO_CURVES, &notes, RATE as usize / 2, RATE);
+            let (mut l, mut r) = (0.0f64, 0.0f64);
+            for f in out[RATE as usize / 4 * 2..].chunks(2) {
+                l += (f[0] as f64).powi(2);
+                r += (f[1] as f64).powi(2);
+            }
+            (l, r)
+        };
+        let (cl, cr) = power(0.0);
+        assert!((cl / cr - 1.0).abs() < 1e-6, "capa {layer}");
+        for pan in [-1.0, -0.5, 0.25, 0.8, 1.0] {
+            let (l, r) = power(pan);
+            let total = (l + r) / (cl + cr);
+            assert!(
+                (total - 1.0).abs() < 0.01,
+                "capa {layer}, pan {pan}: {total:.4}"
+            );
+        }
+    }
+}
+
+/// Un patch nuevo con otras capas (como al entrar un patrón) a media nota:
+/// el nivel y el pan de cada capa se suavizan, sin saltos.
+#[test]
+fn layer_changes_mid_note_do_not_click() {
+    let a = layered(&[(0, 2)]);
+    let mut b = layered(&[(0, 2), (1, 3)]);
+    let layers = b.layers.as_mut().unwrap();
+    layers[0].pan = -1.0;
+    layers[0].level = 0.3;
+    let clock = synth::SongClock {
+        steps: 0.0,
+        seconds: 0.0,
+        frames_per_step: 6000.0,
+    };
+    let mut s = synth::Synth::new(RATE);
+    s.note_on(&a, NoteEvent::new(57.0, HELD));
+    let mut out = vec![0.0f32; 2 * RATE as usize];
+    for (i, chunk) in out.chunks_mut(512).enumerate() {
+        let patch = if i < 40 { &a } else { &b };
+        s.mix_into(chunk, patch, &NO_CURVES, &clock);
+    }
+    for channel in [0, 1] {
+        let y: Vec<f32> = out.iter().skip(channel).step_by(2).copied().collect();
+        let before = max_step(&y[2000..20_000]);
+        let after = max_step(&y[30_000..]);
+        let during = max_step(&y[20_000..30_000]);
+        assert!(
+            during < 1.2 * before.max(after),
+            "canal {channel}: {during} (antes {before}, después {after})"
+        );
+    }
+}
+
+/// Ocho voces de subharm con las seis capas al máximo, el filtro abierto,
+/// resonancia y accent: tras el limitador, dentro de ±1; y una sola voz
+/// así, sin saturar.
+#[test]
+fn eight_subharm_voices_at_full_load_stay_within_one() {
+    let mut patch = synth::subharm::patch(36.0)
+        .with(CUTOFF, 20_000.0)
+        .with(RESONANCE, 0.8);
+    patch.layers = Some(synth::subharm::DEFAULT_LAYERS.map(|l| synth::Layer { level: 1.0, ..l }));
+    let mut one = NoteEvent::new(36.0, HELD);
+    one.accent = true;
+    let single = synth::render(&patch, &NO_CURVES, &[(0, one)], RATE as usize / 2, RATE);
+    let peak = single.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+    println!(
+        "subharm, una voz con todo: pico {:.1} dBFS",
+        20.0 * peak.log10()
+    );
+    assert!(peak < 1.0, "una voz satura: {peak}");
+    synth::subharm::param("voices")
+        .unwrap()
+        .set(&mut patch, 8.0);
+    let notes: Vec<_> = (0..8)
+        .map(|i| (i * 100, NoteEvent::new(36.0 + 5.0 * i as f32, HELD)))
+        .collect();
+    let out = synth::render(&patch, &NO_CURVES, &notes, RATE as usize / 2, RATE);
+    assert!(
+        out.iter()
+            .map(|&v| soft_limit(v))
+            .all(|v| v.is_finite() && v.abs() <= 1.0)
+    );
+}

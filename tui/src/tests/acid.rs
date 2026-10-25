@@ -138,3 +138,23 @@ fn the_sub_shows_its_params() {
     let screen = text(&draw(&mut app, 140, 40));
     assert!(screen.contains("sub · ♪ sub C1 1/1"), "{screen}");
 }
+
+/// El subharm en el panel: sus parámetros y las capas que suenan.
+#[test]
+fn the_subharm_shows_its_layers() {
+    let song = "bpm(120)\n\
+                track(\"sh\", subharm{ s1 = { div = 3, pan = 0.5, level = 0.7 } })\n  \
+                  :melody(\"c _ _ _  . . . .  . . . .  . . . .\")\n";
+    let (_, mut app, mut engine) = open("subharm_view", Some(song));
+    assert!(app.view().error.is_none(), "{:?}", app.view().error);
+    let params = app.view().tracks[0].synth.clone().unwrap().params;
+    assert!(
+        params.ends_with("o1 ÷1 · s1 ÷3 pan 0.5 level 0.7"),
+        "{params}"
+    );
+    offline::render(&mut engine, STEP / 2, 2);
+    app.tick();
+    let screen = text(&draw(&mut app, 140, 40));
+    assert!(screen.contains("sintetizador · sh · subharm"), "{screen}");
+    assert!(screen.contains("sh · ♪ subharm C2 1/1"), "{screen}");
+}

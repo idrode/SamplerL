@@ -568,6 +568,9 @@ enum Frame {
         strings: Vec<Option<String>>,
         /// Si es un método, byte de `code` donde está su `:`.
         colon: Option<usize>,
+        /// Llamada con una tabla sin paréntesis (`subharm{ ... }`): se
+        /// cierra con su tabla.
+        braced: bool,
     },
     Brace {
         /// Byte donde empieza el elemento actual (tras `{` o `,`).
@@ -640,11 +643,38 @@ impl Scan {
                         name,
                         arg: 0,
                         strings: Vec::new(),
+                        braced: false,
                     }
                 }),
-                '{' => frames.push(Frame::Brace { item_start: i + 1 }),
-                ')' | '}' => {
+                '{' => {
+                    // `nombre{ ... }`: una llamada con una tabla (la tabla
+                    // es su único argumento).
+                    let name = last_ident(&code);
+                    let keyword = matches!(
+                        name.as_str(),
+                        "return" | "in" | "do" | "then" | "else" | "and" | "or" | "not"
+                    );
+                    if !name.is_empty() && !keyword && code.trim_end().ends_with(name.as_str()) {
+                        let callee = code.trim_end();
+                        let before = &callee[..callee.len() - name.len()];
+                        frames.push(Frame::Paren {
+                            colon: before.ends_with(':').then(|| before.len() - 1),
+                            name,
+                            arg: 0,
+                            strings: Vec::new(),
+                            braced: true,
+                        });
+                    }
+                    frames.push(Frame::Brace { item_start: i + 1 });
+                }
+                ')' => {
                     frames.pop();
+                }
+                '}' => {
+                    frames.pop();
+                    if matches!(frames.last(), Some(Frame::Paren { braced: true, .. })) {
+                        frames.pop();
+                    }
                 }
                 ',' => match frames.last_mut() {
                     Some(Frame::Paren { arg, .. }) => *arg += 1,
@@ -679,6 +709,24 @@ impl Scan {
 
     /// Efecto de la tabla abierta, si es la de `fx("efecto", { ... })`.
     fn fx_effect(&self) -> Option<&'static api::Effect> {
+        // La tabla de una capa dentro de la de un subharm:
+        // `subharm{ o1 = { ... } }` o `synth("subharm", { o1 = { ... } })`.
+        if let [
+            ..,
+            Frame::Paren {
+                name, arg, strings, ..
+            },
+            Frame::Brace { .. },
+            Frame::Brace { .. },
+        ] = &self.frames[..]
+        {
+            let subharm = match (name.as_str(), *arg) {
+                ("subharm", 0) => true,
+                ("synth", 1) => strings.first()?.as_deref() == Some("subharm"),
+                _ => false,
+            };
+            return subharm.then_some(&api::LAYER_TABLE);
+        }
         let [
             ..,
             Frame::Paren {
@@ -701,6 +749,7 @@ impl Scan {
             ("sample", 1) => Some(&api::SAMPLE_TABLE),
             ("instrument", 0) => Some(&api::INSTRUMENT_TABLE),
             ("synth", 1) => api::synth(strings.first()?.as_deref()?),
+            ("subharm", 0) => api::synth("subharm"),
             ("grains", 0) | ("freeze", 1) => Some(&api::GRAINS_TABLE),
             _ => None,
         }
@@ -797,6 +846,8 @@ pub fn help_at(lines: &[String], row: usize, col: usize) -> Option<Help> {
             "pista:grains({ ... })".to_string()
         } else if api::bus(effect.name).is_some_and(|b| std::ptr::eq(b, effect)) {
             format!("bus(\"{}\", {{ ... }})", effect.name)
+        } else if std::ptr::eq(effect, &api::LAYER_TABLE) {
+            "subharm{ capa = { ... } }".to_string()
         } else if api::synth(effect.name).is_some_and(|t| std::ptr::eq(t, effect)) {
             format!("synth(\"{}\", {{ ... }})", effect.name)
         } else if matches!(
@@ -820,6 +871,7 @@ pub fn help_at(lines: &[String], row: usize, col: usize) -> Option<Help> {
             arg,
             strings,
             colon,
+            ..
         } = frame
         else {
             continue;
@@ -1310,7 +1362,7 @@ mod tests {
     #[test]
     fn synth_offers_its_types_parameters_and_values() {
         let c = at(&format!("{SONG}local b = synth(\"|")).unwrap();
-        assert_eq!(labels(&c), ["acid", "sub"]);
+        assert_eq!(labels(&c), ["acid", "sub", "subharm"]);
         let c = at(&format!("{SONG}local b = synth(\"sub\", {{ wave = \"|")).unwrap();
         assert_eq!(labels(&c), ["sine", "triangle"]);
         let c = at(&format!("{SONG}local b = synth(\"acid\", {{ c|")).unwrap();
@@ -1330,6 +1382,21 @@ mod tests {
             "{}",
             h.description
         );
+    }
+
+    #[test]
+    fn subharm_offers_its_layers_and_their_keys() {
+        let c = at(&format!("{SONG}local s = subharm{{ s|")).unwrap();
+        assert_eq!(labels(&c), ["s1", "s2", "s3", "s4", "seed"]);
+        let c = at(&format!("{SONG}local s = subharm{{ o1 = {{ |")).unwrap();
+        assert_eq!(labels(&c), ["div", "pan", "level"]);
+        let c = at(&format!("{SONG}local s = synth(\"subharm\", {{ s2 = {{ d|")).unwrap();
+        assert_eq!(labels(&c), ["div"]);
+        let h = help(&format!(
+            "{SONG}local s = subharm{{ o1 = {{ div = 3|, pan = 0 }} }}"
+        ))
+        .unwrap();
+        assert_eq!(h.signature, "subharm{ capa = { ... } }");
     }
 
     #[test]

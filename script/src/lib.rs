@@ -285,12 +285,12 @@ pub struct SynthDef {
 }
 
 /// Qué toca una pista: cortes, un instrumento de sample o un
-/// sintetizador (mono o no).
+/// sintetizador (mono o no; con capas, el subharm, sin bloque sub).
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Plays {
     Slices,
     Instrument,
-    Synth { mono: bool },
+    Synth { mono: bool, layers: bool },
 }
 
 impl Plays {
@@ -298,7 +298,10 @@ impl Plays {
         match def.instrument {
             None => Plays::Slices,
             Some(InstrumentDef { synth: None, .. }) => Plays::Instrument,
-            Some(InstrumentDef { synth: Some(s), .. }) => Plays::Synth { mono: s.patch.mono },
+            Some(InstrumentDef { synth: Some(s), .. }) => Plays::Synth {
+                mono: s.patch.mono,
+                layers: s.patch.layers.is_some(),
+            },
         }
     }
 }
@@ -1608,6 +1611,18 @@ impl ScriptHost {
             })?,
         )?;
 
+        let g = guard.clone();
+        globals.set(
+            "subharm",
+            lua.create_function(move |lua, options: Option<Table>| {
+                g(lua, "subharm")?;
+                let def = synth_options(lua, "subharm", options.as_ref())?;
+                Ok(SynthHandle {
+                    def,
+                    sample_rate: rate,
+                })
+            })?,
+        )?;
         let g = guard.clone();
         globals.set(
             "synth",
@@ -3050,6 +3065,14 @@ fn synth_options(lua: &Lua, kind: &str, table: Option<&Table>) -> mlua::Result<I
                         }
                     }
                 }
+                layer if engine::synth::LAYER_NAMES.contains(&layer) => {
+                    let i = engine::synth::LAYER_NAMES
+                        .iter()
+                        .position(|n| *n == layer)
+                        .expect("es una capa");
+                    let layers = patch.layers.as_mut().expect("el subharm tiene capas");
+                    layers[i] = layer_options(lua, &who, layer, &value, layers[i])?;
+                }
                 "sub_wave" => {
                     let wave = match &value {
                         Value::String(w) => step_fx::sub_wave(w.to_str()?.as_ref()),
@@ -3091,10 +3114,18 @@ fn synth_options(lua: &Lua, kind: &str, table: Option<&Table>) -> mlua::Result<I
                             ),
                         ));
                     }
-                    if p.target == engine::synth::preset::Target::SubDiv && fixed.fract() != 0.0 {
+                    let integer = matches!(
+                        p.target,
+                        engine::synth::preset::Target::SubDiv
+                            | engine::synth::preset::Target::Voices
+                    );
+                    if integer && fixed.fract() != 0.0 {
                         return Err(fail(
                             lua,
-                            format!("{who}: sub_div es un entero (1 a 16), no {fixed}"),
+                            format!(
+                                "{who}: {name} es un entero ({} a {}), no {fixed}",
+                                p.min, p.max
+                            ),
                         ));
                     }
                     p.set(&mut patch, fixed);
@@ -3118,6 +3149,91 @@ fn synth_options(lua: &Lua, kind: &str, table: Option<&Table>) -> mlua::Result<I
         engine: engine::Instrument::new(patch.voices),
         synth: Some(def),
     })
+}
+
+/// La tabla de una capa del subharm (`o1 = { div = 1, pan = -0.6 }`),
+/// sobre la que tenía (claves del registro `api::LAYER_PARAMS`).
+fn layer_options(
+    lua: &Lua,
+    who: &str,
+    name: &str,
+    value: &Value,
+    mut layer: engine::synth::Layer,
+) -> mlua::Result<engine::synth::Layer> {
+    let Value::Table(table) = value else {
+        return Err(fail(
+            lua,
+            format!("{who}: {name} es una tabla {{ div = 2, pan = 0, level = 1 }}"),
+        ));
+    };
+    let known: Vec<&str> = api::LAYER_PARAMS.iter().map(|p| p.name).collect();
+    for pair in table.pairs::<Value, Value>() {
+        let (key, value) = pair?;
+        let key = match &key {
+            Value::String(k) => k.to_str()?.to_string(),
+            other => {
+                return Err(fail(
+                    lua,
+                    format!("{who}: {name}: clave no válida ({})", other.type_name()),
+                ));
+            }
+        };
+        if !known.contains(&key.as_str()) {
+            return Err(fail(
+                lua,
+                format!(
+                    "{who}: {name}: clave desconocida \"{key}\" (hay: {})",
+                    known.join(", ")
+                ),
+            ));
+        }
+        if is_curve(&value) {
+            return Err(fail(
+                lua,
+                format!(
+                    "{who}: {name}.{key} no admite ramp() ni lfo(): {}",
+                    "es una capa del subharm: sus divisores son enteros y su nivel y su pan entran con el patrón al compás"
+                ),
+            ));
+        }
+        let number = match value {
+            Value::Integer(n) => n as f64,
+            Value::Number(n) => n,
+            _ => {
+                return Err(fail(lua, format!("{who}: {name}.{key} es un número")));
+            }
+        };
+        let integer = |what: &str| -> mlua::Result<u8> {
+            if number.fract() != 0.0 || !(1.0..=engine::synth::MAX_SUB_DIV as f64).contains(&number)
+            {
+                return Err(fail(
+                    lua,
+                    format!("{who}: {name}.{what} es un entero de 1 a 16, no {number}"),
+                ));
+            }
+            Ok(number as u8)
+        };
+        match key.as_str() {
+            "div" => layer.div = integer("div")?,
+            "rdiv" => layer.rdiv = integer("rdiv")?,
+            "pan" if (-1.0..=1.0).contains(&number) => layer.pan = number as f32,
+            "pan" => {
+                return Err(fail(
+                    lua,
+                    format!("{who}: {name}.pan va de -1 a 1, no {number}"),
+                ));
+            }
+            "level" if (0.0..=1.0).contains(&number) => layer.level = number as f32,
+            "level" => {
+                return Err(fail(
+                    lua,
+                    format!("{who}: {name}.level va de 0 a 1, no {number}"),
+                ));
+            }
+            _ => unreachable!("claves del registro"),
+        }
+    }
+    Ok(layer)
 }
 
 /// Fundido cruzado del bucle si no se dice otro, en ms.
@@ -4371,7 +4487,18 @@ fn checked_steps(
                 ),
             ));
         }
-        if plays == (Plays::Synth { mono: true }) && step.chord.iter().any(Option::is_some) {
+        if matches!(plays, Plays::Synth { layers: true, .. }) && step.sub.is_some() {
+            return Err(fail(
+                lua,
+                format!(
+                    "steps: \"{track}\" es un subharm: no tiene bloque sub ({{sub=...}}); \
+                     sus subs son las capas s1 a s4"
+                ),
+            ));
+        }
+        if matches!(plays, Plays::Synth { mono: true, .. })
+            && step.chord.iter().any(Option::is_some)
+        {
             return Err(fail(
                 lua,
                 format!(

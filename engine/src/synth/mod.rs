@@ -24,6 +24,7 @@ mod filter;
 mod osc;
 pub mod preset;
 pub mod sub;
+pub mod subharm;
 
 use crate::Adsr;
 use crate::automation::{Curve, mix};
@@ -298,6 +299,55 @@ pub struct SubNote {
 /// Formas de onda del sub.
 pub const SUB_WAVES: [Wave; 3] = [Wave::Square, Wave::Triangle, Wave::Sine];
 
+/// Capas de un patch de capas ([`Patch::layers`], el del `subharm`): los
+/// dos osciladores principales y dos subs de cada uno.
+pub const LAYERS: usize = 6;
+/// De qué oscilador principal sale cada capa (los dos primeros son ellos
+/// mismos): `o1`, `o2`, `s1` y `s2` de `o1`, `s3` y `s4` de `o2`.
+pub const LAYER_PARENT: [usize; LAYERS] = [0, 1, 0, 0, 1, 1];
+/// Nombre de cada capa en el script.
+pub const LAYER_NAMES: [&str; LAYERS] = ["o1", "o2", "s1", "s2", "s3", "s4"];
+
+/// Una capa: su divisor de frecuencia (el de la nota en los osciladores
+/// principales; el de su oscilador en los subs), su divisor rítmico (la
+/// capa vuelve a sonar cada 1/`rdiv` del compás), su pan (potencia
+/// constante) y su nivel.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Layer {
+    pub div: u8,
+    pub rdiv: u8,
+    pub pan: f32,
+    pub level: f32,
+}
+
+impl Layer {
+    pub const fn new(div: u8, level: f32) -> Layer {
+        Layer {
+            div,
+            rdiv: 1,
+            pan: 0.0,
+            level,
+        }
+    }
+
+    /// Comprueba los rangos.
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if !(1..=MAX_SUB_DIV).contains(&self.div) {
+            return Err("div de una capa va de 1 a 16");
+        }
+        if !(1..=MAX_SUB_DIV).contains(&self.rdiv) {
+            return Err("rdiv de una capa va de 1 a 16");
+        }
+        if !(-1.0..=1.0).contains(&self.pan) {
+            return Err("pan de una capa va de -1 a 1");
+        }
+        if !(0.0..=1.0).contains(&self.level) {
+            return Err("level de una capa va de 0 a 1");
+        }
+        Ok(())
+    }
+}
+
 impl SubNote {
     /// Comprueba los rangos (los de [`PARAMS`] y [`MAX_SUB_DIV`]).
     pub fn validate(&self) -> Result<(), &'static str> {
@@ -395,6 +445,11 @@ pub struct Patch {
     /// onda (una de [`SUB_WAVES`]).
     pub sub_div: u8,
     pub sub_wave: Wave,
+    /// Capas (el `subharm`): con ellas, cada voz toca dos osciladores
+    /// principales (a la nota dividida por su `div`) y dos subs de cada uno
+    /// (sacados de su fase como el sub, sin unison ni bloque sub), cada
+    /// capa con su nivel y su pan. Ver [`Layer`].
+    pub layers: Option<[Layer; LAYERS]>,
     /// Valores de los parámetros continuos ([`PARAMS`]).
     pub params: [f32; PARAM_COUNT],
 }
@@ -428,6 +483,7 @@ impl Patch {
             zero_phase: false,
             sub_div: 2,
             sub_wave: Wave::Square,
+            layers: None,
             params: PARAMS.map(|p| p.default),
         }
     }
@@ -457,6 +513,11 @@ impl Patch {
             ..SubNote::default()
         }
         .validate()?;
+        if let Some(layers) = &self.layers {
+            for layer in layers {
+                layer.validate()?;
+            }
+        }
         for (value, p) in self.params.iter().zip(&PARAMS) {
             if !(p.min..=p.max).contains(value) {
                 return Err("parámetro del sintetizador fuera de rango");
@@ -559,6 +620,11 @@ struct Voice {
     sub_pan: f32,
     /// La voz sonaba en estéreo en la muestra anterior.
     was_stereo: bool,
+    /// Capas: los reinicios contados de los subs (`s1` a `s4`) y el nivel
+    /// y el pan de cada capa, suavizados.
+    layer_count: [u32; LAYERS],
+    layer_level: [f32; LAYERS],
+    layer_pan: [f32; LAYERS],
     noise: Noise,
     /// Diezmado de los osciladores (van al doble de frecuencia de
     /// muestreo), por canal.
@@ -592,6 +658,9 @@ impl Default for Voice {
             sub_level: 0.0,
             sub_pan: 0.0,
             was_stereo: false,
+            layer_count: [0; LAYERS],
+            layer_level: [0.0; LAYERS],
+            layer_pan: [0.0; LAYERS],
             noise: Noise::new(0),
             down: [Halfband::default(); 2],
             filter: [Filter::default(); 2],
@@ -637,6 +706,12 @@ impl Voice {
             for osc in &mut self.osc {
                 osc.phase = patch.wave.zero_phase();
             }
+        }
+        // Las capas empiezan donde las pide el patch (sin subir desde 0:
+        // la envolvente de amplitud ya sube).
+        if let Some(layers) = &patch.layers {
+            self.layer_level = layers.map(|l| l.level);
+            self.layer_pan = layers.map(|l| l.pan);
         }
         self.noise = Noise::new(osc::splitmix(&mut rng));
         self.active = true;
@@ -728,6 +803,67 @@ fn follow(ms: f32, sample_rate: f32) -> f32 {
 }
 
 impl Voice {
+    /// Una muestra de salida de las capas (estéreo, ya diezmada): los dos
+    /// osciladores principales a la nota dividida por su `div` y los subs
+    /// de cada uno sacados de su fase, cada capa con su nivel y su pan
+    /// (suavizados), al doble de la frecuencia de muestreo como siempre.
+    fn layers_sample(&mut self, layers: &[Layer; LAYERS], wave: Wave, b: &Block) -> (f32, f32) {
+        let mut gains = [(0.0f32, 0.0f32); LAYERS];
+        for (i, layer) in layers.iter().enumerate() {
+            self.layer_level[i] += (layer.level - self.layer_level[i]) * b.smooth;
+            self.layer_pan[i] += (layer.pan - self.layer_pan[i]) * b.smooth;
+            if (layer.level - self.layer_level[i]).abs() < 1e-6 {
+                self.layer_level[i] = layer.level;
+            }
+            if (layer.pan - self.layer_pan[i]).abs() < 1e-6 {
+                self.layer_pan[i] = layer.pan;
+            }
+            let (gl, gr) = constant_power(self.layer_pan[i]);
+            gains[i] = (gl * self.layer_level[i], gr * self.layer_level[i]);
+        }
+        let dt = 0.5 * self.dt;
+        for _ in 0..2 {
+            let (mut l, mut r) = (0.0f32, 0.0f32);
+            let mut add = |y: f32, (gl, gr): (f32, f32)| {
+                l += y * gl;
+                r += y * gr;
+            };
+            for m in 0..2 {
+                let main_dt = dt / layers[m].div.max(1) as f64;
+                let at = self.osc[m].phase;
+                // Los subs de este oscilador, de su fase de ahora.
+                for i in (0..LAYERS).filter(|&i| i >= 2 && LAYER_PARENT[i] == m) {
+                    let div = layers[i].div.max(1) as u32;
+                    if self.layer_count[i] >= div {
+                        self.layer_count[i] %= div;
+                    }
+                    if gains[i] != (0.0, 0.0) {
+                        let phase = (self.layer_count[i] as f64 + at) / div as f64;
+                        add(
+                            osc::shape(wave, phase, main_dt / div as f64, 0.5) as f32,
+                            gains[i],
+                        );
+                    }
+                }
+                let y = self.osc[m].next(wave, main_dt, 0.5);
+                if gains[m] != (0.0, 0.0) {
+                    add(y, gains[m]);
+                }
+                if self.osc[m].phase < at {
+                    for i in (0..LAYERS).filter(|&i| i >= 2 && LAYER_PARENT[i] == m) {
+                        let div = layers[i].div.max(1) as u32;
+                        self.layer_count[i] = (self.layer_count[i] + 1) % div;
+                    }
+                }
+            }
+            self.down[0].push(l);
+            self.down[1].push(r);
+        }
+        (self.down[0].output(), self.down[1].output())
+    }
+}
+
+impl Voice {
     /// Suma `frames` frames de la voz en `out` (estéreo entrelazado).
     fn render(&mut self, out: &mut [f32], b: &Block) {
         let patch = b.patch;
@@ -762,89 +898,98 @@ impl Voice {
                 }
                 self.dt = cycles(self.pitch, b.sample_rate);
             }
-            // Sub: el nivel y el pan del paso (o los del patch), suavizados.
-            let sub = &self.sub_note;
-            let level_to = sub.level.unwrap_or_else(|| p(SUB));
-            let pan_to = sub.pan.unwrap_or_else(|| p(SUB_PAN));
-            self.sub_level += (level_to - self.sub_level) * b.smooth;
-            self.sub_pan += (pan_to - self.sub_pan) * b.smooth;
-            if (level_to - self.sub_level).abs() < 1e-6 {
-                self.sub_level = level_to;
-            }
-            if (pan_to - self.sub_pan).abs() < 1e-6 {
-                self.sub_pan = pan_to;
-            }
-            let sub_on = self.sub_level > 0.0 || level_to > 0.0;
-            let sub_wide = sub_on && (self.sub_pan != 0.0 || pan_to != 0.0);
-            let stereo = b.stereo || sub_wide;
-            if stereo && !self.was_stereo && !b.stereo {
-                // El pan del sub abre la voz: hasta aquí la derecha era la
-                // izquierda, así que su estado es el mismo.
-                self.down[1] = self.down[0];
-                self.filter[1] = self.filter[0];
-            }
-            self.was_stereo = stereo;
-            let (sub_l, sub_r) = if sub_wide {
-                let (gl, gr) = constant_power(self.sub_pan);
-                (self.sub_level * gl, self.sub_level * gr)
-            } else {
-                (self.sub_level, self.sub_level)
-            };
-            let div = sub.div.unwrap_or(patch.sub_div).max(1) as u32;
-            let sub_wave = sub.wave.unwrap_or(patch.sub_wave);
-            // Osciladores, al doble de la frecuencia de muestreo y
-            // diezmados: lo que queda del aliasing de PolyBLEP se pliega
-            // por encima de lo audible y el diezmado lo quita.
-            let pw = p(PW) as f64;
-            let noise = p(NOISE);
-            let dt = 0.5 * self.dt;
-            let center = n / 2;
-            for _ in 0..2 {
-                let (mut l, mut r) = (0.0f32, 0.0f32);
-                // El sub sale de la fase del central y de cuántas veces ha
-                // vuelto a empezar (módulo el divisor): siempre en fase con
-                // él, también con glide.
-                let at = self.osc[center].phase;
-                if self.sub_count >= div {
-                    self.sub_count %= div;
+            let (mut l, mut r, stereo, sub_on, sub) = match &patch.layers {
+                Some(layers) => {
+                    let (l, r) = self.layers_sample(layers, patch.wave, b);
+                    (l, r, true, false, SubNote::default())
                 }
-                let sub_dt = dt * b.ratio[center] / div as f64;
-                for u in 0..n {
-                    let y = self.osc[u].next(patch.wave, dt * b.ratio[u], pw);
-                    if b.stereo {
-                        l += y * (1.0 - b.pan[u]).min(1.0);
-                        r += y * (1.0 + b.pan[u]).min(1.0);
-                    } else {
-                        l += y;
+                None => {
+                    // Sub: el nivel y el pan del paso (o los del patch), suavizados.
+                    let sub = &self.sub_note;
+                    let level_to = sub.level.unwrap_or_else(|| p(SUB));
+                    let pan_to = sub.pan.unwrap_or_else(|| p(SUB_PAN));
+                    self.sub_level += (level_to - self.sub_level) * b.smooth;
+                    self.sub_pan += (pan_to - self.sub_pan) * b.smooth;
+                    if (level_to - self.sub_level).abs() < 1e-6 {
+                        self.sub_level = level_to;
                     }
+                    if (pan_to - self.sub_pan).abs() < 1e-6 {
+                        self.sub_pan = pan_to;
+                    }
+                    let sub_on = self.sub_level > 0.0 || level_to > 0.0;
+                    let sub_wide = sub_on && (self.sub_pan != 0.0 || pan_to != 0.0);
+                    let stereo = b.stereo || sub_wide;
+                    if stereo && !self.was_stereo && !b.stereo {
+                        // El pan del sub abre la voz: hasta aquí la derecha era la
+                        // izquierda, así que su estado es el mismo.
+                        self.down[1] = self.down[0];
+                        self.filter[1] = self.filter[0];
+                    }
+                    self.was_stereo = stereo;
+                    let (sub_l, sub_r) = if sub_wide {
+                        let (gl, gr) = constant_power(self.sub_pan);
+                        (self.sub_level * gl, self.sub_level * gr)
+                    } else {
+                        (self.sub_level, self.sub_level)
+                    };
+                    let div = sub.div.unwrap_or(patch.sub_div).max(1) as u32;
+                    let sub_wave = sub.wave.unwrap_or(patch.sub_wave);
+                    // Osciladores, al doble de la frecuencia de muestreo y
+                    // diezmados: lo que queda del aliasing de PolyBLEP se pliega
+                    // por encima de lo audible y el diezmado lo quita.
+                    let pw = p(PW) as f64;
+                    let noise = p(NOISE);
+                    let dt = 0.5 * self.dt;
+                    let center = n / 2;
+                    for _ in 0..2 {
+                        let (mut l, mut r) = (0.0f32, 0.0f32);
+                        // El sub sale de la fase del central y de cuántas veces ha
+                        // vuelto a empezar (módulo el divisor): siempre en fase con
+                        // él, también con glide.
+                        let at = self.osc[center].phase;
+                        if self.sub_count >= div {
+                            self.sub_count %= div;
+                        }
+                        let sub_dt = dt * b.ratio[center] / div as f64;
+                        for u in 0..n {
+                            let y = self.osc[u].next(patch.wave, dt * b.ratio[u], pw);
+                            if b.stereo {
+                                l += y * (1.0 - b.pan[u]).min(1.0);
+                                r += y * (1.0 + b.pan[u]).min(1.0);
+                            } else {
+                                l += y;
+                            }
+                        }
+                        let sub_y = if sub_on {
+                            let phase = (self.sub_count as f64 + at) / div as f64;
+                            osc::shape(sub_wave, phase, sub_dt, 0.5) as f32
+                        } else {
+                            0.0
+                        };
+                        if self.osc[center].phase < at {
+                            self.sub_count = (self.sub_count + 1) % div;
+                        }
+                        let mut extra = 0.0;
+                        if noise > 0.0 {
+                            extra += noise * self.noise.next();
+                        }
+                        // Sin sub, exactamente la suma de siempre.
+                        let r = if b.stereo { r } else { l };
+                        let (mut l, mut r) = (l * norm + extra, r * norm + extra);
+                        if sub_on {
+                            l += sub_y * sub_l;
+                            r += sub_y * sub_r;
+                        }
+                        self.down[0].push(l);
+                        if stereo {
+                            self.down[1].push(r);
+                        }
+                    }
+                    let l = self.down[0].output();
+                    let r = if stereo { self.down[1].output() } else { l };
+                    (l, r, stereo, sub_on, *sub)
                 }
-                let sub_y = if sub_on {
-                    let phase = (self.sub_count as f64 + at) / div as f64;
-                    osc::shape(sub_wave, phase, sub_dt, 0.5) as f32
-                } else {
-                    0.0
-                };
-                if self.osc[center].phase < at {
-                    self.sub_count = (self.sub_count + 1) % div;
-                }
-                let mut extra = 0.0;
-                if noise > 0.0 {
-                    extra += noise * self.noise.next();
-                }
-                // Sin sub, exactamente la suma de siempre.
-                let r = if b.stereo { r } else { l };
-                let (mut l, mut r) = (l * norm + extra, r * norm + extra);
-                if sub_on {
-                    l += sub_y * sub_l;
-                    r += sub_y * sub_r;
-                }
-                self.down[0].push(l);
-                if stereo {
-                    self.down[1].push(r);
-                }
-            }
-            let mut l = self.down[0].output();
-            let mut r = if stereo { self.down[1].output() } else { l };
+            };
             let sub_drive = if sub_on {
                 sub.drive.unwrap_or_else(|| p(SUB_DRIVE))
             } else {

@@ -18,6 +18,8 @@ pub enum Target {
     Release,
     /// El divisor del sub ([`Patch::sub_div`]): un entero.
     SubDiv,
+    /// Las voces ([`Patch::voices`]; con una, mono): un entero.
+    Voices,
 }
 
 /// Un parámetro de un preset: su nombre, adónde va, cuánto se multiplica
@@ -42,6 +44,10 @@ impl PresetParam {
             Target::Attack => patch.amp.attack_ms = value,
             Target::Release => patch.amp.release_ms = value,
             Target::SubDiv => patch.sub_div = value.round() as u8,
+            Target::Voices => {
+                patch.voices = value.round() as u8;
+                patch.mono = patch.voices == 1;
+            }
         }
     }
 
@@ -52,6 +58,7 @@ impl PresetParam {
             Target::Attack => patch.amp.attack_ms,
             Target::Release => patch.amp.release_ms,
             Target::SubDiv => patch.sub_div as f32,
+            Target::Voices => patch.voices as f32,
         };
         value / self.scale
     }
@@ -190,7 +197,11 @@ pub(crate) const fn with_sub_block<const A: usize, const C: usize>(
 }
 
 /// Los instrumentos sintetizados.
-pub const PRESETS: [&Preset; 2] = [&super::acid::PRESET, &super::sub::PRESET];
+pub const PRESETS: [&Preset; 3] = [
+    &super::acid::PRESET,
+    &super::sub::PRESET,
+    &super::subharm::PRESET,
+];
 
 /// El preset que se llama `name`.
 pub fn preset(name: &str) -> Option<&'static Preset> {
