@@ -337,14 +337,26 @@ pub fn synth_text(def: &script::SynthDef) -> String {
     };
     let round = |v: f32| ((v * 100.0).round() / 100.0).to_string();
     // El bloque sub, solo si suena (o se mueve).
-    let sub_on =
-        def.patch.params[engine::synth::SUB] > 0.0 || def.curves[engine::synth::SUB].is_some();
+    let on = |i: usize| def.patch.params[i] > 0.0 || def.curves[i].is_some();
+    let sub_on = on(engine::synth::SUB);
+    // El LFO y el PWM de la voz analógica, solo si mueven algo.
+    let analog = def.patch.analog;
+    let pwm_on = analog.is_some_and(|a| a.pwm != engine::synth::PwmSource::Manual);
+    let lfo_on = on(engine::synth::LFO_PITCH)
+        || on(engine::synth::LFO_FILTER)
+        || analog.is_some_and(|a| a.pwm == engine::synth::PwmSource::Lfo);
     registered
         .params
         .iter()
         .filter(|p| sub_on || !p.name.starts_with("sub"))
+        .filter(|p| lfo_on || !p.name.starts_with("lfo_"))
+        .filter(|p| pwm_on || p.name != "pwm_amt")
         .filter_map(|p| match p.name {
             "wave" => Some(format!("wave {}", def.patch.wave.name())),
+            "glide_mode" => Some(format!("glide_mode {}", analog?.glide.name())),
+            "vca" => Some(format!("vca {}", analog?.vca.name())),
+            "pwm_src" => Some(format!("pwm_src {}", analog?.pwm.name())),
+            "lfo_wave" => Some(format!("lfo_wave {}", analog?.lfo_wave.name())),
             "sub_wave" => Some(format!("sub_wave {}", def.patch.sub_wave.name())),
             "root" => Some(format!(
                 "root {}",

@@ -1171,11 +1171,12 @@ pub const FUNCTIONS: &[Function] = &[
               empieza cada nota en el cruce por cero y sigue su fase de una nota a \
               la siguiente: sin golpes al arrancar ni clics entre notas; en él, el \
               accent es un 40 % más fuerte). Y `\"subharm\"`, dos osciladores con dos \
-              subs cada uno que dividen la frecuencia y el compás (ver `subharm`).",
+              subs cada uno que dividen la frecuencia y el compás (ver `subharm`), \
+              y `\"sh101\"`, un monosynth de bajo y lead (ver `sh101`).",
         params: &[
             Param {
                 name: "tipo",
-                description: "`\"acid\"`, `\"sub\"` o `\"subharm\"`",
+                description: "`\"acid\"`, `\"sub\"`, `\"subharm\"` o `\"sh101\"`",
             },
             Param {
                 name: "opciones",
@@ -1224,6 +1225,44 @@ pub const FUNCTIONS: &[Function] = &[
              cutoff = 900, res = 0.4,\n\
              }\n\
              track(\"sh\", sh):melody(\"c _ _ _  _ _ _ _  eb _ _ _  g _ _ _\")\n",
+        ),
+    },
+    Function {
+        name: "sh101",
+        receiver: Receiver::Global,
+        signature: "sh101{ opciones }",
+        returns: Some(Receiver::Instrument),
+        summary: "Monosynth de bajo y lead como el SH-101: oscilador de sierra y pulso, sub, ruido, ladder, una envolvente, LFO y portamento.",
+        doc: "Lo mismo que `synth(\"sh101\", { ... })`. Un oscilador con la sierra \
+              (`saw`) y el pulso (`pulse`, de ancho `pw`, que mueve el LFO o la \
+              envolvente con `pwm_src` y `pwm_amt`) de la misma fase, el bloque sub \
+              (los tres del original: `sub_div = 2` y `4` con `sub_wave = \"square\"`, \
+              y `sub_div = 4` con `\"pulse25\"`) y ruido, por un paso bajo de 4 \
+              polos con saturación en cada etapa que autooscila afinado cerca de \
+              `res = 1` (`quality = 2`, por defecto, lo pasa al doble: pliega \
+              menos), y un paso alto fijo (`hpf`). Una sola envolvente (`a`, `d`, \
+              `s`, `r`, en ms) mueve el filtro (`env_amt`, negativo la invierte) y \
+              el VCA (o `vca = \"gate\"`). Mono con prioridad a la última nota: \
+              una tecla pulsada con otra aún abajo, o un paso con `/`, se liga (no \
+              vuelve a disparar la envolvente, solo cambia la altura); al soltarla, \
+              vuelve a la que siga pulsada. `glide` desliza según `glide_mode`. El \
+              LFO (`lfo_wave`, `lfo_rate` o `lfo_sync` al compás) va a la altura, \
+              al corte y al ancho de pulso. Por paso, `!`, `/` y el sub de la nota \
+              (`{sub=...}`).",
+        params: &[Param {
+            name: "opciones",
+            description: "tabla con sus parámetros (ver abajo)",
+        }],
+        template: "sh101{ saw = ${0.8}, pulse = ${0.3}, sub = ${0.6}, cutoff = ${600}, res = ${0.7} }",
+        example: Some(
+            "bpm(124)\n\
+             local bass = sh101{\n  \
+             saw = 0.8, pulse = 0.3, pw = 0.4, sub = 0.6, sub_div = 2,\n  \
+             cutoff = 600, res = 0.7, env_amt = 0.5,\n  \
+             a = 2, d = 250, s = 0, r = 100,\n  \
+             glide = 80, glide_mode = \"auto\",\n\
+             }\n\
+             track(\"bass\", bass):melody(\"c . c c/  eb . c . g1 . bb1 c/  . c eb f\")\n",
         ),
     },
     Function {
@@ -3075,6 +3114,266 @@ pub const SUBHARM_PARAMS: &[FxParam] = &[
     },
 ];
 
+/// Parámetros de `sh101{ ... }` (los rangos y los valores por defecto de
+/// los numéricos son los de `engine::synth::sh101::PARAMS`; un test lo
+/// comprueba), con el bloque sub detrás.
+pub const SH101_PARAMS: &[FxParam] = &SH101_ALL;
+const SH101_ALL: [FxParam; 28 + 5] = with_sub_block(SH101_OWN);
+const SH101_OWN: [FxParam; 28] = [
+    FxParam {
+        name: "root",
+        description: "la nota que suena con 0 semitonos (`melody` sin octava toca en la suya)",
+        default: Some("\"C2\""),
+        valid: "una nota (`\"C2\"`) o un número MIDI (0–127)",
+        values: &[],
+        template: "root = \"${C2}\"",
+        automate: Auto::No(INSTRUMENT),
+    },
+    FxParam {
+        name: "saw",
+        description: "nivel de la sierra del oscilador",
+        default: Some("1"),
+        valid: "0–1",
+        values: &[],
+        template: "saw = ${0.8}",
+        automate: Auto::Smooth,
+    },
+    FxParam {
+        name: "pulse",
+        description: "nivel del pulso del oscilador (la misma fase que la sierra; su ancho, `pw`)",
+        default: Some("0"),
+        valid: "0–1",
+        values: &[],
+        template: "pulse = ${0.5}",
+        automate: Auto::Smooth,
+    },
+    FxParam {
+        name: "pw",
+        description: "ancho del pulso (0,5 es cuadrada; más estrecho, más nasal)",
+        default: Some("0.5"),
+        valid: "0.05–0.95",
+        values: &[],
+        template: "pw = ${0.4}",
+        automate: Auto::Smooth,
+    },
+    FxParam {
+        name: "pwm_src",
+        description: "qué mueve el ancho del pulso: nada (`manual`, el de `pw`), el LFO o la envolvente",
+        default: Some("\"manual\""),
+        valid: "`\"manual\"`, `\"lfo\"` o `\"env\"`",
+        values: &["manual", "lfo", "env"],
+        template: "pwm_src = \"${lfo}\"",
+        automate: Auto::No(DISCRETE),
+    },
+    FxParam {
+        name: "pwm_amt",
+        description: "cuánto mueve su fuente el ancho del pulso (con 1, ±0,45)",
+        default: Some("0"),
+        valid: "0–1",
+        values: &[],
+        template: "pwm_amt = ${0.5}",
+        automate: Auto::Smooth,
+    },
+    FxParam {
+        name: "noise",
+        description: "nivel del ruido blanco",
+        default: Some("0"),
+        valid: "0–1",
+        values: &[],
+        template: "noise = ${0.2}",
+        automate: Auto::Smooth,
+    },
+    FxParam {
+        name: "cutoff",
+        description: "corte del paso bajo de 4 polos (24 dB/oct, saturación en cada etapa), en Hz",
+        default: Some("1500"),
+        valid: "20–20000",
+        values: &[],
+        template: "cutoff = ${600}",
+        automate: Auto::Smooth,
+    },
+    FxParam {
+        name: "res",
+        description: "resonancia: cerca de 1 el filtro autooscila (un seno en el corte, afinado); como en el original, los graves caen al subirla",
+        default: Some("0.3"),
+        valid: "0–1",
+        values: &[],
+        template: "res = ${0.7}",
+        automate: Auto::Smooth,
+    },
+    FxParam {
+        name: "env_amt",
+        description: "cuánto abre la envolvente el corte (1: seis octavas; negativo, lo cierra)",
+        default: Some("0.4"),
+        valid: "-1–1",
+        values: &[],
+        template: "env_amt = ${0.5}",
+        automate: Auto::Smooth,
+    },
+    FxParam {
+        name: "kbd",
+        description: "seguimiento de teclado: con 1, el corte sube una octava por cada octava de la nota sobre `root`",
+        default: Some("0"),
+        valid: "0–1",
+        values: &[],
+        template: "kbd = ${0.5}",
+        automate: Auto::Smooth,
+    },
+    FxParam {
+        name: "res_comp",
+        description: "devuelve los graves que quita la resonancia (0, como el original; 1, todos)",
+        default: Some("0"),
+        valid: "0–1",
+        values: &[],
+        template: "res_comp = ${0.5}",
+        automate: Auto::Smooth,
+    },
+    FxParam {
+        name: "quality",
+        description: "sobremuestreo del filtro: 2 lo pasa al doble de la frecuencia (pliega menos al saturar con resonancia alta; un 25 % más de CPU), 1 a la del motor",
+        default: Some("2"),
+        valid: "1–2",
+        values: &[],
+        template: "quality = ${1}",
+        automate: Auto::No(STRUCTURE),
+    },
+    FxParam {
+        name: "hpf",
+        description: "paso alto de un polo tras el filtro: 0 apagado; 1, 2 y 3 cortan a 80, 180 y 400 Hz",
+        default: Some("0"),
+        valid: "0–3",
+        values: &[],
+        template: "hpf = ${1}",
+        automate: Auto::No(SUB_DIVIDER),
+    },
+    FxParam {
+        name: "a",
+        description: "ataque de la envolvente (la del filtro y el VCA), en ms",
+        default: Some("2"),
+        valid: "0–5000",
+        values: &[],
+        template: "a = ${2}",
+        automate: Auto::No(ENVELOPE),
+    },
+    FxParam {
+        name: "d",
+        description: "decay de la envolvente, en ms",
+        default: Some("300"),
+        valid: "1–10000",
+        values: &[],
+        template: "d = ${250}",
+        automate: Auto::No(ENVELOPE),
+    },
+    FxParam {
+        name: "s",
+        description: "sustain de la envolvente (0: la nota cae hasta el silencio aunque siga)",
+        default: Some("0.6"),
+        valid: "0–1",
+        values: &[],
+        template: "s = ${0}",
+        automate: Auto::No(ENVELOPE),
+    },
+    FxParam {
+        name: "r",
+        description: "release de la envolvente, en ms",
+        default: Some("100"),
+        valid: "0–10000",
+        values: &[],
+        template: "r = ${100}",
+        automate: Auto::No(ENVELOPE),
+    },
+    FxParam {
+        name: "vca",
+        description: "qué abre el volumen: la envolvente (`env`) o la puerta de la nota (`gate`: suena igual mientras dura; la envolvente solo mueve el filtro)",
+        default: Some("\"env\""),
+        valid: "`\"env\"` o `\"gate\"`",
+        values: &["env", "gate"],
+        template: "vca = \"${gate}\"",
+        automate: Auto::No(DISCRETE),
+    },
+    FxParam {
+        name: "glide",
+        description: "portamento: lo que tarda en llegar a la nota, en ms (curva exponencial); según `glide_mode`",
+        default: Some("0"),
+        valid: "0–2000",
+        values: &[],
+        template: "glide = ${80}",
+        automate: Auto::Smooth,
+    },
+    FxParam {
+        name: "glide_mode",
+        description: "cuándo desliza: nunca (`off`), siempre (`on`, también entre notas separadas) o solo en las ligadas (`auto`: una tecla con otra pulsada o un paso con `/`)",
+        default: Some("\"off\""),
+        valid: "`\"off\"`, `\"on\"` o `\"auto\"`",
+        values: &["off", "on", "auto"],
+        template: "glide_mode = \"${auto}\"",
+        automate: Auto::No(DISCRETE),
+    },
+    FxParam {
+        name: "lfo_wave",
+        description: "forma del LFO: triangular, cuadrada o un valor al azar en cada ciclo (sample & hold)",
+        default: Some("\"tri\""),
+        valid: "`\"tri\"`, `\"square\"` o `\"random\"`",
+        values: &["tri", "square", "random"],
+        template: "lfo_wave = \"${random}\"",
+        automate: Auto::No(DISCRETE),
+    },
+    FxParam {
+        name: "lfo_rate",
+        description: "velocidad del LFO, en Hz (sin `lfo_sync`)",
+        default: Some("5"),
+        valid: "0.05–30",
+        values: &[],
+        template: "lfo_rate = ${5}",
+        automate: Auto::Smooth,
+    },
+    FxParam {
+        name: "lfo_sync",
+        description: "fija el LFO al compás: n ciclos por compás, en fase con él (0, libre a `lfo_rate`)",
+        default: Some("0"),
+        valid: "0–16",
+        values: &[],
+        template: "lfo_sync = ${4}",
+        automate: Auto::No(SUB_DIVIDER),
+    },
+    FxParam {
+        name: "lfo_pitch",
+        description: "cuánto mueve el LFO la altura, en semitonos (vibrato; con `square`, trino)",
+        default: Some("0"),
+        valid: "0–12",
+        values: &[],
+        template: "lfo_pitch = ${0.3}",
+        automate: Auto::Smooth,
+    },
+    FxParam {
+        name: "lfo_filter",
+        description: "cuánto mueve el LFO el corte, en octavas",
+        default: Some("0"),
+        valid: "0–4",
+        values: &[],
+        template: "lfo_filter = ${1}",
+        automate: Auto::Smooth,
+    },
+    FxParam {
+        name: "drift",
+        description: "deriva de afinación, lenta y mínima (con 1, hasta ±10 cents), reproducible con la semilla",
+        default: Some("0"),
+        valid: "0–1",
+        values: &[],
+        template: "drift = ${0.3}",
+        automate: Auto::Smooth,
+    },
+    FxParam {
+        name: "seed",
+        description: "semilla de la fase del oscilador, el ruido, el LFO al azar y la deriva; sin ella, una sacada del nombre de la pista",
+        default: Some("del nombre"),
+        valid: "entero de 0 en adelante",
+        values: &[],
+        template: "seed = ${1}",
+        automate: Auto::No(SEED),
+    },
+];
+
 /// Los tipos de `synth(tipo, { ... })`, como efectos (para el
 /// autocompletado, la ayuda y la guía).
 pub const SYNTHS: &[Effect] = &[
@@ -3098,6 +3397,13 @@ pub const SYNTHS: &[Effect] = &[
         summary: "Inspirado en el Subharmonicon: dos osciladores y dos subs de cada uno, seis capas que dividen la frecuencia y el compás.",
         params: SUBHARM_PARAMS,
         template: "{ o1 = { div = ${1}, rdiv = ${4} }, s1 = { div = ${3}, rdiv = ${3} } }",
+    },
+    Effect {
+        name: "sh101",
+        aliases: &[],
+        summary: "Monosynth de bajo y lead como el SH-101: sierra y pulso, sub, ruido, ladder que autooscila, una envolvente, LFO y portamento.",
+        params: SH101_PARAMS,
+        template: "{ saw = ${0.8}, pulse = ${0.3}, cutoff = ${600}, res = ${0.7} }",
     },
 ];
 

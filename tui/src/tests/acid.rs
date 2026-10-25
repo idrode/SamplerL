@@ -158,3 +158,31 @@ fn the_subharm_shows_its_layers() {
     assert!(screen.contains("sintetizador · sh · subharm"), "{screen}");
     assert!(screen.contains("sh · ♪ subharm C2 1/1"), "{screen}");
 }
+
+/// El sh101 en el panel: sus parámetros con sus nombres (`glide_mode
+/// auto`, `vca gate`), sin el LFO ni `pwm_amt` mientras no muevan nada.
+#[test]
+fn the_sh101_shows_its_params() {
+    let song = "bpm(120)\n\
+                track(\"b\", sh101{ cutoff = 600, glide = 80, glide_mode = \"auto\", vca = \"gate\" })\n  \
+                  :melody(\"c . c c/  . . . .  . . . .  . . . .\")\n";
+    let (_, mut app, mut engine) = open("sh101_view", Some(song));
+    assert!(app.view().error.is_none(), "{:?}", app.view().error);
+    let params = app.view().tracks[0].synth.clone().unwrap().params;
+    for shown in [
+        "cutoff 600",
+        "glide_mode auto",
+        "vca gate",
+        "quality 2",
+        "pwm_src manual",
+    ] {
+        assert!(params.contains(shown), "{shown}: {params}");
+    }
+    for hidden in ["lfo_rate", "pwm_amt", "sub_div"] {
+        assert!(!params.contains(hidden), "{hidden}: {params}");
+    }
+    offline::render(&mut engine, STEP / 2, 2);
+    app.tick();
+    let screen = text(&draw(&mut app, 140, 40));
+    assert!(screen.contains("sintetizador · b · sh101"), "{screen}");
+}

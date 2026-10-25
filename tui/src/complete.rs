@@ -750,6 +750,7 @@ impl Scan {
             ("instrument", 0) => Some(&api::INSTRUMENT_TABLE),
             ("synth", 1) => api::synth(strings.first()?.as_deref()?),
             ("subharm", 0) => api::synth("subharm"),
+            ("sh101", 0) => api::synth("sh101"),
             ("grains", 0) | ("freeze", 1) => Some(&api::GRAINS_TABLE),
             _ => None,
         }
@@ -1362,7 +1363,7 @@ mod tests {
     #[test]
     fn synth_offers_its_types_parameters_and_values() {
         let c = at(&format!("{SONG}local b = synth(\"|")).unwrap();
-        assert_eq!(labels(&c), ["acid", "sub", "subharm"]);
+        assert_eq!(labels(&c), ["acid", "sub", "subharm", "sh101"]);
         let c = at(&format!("{SONG}local b = synth(\"sub\", {{ wave = \"|")).unwrap();
         assert_eq!(labels(&c), ["sine", "triangle"]);
         let c = at(&format!("{SONG}local b = synth(\"acid\", {{ c|")).unwrap();
@@ -1379,6 +1380,27 @@ mod tests {
         assert_eq!(h.signature, "synth(\"acid\", { ... })");
         assert!(
             h.description.starts_with("res: resonancia"),
+            "{}",
+            h.description
+        );
+    }
+
+    #[test]
+    fn sh101_offers_its_parameters_and_values() {
+        let c = at(&format!("{SONG}local b = sh101{{ glide_|")).unwrap();
+        assert_eq!(labels(&c), ["glide_mode"]);
+        let c = at(&format!("{SONG}local b = sh101{{ glide_mode = \"|")).unwrap();
+        assert_eq!(labels(&c), ["off", "on", "auto"]);
+        let c = at(&format!("{SONG}local b = sh101{{ sub_wave = \"|")).unwrap();
+        assert_eq!(labels(&c), ["square", "tri", "sine", "pulse25"]);
+        let c = at(&format!(
+            "{SONG}local b = synth(\"sh101\", {{ lfo_wave = \"|"
+        ))
+        .unwrap();
+        assert_eq!(labels(&c), ["tri", "square", "random"]);
+        let h = help(&format!("{SONG}local b = sh101{{ res_comp = 0.|5 }}")).unwrap();
+        assert!(
+            h.description.starts_with("res_comp: devuelve los graves"),
             "{}",
             h.description
         );

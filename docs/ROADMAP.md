@@ -445,10 +445,23 @@ error con la línea y sigue sonando lo anterior; portable (Rust puro).
    `"subbass"`), un subgrave limpio (seno por un paso bajo suave, mono,
    que arranca en el cruce por cero, con `tone`, `drive` antes del filtro,
    `glide`, `attack` y `release`), sobre presets genéricos en el motor.
+6. ✅ **sh101** (después, a petición): `sh101{...}` (o `synth("sh101",
+   {...})`), un monosynth de bajo y lead como el SH-101, sobre una voz
+   analógica nueva en el núcleo: sierra y pulso de la misma fase con PWM
+   (manual, LFO o envolvente), el bloque sub con sus tres modos (el pulso
+   al 25 %, `sub_wave = "pulse25"`, nuevo en el bloque general), ruido; un
+   ladder propio con saturación en cada etapa que autooscila afinado,
+   pierde graves con la resonancia (`res_comp` lo compensa), sigue al
+   teclado (`kbd`) y va al doble con `quality = 2`; paso alto fijo
+   (`hpf`); una sola envolvente para el filtro y el VCA (`vca = env |
+   gate`); mono con prioridad a la última nota y legato; portamento
+   (`glide_mode = off | on | auto`); LFO (tri, square, random; libre o
+   `lfo_sync` al compás) a la altura, al corte y al PWM; y `drift`. Dos
+   recetas (bajo y lead) y un «Paso a paso» en la guía. Detalle y
+   decisiones en «Después: el sh101» de [docs/ESTADO.md](ESTADO.md).
 
 Queda para después, sobre el mismo núcleo: pads (polifónico con unison,
-ataque y release largos), leads y wavetable; un instrumento que use el
-suboscilador y el ruido; y medir el aliasing de la saturación del ladder.
+ataque y release largos) y wavetable.
 
 ## Fase P: sub-armónicos ✅
 

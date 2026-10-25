@@ -229,7 +229,7 @@ fn errors_say_the_line() {
     let cases = [
         (
             "synth(\"moog\")",
-            "no hay ese sintetizador (hay: acid, sub, subharm)",
+            "no hay ese sintetizador (hay: acid, sub, subharm, sh101)",
         ),
         (
             "synth(\"acid\", { cutof = 300 })",
@@ -621,5 +621,133 @@ fn subharm_errors_say_the_line() {
     // Con varias voces, acordes sí.
     song_ok(
         "track(\"s\", subharm{ voices = 3 }):steps(\"1^0^7 . . .  . . . .  . . . .  . . . .\")",
+    );
+}
+
+/// `sh101{...}` (el ejemplo de la especificación, en ms) da el mismo patch
+/// que `synth("sh101", {...})` y que ponerlo a mano, y suena igual que el
+/// motor con él (con un slide ligado y el sub en pulso al 25 %).
+#[test]
+fn the_sh101_sounds_like_the_engine() {
+    let source = "{\n\
+                    saw = 0.8, pulse = 0.3, pw = 0.4, sub = 0.6, sub_div = 4,\n\
+                    sub_wave = \"pulse25\", cutoff = 600, res = 0.7, env_amt = 0.5,\n\
+                    a = 2, d = 250, s = 0, r = 100, glide = 80, glide_mode = \"auto\",\n\
+                    quality = 2, hpf = 1, vca = \"gate\", pwm_src = \"lfo\", pwm_amt = 0.3,\n\
+                    lfo_wave = \"random\", lfo_sync = 4, lfo_filter = 0.5, drift = 0.4,\n\
+                    seed = 3,\n\
+                  }";
+    let melody = "c . c c/  eb . c . g1 . bb1 c/  . c eb f";
+    let braced = song_ok(&format!("track(\"b\", sh101{source}):melody(\"{melody}\")"));
+    let called = song_ok(&format!(
+        "track(\"b\", synth(\"sh101\", {source})):melody(\"{melody}\")"
+    ));
+    let def = braced.tracks[0].instrument.unwrap();
+    assert_eq!(def.root, 36);
+    let synth_def = def.synth.unwrap();
+    assert_eq!(synth_def.kind, "sh101");
+    assert_eq!(
+        synth_def.patch,
+        called.tracks[0].instrument.unwrap().synth.unwrap().patch
+    );
+    let mut patch = synth::sh101::patch(36.0);
+    for (name, value) in [
+        ("saw", 0.8),
+        ("pulse", 0.3),
+        ("pw", 0.4),
+        ("sub", 0.6),
+        ("sub_div", 4.0),
+        ("cutoff", 600.0),
+        ("res", 0.7),
+        ("env_amt", 0.5),
+        ("a", 2.0),
+        ("d", 250.0),
+        ("s", 0.0),
+        ("r", 100.0),
+        ("glide", 80.0),
+        ("quality", 2.0),
+        ("hpf", 1.0),
+        ("pwm_amt", 0.3),
+        ("lfo_sync", 4.0),
+        ("lfo_filter", 0.5),
+        ("drift", 0.4),
+    ] {
+        synth::sh101::param(name).unwrap().set(&mut patch, value);
+    }
+    patch.sub_wave = synth::Wave::Pulse25;
+    let analog = patch.analog.as_mut().unwrap();
+    analog.glide = synth::GlideMode::Auto;
+    analog.vca = synth::VcaMode::Gate;
+    analog.pwm = synth::PwmSource::Lfo;
+    analog.lfo_wave = synth::LfoWave::Random;
+    patch.seed = 3;
+    assert_eq!(synth_def.patch, patch);
+    let steps =
+        engine::notation::parse_steps("1 . 1 1/  1^3 . 1 . 1^-5 . 1^-2 1/  . 1 1^3 1^5").unwrap();
+    let silence = std::sync::Arc::new(Sample::silence(RATE));
+    let slices = Slices::grid(&silence, 1);
+    let pattern = Pattern::from_steps(silence, &slices, steps)
+        .unwrap()
+        .with_synth(Some(patch), [None; synth::PARAM_COUNT])
+        .unwrap();
+    let (mut controller, mut engine) = new_engine(RATE);
+    controller.set_bpm(120.0).unwrap();
+    controller.set_track_pattern(0, Some(pattern)).unwrap();
+    controller.start().unwrap();
+    let frames = 2 * engine::bar_frames(120.0, RATE) as usize;
+    let direct = offline::render(&mut engine, frames, 2);
+    let scripted = braced.render(RATE, 2).unwrap();
+    assert!(direct.iter().any(|v| v.abs() > 0.05), "no suena");
+    assert!(scripted == direct, "el script no suena como el motor");
+}
+
+/// Lo que no vale del `sh101` dice la línea; el sub por paso, `!`, `/` y
+/// las curvas de sus continuos sí valen.
+#[test]
+fn sh101_errors_say_the_line() {
+    let cases = [
+        (
+            "sh101{ glide_mode = \"siempre\" }",
+            "glide_mode es \"off\", \"on\" o \"auto\"",
+        ),
+        ("sh101{ vca = 1 }", "vca es \"env\" o \"gate\""),
+        (
+            "sh101{ pwm_src = \"adsr\" }",
+            "pwm_src es \"manual\", \"lfo\" o \"env\"",
+        ),
+        (
+            "sh101{ lfo_wave = \"sine\" }",
+            "lfo_wave es \"tri\", \"square\" o \"random\"",
+        ),
+        ("sh101{ quality = 1.5 }", "quality es un entero (1 a 2)"),
+        ("sh101{ quality = 3 }", "quality = 3 fuera de rango (1 a 2)"),
+        ("sh101{ hpf = 4 }", "hpf = 4 fuera de rango (0 a 3)"),
+        ("sh101{ lfo_sync = 2.5 }", "lfo_sync es un entero (0 a 16)"),
+        ("sh101{ s = 2 }", "s = 2 fuera de rango (0 a 1)"),
+        (
+            "sh101{ a = ramp(1, 100, \"1 compás\") }",
+            "a no admite ramp() ni lfo()",
+        ),
+        ("sh101{ lfo_amt = 0.5 }", "clave desconocida \"lfo_amt\""),
+        ("sh101{ wave = \"square\" }", "clave desconocida \"wave\""),
+        (
+            "track(\"b\", sh101{}):steps(\"1^0^7 . . .  . . . .  . . . .  . . . .\")",
+            "es un sintetizador monofónico",
+        ),
+        (
+            "track(\"b\", sh101{}):steps(\"1{lp=800} . . .  . . . .  . . . .  . . . .\")",
+            "es un sintetizador: sus notas no tienen efectos por paso",
+        ),
+    ];
+    for (line, expected) in cases {
+        let Err(err) = song(&format!("local x = 1\n{line}")) else {
+            panic!("{line}: debería fallar");
+        };
+        assert!(err.contains("song.lua:3:"), "{line}: {err}");
+        assert!(err.contains(expected), "{line}: {err}");
+    }
+    song_ok(
+        "track(\"b\", sh101{ cutoff = ramp(200, 4000, \"2 compases\"), lfo_pitch = lfo(1, 0, 0.5) })\n  \
+         :steps(\"1{sub=0.8,sub_wave=pulse25,sub_div=4} . 1! 1/  . . . .  . . . .  . . . .\")",
     );
 }

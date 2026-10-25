@@ -232,10 +232,11 @@ pub(crate) const fn with_sub_block<const A: usize, const C: usize>(
 }
 
 /// Los instrumentos sintetizados.
-pub const PRESETS: [&Preset; 3] = [
+pub const PRESETS: [&Preset; 4] = [
     &super::acid::PRESET,
     &super::sub::PRESET,
     &super::subharm::PRESET,
+    &super::sh101::PRESET,
 ];
 
 /// El preset que se llama `name`.

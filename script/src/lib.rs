@@ -1613,6 +1613,18 @@ impl ScriptHost {
 
         let g = guard.clone();
         globals.set(
+            "sh101",
+            lua.create_function(move |lua, options: Option<Table>| {
+                g(lua, "sh101")?;
+                let def = synth_options(lua, "sh101", options.as_ref())?;
+                Ok(SynthHandle {
+                    def,
+                    sample_rate: rate,
+                })
+            })?,
+        )?;
+        let g = guard.clone();
+        globals.set(
             "subharm",
             lua.create_function(move |lua, options: Option<Table>| {
                 g(lua, "subharm")?;
@@ -3073,6 +3085,32 @@ fn synth_options(lua: &Lua, kind: &str, table: Option<&Table>) -> mlua::Result<I
                     let layers = patch.layers.as_mut().expect("el subharm tiene capas");
                     layers[i] = layer_options(lua, &who, layer, &value, layers[i])?;
                 }
+                choice @ ("glide_mode" | "vca" | "pwm_src" | "lfo_wave") => {
+                    use engine::synth::{GlideMode, LfoWave, PwmSource, VcaMode};
+                    let analog = patch
+                        .analog
+                        .as_mut()
+                        .expect("solo la voz analógica tiene estas claves");
+                    let name = match &value {
+                        Value::String(w) => Some(w.to_str()?.to_string()),
+                        _ => None,
+                    };
+                    let name = name.as_deref().unwrap_or("");
+                    let set = match choice {
+                        "glide_mode" => GlideMode::from_name(name).map(|m| analog.glide = m),
+                        "vca" => VcaMode::from_name(name).map(|m| analog.vca = m),
+                        "pwm_src" => PwmSource::from_name(name).map(|m| analog.pwm = m),
+                        _ => LfoWave::from_name(name).map(|m| analog.lfo_wave = m),
+                    };
+                    if set.is_none() {
+                        let values: Vec<String> =
+                            param.values.iter().map(|v| format!("\"{v}\"")).collect();
+                        return Err(fail(
+                            lua,
+                            format!("{who}: {choice} es {}", or_list(&values)),
+                        ));
+                    }
+                }
                 "sub_wave" => {
                     let wave = match &value {
                         Value::String(w) => step_fx::sub_wave(w.to_str()?.as_ref()),
@@ -3116,10 +3154,14 @@ fn synth_options(lua: &Lua, kind: &str, table: Option<&Table>) -> mlua::Result<I
                             ),
                         ));
                     }
+                    use engine::synth::preset::Target;
                     let integer = matches!(
                         p.target,
-                        engine::synth::preset::Target::SubDiv
-                            | engine::synth::preset::Target::Voices
+                        Target::SubDiv
+                            | Target::Voices
+                            | Target::Hpf
+                            | Target::Quality
+                            | Target::LfoSync
                     );
                     if integer && fixed.fract() != 0.0 {
                         return Err(fail(
@@ -5463,5 +5505,14 @@ impl UserData for BarHandle {
             this.each(|s| s.gain = gain);
             Ok(this.handle())
         });
+    }
+}
+
+/// `"a"`, `"a" o "b"`, `"a", "b" o "c"`.
+fn or_list(values: &[String]) -> String {
+    match values {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} o {last}", rest.join(", ")),
     }
 }

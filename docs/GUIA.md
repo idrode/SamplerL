@@ -69,6 +69,9 @@ la sección 4 (con sus parámetros, rangos y un ejemplo cada una).
 - `subharm{...}`, inspirado en el Subharmonicon: seis capas que dividen la
   frecuencia de la nota (`div`) y el compás (`rdiv`), para poliritmos de
   subarmónicos.
+- `sh101{...}`, un monosynth de bajo y lead como el SH-101: sierra y pulso,
+  sub, ruido, un ladder que autooscila, una sola envolvente, LFO,
+  portamento y legato con prioridad a la última nota.
 - Texturas con granos y congelar un instante (`pista:grains`,
   `pista:freeze`).
 - Ver dónde se pisan las pistas en frecuencia y que el EQ sugerido se
@@ -1613,6 +1616,7 @@ track("drums", amen)
 | `synth("acid")` | `cutoff` (continuo), `res` (continuo), `envmod` (continuo), `decay` (continuo), `accent` (continuo), `dist` (continuo), `glide` (continuo), `sub` (continuo), `sub_pan` (continuo), `sub_drive` (continuo) |
 | `synth("sub")` | `tone` (continuo), `drive` (continuo), `glide` (continuo), `sub` (continuo), `sub_pan` (continuo), `sub_drive` (continuo) |
 | `synth("subharm")` | `cutoff` (continuo), `res` (continuo), `envmod` (continuo), `fdecay` (continuo), `glide` (continuo), `drive` (continuo), `attack` (continuo), `decay` (continuo) |
+| `synth("sh101")` | `saw` (continuo), `pulse` (continuo), `pw` (continuo), `pwm_amt` (continuo), `noise` (continuo), `cutoff` (continuo), `res` (continuo), `env_amt` (continuo), `kbd` (continuo), `res_comp` (continuo), `glide` (continuo), `lfo_rate` (continuo), `lfo_pitch` (continuo), `lfo_filter` (continuo), `drift` (continuo), `sub` (continuo), `sub_pan` (continuo), `sub_drive` (continuo) |
 
 | Dónde | No admiten curva | Por qué |
 | --- | --- | --- |
@@ -1641,6 +1645,12 @@ track("drums", amen)
 | `synth("subharm")` | `root` | cada nota lo lee al nacer y el instrumento se valida entero al cargar; para cambiar la nota, la del paso (`^`) |
 | `synth("subharm")` | `voices` | cambia cuántas cosas suenan, no cómo suenan: entra con el patrón al compás |
 | `synth("subharm")` | `seed` | es la semilla del azar: entre dos semillas no hay nada continuo |
+| `synth("sh101")` | `root` | cada nota lo lee al nacer y el instrumento se valida entero al cargar; para cambiar la nota, la del paso (`^`) |
+| `synth("sh101")` | `pwm_src`, `vca`, `glide_mode`, `lfo_wave`, `sub_wave` | elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer |
+| `synth("sh101")` | `quality` | cambia cuántas cosas suenan, no cómo suenan: entra con el patrón al compás |
+| `synth("sh101")` | `hpf`, `lfo_sync`, `sub_div` | es un divisor entero: entre dividir por 2 y por 3 no hay nada que recorrer |
+| `synth("sh101")` | `a`, `d`, `s`, `r` | la envolvente se fija con el sintetizador al cargar; para mover el volumen en el tiempo, el de la pista (`:gain()` con `ramp()` o `lfo()`) |
+| `synth("sh101")` | `seed` | es la semilla del azar: entre dos semillas no hay nada continuo |
 | `sample` | `trim`, `normalize`, `fade_in`, `fade_out` | se aplica al cargar, en el hilo de control (el sample o el bucle se preparan una vez): no suena en el tiempo |
 
 ### `scale(nombre [, tónica])`
@@ -1769,9 +1779,9 @@ track("lead", piano):melody("c _ e _  g _ e _  c+e+g _ _ _  . . b2 .")
 
 Devuelve: instrumento.
 
-Un instrumento sintetizado, sin sample: osciladores, filtro y envolventes. Se toca como un instrumento de sample (`track(nombre, synth(...))`, `:melody()`, `scale`, los pads del modo tocar y el MIDI de entrada): el pitch de cada paso son semitonos sobre su `root`. Los parámetros continuos admiten `ramp()` y `lfo()` (se mueven también dentro de una nota, sin clics) y los efectos de la pista van detrás. En sus pasos, dos sufijos más: `!` accent (la nota suena más fuerte y más abierta) y `/` slide (la nota llega ligada desde la anterior: se desliza hasta su altura en `glide` ms sin volver a disparar las envolventes; la anterior sigue sonando hasta que llega). En `melody` van detrás de la nota: `"c!"`, `"eb/"`, `"g!/"`. Hay dos tipos, los dos monofónicos: `"acid"`, el bajo del 303 (un oscilador de sierra o cuadrada, paso bajo de 4 polos con mucha resonancia; en él, el accent también abre el filtro), y `"sub"` (o `"subbass"`), un subgrave limpio para dar profundidad (un seno por un paso bajo suave que empieza cada nota en el cruce por cero y sigue su fase de una nota a la siguiente: sin golpes al arrancar ni clics entre notas; en él, el accent es un 40 % más fuerte). Y `"subharm"`, dos osciladores con dos subs cada uno que dividen la frecuencia y el compás (ver `subharm`).
+Un instrumento sintetizado, sin sample: osciladores, filtro y envolventes. Se toca como un instrumento de sample (`track(nombre, synth(...))`, `:melody()`, `scale`, los pads del modo tocar y el MIDI de entrada): el pitch de cada paso son semitonos sobre su `root`. Los parámetros continuos admiten `ramp()` y `lfo()` (se mueven también dentro de una nota, sin clics) y los efectos de la pista van detrás. En sus pasos, dos sufijos más: `!` accent (la nota suena más fuerte y más abierta) y `/` slide (la nota llega ligada desde la anterior: se desliza hasta su altura en `glide` ms sin volver a disparar las envolventes; la anterior sigue sonando hasta que llega). En `melody` van detrás de la nota: `"c!"`, `"eb/"`, `"g!/"`. Hay dos tipos, los dos monofónicos: `"acid"`, el bajo del 303 (un oscilador de sierra o cuadrada, paso bajo de 4 polos con mucha resonancia; en él, el accent también abre el filtro), y `"sub"` (o `"subbass"`), un subgrave limpio para dar profundidad (un seno por un paso bajo suave que empieza cada nota en el cruce por cero y sigue su fase de una nota a la siguiente: sin golpes al arrancar ni clics entre notas; en él, el accent es un 40 % más fuerte). Y `"subharm"`, dos osciladores con dos subs cada uno que dividen la frecuencia y el compás (ver `subharm`), y `"sh101"`, un monosynth de bajo y lead (ver `sh101`).
 
-- `tipo`: `"acid"`, `"sub"` o `"subharm"`
+- `tipo`: `"acid"`, `"sub"`, `"subharm"` o `"sh101"`
 - `opciones`: tabla con sus parámetros (ver abajo)
 
 | Tipo | Parámetro | Qué es | Por defecto | Valores |
@@ -1821,6 +1831,39 @@ Un instrumento sintetizado, sin sample: osciladores, filtro y envolventes. Se to
 |  | `decay` | lo que tarda en apagarse cada capa tras sonar, en ms: corto, golpes; largo, notas que se solapan | `800` | 10–10000 |
 |  | `voices` | notas a la vez (1: mono, las notas se ligan; más: polifónico, cada voz con sus seis capas) | `1` | 1–8 |
 |  | `seed` | semilla de la fase de los osciladores al empezar desde el silencio; sin ella, una sacada del nombre de la pista | `del nombre` | entero de 0 en adelante |
+| `"sh101"` | `root` | la nota que suena con 0 semitonos (`melody` sin octava toca en la suya) | `"C2"` | una nota (`"C2"`) o un número MIDI (0–127) |
+|  | `saw` | nivel de la sierra del oscilador | `1` | 0–1 |
+|  | `pulse` | nivel del pulso del oscilador (la misma fase que la sierra; su ancho, `pw`) | `0` | 0–1 |
+|  | `pw` | ancho del pulso (0,5 es cuadrada; más estrecho, más nasal) | `0.5` | 0.05–0.95 |
+|  | `pwm_src` | qué mueve el ancho del pulso: nada (`manual`, el de `pw`), el LFO o la envolvente | `"manual"` | `"manual"`, `"lfo"` o `"env"` |
+|  | `pwm_amt` | cuánto mueve su fuente el ancho del pulso (con 1, ±0,45) | `0` | 0–1 |
+|  | `noise` | nivel del ruido blanco | `0` | 0–1 |
+|  | `cutoff` | corte del paso bajo de 4 polos (24 dB/oct, saturación en cada etapa), en Hz | `1500` | 20–20000 |
+|  | `res` | resonancia: cerca de 1 el filtro autooscila (un seno en el corte, afinado); como en el original, los graves caen al subirla | `0.3` | 0–1 |
+|  | `env_amt` | cuánto abre la envolvente el corte (1: seis octavas; negativo, lo cierra) | `0.4` | -1–1 |
+|  | `kbd` | seguimiento de teclado: con 1, el corte sube una octava por cada octava de la nota sobre `root` | `0` | 0–1 |
+|  | `res_comp` | devuelve los graves que quita la resonancia (0, como el original; 1, todos) | `0` | 0–1 |
+|  | `quality` | sobremuestreo del filtro: 2 lo pasa al doble de la frecuencia (pliega menos al saturar con resonancia alta; un 25 % más de CPU), 1 a la del motor | `2` | 1–2 |
+|  | `hpf` | paso alto de un polo tras el filtro: 0 apagado; 1, 2 y 3 cortan a 80, 180 y 400 Hz | `0` | 0–3 |
+|  | `a` | ataque de la envolvente (la del filtro y el VCA), en ms | `2` | 0–5000 |
+|  | `d` | decay de la envolvente, en ms | `300` | 1–10000 |
+|  | `s` | sustain de la envolvente (0: la nota cae hasta el silencio aunque siga) | `0.6` | 0–1 |
+|  | `r` | release de la envolvente, en ms | `100` | 0–10000 |
+|  | `vca` | qué abre el volumen: la envolvente (`env`) o la puerta de la nota (`gate`: suena igual mientras dura; la envolvente solo mueve el filtro) | `"env"` | `"env"` o `"gate"` |
+|  | `glide` | portamento: lo que tarda en llegar a la nota, en ms (curva exponencial); según `glide_mode` | `0` | 0–2000 |
+|  | `glide_mode` | cuándo desliza: nunca (`off`), siempre (`on`, también entre notas separadas) o solo en las ligadas (`auto`: una tecla con otra pulsada o un paso con `/`) | `"off"` | `"off"`, `"on"` o `"auto"` |
+|  | `lfo_wave` | forma del LFO: triangular, cuadrada o un valor al azar en cada ciclo (sample & hold) | `"tri"` | `"tri"`, `"square"` o `"random"` |
+|  | `lfo_rate` | velocidad del LFO, en Hz (sin `lfo_sync`) | `5` | 0.05–30 |
+|  | `lfo_sync` | fija el LFO al compás: n ciclos por compás, en fase con él (0, libre a `lfo_rate`) | `0` | 0–16 |
+|  | `lfo_pitch` | cuánto mueve el LFO la altura, en semitonos (vibrato; con `square`, trino) | `0` | 0–12 |
+|  | `lfo_filter` | cuánto mueve el LFO el corte, en octavas | `0` | 0–4 |
+|  | `drift` | deriva de afinación, lenta y mínima (con 1, hasta ±10 cents), reproducible con la semilla | `0` | 0–1 |
+|  | `seed` | semilla de la fase del oscilador, el ruido, el LFO al azar y la deriva; sin ella, una sacada del nombre de la pista | `del nombre` | entero de 0 en adelante |
+|  | `sub` | nivel del sub: una onda a la frecuencia de la nota dividida por `sub_div`, sacada de la fase del oscilador (siempre en fase, también con glide); 0 lo apaga | `0` | 0–1 |
+|  | `sub_div` | divisor de frecuencia del sub: 2 una octava abajo, 3 una octava y una quinta, 4 dos octavas... | `2` | 1–16 |
+|  | `sub_wave` | forma de onda del sub: cuadrada (con PolyBLEP en sus saltos), triangular, seno o el pulso estrecho al 25 % del SH-101 (con `sub_div = 4`, dos octavas abajo) | `"square"` | `"square"`, `"tri"`, `"sine"` o `"pulse25"` |
+|  | `sub_pan` | pan del sub, de potencia constante (en el centro suena igual en los dos lados) | `0` | -1–1 |
+|  | `sub_drive` | saturación suave de la suma del oscilador y el sub, antes del filtro (solo con el sub sonando) | `0` | 0–1 |
 
 ```lua
 bpm(130)
@@ -1855,6 +1898,25 @@ local sh = subharm{
   cutoff = 900, res = 0.4,
 }
 track("sh", sh):melody("c _ _ _  _ _ _ _  eb _ _ _  g _ _ _")
+```
+
+### `sh101{ opciones }`
+
+Devuelve: instrumento.
+
+Monosynth de bajo y lead como el SH-101: oscilador de sierra y pulso, sub, ruido, ladder, una envolvente, LFO y portamento. Lo mismo que `synth("sh101", { ... })`. Un oscilador con la sierra (`saw`) y el pulso (`pulse`, de ancho `pw`, que mueve el LFO o la envolvente con `pwm_src` y `pwm_amt`) de la misma fase, el bloque sub (los tres del original: `sub_div = 2` y `4` con `sub_wave = "square"`, y `sub_div = 4` con `"pulse25"`) y ruido, por un paso bajo de 4 polos con saturación en cada etapa que autooscila afinado cerca de `res = 1` (`quality = 2`, por defecto, lo pasa al doble: pliega menos), y un paso alto fijo (`hpf`). Una sola envolvente (`a`, `d`, `s`, `r`, en ms) mueve el filtro (`env_amt`, negativo la invierte) y el VCA (o `vca = "gate"`). Mono con prioridad a la última nota: una tecla pulsada con otra aún abajo, o un paso con `/`, se liga (no vuelve a disparar la envolvente, solo cambia la altura); al soltarla, vuelve a la que siga pulsada. `glide` desliza según `glide_mode`. El LFO (`lfo_wave`, `lfo_rate` o `lfo_sync` al compás) va a la altura, al corte y al ancho de pulso. Por paso, `!`, `/` y el sub de la nota (`{sub=...}`).
+
+- `opciones`: tabla con sus parámetros (ver abajo)
+
+```lua
+bpm(124)
+local bass = sh101{
+  saw = 0.8, pulse = 0.3, pw = 0.4, sub = 0.6, sub_div = 2,
+  cutoff = 600, res = 0.7, env_amt = 0.5,
+  a = 2, d = 250, s = 0, r = 100,
+  glide = 80, glide_mode = "auto",
+}
+track("bass", bass):melody("c . c c/  eb . c . g1 . bb1 c/  . c eb f")
 ```
 
 ### `sample:slice(n)`
@@ -2887,6 +2949,135 @@ track("sh", subharm{
 
 Y con `voices = 3` toca acordes: cada voz con sus seis capas (cuesta
 alrededor de un 1,5 % de un núcleo por voz).
+
+### Un monosynth de bajo y lead (sh101)
+
+`sh101{...}` es un monosynth como el SH-101. Un oscilador con la sierra
+(`saw`) y el pulso (`pulse`, de ancho `pw`) de la misma fase, el bloque sub
+con los tres modos del original (`sub_div = 2`, una octava abajo; `4`, dos;
+y `4` con `sub_wave = "pulse25"`, el pulso estrecho) y ruido (`noise`). Todo
+pasa por un paso bajo de 4 polos con saturación en cada etapa: cerca de
+`res = 1` autooscila, un seno afinado en el corte; y como en el original,
+los graves caen al subir la resonancia (`res_comp` los devuelve). Una sola
+envolvente (`a`, `d`, `s`, `r`, en ms) mueve el filtro (`env_amt`;
+negativo, lo cierra) y el volumen; con `vca = "gate"`, el volumen es la
+puerta de la nota y la envolvente solo mueve el filtro.
+
+Es monofónico con prioridad a la última nota. Una nota que empieza antes
+de que acabe la anterior se liga: no vuelve a atacar, solo cambia de
+altura. En un patrón eso es el `/` del paso; en vivo (pads, MIDI), una
+tecla pulsada con otra aún abajo, y al soltarla vuelve a la que siga
+pulsada. `glide` (ms) desliza según `glide_mode`: `"off"` nunca, `"on"`
+siempre (también entre notas separadas) y `"auto"` solo en las ligadas.
+
+```lua
+-- 12-sh101-bajo.lua
+bpm(124)
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen)
+  :steps("1 . . .  3 . . .  1 . 1 .  3 . . .")
+  :gain(0.6)
+
+-- Sierra y algo de pulso, el sub una octava abajo, resonancia alta y la
+-- envolvente sin sustain: cada nota es un golpe que se cierra. Las notas
+-- con / se ligan y deslizan (glide_mode = "auto").
+local bass = sh101{
+  saw = 0.8, pulse = 0.3, pw = 0.4, sub = 0.6, sub_div = 2,
+  cutoff = 500, res = 0.7, env_amt = 0.5,
+  a = 2, d = 250, s = 0, r = 100,
+  glide = 80, glide_mode = "auto",
+}
+track("bass", bass)
+  :melody("c . c c/  eb . c . g1 . bb1 c/  . c eb f")
+  :gain(1.1)
+```
+
+Y un lead, en C4, con el ancho de pulso movido por el LFO (`pwm_src =
+"lfo"`), un vibrato suave (`lfo_pitch`) y el filtro que sigue al teclado
+(`kbd`):
+
+```lua
+-- 13-sh101-lead.lua
+bpm(124)
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen)
+  :steps("1 . . .  3 . . .  1 . 1 .  3 . . .")
+  :gain(0.6)
+
+-- Un lead en C4: sierra y pulso que se ensancha y se estrecha con el LFO,
+-- sustain alto, el filtro que sigue al teclado y un vibrato suave. Las
+-- notas ligadas (/) deslizan sin volver a atacar.
+local lead = sh101{
+  root = "C4",
+  saw = 0.7, pulse = 0.5, pw = 0.5, pwm_src = "lfo", pwm_amt = 0.5,
+  cutoff = 1800, res = 0.35, env_amt = 0.3, kbd = 0.6,
+  a = 5, d = 400, s = 0.7, r = 250,
+  lfo_rate = 5.5, lfo_pitch = 0.15,
+  glide = 120, glide_mode = "auto",
+}
+track("lead", lead)
+  :melody("g _ _ bb/  c5 _ _ _  bb _ g/ f  g _ _ _")
+  :gain(1.1)
+```
+
+`quality = 2` (por defecto) pasa el filtro al doble de la frecuencia:
+pliega menos cuando satura con mucha resonancia, por un 25 % más de CPU
+(alrededor de un 1,3 % de un núcleo, frente al 1 % con `quality = 1`).
+`hpf` (0 a 3) añade un paso alto fijo tras el filtro y `drift` una deriva
+de afinación mínima y lenta, la misma en cada render con la misma semilla.
+
+#### Paso a paso
+
+Una sierra sola, con el filtro medio cerrado y la envolvente que lo abre
+en cada nota:
+
+```lua
+bpm(124)
+track("b", sh101{ cutoff = 400, env_amt = 0.6, s = 0, d = 200 })
+  :melody("c . c .  eb . c .  g1 . bb1 .  c . . .")
+```
+
+Con la resonancia alta y el corte barriendo dos compases, se oye el
+filtro; alterna `quality = 1` y `2` para compararlos:
+
+```lua
+bpm(124)
+track("b", sh101{
+  cutoff = ramp(150, 6000, "2 compases"), res = 0.85, env_amt = 0.3,
+  s = 0, d = 200, quality = 2,
+})
+  :melody("c . c .  eb . c .  g1 . bb1 .  c . . .")
+```
+
+El sub en sus tres modos, cada uno en un paso: una octava abajo, dos, y el
+pulso estrecho dos octavas abajo:
+
+```lua
+bpm(124)
+track("b", sh101{ saw = 0.6, cutoff = 900, sub = 0.8 })
+  :steps("1{sub_div=2} _ _ _  1{sub_div=4} _ _ _  1{sub_div=4,sub_wave=pulse25} _ _ _  . . . .")
+```
+
+Legato y glide en `auto`: solo las notas con `/` deslizan, sin volver a
+atacar; las demás atacan otra vez en su altura:
+
+```lua
+bpm(124)
+track("b", sh101{ glide = 120, glide_mode = "auto", s = 0.5, cutoff = 1200 })
+  :melody("c _ _ g/  _ _ c . eb _ f/ _  g _ c/ _")
+```
+
+Y el LFO al compás: `lfo_sync = 4` da cuatro ciclos por compás, en fase con
+él; `lfo_wave = "random"` cambia el corte a saltos en cada ciclo:
+
+```lua
+bpm(124)
+track("b", sh101{
+  cutoff = 700, res = 0.6, s = 0.6,
+  lfo_wave = "random", lfo_sync = 4, lfo_filter = 1.5,
+})
+  :melody("c _ _ _  _ _ _ _  eb _ _ _  _ _ _ _")
+```
 
 ### Una caja más grave que dura lo mismo
 
