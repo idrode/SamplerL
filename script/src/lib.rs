@@ -4281,6 +4281,26 @@ impl UserData for SlicedHandle {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_method("count", |_, this, ()| Ok(this.slices.len()));
 
+        // `:note(i)`: la nota del corte `i` en cifrado americano (`"C#4"`)
+        // y su desafinación en cents, o nil si no tiene un tono claro.
+        methods.add_method("note", |lua, this, index: i64| {
+            let range = usize::try_from(index - 1)
+                .ok()
+                .and_then(|i| this.slices.get(i))
+                .ok_or_else(|| {
+                    fail(
+                        lua,
+                        format!(
+                            "note({index}): el corte no existe (hay {})",
+                            this.slices.len()
+                        ),
+                    )
+                })?;
+            Ok(engine::detect_note(&this.sample, range)
+                .map(|g| (g.name(), g.cents()))
+                .unzip())
+        });
+
         // `:set(i, { attack = ms, release = ms })` (o `:set({ ... })` para
         // todos): la forma de un corte.
         methods.add_method(

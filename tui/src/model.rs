@@ -272,6 +272,9 @@ pub struct TrackView {
     pub automated: Vec<(usize, &'static str)>,
     /// Etiqueta de cada corte (si la tiene).
     pub labels: Vec<Option<String>>,
+    /// Nota detectada de cada corte (`engine::detect_note`), si tiene un
+    /// tono claro.
+    pub notes: Vec<Option<engine::NoteGuess>>,
     /// Cortes con el inicio ajustado a mano.
     pub adjusted: Vec<bool>,
     /// Envíos a los buses: `[delay, reverb]`.
@@ -464,6 +467,11 @@ impl TrackView {
     /// Etiqueta del corte `i` (desde 0), si la tiene.
     pub fn label(&self, i: usize) -> Option<&str> {
         self.labels.get(i).and_then(|l| l.as_deref())
+    }
+
+    /// Nota del corte `i` (desde 0) en cifrado americano, si tiene.
+    pub fn note(&self, i: usize) -> Option<String> {
+        self.notes.get(i).copied().flatten().map(|n| n.name())
     }
 }
 

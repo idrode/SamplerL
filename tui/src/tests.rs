@@ -2407,6 +2407,7 @@ mod midi_out;
 mod mouse;
 mod mpe;
 mod navigation;
+mod notes;
 mod record;
 mod resample;
 mod sections;

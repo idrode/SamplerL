@@ -1315,6 +1315,33 @@ pub const FUNCTIONS: &[Function] = &[
         ),
     },
     Function {
+        name: "note",
+        receiver: Receiver::Slices,
+        signature: "cortes:note(i)",
+        returns: None,
+        summary: "Nota del corte i (desde 1) en cifrado americano, como \"C#4\".",
+        doc: "Devuelve dos valores, la nota más cercana (`\"C#4\"`, con sostenidos y \
+              C4 = 60, como en `melody`) y cuántos cents está por encima o por debajo \
+              (de −50 a 50), o `nil` si el corte no tiene un tono claro (un golpe de \
+              caja, ruido, silencio). Busca el periodo de 41 Hz (E1) a 2,1 kHz (C7) \
+              con YIN en ventanas a lo largo del corte, sin el ataque; si el corte \
+              tiene dos notas, da la que más suena. La vista del sample escribe la \
+              nota en cada marca y «Notas de los cortes» de la paleta las lista.",
+        params: &[Param {
+            name: "i",
+            description: "número del corte (desde 1)",
+        }],
+        template: "note(${1})",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             -- El bajo, en la nota del bombo (o en C1 si no tiene).\n\
+             local nota = amen:note(1) or \"C1\"\n\
+             track(\"drums\", amen):steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\")\n\
+             track(\"sub\", synth(\"sub\", {}))\n  \
+             :melody(nota .. \" _ _ _  _ _ _ _  . . . .  . . . .\")\n",
+        ),
+    },
+    Function {
         name: "set",
         receiver: Receiver::Slices,
         signature: "cortes:set([i,] parámetros)",

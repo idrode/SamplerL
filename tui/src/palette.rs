@@ -40,6 +40,7 @@ pub enum Action {
     ResetMeters,
     Metronome,
     DetectBpm,
+    SliceNotes,
     Preview,
     SliceEarlier,
     SliceLater,
@@ -252,6 +253,12 @@ pub const ACTIONS: &[ActionDef] = &[
         action: Action::DetectBpm,
         name: "Detectar el BPM del sample",
         description: "Propone el tempo y los compases del sample de la pista; Enter pone bpm() en el script",
+        keys: "",
+    },
+    ActionDef {
+        action: Action::SliceNotes,
+        name: "Notas de los cortes",
+        description: "Lista la nota de cada corte de la pista en cifrado americano (C#4), con sus cents si está desafinada",
         keys: "",
     },
     ActionDef {

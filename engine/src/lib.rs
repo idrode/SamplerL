@@ -15,6 +15,7 @@ pub mod metronome;
 pub mod notation;
 pub mod offline;
 mod output;
+pub mod pitch;
 mod sample;
 mod sequencer;
 mod shift;
@@ -44,6 +45,7 @@ pub use grain::{GRAIN_PARAMS, Granular, Knob, MAX_GRAINS};
 pub use instrument::{Adsr, Instrument, MAX_VOICES};
 pub use limiter::{LIMIT_THRESHOLD, soft_limit};
 pub use output::{NullOutput, Output, open_null_output, open_output};
+pub use pitch::{NoteGuess, detect_note, detect_notes, note_name};
 pub use sample::{ImportOptions, LoadError, Sample};
 pub use sequencer::{
     DEFAULT_BPM, MAX_BPM, MAX_CHORD, MAX_CYCLE_BARS, MAX_DELAY, MAX_GAIN, MAX_RETRIG,

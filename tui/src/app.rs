@@ -65,6 +65,9 @@ const PAD_KEY: u8 = 128;
 const PAD_FIRST_HOLD: Duration = Duration::from_millis(700);
 /// ...o en este tras la última repetición.
 const PAD_REPEAT_HOLD: Duration = Duration::from_millis(150);
+/// Desafinación (en cents) a partir de la cual «Notas de los cortes» la
+/// escribe junto a la nota.
+const CENTS_SHOWN: i32 = 10;
 
 /// Una nota en vivo de un instrumento que todavía suena (de un pad o del
 /// MIDI de entrada).
@@ -259,6 +262,9 @@ pub struct App {
     /// Resúmenes de forma de onda por sample (se guarda el `Arc` para que la
     /// dirección no se reutilice mientras está en la caché).
     waveforms: HashMap<usize, (Arc<Sample>, Arc<Waveform>)>,
+    /// Nota de cada corte, por sample y cortes (ver `slice_notes_key`); el
+    /// `Arc<Sample>` mantiene vivo el puntero de la clave.
+    slice_notes: HashMap<SliceNotesKey, (Arc<Sample>, Vec<Option<engine::NoteGuess>>)>,
     /// Autocompletado abierto (popup junto al cursor).
     completion: Option<Completion>,
     /// Campos de la última plantilla que faltan por rellenar; Tab salta
@@ -395,6 +401,7 @@ impl App {
             last_external_check: Instant::now(),
             overwrite_armed: false,
             waveforms: HashMap::new(),
+            slice_notes: HashMap::new(),
             completion: None,
             marks: editing::Fields::default(),
             mark_selected: false,
@@ -1521,9 +1528,11 @@ impl App {
         }
     }
 
-    /// Calcula los resúmenes de los samples nuevos y olvida los que ya no se
-    /// usan. Se hace al cargar, no al dibujar.
+    /// Calcula los resúmenes de los samples nuevos (y las notas de sus
+    /// cortes) y olvida los que ya no se usan. Se hace al cargar, no al
+    /// dibujar.
     fn update_waveforms(&mut self) {
+        self.update_slice_notes();
         let Some(song) = self.host.song() else { return };
         let mut next = HashMap::new();
         let all = song
@@ -1539,6 +1548,33 @@ impl App {
             next.insert(key, entry);
         }
         self.waveforms = next;
+    }
+
+    /// Detecta la nota de los cortes nuevos (por sample y cortes: mover un
+    /// corte la vuelve a calcular) y olvida los que ya no se usan.
+    fn update_slice_notes(&mut self) {
+        let Some(song) = self.host.song() else { return };
+        let mut next = HashMap::new();
+        let all = song
+            .tracks
+            .iter()
+            .chain(song.sections.iter().flat_map(|s| s.tracks.iter()));
+        for track in all {
+            let key = slice_notes_key(track);
+            if next.contains_key(&key) {
+                continue;
+            }
+            let entry = self.slice_notes.remove(&key).unwrap_or_else(|| {
+                let notes = if track.instrument.is_some_and(|i| i.synth.is_some()) {
+                    Vec::new()
+                } else {
+                    engine::detect_notes(&track.sample, &track.slices)
+                };
+                (track.sample.clone(), notes)
+            });
+            next.insert(key, entry);
+        }
+        self.slice_notes = next;
     }
 
     /// Arranca (en el cue, si hay uno) o para el secuenciador.
@@ -3078,6 +3114,7 @@ impl App {
             Action::Metronome => self.toggle_metronome(),
             Action::Highlight => self.toggle_highlight(),
             Action::DetectBpm => self.detect_bpm(),
+            Action::SliceNotes => self.slice_notes(),
             Action::Preview => self.preview_selected(),
             Action::SliceEarlier => self.adjust_slice(Some(-5.0)),
             Action::SliceLater => self.adjust_slice(Some(5.0)),
@@ -3303,6 +3340,32 @@ impl App {
         message.push_str(" · Enter pone bpm() en el script");
         self.message = message;
         self.prompt = Some(format!("bpm {}", guess.rounded()));
+    }
+
+    /// «Notas de los cortes»: la nota de cada corte de la pista
+    /// seleccionada (`1 C4 · 2 E4 +25¢ · 3 —`).
+    pub fn slice_notes(&mut self) {
+        let Some(track) = self.view().tracks.into_iter().nth(self.selected) else {
+            self.message = "no hay pistas".into();
+            return;
+        };
+        if track.notes.iter().all(Option::is_none) {
+            self.message = format!("{}: ningún corte tiene un tono claro", track.name);
+            return;
+        }
+        let list: Vec<String> = track
+            .notes
+            .iter()
+            .enumerate()
+            .map(|(i, note)| match note {
+                Some(n) if n.cents().abs() >= CENTS_SHOWN => {
+                    format!("{} {} {:+}¢", i + 1, n.name(), n.cents())
+                }
+                Some(n) => format!("{} {}", i + 1, n.name()),
+                None => format!("{} —", i + 1),
+            })
+            .collect();
+        self.message = format!("{}: {}", track.name, list.join(" · "));
     }
 
     /// `bpm N`: cambia la primera línea `bpm(...)` del script por `bpm(N)`,
@@ -3795,6 +3858,10 @@ impl App {
                                 })
                                 .collect(),
                             labels: t.labels.clone(),
+                            notes: self
+                                .slice_notes
+                                .get(&slice_notes_key(t))
+                                .map_or_else(Vec::new, |(_, n)| n.clone()),
                             adjusted: t.adjusted.clone(),
                             swing: t.swing,
                             gate: t.gate,
@@ -4198,6 +4265,16 @@ fn read_script(path: &Path) -> std::io::Result<(String, String)> {
         }
         Err(e) => Err(e),
     }
+}
+
+/// Clave de la caché de notas: el sample (su puntero) y sus cortes.
+type SliceNotesKey = (usize, Vec<std::ops::Range<usize>>);
+
+fn slice_notes_key(track: &script::TrackDef) -> SliceNotesKey {
+    (
+        Arc::as_ptr(&track.sample) as usize,
+        track.slices.iter().collect(),
+    )
 }
 
 /// Semicorchea del último paso contada desde el inicio de la sección que

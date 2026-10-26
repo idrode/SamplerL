@@ -39,6 +39,9 @@ la sección 4 (con sus parámetros, rangos y un ejemplo cada una).
   tempo de la canción sin cambiar el tono (`sample:stretch()`).
 - Etiquetar cortes (`cortes:name`, o desde la interfaz), moverlos a oído
   (`,` `.` en el modo tocar, o `cortes:move`), partirlos y unirlos.
+- Saber qué nota toca cada corte de una melodía, en cifrado americano
+  (`C#4`): la vista del sample la escribe en cada marca, «Notas de los
+  cortes» en la paleta las lista y `cortes:note(i)` la da en Lua.
 - Dar forma a cada corte (`cortes:set`: ataque, cola, pan, la parte que
   suena, bucle sin clic en el salto o ida y vuelta) y ponerle sus propios efectos
   (`cortes:fx`: ensuciar solo la caja, bajar solo el bombo).
@@ -625,6 +628,7 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Solo de la pista | Pone la pista seleccionada en solo, o se lo quita (en vivo) | s (modo tocar) |
 | Quitar mute y solo | Quita todos los mute y solo en vivo (los del script siguen) | — |
 | Detectar el BPM del sample | Propone el tempo y los compases del sample de la pista; Enter pone bpm() en el script | — |
+| Notas de los cortes | Lista la nota de cada corte de la pista en cifrado americano (C#4), con sus cents si está desafinada | — |
 | Metrónomo | Enciende o apaga el clic en cada pulso (no entra en lo exportado salvo que se pida) | — |
 | Reiniciar medidores | Pone a cero los medidores y quita los avisos de limitador y saturación | — |
 | Etiquetar el corte seleccionado | Abre «etiquetar N » para escribir la etiqueta (kick, snare...); se guarda en el proyecto | — |
@@ -1425,6 +1429,29 @@ track("a", amen):steps("1 . . 1  . . 3 .  1 . 5 .  . 3 . 6")
 track("b", amen):steps("1 . 3' .  1^7 . 5@0.5 .  . 3r4 . 6  x . . 7'^-12@0.8")
 ```
 
+### La nota de cada corte
+
+Si el sample es una melodía (una voz, un riff, un bajo) y lo cortas, cada
+corte dice qué nota toca, en cifrado americano con sostenidos y C4 = 60
+(como en `melody`): la vista del sample la escribe junto al número de su
+marca (`3 G#4`, o `3 voz G#4` con etiqueta), y «Notas de los cortes» (F1)
+las lista con su desafinación si pasa de 10 cents (`1 C4 · 2 E4 · 3 —
+· 4 A4 -30¢`). Un corte sin tono claro (una caja, un charles, ruido) no
+tiene nota (`—`); un bombo con cola sí suele tenerla. Si un corte coge dos
+notas, dice la que más suena: muévelo (`,` `.`) o pide más cortes. Mover
+un corte vuelve a calcular su nota.
+
+En Lua, `cortes:note(i)` devuelve el nombre (`"G#4"`) y los cents, o `nil`:
+sirve tal cual en `melody` o como `root` de un instrumento, para que lo que
+añadas encaje con el sample:
+
+```lua
+local voz = sample("amen.wav"):slice(8)
+track("voz", voz):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+local raiz = voz:note(1) or "C2"
+track("bajo", synth("sub", {})):melody(raiz .. " _ _ _  _ _ _ _  . . . .  . . . .")
+```
+
 ## 4. API de Lua
 
 El script se ejecuta entero en cada carga. Cada llamada construye el modelo
@@ -2078,6 +2105,21 @@ Solo el corte i (desde 1), como fuente de un único corte. En el patrón de la p
 local amen = sample("amen.wav"):slice(8)
 local caja = amen:slice_at(3)
 track("caja", caja):steps(". . . .  x . . .  . . . .  x . . .")
+```
+
+### `cortes:note(i)`
+
+Nota del corte i (desde 1) en cifrado americano, como "C#4". Devuelve dos valores, la nota más cercana (`"C#4"`, con sostenidos y C4 = 60, como en `melody`) y cuántos cents está por encima o por debajo (de −50 a 50), o `nil` si el corte no tiene un tono claro (un golpe de caja, ruido, silencio). Busca el periodo de 41 Hz (E1) a 2,1 kHz (C7) con YIN en ventanas a lo largo del corte, sin el ataque; si el corte tiene dos notas, da la que más suena. La vista del sample escribe la nota en cada marca y «Notas de los cortes» de la paleta las lista.
+
+- `i`: número del corte (desde 1)
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+-- El bajo, en la nota del bombo (o en C1 si no tiene).
+local nota = amen:note(1) or "C1"
+track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+track("sub", synth("sub", {}))
+  :melody(nota .. " _ _ _  _ _ _ _  . . . .  . . . .")
 ```
 
 ### `cortes:set([i,] parámetros)`

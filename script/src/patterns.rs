@@ -250,14 +250,7 @@ pub fn note_number(name: &str) -> Option<i32> {
 
 /// Nombre de una nota MIDI: `60` → `"C4"`, `61` → `"C#4"`.
 pub fn note_name(midi: i32) -> String {
-    const NAMES: [&str; 12] = [
-        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
-    ];
-    format!(
-        "{}{}",
-        NAMES[midi.rem_euclid(12) as usize],
-        midi.div_euclid(12) - 1
-    )
+    engine::note_name(midi)
 }
 
 /// Patrón de notas (`"c e g e"`, `"c+e+g _ . a3@0.5"`) a pasos con pitch

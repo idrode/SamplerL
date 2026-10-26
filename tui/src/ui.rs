@@ -1516,7 +1516,8 @@ pub fn wave_bar(lo: f32, hi: f32, rows: u16) -> Vec<Option<char>> {
     cells
 }
 
-/// Texto de la marca de un corte en la vista del sample: `3` o `3 snare`.
+/// Texto de la marca de un corte en la vista del sample: `3`, `3 snare`,
+/// `3 C#4` o `3 snare C#4` (con la nota detectada, si la tiene).
 fn slice_mark(track: &crate::model::TrackView, i: usize) -> String {
     // Un `*` marca los cortes ajustados a mano.
     let star = if track.adjusted.get(i).copied().unwrap_or(false) {
@@ -1524,10 +1525,15 @@ fn slice_mark(track: &crate::model::TrackView, i: usize) -> String {
     } else {
         ""
     };
-    match track.label(i) {
-        Some(label) => format!("{}{star} {label}", i + 1),
-        None => format!("{}{star}", i + 1),
+    let mut mark = format!("{}{star}", i + 1);
+    for word in [track.label(i).map(str::to_string), track.note(i)]
+        .into_iter()
+        .flatten()
+    {
+        mark.push(' ');
+        mark.push_str(&word);
     }
+    mark
 }
 
 /// Ancho de cada columna del tracker.
