@@ -55,7 +55,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     if view.editor_outside {
         // Sin editor aquí, el ratón no tiene dónde escribir.
         app.editor_area = None;
-        draw_main_window(frame, &view);
+        let sample_area = draw_main_window(frame, &view);
+        app.sample_area = Some(Block::bordered().inner(sample_area));
         return;
     }
     let [main, fx, help] = Layout::vertical([
@@ -94,6 +95,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     };
     frame.render_widget(EnginePanel(&view), engine_area);
     frame.render_widget(SamplePanel(&view), sample_area);
+    app.sample_area = Some(Block::bordered().inner(sample_area));
     frame.render_widget(TrackerPanel(&view), tracker_area);
     frame.render_widget(FxPanel(&view), fx);
     frame.render_widget(HelpLine(&view), help);
@@ -125,7 +127,8 @@ fn tracker_first(height: u16, normal: u16, squeezed: u16) -> u16 {
 /// La ventana principal con el editor en la suya (fase L): las vistas
 /// ocupan toda la ventana. Arriba, el transporte y el enlace; la forma de
 /// onda grande; debajo, el mezclador y el tracker; abajo, los efectos.
-fn draw_main_window(frame: &mut Frame, view: &ViewModel) {
+/// Devuelve dónde quedó el panel del sample.
+fn draw_main_window(frame: &mut Frame, view: &ViewModel) -> Rect {
     let [top, body, fx, help] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Min(8),
@@ -176,6 +179,7 @@ fn draw_main_window(frame: &mut Frame, view: &ViewModel) {
     frame.render_widget(FxPanel(view), fx);
     frame.render_widget(HelpLine(view), help);
     draw_popups(frame, view, None);
+    sample_area
 }
 
 /// Tabla de choques de frecuencia del último análisis (la de

@@ -808,6 +808,13 @@ La vista del sample marca los cortes ajustados con `*` y da la posición
 del seleccionado; «Quitar el ajuste del corte» lo devuelve al detector. En
 Lua, `cortes:move(i, ms)`.
 
+**Con el ratón**, en la vista del sample: pulsa sobre la marca de un corte
+(o justo a su lado) y arrástrala; el corte anterior se alarga o se acorta
+con ella. Al soltar se guarda como el ajuste de las teclas (en el
+proyecto, con preescucha). Va de columna en columna; para afinar, `<` y
+`>`. Un clic en otro sitio de la onda selecciona el corte que hay ahí.
+Sirve en los dos modos y en la ventana principal con el editor fuera.
+
 **Grabar lo tocado.** «Grabar lo tocado» (paleta) deja escrita la orden
 `grabar 1`; cambia el número por los compases que quieras (Enter). La
 grabación empieza al principio del compás siguiente (el panel del motor
@@ -1165,7 +1172,8 @@ se pega nada.
 desplazado y en las líneas largas), arrastrar selecciona (Ctrl-C lo copia)
 y la rueda desplaza el texto tres líneas. Funciona en el modo editor sin
 nada abierto encima (la paleta, la línea de órdenes...), también en la
-ventana del editor de `--split`. Mientras la interfaz tiene el ratón, la
+ventana del editor de `--split`. En la vista del sample, arrastra las
+marcas de los cortes (ver «ajuste manual de cortes»). Mientras la interfaz tiene el ratón, la
 terminal no selecciona sola: **Shift y arrastrar** selecciona como siempre
 para copiar con la terminal (en casi todas; en algunas, Alt). Dentro de
 tmux, si no llegan los clics, `set -g mouse on`. Con `raton = false` en

@@ -205,6 +205,11 @@ pub struct App {
     pub editor_area: Option<ratatui::layout::Rect>,
     /// Arrastrando con el ratón: dónde se pulsó (fila y columna del texto).
     drag_from: Option<(usize, usize)>,
+    /// Dónde se dibujó la forma de onda la última vez (dentro del borde):
+    /// el ratón arrastra ahí las marcas de los cortes.
+    pub sample_area: Option<ratatui::layout::Rect>,
+    /// Arrastrando la marca de un corte con el ratón.
+    slice_drag: Option<mouse::SliceDrag>,
     /// El ratón en el editor (`[editor] raton`).
     mouse_enabled: bool,
     /// El modo vim (`[editor] modo = "vim"`): su modo y lo que lleva entre
@@ -368,6 +373,8 @@ impl App {
             editor: TextArea::new(text.lines().map(String::from).collect()),
             editor_area: None,
             drag_from: None,
+            sample_area: None,
+            slice_drag: None,
             mouse_enabled: true,
             vim: None,
             vim_exit: vim::DEFAULT_EXIT,
@@ -793,14 +800,36 @@ impl App {
         let index = self
             .selected_slice
             .min(track.slices.len().saturating_sub(1));
-        let (origin, name) = (track.origin.clone(), track.name.clone());
         let Some(range) = track.slices.get(index) else {
             return;
         };
+        let current = self.frame_ms(range.start);
+        self.place_slice(index, delta_ms.map(|d| current + d));
+    }
+
+    /// Ms del sample original (sin estirar) del frame `frame` del sample
+    /// de la pista seleccionada: las posiciones del proyecto van así.
+    fn frame_ms(&self, frame: usize) -> f64 {
+        let Some(track) = self.tracks().get(self.selected) else {
+            return 0.0;
+        };
         let rate = track.sample.sample_rate() as f64;
-        // Las posiciones van en ms del sample original (sin estirar).
         let ratio = track.stretch.map_or(1.0, |s| s.ratio);
-        let current = range.start as f64 * 1000.0 / rate / ratio;
+        frame as f64 * 1000.0 / rate / ratio
+    }
+
+    /// Pone el inicio del corte `index` de la pista seleccionada en `ms`
+    /// (del sample original), o le quita el ajuste con `None`: lo de
+    /// [`App::adjust_slice`], también para arrastrar la marca con el ratón.
+    fn place_slice(&mut self, index: usize, ms: Option<f64>) {
+        let Some(track) = self.tracks().get(self.selected) else {
+            self.message = "no hay pistas".into();
+            return;
+        };
+        let (origin, name) = (track.origin.clone(), track.name.clone());
+        if index >= track.slices.len() {
+            return;
+        }
         let Some(slice) = origin.indices[index].map(|i| i + 1) else {
             self.message = format!(
                 "el corte {} de {name} lo añade el script con :add(): muévelo en el script",
@@ -815,7 +844,7 @@ impl App {
             .find(|p| p.sample == origin.sample && p.slices == origin.cut() && p.slice == slice)
             .map(|p| p.ms);
         // Con la resolución de un frame, redondeado a 0,1 ms.
-        let target = delta_ms.map(|d| ((current + d).max(0.0) * 10.0).round() / 10.0);
+        let target = ms.map(|ms| (ms.max(0.0) * 10.0).round() / 10.0);
         self.host
             .set_position(&origin.sample, origin.cut(), slice, target);
         self.load();
@@ -3728,8 +3757,12 @@ impl App {
 
     /// El texto pegado va al editor: modo editar y sin nada encima.
     fn pastes_in_editor(&self) -> bool {
-        self.mode == Mode::Edit
-            && self.prompt.is_none()
+        self.mode == Mode::Edit && self.nothing_on_top()
+    }
+
+    /// Sin nada abierto encima de los paneles (paleta, línea de órdenes...).
+    fn nothing_on_top(&self) -> bool {
+        self.prompt.is_none()
             && self.palette.is_none()
             && self.block_picker.is_none()
             && self.browser.is_none()
@@ -3908,6 +3941,18 @@ impl App {
             })
             .unwrap_or_default();
         let selected = (!tracks.is_empty()).then(|| self.selected.min(tracks.len() - 1));
+        // La marca que se arrastra con el ratón, donde va (aún sin cargar).
+        let mut tracks = tracks;
+        if let Some(drag) = &self.slice_drag
+            && let Some(track) = selected.and_then(|i| tracks.get_mut(i))
+            && track.name == drag.track
+            && drag.index < track.slices.len()
+        {
+            track.slices[drag.index].start = drag.at;
+            if drag.index > 0 {
+                track.slices[drag.index - 1].end = drag.at;
+            }
+        }
         let selected_slice = selected
             .and_then(|t| tracks[t].slices.len().checked_sub(1))
             .map(|last| self.selected_slice.min(last));
