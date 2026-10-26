@@ -19,6 +19,7 @@ use crate::shift::Shift;
 use crate::slice::Slices;
 use crate::slice_fx::VoiceFx;
 use crate::status::{SharedStatus, Status};
+use crate::synth;
 use crate::synth::{NoteEvent, Patch, SongClock, Synth};
 
 const COMMAND_CAPACITY: usize = 64;
@@ -57,6 +58,30 @@ impl MidiNote {
 
 /// Número máximo de pistas. Cada una tiene su patrón y su voz.
 pub const MAX_TRACKS: usize = 8;
+
+/// Semitonos de bend de una nota como mucho (±96: el rango de MPE más
+/// grande es ±96).
+pub const MAX_BEND: f32 = 96.0;
+
+/// Comprueba el valor de un eje de la expresión por nota.
+fn valid_axis(axis: usize, value: f32) -> Result<(), SendError> {
+    let ok = match axis {
+        synth::BEND => (-MAX_BEND..=MAX_BEND).contains(&value),
+        a if a < synth::AXES => (0.0..=1.0).contains(&value),
+        _ => false,
+    };
+    if ok {
+        Ok(())
+    } else {
+        Err(SendError::InvalidSynth(
+            "expresión por nota: eje o valor fuera de rango (bend ±96, presión y slide de 0 a 1)",
+        ))
+    }
+}
+
+/// Compás más alto en que puede arrancar el transporte
+/// ([`Controller::start_at`]): más de 14 horas a 300 BPM.
+pub const MAX_START_BAR: u64 = 1 << 16;
 /// Frames por trozo de mezcla. Los buffers de pista y maestro tienen este
 /// tamaño fijo; los bloques del callback se procesan en trozos.
 pub(crate) const CHUNK: usize = 256;
@@ -109,6 +134,10 @@ enum Command {
     CommitBatch,
     /// Arranca el secuenciador desde el paso 0.
     Start,
+    /// Arranca el secuenciador en el paso 0 de ese compás de la canción
+    /// (con línea de tiempo, donde cae en ella), como si hubiera llegado
+    /// hasta él.
+    StartAt(u64),
     /// Para el secuenciador y la voz que suena.
     Stop,
     /// Mute en vivo de una pista (inmediato, no espera al compás).
@@ -147,6 +176,17 @@ enum Command {
         semitones: f32,
         gain: f32,
         key: u8,
+        /// La expresión con la que empieza (ver `NoteMod`); `None`, una
+        /// nota sin expresión (un pad del teclado).
+        expr: Option<[f32; synth::AXES]>,
+    },
+    /// Expresión por nota (MPE): el eje `axis` de la nota en vivo de esa
+    /// tecla va a `value` (suavizado). Inmediato.
+    NoteMod {
+        track: usize,
+        key: u8,
+        axis: u8,
+        value: f32,
     },
     /// Suelta la nota en vivo de esa tecla: empieza su release.
     NoteOff { track: usize, key: u8 },
@@ -692,6 +732,8 @@ pub enum SendError {
     InvalidArrangement(&'static str),
     /// Etiqueta de patrón por encima de `MAX_TAG`.
     InvalidTag(u32),
+    /// Compás de arranque por encima de [`MAX_START_BAR`].
+    InvalidStartBar(u64),
 }
 
 impl fmt::Display for SendError {
@@ -707,6 +749,10 @@ impl fmt::Display for SendError {
             SendError::InvalidGranular(reason) => write!(f, "granos: {reason}"),
             SendError::InvalidSynth(reason) => write!(f, "sintetizador: {reason}"),
             SendError::InvalidArrangement(reason) => write!(f, "arreglo: {reason}"),
+            SendError::InvalidStartBar(bar) => write!(
+                f,
+                "compás de arranque {bar} fuera de rango (0 a {MAX_START_BAR})"
+            ),
             SendError::InvalidTag(tag) => {
                 write!(
                     f,
@@ -1271,6 +1317,33 @@ impl Controller {
         gain: f32,
         key: u8,
     ) -> Result<(), SendError> {
+        self.send_synth_on(track, patch, semitones, gain, key, None)
+    }
+
+    /// Como [`Controller::synth_note_on`], con la expresión con la que
+    /// empieza la nota (los ejes de [`synth::AXES`]; en MPE, lo que el
+    /// canal de la nota ya traía: el bend antes de pulsar, por ejemplo).
+    pub fn synth_note_on_expr(
+        &mut self,
+        track: usize,
+        patch: Patch,
+        semitones: f32,
+        gain: f32,
+        key: u8,
+        expr: [f32; synth::AXES],
+    ) -> Result<(), SendError> {
+        self.send_synth_on(track, patch, semitones, gain, key, Some(expr))
+    }
+
+    fn send_synth_on(
+        &mut self,
+        track: usize,
+        patch: Patch,
+        semitones: f32,
+        gain: f32,
+        key: u8,
+        expr: Option<[f32; synth::AXES]>,
+    ) -> Result<(), SendError> {
         if track >= MAX_TRACKS {
             return Err(SendError::NoSuchTrack(track));
         }
@@ -1284,14 +1357,43 @@ impl Controller {
             return Err(invalid("nota fuera de rango (-36 a 36 semitonos)"));
         }
         patch.validate().map_err(SendError::InvalidSynth)?;
+        for (axis, &value) in expr.iter().flatten().enumerate() {
+            valid_axis(axis, value)?;
+        }
         let cmd = Command::SynthOn {
             track,
             patch,
             semitones,
             gain,
             key,
+            expr,
         };
         self.send(cmd, Some(true))
+    }
+
+    /// Expresión por nota: el eje `axis` ([`synth::BEND`] en semitonos,
+    /// [`synth::PRESSURE`] y [`synth::SLIDE`] de 0 a 1) de la nota en vivo
+    /// de la tecla `key` va a `value`, suavizado. Mueve lo que el patch de
+    /// la pista asigna a ese eje ([`synth::Patch::expr`]); sin la nota
+    /// sonando, nada. Inmediato.
+    pub fn note_mod(
+        &mut self,
+        track: usize,
+        key: u8,
+        axis: usize,
+        value: f32,
+    ) -> Result<(), SendError> {
+        if track >= MAX_TRACKS {
+            return Err(SendError::NoSuchTrack(track));
+        }
+        valid_axis(axis, value)?;
+        let cmd = Command::NoteMod {
+            track,
+            key,
+            axis: axis as u8,
+            value,
+        };
+        self.send(cmd, None)
     }
 
     /// Toca ya una nube de granos en la pista `track` (un pad o una nota
@@ -1527,6 +1629,18 @@ impl Controller {
     /// Arranca el secuenciador en el paso 0, aplicando lo pendiente.
     pub fn start(&mut self) -> Result<(), SendError> {
         self.send(Command::Start, Some(true))
+    }
+
+    /// Arranca el secuenciador en el compás `bar` de la canción (contando
+    /// desde 0), aplicando lo pendiente, como si hubiera llegado hasta él:
+    /// las vueltas de los patrones (`every`, ciclos de compases), las
+    /// rampas y los LFO siguen por donde irían. Con línea de tiempo, en la
+    /// entrada y el compás donde cae `bar` (da la vuelta al acabar).
+    pub fn start_at(&mut self, bar: u64) -> Result<(), SendError> {
+        if bar > MAX_START_BAR {
+            return Err(SendError::InvalidStartBar(bar));
+        }
+        self.send(Command::StartAt(bar), Some(true))
     }
 
     /// Silencia (o vuelve a dejar sonar) una pista ya, sin esperar al
@@ -1832,16 +1946,8 @@ impl Engine {
                     }
                 }
             }
-            Command::Start => {
-                self.transport.start();
-                if let Some(playlist) = &mut self.playlist {
-                    playlist.restart = true;
-                }
-                self.status.clear_step();
-                for track in self.tracks.iter_mut() {
-                    track.retrig = None;
-                }
-            }
+            Command::Start => self.start_at(0),
+            Command::StartAt(bar) => self.start_at(bar),
             Command::Stop => {
                 self.transport.running = false;
                 self.metronome.stop();
@@ -1892,6 +1998,7 @@ impl Engine {
                 semitones,
                 gain,
                 key,
+                expr,
             } => {
                 self.note_off(track, key);
                 let t = &mut self.tracks[track];
@@ -1908,11 +2015,22 @@ impl Engine {
                     key: Some(key),
                     sub: Default::default(),
                 };
-                t.synth.note_on(&patch, ev);
+                let born = t.synth.note_on(&patch, ev);
+                if let Some(expr) = expr
+                    && patch.expr.iter().any(Option::is_some)
+                {
+                    t.synth.set_expr(born, expr);
+                }
                 self.status.set_hit(track, 0);
                 self.choke(track);
             }
             Command::NoteOff { track, key } => self.note_off(track, key),
+            Command::NoteMod {
+                track,
+                key,
+                axis,
+                value,
+            } => self.tracks[track].synth.note_mod(key, axis as usize, value),
             Command::GrainOn {
                 track,
                 sample,
@@ -1982,6 +2100,18 @@ impl Engine {
         }
     }
 
+    /// Arranca el transporte en el compás `bar` (0: desde el principio).
+    fn start_at(&mut self, bar: u64) {
+        self.transport.start_at(bar, self.sample_rate);
+        if let Some(playlist) = &mut self.playlist {
+            playlist.restart = true;
+        }
+        self.status.clear_step();
+        for track in self.tracks.iter_mut() {
+            track.retrig = None;
+        }
+    }
+
     /// Dispara el paso actual del secuenciador en todas las pistas y avanza.
     /// Al empezar un compás, antes aplica los patrones pendientes.
     fn step(&mut self) {
@@ -1997,7 +2127,7 @@ impl Engine {
             self.rack.params = buses;
         }
         if step == 0 {
-            self.advance_playlist(global, now);
+            self.advance_playlist(bar, global, now);
         }
         // Las vueltas de los patrones cuentan desde el inicio de la sección.
         let origin = self.playlist.as_ref().map_or(0, |p| p.origin_step);
@@ -2899,7 +3029,7 @@ impl Engine {
     /// misma sección si sigue estando) o se avanza por la línea de tiempo;
     /// si cambia la sección, sus patrones pasan a las pistas y los de la
     /// anterior vuelven a su sitio en el arreglo. Publica la posición.
-    fn advance_playlist(&mut self, global: u64, now: u64) {
+    fn advance_playlist(&mut self, bar: u64, global: u64, now: u64) {
         let bar_steps = self.transport.meter().steps as u64;
         let bar_frames = crate::sequencer::bar_frames_steps(
             bar_steps as usize,
@@ -2935,6 +3065,8 @@ impl Engine {
                         None => (Place { entry: 0, bar: 0 }, None, true),
                     }
                 }
+                // Al arrancar, donde se arrancó (el compás 0 con `Start`).
+                _ if bar == self.transport.first_bar() => (new.place_at(bar), None, false),
                 _ => (Place { entry: 0, bar: 0 }, None, false),
             };
             let (looping, origin) = match &old {
@@ -2971,16 +3103,20 @@ impl Engine {
             self.playlist = Some(playlist);
             self.status.set_lost(lost);
         } else if let Some(playlist) = &mut self.playlist {
-            let place = if playlist.restart {
-                Place { entry: 0, bar: 0 }
+            let restart = playlist.restart;
+            let place = if restart {
+                playlist.arrangement.place_at(bar)
             } else {
                 playlist.next()
             };
             playlist.restart = false;
             playlist.jump = None;
-            if place.bar == 0 {
-                playlist.origin_step = global;
-                playlist.origin_frame = now;
+            if place.bar == 0 || restart {
+                // Al arrancar a media entrada, como si se hubiera llegado a
+                // ella: su origen, los compases de antes.
+                let back = place.bar as u64;
+                playlist.origin_step = global.saturating_sub(back * bar_steps);
+                playlist.origin_frame = now.saturating_sub(back * bar_frames);
             }
             playlist.place = place;
             let section = playlist.arrangement.timeline[place.entry].0;

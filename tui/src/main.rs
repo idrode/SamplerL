@@ -5,6 +5,7 @@ mod complete;
 mod config;
 mod diagnose;
 mod editing;
+mod expression;
 mod highlight;
 mod history;
 mod link;
@@ -32,7 +33,7 @@ uso: tui --edit <canción.lua | proyecto.sampler> [--allow-audio] [--allow-midi]
      tui --window-editor <canción.lua | proyecto.sampler>    (editor de una --split en marcha)
      tui <archivo.wav> --render <salida.wav>
      tui <archivo.wav> --detect-bpm               (propone bpm() y compases)
-     tui --script <canción.lua> --render <salida.wav> [--bars M] [--metronome] [--track pista]
+     tui --script <canción.lua> --render <salida.wav> [--bars M] [--from N] [--metronome] [--track pista]
      tui --script <canción.lua> --allow-audio     (reproduce y recarga al guardar)
      tui --script <canción.lua> --analyze-masking (choques de frecuencia entre pistas)
      tui <archivo.wav> --render <salida.wav> --pattern \"1 . 3 . ...\" \
@@ -46,7 +47,9 @@ uso: tui --edit <canción.lua | proyecto.sampler> [--allow-audio] [--allow-midi]
                3'^7@0.5r2  combinables, en cualquier orden
   --slices   cortes a detectar (por defecto 8)
   --bpm      tempo (por defecto 120)
-  --bars     compases a renderizar (por defecto 4)
+  --bars     compases a renderizar (por defecto 4; con línea de tiempo, hasta su final)
+  --from     con --script: empieza en el compás N (desde 0, como la barra de estado),
+               como si la canción hubiera llegado hasta él (every, ramp, lfo, secciones)
   --min-gap  separación mínima entre cortes en ms (por defecto 40)
   --detector detección de transitorios: flux (flujo espectral, por defecto) o energy
   --metronome  añade al render el clic del metrónomo (si no, nunca lo lleva)
@@ -100,6 +103,7 @@ fn run() -> Result<(), BoxError> {
     let mut slices = None;
     let mut bpm = None;
     let mut bars = None;
+    let mut from = None;
     let mut min_gap_ms = None;
     let mut detector = None;
     let mut script = None;
@@ -138,6 +142,7 @@ fn run() -> Result<(), BoxError> {
             "--slices" => slices = Some(parse_number::<usize>("--slices", &value()?)?),
             "--bpm" => bpm = Some(parse_number::<f64>("--bpm", &value()?)?),
             "--bars" => bars = Some(parse_number::<u64>("--bars", &value()?)?),
+            "--from" => from = Some(parse_number::<u64>("--from", &value()?)?),
             "--script" => script = Some(value()?),
             "--track" => track = Some(value()?),
             "--edit" => edit = Some(value()?),
@@ -212,6 +217,12 @@ fn run() -> Result<(), BoxError> {
             )
             .into());
         }
+        if from.is_some() && (render_to.is_none() || track.is_some() || masking) {
+            return Err(format!(
+                "--from va con --script y --render (sin --track ni --analyze-masking)\n{USAGE}"
+            )
+            .into());
+        }
         if masking {
             if render_to.is_some() || allow_audio || track.is_some() || bars.is_some() {
                 return Err(format!(
@@ -225,7 +236,7 @@ fn run() -> Result<(), BoxError> {
         return match render_to {
             Some(out) => match track {
                 Some(track) => render_track(&script, &out, &track, bars),
-                None => render_script(&script, &out, bars, metronome),
+                None => render_script(&script, &out, bars, from.unwrap_or(0), metronome),
             },
             None if allow_audio => play_script(&script),
             None => Err(format!(
@@ -234,6 +245,9 @@ fn run() -> Result<(), BoxError> {
             )
             .into()),
         };
+    }
+    if from.is_some() {
+        return Err(format!("--from va con --script\n{USAGE}").into());
     }
     let path = path.ok_or(USAGE)?;
     if detect {
@@ -436,6 +450,7 @@ fn render_script(
     path: &str,
     out: &str,
     bars: Option<u64>,
+    from: u64,
     metronome: bool,
 ) -> Result<(), BoxError> {
     let mut host = script::ScriptHost::new(RENDER_RATE);
@@ -443,12 +458,26 @@ fn render_script(
     let song = host.load_file(&mut controller, std::path::Path::new(path))?;
     let bpm = song.bpm.unwrap_or(engine::DEFAULT_BPM);
     // Sin --bars: con línea de tiempo, la canción entera (hasta 256
-    // compases); si no, 4.
-    let bars = bars.unwrap_or(if song.timeline.is_empty() {
-        DEFAULT_BARS
-    } else {
-        song.length_bars(1)
-    });
+    // compases) o lo que queda desde --from; si no, 4.
+    let bars = match bars {
+        Some(bars) => bars,
+        None if song.timeline.is_empty() => DEFAULT_BARS,
+        None => {
+            let length = song.length_bars(1);
+            if from >= length {
+                return Err(format!(
+                    "--from {from}: la línea de tiempo dura {} (del 0 al {})",
+                    script::bars_text(length),
+                    length - 1
+                )
+                .into());
+            }
+            length - from
+        }
+    };
+    if from > engine::MAX_START_BAR {
+        return Err(format!("--from {from}: como mucho {}", engine::MAX_START_BAR).into());
+    }
     for warning in &song.warnings {
         eprintln!("aviso: {warning}");
     }
@@ -475,17 +504,22 @@ fn render_script(
     if metronome {
         controller.set_metronome(true)?;
     }
-    controller.start()?;
+    controller.start_at(from)?;
 
     // Con la rampa de tempo y el compás de la canción, como suena.
-    let frames = song.frames(RENDER_RATE, bars);
+    let frames = song.frames(RENDER_RATE, from + bars) - song.frames(RENDER_RATE, from);
     if frames > (MAX_RENDER_SECONDS as u64) * RENDER_RATE as u64 {
         return Err(format!("render demasiado largo (máximo {MAX_RENDER_SECONDS} s)").into());
     }
     let audio = engine::offline::render(&mut engine, frames as usize, 2);
     engine::offline::write_wav(out, &audio, 2, RENDER_RATE)?;
+    let start = if from > 0 {
+        format!(" desde el compás {from}")
+    } else {
+        String::new()
+    };
     println!(
-        "{out}: {} a {bpm} BPM, {frames} frames ({:.2} s)",
+        "{out}: {}{start} a {bpm} BPM, {frames} frames ({:.2} s)",
         script::bars_text(bars),
         frames as f64 / RENDER_RATE as f64
     );
@@ -678,19 +712,35 @@ fn run_terminal(
     // con sus saltos de línea. Si el terminal no lo sabe, llega como
     // teclas en ráfaga (ver `App::handle_keys`).
     let paste = ratatui::crossterm::execute!(std::io::stdout(), EnableBracketedPaste).is_ok();
+    // El ratón en el editor (`[editor] raton`): la terminal deja de
+    // seleccionar sola (con Shift y arrastrar, sí).
+    let mouse = app.mouse_enabled()
+        && ratatui::crossterm::execute!(std::io::stdout(), event::EnableMouseCapture).is_ok();
     // Si la terminal sabe decir cuándo se suelta una tecla (protocolo de
     // teclado de kitty: kitty, foot, WezTerm, Ghostty...), se le pide: los
     // pads de un instrumento sueltan su nota al soltar la tecla. Si no
     // (tmux, la mayoría), la sueltan cuando dejan de llegar repeticiones.
+    // Con el protocolo, además, las teclas llegan sin ambigüedad: Shift-
+    // Ctrl-Espacio (el cue) no es Ctrl-Espacio (marcha), que sin él llegan
+    // los dos como el mismo byte NUL. En tmux, con `extended-keys` y
+    // `extended-keys-format csi-u` llegan igual de distintas (ver la guía).
     let releases = ratatui::crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false)
         && ratatui::crossterm::execute!(
             std::io::stdout(),
-            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::REPORT_EVENT_TYPES)
+            PushKeyboardEnhancementFlags(
+                KeyboardEnhancementFlags::REPORT_EVENT_TYPES
+                    | KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                    | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
+            )
         )
         .is_ok();
     // Modos del terminal que se piden al entrar y se quitan al salir,
     // también con error o pánico (al soltar la guarda).
-    let modes = TerminalModes { paste, releases };
+    let modes = TerminalModes {
+        paste,
+        releases,
+        mouse,
+    };
     app.set_key_releases(releases);
     let result = (|| -> Result<(), BoxError> {
         loop {
@@ -744,6 +794,21 @@ fn run_terminal(
                         }
                     }
                     Event::Paste(text) => app.paste(&text),
+                    Event::Mouse(m) => {
+                        use app::MouseAction;
+                        use event::{MouseButton, MouseEventKind};
+                        let action = match m.kind {
+                            MouseEventKind::Down(MouseButton::Left) => Some(MouseAction::Down),
+                            MouseEventKind::Drag(MouseButton::Left) => Some(MouseAction::Drag),
+                            MouseEventKind::Up(MouseButton::Left) => Some(MouseAction::Up),
+                            MouseEventKind::ScrollUp => Some(MouseAction::ScrollUp),
+                            MouseEventKind::ScrollDown => Some(MouseAction::ScrollDown),
+                            _ => None,
+                        };
+                        if let Some(action) = action {
+                            app.mouse(action, m.column, m.row);
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -762,11 +827,17 @@ const BURST_MAX: usize = 4096;
 struct TerminalModes {
     paste: bool,
     releases: bool,
+    mouse: bool,
 }
 
 impl Drop for TerminalModes {
     fn drop(&mut self) {
-        use ratatui::crossterm::event::{DisableBracketedPaste, PopKeyboardEnhancementFlags};
+        use ratatui::crossterm::event::{
+            DisableBracketedPaste, DisableMouseCapture, PopKeyboardEnhancementFlags,
+        };
+        if self.mouse {
+            let _ = ratatui::crossterm::execute!(std::io::stdout(), DisableMouseCapture);
+        }
         if self.releases {
             let _ = ratatui::crossterm::execute!(std::io::stdout(), PopKeyboardEnhancementFlags);
         }

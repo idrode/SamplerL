@@ -493,6 +493,112 @@ con el transporte parado, `rdiv` cuenta un compás virtual desde la nota.
    compás.
 5. ✅ **Presets, guía y documentación** de `subharm`.
 
+## Fase Q: MPE (Roli Seaboard) y expresión por nota
+
+Pedida por el usuario: pitch bend y presión **por nota** a parámetros de
+los synths. Se hace después de la S. **A medias**: hecho lo que no depende
+del aparato (los mensajes según la especificación MIDI y MPE, el motor,
+Lua, la guía y una receta); falta comprobarlo con la salida de `aseqdump`
+del Seaboard y decidir el synth polifónico. Detalle en «Fase Q» de
+[docs/ESTADO.md](ESTADO.md).
+
+Hecho:
+
+1. ✅ **Mensajes**: `PitchBend`, `ChannelPressure`, `PolyPressure` y
+   `Controller`, con canal (`tui/src/midi.rs`).
+2. ✅ **Zonas MPE** (`tui/src/expression.rs`): canal ↔ nota, el maestro
+   (canal 1) suma su bend, lo que trae el canal antes de la nota;
+   `[midi] mpe` y `bend`.
+3. ✅ **Motor**: `Command::NoteMod` (`Controller::note_mod`) y la
+   expresión inicial en `SynthOn` (`synth_note_on_expr`), suavizadas y
+   sin reservas (`no_alloc.rs`). La voz se identifica por su tecla (como el
+   note off), no por un id devuelto.
+4. ✅ **Lua**: `:mpe{ bend = "pitch", pressure = { "cutoff", range = 3,
+   curve = 1.5 }, slide = "res" }`, registro, guía y la receta
+   `14-mpe.lua`.
+
+Falta:
+
+- ⏳ **Datos reales**: el usuario ejecuta `aseqdump -p 24:0`
+  (Seaboard RISE = cliente 24:0 en ALSA) tocando y pega la salida:
+  canales, rango de bend, CC74, presión de canal o por nota. Anotarlo en
+  `docs/ESTADO.md`. No construir sobre suposiciones.
+- `tui/src/midi.rs` solo parsea notas y reloj: añadir `PitchBend`,
+  `ChannelPressure`, `PolyPressure` y `Controller` (con canal), con tests
+  de mensajes simulados.
+- Zonas MPE: cada nota en su canal (2-16; el 1 es el maestro); asociar
+  canal ↔ voz al entrar la nota y soltarla en el note off. `[midi] mpe =
+  true|false` y rango de bend por nota (±48 en MPE por defecto).
+- Orden `NoteMod` (voz, eje, valor) por la cola lock-free, suavizada, sin
+  reservas (`no_alloc.rs`). `Engine::synth_note_on` devuelve el id de la
+  voz.
+- Lua: asignar ejes a parámetros, p. ej. `:mpe{ bend = "pitch", pressure
+  = "cutoff", slide = "pw" }` (sintaxis propuesta, ajustable), con rango y
+  curva. Los asignables son los continuos que admiten `ramp()`/`lfo()`
+  (`api::Auto`). Registro, guía y receta.
+- ⏳ `acid` y `sh101` son monofónicos (con acordes siguen a la última
+  nota): decidir con el usuario si basta `subharm{ voices = n }` (lo que
+  usa la receta) o hace falta otro synth polifónico.
+- Si el Seaboard manda su rango de bend por RPN 0, leerlo de ahí en vez
+  de `[midi] bend`.
+- Pendiente opcional: `scripts/conectar-seaboard.sh`, que busque los
+  puertos y conecte solo (a mano: `aconnect 24:0 129:0`; 129 es «sampler
+  entrada», 128 «sampler salida»; los números cambian al reiniciar).
+
+## Fase R: editor con ratón y modo vim (fase 1) ✅
+
+Pedida por el usuario. Se hizo con la Q a medias (esperando al Seaboard).
+Detalle y decisiones en «Fase R» de [docs/ESTADO.md](ESTADO.md).
+
+1. ✅ **Ratón**: clic, arrastrar y rueda en el editor (también en la
+   ventana de `--split`), `[editor] raton`.
+2. ✅ **Modo vim**, fase 1: `[editor] modo = "vim"`, «Modo vim» en la
+   paleta, el modo en el borde del editor; `jk` sale de Insert
+   (`[editor] salir_insert`): Ctrl-[ es el mismo byte que Esc, y Esc va al
+   modo tocar.
+
+Lo pedido:
+
+- **Ratón en el editor** (hoy no hay captura: `ratatui::init()` sin
+  `EnableMouseCapture`): clic mueve el cursor (pantalla → fila/columna,
+  con desplazamiento y líneas largas), rueda, arrastrar para seleccionar;
+  también en `--split`. Documentar Shift+arrastrar para copiar con la
+  terminal.
+- **Modo vim** con `[editor] modo = "vim"` en la configuración (por
+  defecto, el de ahora), y el modo en la barra de estado. Sobre
+  `ratatui-textarea`, que no tiene modos.
+- Fase 1 de vim: `h j k l w b e 0 $ gg G`; `i a o O A I`; `x dd yy p P`;
+  `u` y Ctrl-R; `/` con `n` y `N`; `:w`. Sin macros, registros, `:s///`
+  ni marcas; los operadores compuestos, Visual y `.` quedan para después.
+- **Decidido por el usuario**: Esc sigue cambiando del editor al modo
+  tocar, también en vim. Así que en Insert, Esc no vuelve a Normal: otra
+  tecla sale de Insert (`jk` o Ctrl-[; preguntar cuál) y, en Normal, Esc
+  pasa al modo tocar.
+- Revisar la paleta, el autocompletado, Alt-G, Ctrl-F, F6/F7, los tests de
+  pantalla y los de la guía que simulan teclas. Regenerar la guía
+  (`ACTUALIZAR_GUIA=1 cargo test -p tui the_guide_lists_the_config`).
+
+## Fase S: transporte con atajos y cue ✅
+
+Pedida por el usuario; hecha antes que la Q y la R. Detalle y decisiones
+en «Fase S» de [docs/ESTADO.md](ESTADO.md).
+
+1. ✅ **Teclado**: Ctrl-Espacio y Shift-Ctrl-Espacio llegan como el mismo
+   byte NUL sin ayuda de la terminal. Se piden también
+   `DISAMBIGUATE_ESCAPE_CODES` y `REPORT_ALTERNATE_KEYS` (protocolo de
+   kitty) y la guía explica las teclas extendidas de tmux; F9 hace lo
+   mismo que Shift-Ctrl-Espacio cuando no se distinguen.
+2. ✅ **Motor**: `Command::StartAt` (`Controller::start_at`), sin reservas
+   (`no_alloc.rs`): arranca en un compás cualquiera con `every`, `ramp`,
+   `lfo`, la rampa de tempo y la entrada de la línea de tiempo contando
+   desde ahí como si la canción hubiera llegado.
+3. ✅ **Interfaz**: Ctrl-Espacio marcha/paro desde el editor, el modo
+   tocar y la ventana del editor (`--split`, por el socket);
+   Shift-Ctrl-Espacio (o F9) fija el cue (el compás que suena o, parado,
+   el del cursor del tracker; con secciones, la entrada); el cue en la
+   barra de estado y en la línea de tiempo; «Borrar el cue» en la paleta.
+4. ✅ **`--from <compás>`** en el render offline.
+
 ## Mejoras sueltas
 
 Arreglos pequeños fuera de las fases, con las reglas de siempre. Detalle

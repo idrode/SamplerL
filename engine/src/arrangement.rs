@@ -125,6 +125,23 @@ impl Arrangement {
         self.timeline.iter().map(|&(_, b)| b as u64).sum()
     }
 
+    /// Dónde cae el compás `bar` de la canción (contando desde el
+    /// principio de la línea de tiempo, que da la vuelta al acabar).
+    pub(crate) fn place_at(&self, bar: u64) -> Place {
+        let total = self.bars();
+        let mut left = if total == 0 { 0 } else { bar % total };
+        for (entry, &(_, bars)) in self.timeline.iter().enumerate() {
+            if left < bars as u64 {
+                return Place {
+                    entry,
+                    bar: left as u32,
+                };
+            }
+            left -= bars as u64;
+        }
+        Place { entry: 0, bar: 0 }
+    }
+
     fn id_of(&self, entry: usize) -> u64 {
         self.sections[self.timeline[entry].0].id
     }

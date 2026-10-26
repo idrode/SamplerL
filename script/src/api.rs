@@ -1878,6 +1878,51 @@ pub const FUNCTIONS: &[Function] = &[
         ),
     },
     Function {
+        name: "mpe",
+        receiver: Receiver::Track,
+        signature: "pista:mpe{ eje = destino, ... }",
+        returns: Some(Receiver::Track),
+        summary: "Expresión por nota de un sintetizador: el bend, la presión y el slide de cada nota MIDI en vivo mueven su altura, su volumen o un parámetro.",
+        doc: "Para tocar con un controlador expresivo (MPE, como un Roli Seaboard; \
+              ver «MIDI» en la sección 2) o con un teclado con aftertouch. Tres ejes: \
+              `bend` (el pitch bend de la nota, en semitonos: el rango lo dice `bend` \
+              en `[midi]`), `pressure` (la presión, de 0 a 1: aftertouch del canal o \
+              por nota) y `slide` (el CC74, deslizar en vertical, de 0 a 1). Cada uno \
+              va a `\"pitch\"` (semitonos), `\"gain\"` (el volumen de la nota: con \
+              `range = 1`, sin presión calla; con 0,5, suena a la mitad) o a un \
+              parámetro del sintetizador que la voz lea muestra a muestra (el corte, \
+              la resonancia, la saturación, el ancho de pulso...; no el glide, ni los \
+              decays, ni las voces). Como texto (`pressure = \"cutoff\"`) o como \
+              tabla con `range` (lo que mueve el eje entero: semitonos, octavas en el \
+              corte, unidades del parámetro en los demás) y `curve` (exponente del \
+              eje: 2 responde poco al principio y mucho al final). En el bend, el eje \
+              entero es una octava de bend (12 semitonos): `bend = \"pitch\"` sigue \
+              al dedo tal cual. Por defecto `range` es 12 en el bend al pitch, 2 en \
+              los demás al pitch, 1 en el volumen, 2 octavas en el corte y medio \
+              rango en los demás parámetros; `curve`, 1. Cada nota mueve solo su voz \
+              (en un sintetizador polifónico, como el `subharm` con `voices`, cada \
+              dedo la suya; en uno mono, la nota que suena), suavizado unos 8 ms. Las \
+              notas del patrón y los pads del teclado no tienen expresión: suenan \
+              como sin `:mpe`. Sin tabla (`:mpe()`), ninguno.",
+        params: &[Param {
+            name: "ejes",
+            description: "tabla con `bend`, `pressure` y `slide`: un destino o `{ destino, range = n, curve = n }`",
+        }],
+        template: "mpe{ bend = \"${pitch}\", pressure = \"${cutoff}\" }",
+        example: Some(
+            "-- Un subharm de 6 voces para el Seaboard: cada dedo dobla su nota,\n\
+             -- la presión abre su filtro y el slide le sube la resonancia.\n\
+             track(\"tecla\", subharm{ voices = 6, cutoff = 300 })\n  \
+             :mpe{\n    \
+             bend = \"pitch\",\n    \
+             pressure = { \"cutoff\", range = 3, curve = 1.5 },\n    \
+             slide = { \"res\", range = 0.4 },\n  \
+             }\n  \
+             -- Las notas del patrón suenan sin expresión.\n  \
+             :melody(\"c . . .  . . . .  eb . . .  . . . .\")\n",
+        ),
+    },
+    Function {
         name: "grains",
         receiver: Receiver::Track,
         signature: "pista:grains([parámetros])",

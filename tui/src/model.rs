@@ -20,6 +20,8 @@ pub struct ViewModel {
     pub dirty: bool,
     /// Modo tocar: las teclas disparan cortes en vez de escribir.
     pub playing_mode: bool,
+    /// Con el modo vim, el suyo (`NORMAL` o `INSERT`).
+    pub vim: Option<&'static str>,
     /// El archivo cambió fuera del editor (se ofrece recargar).
     pub external_change: bool,
     /// Línea de órdenes abierta (F2) y su texto.
@@ -59,6 +61,9 @@ pub struct ViewModel {
     /// Ayuda de la función bajo el cursor (en el modo editor).
     pub help: Option<Help>,
     pub transport: TransportView,
+    /// El cue (donde empieza el siguiente arranque), como se ve: `compás
+    /// 8` o `drop (entrada 3)`.
+    pub cue: Option<String>,
     /// Metrónomo encendido.
     pub metronome: bool,
     /// Grabación en curso: «REC drums 1/2» o, hasta que empieza el
@@ -421,6 +426,8 @@ pub struct TimelineView {
     pub bar: u32,
     /// Se repite la entrada que suena.
     pub looping: bool,
+    /// Entrada en la que está el cue.
+    pub cue: Option<usize>,
 }
 
 impl ViewModel {

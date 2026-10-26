@@ -932,8 +932,11 @@ pub(crate) struct Transport {
     current_bar: (u64, u64),
     /// Siguiente paso a disparar dentro del compás.
     step: usize,
-    /// Compases completos desde que arrancó el transporte.
+    /// Compases completos desde que arrancó el transporte (desde 0, o
+    /// desde el compás en que arrancó con `start_at`).
     bar: u64,
+    /// El compás en que arrancó.
+    first_bar: u64,
     /// Pasos de los compases anteriores (desde que arrancó).
     steps_before: u64,
     bpm: f64,
@@ -955,6 +958,7 @@ impl Transport {
             current_bar: (0, 0),
             step: 0,
             bar: 0,
+            first_bar: 0,
             steps_before: 0,
             bpm: DEFAULT_BPM,
             meter: Meter::COMMON,
@@ -965,19 +969,46 @@ impl Transport {
         }
     }
 
-    /// Arranca desde el paso 0 del compás.
-    pub fn start(&mut self) {
+    /// Arranca en el paso 0 del compás `bar` como si la canción hubiera
+    /// llegado hasta él: los pasos y los frames de antes cuentan (con el
+    /// tempo, la rampa y el compás que van a sonar), así que las vueltas
+    /// de los patrones y las curvas siguen por donde irían. Sin reservas:
+    /// el bucle es de los compases de la rampa como mucho.
+    pub fn start_at(&mut self, bar: u64, sample_rate: u32) {
+        let meter = self.pending_meter.unwrap_or(self.meter);
+        let ramp = match self.pending_ramp {
+            Some(ramp) => Some(ramp),
+            None if self.pending_bpm.is_some() => None,
+            None => self.ramp.map(|(r, _)| r),
+        };
+        let bpm = self.pending_bpm.unwrap_or(self.bpm);
+        let before = match ramp {
+            Some(ramp) => {
+                let ramped = bar.min(ramp.bars);
+                let during: u64 = (0..ramped)
+                    .map(|k| step_offset(meter.steps, ramp.bpm_at(k), sample_rate))
+                    .sum();
+                during + (bar - ramped) * step_offset(meter.steps, ramp.to, sample_rate)
+            }
+            None => bar * step_offset(meter.steps, bpm, sample_rate),
+        };
         self.running = true;
-        self.frame = 0;
-        self.bar_start = 0;
-        self.current_bar = (0, 0);
+        self.frame = before;
+        self.bar_start = before;
+        self.current_bar = (before, 0);
         self.step = 0;
-        self.bar = 0;
-        self.steps_before = 0;
+        self.bar = bar;
+        self.first_bar = bar;
+        self.steps_before = bar * meter.steps as u64;
         // Una rampa en curso vuelve a empezar con la canción.
         if let Some((_, start)) = &mut self.ramp {
             *start = 0;
         }
+    }
+
+    /// El compás en que arrancó el transporte (0 salvo con `start_at`).
+    pub fn first_bar(&self) -> u64 {
+        self.first_bar
     }
 
     /// Compás que está sonando.
@@ -1027,11 +1058,14 @@ impl Transport {
                 self.bpm = bpm;
                 self.ramp = None;
             }
-            // La misma rampa otra vez (al recargar) sigue por donde iba.
+            // La misma rampa otra vez (al recargar) sigue por donde iba. La
+            // que entra al arrancar empieza con la canción (en el compás 0,
+            // también si se arrancó más adelante).
             if let Some(ramp) = self.pending_ramp.take()
                 && self.ramp.map(|(r, _)| r) != Some(ramp)
             {
-                self.ramp = Some((ramp, bar));
+                let start = if bar == self.first_bar { 0 } else { bar };
+                self.ramp = Some((ramp, start));
             }
             if let Some(meter) = self.pending_meter.take() {
                 self.meter = meter;

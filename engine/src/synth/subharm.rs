@@ -152,6 +152,7 @@ pub fn patch(root: f32) -> Patch {
         layers: Some(DEFAULT_LAYERS),
         analog: None,
         params: super::PARAMS.map(|p| p.default),
+        expr: [None; super::AXES],
     };
     patch.params[ACCENT] = 1.0;
     defaults(&mut patch, &PARAMS);

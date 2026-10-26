@@ -87,7 +87,8 @@ pub struct EditorLink {
 fn editor_side(action: Action) -> bool {
     matches!(
         action,
-        Action::Undo
+        Action::ToggleVim
+            | Action::Undo
             | Action::Redo
             | Action::ToggleComment
             | Action::DuplicateLines
@@ -122,7 +123,8 @@ fn editor_side(action: Action) -> bool {
 fn needs_the_editor(action: Action) -> bool {
     matches!(
         action,
-        Action::Undo
+        Action::ToggleVim
+            | Action::Undo
             | Action::Redo
             | Action::ToggleComment
             | Action::DuplicateLines
@@ -603,6 +605,7 @@ impl App {
                 .get(self.selected)
                 .map_or(String::new(), |t| t.name.clone()),
             slice: self.selected_slice + 1,
+            cue: self.cue.map_or(String::new(), |bar| self.cue_text(bar)),
         });
         let Some(Link::Main(main)) = &mut self.link else {
             return;
@@ -1053,8 +1056,13 @@ impl App {
                         } else {
                             format!(" · {} corte {}", s.track, s.slice)
                         };
+                        let cue = if s.cue.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" · ⏮ cue {}", s.cue)
+                        };
                         format!(
-                            "⇄ principal {play} {:.0} BPM · compás {} paso {step}{track}",
+                            "⇄ principal {play} {:.0} BPM · compás {} paso {step}{track}{cue}",
                             s.bpm, s.bar
                         )
                     }
@@ -1066,6 +1074,7 @@ impl App {
                         bar: s.bar,
                         step: s.step,
                     };
+                    view.cue = (!s.cue.is_empty()).then(|| s.cue.clone());
                 }
             }
         }

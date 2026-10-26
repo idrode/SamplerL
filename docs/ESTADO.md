@@ -915,6 +915,103 @@ el transporte parado, `rdiv` cuenta un compás virtual desde la nota.
 - **Una nota a medio compás suena ya** (todas sus capas) y luego sigue la rejilla del compás, no una rejilla propia: así varias notas y varias pistas comparten el mismo ritmo.
 - **Polifonía**: cada voz lleva sus seis capas con todo su estado en el `Track` (medido: 23 KiB por pista, 4 KiB más que antes de la fase P, unos 250 bytes por ranura de voz; 186 KiB las 8 pistas, reservados al crear el motor). Medido (release, i7-7500U): 8 voces con las seis capas sonando y redisparándose, 11,7 % de un núcleo (1,47 % por voz). No hace falta bajar el límite de 8 voces por pista; lo que no cabe en este portátil son muchas pistas así a la vez (8 pistas × 8 voces llegarían a casi un núcleo entero).
 - **Sin verificar de oído**: si los ritmos se oyen como se espera (con auriculares), el equilibrio entre capas y el nivel por defecto, si el ataque de 2 ms y el decay de 800 ms son buenos de partida, y cómo suenan los subs muy divididos (`div` 11-16, por debajo de lo audible con notas graves).
+## Fase Q: MPE y expresión por nota (a medias)
+
+Hecho lo que no depende del aparato: los mensajes de expresión según la
+especificación MIDI, las zonas MPE según la especificación MPE, el motor,
+Lua, la guía y una receta. **Falta comprobarlo con el Seaboard**: el
+usuario no podía tocarlo; cuando pegue la salida de `aseqdump -p 24:0`, se
+anota aquí (canales, rango de bend, CC74, presión de canal o por nota) y se
+ajusta lo que no cuadre.
+
+### Los mensajes y las zonas
+
+- `tui/src/midi.rs`: `PitchBend` (14 bits, LSB primero, centrado en 0: de -8192 a 8191), `ChannelPressure`, `PolyPressure` y `Controller`, con canal; un byte de datos con el bit alto no es un mensaje.
+- `tui/src/expression.rs` (`Expression`): el estado de cada canal (bend de -1 a 1, presión y slide de 0 a 1) y las notas que suenan con su canal. Con MPE (zona baja), lo de un canal es de su nota; el bend del canal 1 (el maestro, ±2 semitonos) se suma a todas; lo que el canal trae antes de la nota es con lo que empieza (`note_on` devuelve sus ejes). Sin MPE, lo de un canal va a todas sus notas y la presión por nota a la suya. El bend en semitonos: `[midi] bend` (48 con MPE, 2 sin él), acotado a ±96 (`engine::MAX_BEND`). `coalesce` deja el último cambio de cada eje de cada nota: lo que llega entre dos vueltas de la interfaz no satura la cola del motor (64 órdenes).
+- `App`: con `mpe = true`, `canal` no filtra. La nota MIDI de un instrumento sale con `synth_note_on_expr`; los cambios esperan en `expr_changes` y se mandan en `poll_midi` y `tick` (`note_mod` a la pista de la nota en vivo, por su tecla).
+- **Config**: `[midi] mpe = true|false` y `bend = 1..96`.
+
+### El motor
+
+- `engine::synth`: `AXES` = 3 (`BEND` en semitonos, `PRESSURE` y `SLIDE` de 0 a 1), `ExprTarget` (`Pitch`, `Gain`, `Param(k)`) y `ExprMap { target, range, curve }` en `Patch::expr`. Lo que suma un eje: `range · signo(x) · |x|^curve`, con `x` el eje (el bend, entre 12: una octava de bend es 1). Un parámetro logarítmico (el corte) se mueve en octavas; los demás, en sus unidades; siempre dentro de su rango. `Gain`: `1 - range + |suma|`, entre 0 y 1. Solo los parámetros que la voz lee muestra a muestra (`expressive`: no el decay del filtro, el glide, el desafinado, la apertura ni las envolventes de las capas, que se fijan por trozo).
+- Cada voz lleva `expr` (suavizado) y `expr_goal`. En `mix_into`, si el patch asigna algún eje y la voz es expresiva, la voz se toca con una copia del bloque con sus parámetros movidos al principio y al final del trozo (interpolados muestra a muestra como siempre), sus semitonos de bend y su factor de volumen; el bend se suma a la altura (con glide; en la voz analógica, a la del LFO y la deriva). Suavizado: un polo de 8 ms por trozo de 32 frames (`EXPR_SMOOTHING_SECONDS`).
+- **Solo las notas con expresión la siguen** (`Voice::expressive`, que pone `Synth::set_expr`): las del patrón y los pads del teclado suenan como sin `:mpe` (si no, con presión al volumen callarían). La expresión inicial entra sin suavizar en una nota nueva (`expr_fresh`) y suavizada en una ligada.
+- `Command::SynthOn` lleva `expr: Option<[f32; AXES]>` (`None` en `synth_note_on`); `Command::NoteMod { track, key, axis, value }` (`Controller::note_mod`), inmediato. La voz se identifica por la tecla, como el note off: el motor no puede devolver un id sin esperar al hilo de audio, y en MPE cada nota tiene su tecla (dos dedos en la misma nota de canales distintos comparten la expresión de la última).
+- Sin ejes asignados, nada cambia: el camino de siempre (`golden.rs` igual).
+- **Tests**: `engine/tests/expression.rs` (el bend inicial suena desde el principio; un bend mueve solo la voz de su tecla, las dos juntas suenan como cada una sola; una octava de golpe sin clics; la presión abre el filtro de su nota y la curva; presión al volumen sin clics, y con `range` 0,5 a la mitad; el slide y los ejes sin asignar, bit a bit lo de siempre; el sh101 mono; los pads sin expresión; errores), `no_alloc.rs` (8 voces con bend, presión y volumen cambiando en cada bloque).
+
+### Lua, guía y receta
+
+- `pista:mpe{ bend = ..., pressure = ..., slide = ... }` (`mpe_options` en `script/src/lib.rs`): cada eje a `"pitch"`, `"gain"` o un parámetro del preset que vaya a un parámetro expresivo del núcleo; como texto o como tabla `{ destino, range = n, curve = n }`. Rangos por defecto: 12 el bend al pitch, 2 lo demás al pitch, 1 el volumen, 2 octavas los logarítmicos y medio rango (en las unidades del preset, por su escala) los demás; `curve` 1. `false` quita un eje; `:mpe()`, todos. Solo en sintetizadores. Errores con la línea.
+- Registro (`api::FUNCTIONS`, `mpe`), la guía (sección generada, «MIDI» de la sección 2 y la receta «Tocar con expresión por nota (MPE)») y `scripts/ejemplos/14-mpe.lua` (un `subharm` de seis voces; renderizada, pica a -3,3 dBFS). Tests: `script/tests/mpe.rs` (los ejes con sus valores por defecto y sus unidades, las notas del patrón bit a bit iguales con y sin `:mpe`, nueve errores con la línea, una pista de cortes), `registry.rs`, `guide.rs`; en la interfaz, `tui/src/expression.rs` (zonas, maestro, sin MPE, rango, `coalesce`) y `tui/src/tests/mpe.rs` (de mensajes MIDI simulados al audio: el bend que trae el canal antes de la nota, otro canal no la mueve, el suyo sí; la configuración).
+
+### Decisiones y pendientes
+
+- **El bend va en semitonos al motor**: el rango es del controlador (la configuración), no del sonido. El bend a otro parámetro cuenta una octava de bend como el eje entero.
+- **El synth polifónico, por decidir con el usuario**: la receta usa `subharm{ voices = 6 }`, que ya existía; `acid`, `sub` y `sh101` son mono (la expresión es la de la nota que suena).
+- **Sin verificar con el aparato**: canales que usa el Seaboard, si manda la presión como aftertouch de canal o por nota, su rango de bend (y si lo manda por RPN 0) y si el slide es el CC74. Tampoco se ha oído.
+- Pendiente opcional: `scripts/conectar-seaboard.sh`.
+
+## Fase R: editor con ratón y modo vim (fase 1) ✅
+
+### El ratón
+
+- `run_terminal` pide la captura del ratón (`EnableMouseCapture`, y la quita al salir con los demás modos en `TerminalModes`) si `[editor] raton` no es `false`. Los eventos de crossterm pasan a `app::MouseAction` (`Down`, `Drag`, `Up`, `ScrollUp`, `ScrollDown`, solo el botón izquierdo) y `App::mouse(acción, columna, fila)` (`tui/src/app/mouse.rs`), que no sabe de crossterm: así se prueba.
+- `ui::draw_editor` guarda dónde dibujó el texto (`App::editor_area`; `None` en la principal con el editor fuera). La celda pulsada pasa a fila y columna del texto con `TextArea::screen_to_data`, sumando `scroll_offset` y quitando `line_number_width`: con el texto desplazado en vertical y en horizontal (el editor no parte las líneas largas; se desplaza). Sobre los números de línea, la columna 0; más allá del final, el final de la línea.
+- Clic: cursor ahí, sin selección (cierra el autocompletado y olvida los campos de la plantilla, como moverse con las teclas). Arrastrar: la selección empieza en el clic en cuanto el ratón se mueve a otro carácter; fuera del texto por arriba o por abajo, desplaza una línea. Rueda: tres líneas (`Scrolling::Delta`).
+- Solo en el modo editor y sin nada encima (`pastes_in_editor`: la paleta, la línea de órdenes, los selectores...). En la ventana del editor de `--split`, igual (dibuja con el mismo `draw_editor`).
+- Con la captura, la terminal deja de seleccionar sola: Shift y arrastrar (la guía lo dice). Dentro de tmux, si no llegan los clics, `set -g mouse on` (sin verificar aquí: no hay tmux en esta máquina).
+- **Tests** (`tui/src/tests/mouse.rs`): clic en un carácter, más allá del final, sobre los números y fuera del editor; con el texto desplazado y la rueda; en una línea larga desplazada a la derecha; arrastrar (sin moverse no hay selección; a la derecha y a otra línea; Ctrl-C copia; un clic la quita); nada en el modo tocar, con la paleta ni con `raton = false`; en la ventana del editor sí y en la principal sin editor no.
+
+### El modo vim
+
+- `tui/src/app/vim.rs`: `Vim { mode: Normal | Insert, pending, linewise, exit, half_exit }` en `App::vim` (`None`, el editor de siempre). `App::handle` lo consulta en el modo editor, tras la paleta y el cursor del tracker y antes del autocompletado: en Normal, las letras sin Ctrl ni Alt (y Enter, Retroceso, Tab, Supr) son órdenes; lo demás (los atajos, las flechas, Esc) sigue el camino de siempre. En Insert, todo sigue el camino de siempre salvo la segunda tecla de salida.
+- Órdenes sobre `ratatui-textarea`: los movimientos con `CursorMove` (`h` y `l` sin cambiar de línea ni pasar del último carácter, `$` sobre el último, `G` y `I` al primer carácter que no es espacio); `o`, `O`, `x`, `dd`, `p` y `P` dentro de `App::grouped` (un solo paso de deshacer); `dd` corta con una selección (la línea y su salto; la última, desde el final de la anterior; la única, se vacía); `yy`/`dd` copian la línea al portapapeles del widget y marcan `linewise`, y `p`/`P` la ponen en una línea propia; `x` copia su carácter. `u` y Ctrl-R son deshacer y rehacer de la app; `/`, `n` y `N`, las acciones de buscar (`buscar ` en la línea de órdenes, F6, F7); `:` abre la línea de órdenes con `:`, y `run_command` manda a `vim_command` lo que empieza por `:` (antes que a la principal, en la ventana del editor): `:w` es `save` (guardar y cargar); lo demás, un aviso.
+- **Salir de Insert**: Esc va al modo tocar (decidido por el usuario), así que salen dos teclas seguidas, `jk` por defecto (`[editor] salir_insert`, dos letras): la primera se escribe; si la siguiente es la segunda, se borra la primera, se vuelve a Normal y el cursor va a la izquierda, como en vim. Sin tiempo de espera (todo determinista). **Ctrl-[ no puede ser**: la terminal lo manda como el byte de Esc (0x1B); solo con el protocolo de kitty llegaría distinto.
+- El modo se ve en el borde del editor (`NORMAL`, `INSERT`; `ViewModel::vim`), también en la ventana del editor. «Modo vim» en la paleta lo enciende o apaga en la sesión (en la ventana del editor, allí). `[editor] modo = "vim" | "clasico"`.
+- **Tests** (`tui/src/tests/vim.rs`): los movimientos y que Normal no escribe; Insert por `i a A I o O`, `jk` (una `j` sola se queda); `dd` en medio, al final y en la única línea, `p`, `P`, `x`, `yy`, deshacer y rehacer; buscar, `:w` y una orden que no está; Esc al modo tocar desde los dos modos y Ctrl-S en Normal; la configuración (`salir_insert = "fd"`, errores) y la paleta. Las demás pruebas de teclas (paleta, autocompletado, Alt-G, Ctrl-F, F6/F7, pantalla, guía) siguen igual: el modo por defecto es el de siempre.
+
+### Decisiones
+
+- **`jk` en vez de preguntar**: el prompt pedía preguntar entre `jk` y Ctrl-[; Ctrl-[ es imposible de distinguir de Esc sin el protocolo de kitty, así que queda `jk`, configurable. Por confirmar con el usuario.
+- **Sin cuentas ni operadores con movimiento** (fase 1): `dd` y `yy` son órdenes de dos letras, no operador más movimiento; `gd`, `dw`... dan un aviso.
+
+## Fase S: transporte con atajos y cue ✅
+
+Ctrl-Espacio arranca y para; Shift-Ctrl-Espacio (o F9) fija un cue, el
+compás en que empieza el siguiente arranque; el motor arranca en un compás
+cualquiera como si la canción hubiera llegado hasta él; `--from` hace lo
+mismo en el render offline. Hecha antes que la Q y la R, a petición del
+usuario.
+
+### El teclado
+
+- Sin ayuda de la terminal, Ctrl-Espacio y Shift-Ctrl-Espacio llegan como el mismo byte NUL (crossterm lo da como `Char(' ')` con Control). `run_terminal` (`tui/src/main.rs`) pedía solo `REPORT_EVENT_TYPES`, y solo si `supports_keyboard_enhancement()` decía que sí; ahora pide además `DISAMBIGUATE_ESCAPE_CODES` y `REPORT_ALTERNATE_KEYS`: con el protocolo de kitty, Shift-Ctrl-Espacio llega con Shift. En tmux (que no responde a esa consulta) llegan distintas con `extended-keys always`, `extended-keys-format csi-u` (tmux 3.5) y `terminal-features ...:extkeys`: tmux manda `CSI 32;6u`, que crossterm entiende siempre. No se pide `modifyOtherKeys` (`CSI > 4;2m`): fuera de tmux, xterm contestaría con `CSI 27;...~`, que crossterm no entiende.
+- Esta máquina de desarrollo no tiene tmux instalado, así que la combinación dentro de tmux no se ha probado de verdad; F9 hace lo mismo (y se puede atar otra en `[teclas]`).
+- **Configuración** (`tui/src/config.rs`): `KeyCombo` tiene `shift` y la tecla `space` (o `espacio`; sola, error: escribiría texto). Se ve como `Shift-Ctrl-Espacio`. Una combinación sin `shift` vale también con Shift (las de siempre no cambian si la terminal empieza a decirlo), y `Keymap::lookup` busca antes las que lo piden: Shift-Ctrl-Espacio es el cue aunque Ctrl-Espacio sea marcha. `marcha` = `ctrl-space`, `ctrl-t`, `f8`; `cue` nueva, `shift-ctrl-space` y `f9` (F5 ya era cargar).
+
+### El motor
+
+- `Command::StartAt(bar)` y `Controller::start_at(bar)` (`MAX_START_BAR` = 65 536; más, `SendError::InvalidStartBar`). `Start` es `start_at(0)`, el mismo código (`Engine::start_at`).
+- `Transport::start_at(bar, rate)` (`engine/src/sequencer.rs`): `bar` y `steps_before` (`bar` · pasos del compás) como si hubieran pasado esos compases, y `frame`/`bar_start` con los frames de los compases de antes, con el tempo, la rampa y el compás que van a sonar (los pendientes si los hay: al arrancar entran en el paso 0). Con rampa de tempo, el bucle es de sus compases como mucho (los de después, multiplicados): acotado y sin reservas. Así los patrones (que miran la semicorchea global), las curvas (posición en pasos y en segundos) y el redisparo del subharm (`current_bar`) siguen por donde irían. `first_bar` guarda dónde se arrancó: una rampa de tempo que entra al arrancar empieza en el compás 0 de la canción, no en el de arranque (como `Song::bpm_at`).
+- **Línea de tiempo** (`engine/src/arrangement.rs`): `Arrangement::place_at(bar)` (da la vuelta al acabar, como el motor). Al arrancar (`playlist.restart`, o un arreglo que entra en el primer compás), `advance_playlist` va a esa entrada y ese compás, con el origen de la entrada (`origin_step`, `origin_frame`) los compases de antes: sus vueltas y sus curvas, por donde irían.
+- **Tests**: `engine/tests/start_at.rs` (la vuelta del ciclo que cae; el compás tras `start_at` bit a bit igual que llegando cuando lo de antes no deja cola; `start_at(0)` = `start`; la rampa de tempo a mitad y pasada y la posición; con línea de tiempo, al principio de una entrada, a media entrada, pasado el final y con un arreglo que ya sonaba; el tope), `no_alloc.rs` (con rampa de tempo y compás de 7/8, y con secciones a media entrada), `script/tests/start_at.rs` (un `:gain(ramp(...))` sigue igual que llegando; `bpm_ramp` y `every` en el compás 4).
+
+### La interfaz
+
+- `App::cue: Option<u64>` (`tui/src/app/cue.rs`), un compás contando desde 0 como la barra de estado. `set_cue`: en marcha, el compás que suena (`Status::bar`); parada, el del cursor del tracker (su fila en la vuelta que se ve: `vuelta · longitud + fila`, entre los pasos del compás) o, sin cursor, donde se paró; con secciones, siempre el principio de una entrada (la que suena o en la que se paró). `toggle_transport` arranca con `start_at(cue)`; el cue se queda hasta «Borrar el cue» (paleta): cada arranque vuelve a él.
+- Se ve en la barra de estado (`⏮ cue compás 8`, `⏮ cue drop (entrada 2)`; `ViewModel::cue`) y en la línea de tiempo, delante de su entrada (`TimelineView::cue`). Ctrl-Espacio y el cue funcionan en el modo tocar y con el cursor del tracker abierto (como marcha). En la ventana del editor van a la principal como las demás acciones del motor (`ToMain::Action`), y el estado que manda la principal lleva el texto del cue (un campo más en `estado`, opcional para una principal de antes), que el editor enseña en su línea del enlace.
+- `--from N` (con `--script` y `--render`, sin `--track`): `start_at(N)` y los frames de `N` a `N + bars` con `Song::frames` (la rampa y el compás de la canción). Sin `--bars`, con línea de tiempo, hasta su final (si `N` se pasa, error).
+- **Tests**: `tui/src/tests/transport.rs` (las teclas: Ctrl-Espacio marcha, con Shift el cue, F9, Ctrl-T con Shift sigue siendo marcha, cómo se leen y se ven; marcha/paro desde el editor sin escribir un espacio y desde el modo tocar; el cue en marcha, en la barra de estado, cada arranque vuelve y borrarlo; parada con el cursor del tracker en una pista de 32 pasos; con secciones, la entrada y la marca en la línea de tiempo), `tests/split.rs` (Ctrl-Espacio y el cue desde la ventana del editor), `link.rs` (el campo nuevo de `estado`). Comprobado a mano con el render: `--from 4` de una pista con `every(4, ...)` toca la variante, `--from 3` y `--from 5` no.
+
+### Decisiones
+
+- **El cue es un compás, no un paso**: el motor arranca en el paso 0 de un compás (los cambios entran al compás; arrancar a media vuelta no tiene sentido para ensayar). Con secciones, una entrada: es lo que se ensaya.
+- **Persistente**: un cue de DAW, cada arranque vuelve a él hasta que se borra. Un `Start` de reloj MIDI de entrada sigue arrancando desde el principio (es lo que dice MIDI).
+- **Las colas de antes no suenan**: arrancar en el compás N no reproduce los reverbs ni las notas largas que vendrían del N - 1. Lo que sí sigue es todo lo que depende de la posición: vueltas, `every`, `chance` (que se sortea al cargar, por compases), curvas, rampa de tempo y sección.
+- **F9, no F5**: F5 ya era cargar.
+- **Sin verificar**: Shift-Ctrl-Espacio dentro de tmux en la máquina del usuario (aquí no hay tmux).
+
 ## Mejoras sueltas
 
 - **Pegado multilínea**: ya lo hacían el pegado con bracketed paste (`App::paste`, `editing::burst_text` para terminales sin él) y la parte 1 de la fase L en la ventana del editor; verificado con sus tests (`pasting_keeps_the_lines_and_the_indent_and_undoes_at_once`, `pasting_with_the_completion_open_accepts_nothing`, `a_burst_of_keys_with_line_breaks_is_a_paste`, `split::pasting_in_the_editor_window_keeps_the_indent_and_undoes_at_once`): líneas y sangría tal cual, sin autocompletado ni sangrado automático, un solo Ctrl-Z.

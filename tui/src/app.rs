@@ -21,6 +21,11 @@ use crate::model::{
 };
 use crate::palette::{self, Action, Item};
 
+mod cue;
+mod mouse;
+mod vim;
+pub use mouse::MouseAction;
+pub use vim::DEFAULT_EXIT as VIM_EXIT;
 mod split;
 #[cfg(test)]
 pub use split::editor_command;
@@ -192,6 +197,18 @@ pub enum Flow {
 
 pub struct App {
     pub editor: TextArea<'static>,
+    /// Dónde se dibujó el texto del editor la última vez (el ratón lo usa
+    /// para saber qué se pulsa); `None` si no se dibujó.
+    pub editor_area: Option<ratatui::layout::Rect>,
+    /// Arrastrando con el ratón: dónde se pulsó (fila y columna del texto).
+    drag_from: Option<(usize, usize)>,
+    /// El ratón en el editor (`[editor] raton`).
+    mouse_enabled: bool,
+    /// El modo vim (`[editor] modo = "vim"`): su modo y lo que lleva entre
+    /// teclas; `None`, el editor de siempre.
+    vim: Option<vim::Vim>,
+    /// Las dos teclas que salen de Insert (`[editor] salir_insert`).
+    vim_exit: [char; 2],
     /// Portapapeles del sistema (OSC 52 y `wl-copy`/`wl-paste`).
     pub(crate) clipboard: crate::clipboard::Clipboard,
     path: PathBuf,
@@ -207,6 +224,8 @@ pub struct App {
     error: Option<ScriptError>,
     message: String,
     started: bool,
+    /// Compás en que empieza el siguiente arranque (ver `app::cue`).
+    cue: Option<u64>,
     selected: usize,
     /// Corte seleccionado de la pista seleccionada (desde 0): el último
     /// tocado en el modo tocar o el elegido desde la paleta.
@@ -301,6 +320,10 @@ pub struct App {
     /// Entrada MIDI: qué se hace con ella, el tempo del reloj y la cola
     /// por la que llegan los mensajes del puerto (sin bloqueos).
     midi: crate::midi::MidiConfig,
+    /// La expresión por nota de lo que entra por MIDI (fase Q) y los
+    /// cambios que esperan a ir al motor.
+    expression: crate::expression::Expression,
+    expr_changes: Vec<crate::expression::Change>,
     clock: crate::midi::ClockTempo,
     midi_in: Option<rtrb::Consumer<crate::midi::TimedEvent>>,
     /// Destino de las notas que salen de las pistas con `:midi()`.
@@ -337,6 +360,11 @@ impl App {
         let (text, saved) = read_script(path)?;
         let mut app = App {
             editor: TextArea::new(text.lines().map(String::from).collect()),
+            editor_area: None,
+            drag_from: None,
+            mouse_enabled: true,
+            vim: None,
+            vim_exit: vim::DEFAULT_EXIT,
             clipboard: crate::clipboard::Clipboard::system(),
             path: path.to_path_buf(),
             project: None,
@@ -348,6 +376,7 @@ impl App {
             error: None,
             message: String::new(),
             started: false,
+            cue: None,
             selected: 0,
             selected_slice: 0,
             metronome: false,
@@ -396,6 +425,8 @@ impl App {
             keys: Keymap::default(),
             search: None,
             midi: crate::midi::MidiConfig::default(),
+            expression: crate::expression::Expression::new(&crate::midi::MidiConfig::default()),
+            expr_changes: Vec::new(),
             clock: crate::midi::ClockTempo::default(),
             midi_in: None,
             midi_out: None,
@@ -469,8 +500,20 @@ impl App {
     /// en el hilo que dibuja). Sus avisos van al mensaje.
     pub fn set_config(&mut self, config: &Config) {
         self.editor_terminal = config.editor_terminal.clone();
+        self.mouse_enabled = config.editor.mouse;
+        self.vim_exit = config.editor.insert_exit;
+        // El modo vim se queda como estaba si ya lo era (con su modo).
+        self.vim = match (config.editor.vim, self.vim.take()) {
+            (false, _) => None,
+            (true, Some(mut vim)) => {
+                vim.set_exit(config.editor.insert_exit);
+                Some(vim)
+            }
+            (true, None) => Some(vim::Vim::new(config.editor.insert_exit)),
+        };
         self.keys = config.keys.clone();
         self.midi = config.midi;
+        self.expression = crate::expression::Expression::new(&config.midi);
         self.highlighting = config.highlight.enabled;
         self.highlight_delay_ms = config.highlight.delay_ms;
         if !config.warnings.is_empty() {
@@ -501,6 +544,13 @@ impl App {
     /// Ejecuta una orden de la línea de órdenes (F2).
     pub fn run_command(&mut self, line: &str) {
         let line = line.trim();
+        // Las órdenes de vim (`:w`), aquí también en la ventana del editor.
+        if let Some(rest) = line.strip_prefix(':')
+            && self.vim.is_some()
+        {
+            self.vim_command(rest);
+            return;
+        }
         if self.link_command(line) {
             return;
         }
@@ -1330,6 +1380,11 @@ impl App {
     }
 
     #[cfg(test)]
+    pub fn path_for_test(&self) -> &Path {
+        &self.path
+    }
+
+    #[cfg(test)]
     pub fn text_for_test(&self) -> String {
         self.text()
     }
@@ -1486,16 +1541,20 @@ impl App {
         self.waveforms = next;
     }
 
+    /// Arranca (en el cue, si hay uno) o para el secuenciador.
     pub fn toggle_transport(&mut self) {
         let running = self.status.is_some_and(|s| s.running) || self.controller.is_playing();
-        let result = if running {
-            self.controller.stop()
-        } else {
-            self.controller.start()
+        let result = match self.cue {
+            _ if running => self.controller.stop(),
+            Some(bar) => self.controller.start_at(bar),
+            None => self.controller.start(),
         };
         self.message = match result {
             Ok(()) if running => "parado".into(),
-            Ok(()) => "en marcha".into(),
+            Ok(()) => match self.cue {
+                Some(bar) => format!("en marcha desde el cue: {}", self.cue_text(bar)),
+                None => "en marcha".into(),
+            },
             Err(e) => format!("motor: {e}"),
         };
     }
@@ -1615,6 +1674,20 @@ impl App {
         while let Some(event) = self.midi_in.as_mut().and_then(|q| q.pop().ok()) {
             self.midi_event(event);
         }
+        self.flush_expression();
+    }
+
+    /// Manda al motor la expresión que ha cambiado (lo último de cada eje
+    /// de cada nota) de las notas en vivo de un sintetizador.
+    fn flush_expression(&mut self) {
+        crate::expression::coalesce(&mut self.expr_changes);
+        for change in self.expr_changes.drain(..) {
+            if let Some(held) = self.held.iter().find(|h| h.key == change.key && !h.grain) {
+                let _ = self
+                    .controller
+                    .note_mod(held.slot, change.key, change.axis, change.value);
+            }
+        }
     }
 
     /// Un mensaje MIDI: una nota dispara un corte de la pista seleccionada
@@ -1630,11 +1703,15 @@ impl App {
                 velocity,
             } => {
                 let gain = velocity as f32 / 127.0;
-                if self.midi.channel.is_some_and(|c| c != channel) {
+                // Con MPE las notas llegan por todos los canales.
+                let filtered = !self.midi.mpe && self.midi.channel.is_some_and(|c| c != channel);
+                if filtered {
                 } else if let Some(root) = self.selected_instrument().map(|i| i.root) {
-                    // En un instrumento, la nota es la que suena.
+                    // En un instrumento, la nota es la que suena (con lo que
+                    // su canal trae de expresión).
                     let now = Instant::now();
-                    self.live_note_on(note, (note as i32 - root) as f32, gain, now);
+                    let expr = self.expression.note_on(channel, note);
+                    self.live_note_on_expr(note, (note as i32 - root) as f32, gain, now, expr);
                 } else if self.selected_granular() {
                     // En una pista con granos, la nota abre una nube.
                     let offset = note as i32 - self.midi.base_note as i32;
@@ -1644,9 +1721,17 @@ impl App {
                 }
             }
             MidiEvent::NoteOff { channel, note } => {
-                if !self.midi.channel.is_some_and(|c| c != channel) {
+                if self.midi.mpe || !self.midi.channel.is_some_and(|c| c != channel) {
+                    self.expression.note_off(note);
                     self.live_note_off(note);
                 }
+            }
+            MidiEvent::PitchBend { .. }
+            | MidiEvent::ChannelPressure { .. }
+            | MidiEvent::PolyPressure { .. }
+            | MidiEvent::Controller { .. } => {
+                let changes = self.expression.event(&event.event);
+                self.expr_changes.extend(changes);
             }
             _ if !self.midi.clock => {}
             MidiEvent::Clock => {
@@ -1711,6 +1796,11 @@ impl App {
     /// La terminal avisa al soltar las teclas (protocolo de teclado
     /// mejorado): los pads de un instrumento sueltan su nota con ese aviso,
     /// no por tiempo.
+    /// El ratón en el editor (`[editor] raton`): la terminal lo pide.
+    pub fn mouse_enabled(&self) -> bool {
+        self.mouse_enabled
+    }
+
     pub fn set_key_releases(&mut self, on: bool) {
         self.key_releases = on;
     }
@@ -2005,6 +2095,19 @@ impl App {
     /// Una nota en vivo (`semitones` sobre la raíz) en el instrumento de la
     /// pista seleccionada, con la tecla `key` del motor.
     fn live_note_on(&mut self, key: u8, semitones: f32, gain: f32, now: Instant) {
+        self.live_note_on_expr(key, semitones, gain, now, [0.0; engine::synth::AXES]);
+    }
+
+    /// Como [`App::live_note_on`], con la expresión con la que empieza la
+    /// nota (la de su canal MIDI; en un instrumento de sample no cuenta).
+    fn live_note_on_expr(
+        &mut self,
+        key: u8,
+        semitones: f32,
+        gain: f32,
+        now: Instant,
+        expr: [f32; engine::synth::AXES],
+    ) {
         let Some(track) = self.tracks().get(self.selected) else {
             return;
         };
@@ -2020,9 +2123,10 @@ impl App {
         let note = script::patterns::note_name(instrument.root + semitones as i32);
         // Un sintetizador toca su patch; un instrumento, su sample.
         let sent = match instrument.synth {
-            Some(synth) => self
-                .controller
-                .synth_note_on(slot, synth.patch, semitones, gain, key),
+            Some(synth) => {
+                self.controller
+                    .synth_note_on_expr(slot, synth.patch, semitones, gain, key, expr)
+            }
             None => self.controller.note_on(
                 slot,
                 &sample,
@@ -2951,6 +3055,9 @@ impl App {
             Action::SaveAndLoad => self.save(),
             Action::Load => self.load(),
             Action::Transport => self.toggle_transport(),
+            Action::Cue => self.set_cue(),
+            Action::ToggleVim => self.toggle_vim(),
+            Action::ClearCue => self.clear_cue(),
             Action::GotoError => self.goto_error(),
             Action::NextTrack => self.next_track(),
             Action::PlayMode => self.toggle_mode(),
@@ -3388,11 +3495,18 @@ impl App {
                         | Action::Load
                         | Action::SaveAndLoad
                         | Action::Transport
+                        | Action::Cue
                         | Action::Quit
                 ))
             )
         {
             return self.handle_tracker_edit(input);
+        }
+        // El modo vim: en Normal, las letras son órdenes.
+        if self.mode == Mode::Edit
+            && let Some(flow) = self.handle_vim(&input, bound.is_some())
+        {
+            return flow;
         }
         // Con el autocompletado abierto, las flechas lo recorren, Tab acepta,
         // Enter acepta solo tras moverse con las flechas (si no, cierra y es
@@ -3595,6 +3709,7 @@ impl App {
             self.blocks.reload();
         }
         self.flush_midi();
+        self.flush_expression();
         self.release_expired_pads(Instant::now());
         self.watch_recording();
         let status = self.controller.status();
@@ -3746,10 +3861,13 @@ impl App {
                     current: place.map_or(0, |p| p.entry).min(song.timeline.len() - 1),
                     bar: place.map_or(0, |p| p.bar),
                     looping: place.is_some_and(|p| p.looping),
+                    cue: self.cue_entry(),
                 }
             });
         let mut view = ViewModel {
+            vim: self.vim.as_ref().map(vim::Vim::label),
             timeline,
+            cue: self.cue.map(|bar| self.cue_text(bar)),
             variant: self.host.variant(),
             error: self.error.as_ref().map(|e| ErrorView {
                 line: error_line(&e.message, &name),

@@ -624,6 +624,16 @@ fn the_audio_thread_never_allocates() {
         }
     });
     assert_eq!(n, 0, "reservas al recargar el arreglo");
+    // Arrancar a media línea de tiempo (en el compás 5, dentro de una
+    // entrada).
+    controller.stop().unwrap();
+    controller.start_at(5).unwrap();
+    let n = counted(|| {
+        for _ in 0..300 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas al arrancar en un compás con secciones");
     let mut batch = engine::Batch::new();
     batch.set_arrangement(None);
     for t in 0..3 {
@@ -1243,6 +1253,44 @@ fn the_audio_thread_never_allocates() {
     for key in 0..10 {
         controller.note_off(7, key).unwrap();
     }
+    // Expresión por nota (MPE): bend, presión y slide en cada voz.
+    let mut expressive = poly;
+    expressive.expr = [
+        Some(engine::synth::ExprMap {
+            target: engine::synth::ExprTarget::Pitch,
+            range: 12.0,
+            curve: 1.0,
+        }),
+        Some(engine::synth::ExprMap {
+            target: engine::synth::ExprTarget::Param(engine::synth::CUTOFF),
+            range: 3.0,
+            curve: 2.0,
+        }),
+        Some(engine::synth::ExprMap {
+            target: engine::synth::ExprTarget::Gain,
+            range: 0.5,
+            curve: 1.0,
+        }),
+    ];
+    for key in 0..8 {
+        controller
+            .synth_note_on_expr(7, expressive, key as f32, 0.8, key, [1.0, 0.2, 0.5])
+            .unwrap();
+    }
+    let n = counted(|| {
+        for i in 0..100 {
+            for key in 0..8u8 {
+                let x = (i + key as usize) as f32 / 100.0;
+                controller.note_mod(7, key, 0, 4.0 * x - 2.0).unwrap();
+                controller.note_mod(7, key, 1, x.min(1.0)).unwrap();
+            }
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas con expresión por nota");
+    for key in 0..8 {
+        controller.note_off(7, key).unwrap();
+    }
     controller.set_track_pattern(3, None).unwrap();
     controller.set_track_pattern(4, None).unwrap();
     controller.set_track_pattern(5, None).unwrap();
@@ -1365,6 +1413,17 @@ fn the_audio_thread_never_allocates() {
         }
     });
     assert_eq!(n, 0, "reservas al parar y arrancar");
+
+    // Arrancar en un compás cualquiera (con la rampa de tempo: cuenta sus
+    // compases de antes).
+    controller.stop().unwrap();
+    controller.start_at(1000).unwrap();
+    let n = counted(|| {
+        for _ in 0..100 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas al arrancar en un compás");
     controller.collect_garbage();
 }
 

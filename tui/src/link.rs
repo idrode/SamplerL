@@ -136,6 +136,8 @@ pub struct RemoteState {
     /// Pista y corte seleccionados (el corte desde 1).
     pub track: String,
     pub slice: usize,
+    /// El cue como se ve (vacío: no hay).
+    pub cue: String,
 }
 
 /// Escapa un campo.
@@ -278,6 +280,7 @@ impl Message for ToEditor {
                     &s.step.map_or(String::new(), |s| s.to_string()),
                     &s.track,
                     &s.slice.to_string(),
+                    &s.cue,
                 ],
             ),
             ToEditor::Labels(labels) => {
@@ -338,6 +341,8 @@ impl Message for ToEditor {
                     },
                     track: field(&f, 4, v)?.into(),
                     slice: number(field(&f, 5, v)?, v)?,
+                    // (Una principal de antes no lo manda.)
+                    cue: f.get(6).cloned().unwrap_or_default(),
                 })
             }
             "etiquetas" => ToEditor::Labels(f),
@@ -767,6 +772,7 @@ mod tests {
             step: Some(15),
             track: "drums".into(),
             slice: 3,
+            cue: "drop (entrada 2)".into(),
         }));
         roundtrip(ToEditor::State(RemoteState::default()));
         roundtrip(ToEditor::Labels(vec!["kick".into(), "caja\tgorda".into()]));

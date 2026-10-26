@@ -371,6 +371,48 @@ fn engine_actions_go_to_the_main_window_and_text_ones_stay() {
 }
 
 #[test]
+fn ctrl_space_and_the_cue_from_the_editor_window() {
+    use ratatui_textarea::{Input, Key};
+    let space = |shift: bool| Input {
+        key: Key::Char(' '),
+        ctrl: true,
+        shift,
+        ..Input::default()
+    };
+    let path = fixture("split_cue", Some(SONG));
+    let (mut main, mut engine) = main_window(&path, None);
+    let (mut editor, _idle) = editor_window(&path);
+    pump(&mut main, &mut editor);
+    offline::render(&mut engine, 2 * 16 * STEP + STEP, 2);
+    main.tick();
+    assert_eq!(main.view().transport.bar, 2);
+    let before = editor.text_for_test();
+
+    // Shift-Ctrl-Espacio en el editor fija el cue en la principal, y el
+    // editor lo ve en su línea del enlace.
+    editor.handle(space(true));
+    pump_until(&mut main, &mut editor, |m, _| m.view().cue.is_some());
+    assert_eq!(main.view().cue.as_deref(), Some("compás 2"));
+    pump_until(&mut main, &mut editor, |_, e| {
+        link_line(e).contains("⏮ cue compás 2")
+    });
+    // Ctrl-Espacio para y arranca el motor de la principal (en el cue).
+    editor.handle(space(false));
+    pump(&mut main, &mut editor);
+    offline::render(&mut engine, 512, 2);
+    main.tick();
+    assert!(!main.view().transport.running);
+    editor.handle(space(false));
+    pump(&mut main, &mut editor);
+    offline::render(&mut engine, 512, 2);
+    main.tick();
+    assert!(main.view().transport.running);
+    assert_eq!(main.view().transport.bar, 2);
+    // Nada se escribe en el editor.
+    assert_eq!(editor.text_for_test(), before);
+}
+
+#[test]
 fn pasting_in_the_editor_window_keeps_the_indent_and_undoes_at_once() {
     let path = fixture("split_paste", Some(SONG));
     let (mut main, _engine) = main_window(&path, None);

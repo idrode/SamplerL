@@ -25,6 +25,8 @@ pub enum Action {
     SaveAndLoad,
     Load,
     Transport,
+    Cue,
+    ClearCue,
     GotoError,
     NextTrack,
     PlayMode,
@@ -68,6 +70,7 @@ pub enum Action {
     Highlight,
     EditorWindow,
     EditorBack,
+    ToggleVim,
     Quit,
 }
 
@@ -176,8 +179,20 @@ pub const ACTIONS: &[ActionDef] = &[
     ActionDef {
         action: Action::Transport,
         name: "Marcha / paro",
-        description: "Arranca o para el secuenciador",
-        keys: "Ctrl-T o F8",
+        description: "Arranca o para el secuenciador (en el cue, si hay uno)",
+        keys: "Ctrl-Espacio o Ctrl-T o F8",
+    },
+    ActionDef {
+        action: Action::Cue,
+        name: "Fijar el cue",
+        description: "El siguiente arranque empieza ahí: el compás que suena (con secciones, su entrada) o, parado, el del cursor del tracker",
+        keys: "Shift-Ctrl-Espacio o F9",
+    },
+    ActionDef {
+        action: Action::ClearCue,
+        name: "Borrar el cue",
+        description: "Vuelve a arrancar desde el principio",
+        keys: "",
     },
     ActionDef {
         action: Action::GotoError,
@@ -435,6 +450,12 @@ pub const ACTIONS: &[ActionDef] = &[
         action: Action::EditorBack,
         name: "Volver a meter el editor en la principal",
         description: "Con el editor en su ventana: lo cierra y vuelve a la principal con su texto, cursor e historial de deshacer (sin guardar)",
+        keys: "",
+    },
+    ActionDef {
+        action: Action::ToggleVim,
+        name: "Modo vim",
+        description: "Enciende o apaga el modo vim del editor en esta sesión (el de siempre, `[editor] modo`)",
         keys: "",
     },
     ActionDef {

@@ -3195,6 +3195,151 @@ fn synth_options(lua: &Lua, kind: &str, table: Option<&Table>) -> mlua::Result<I
     })
 }
 
+/// Lee la tabla de `:mpe{ ... }` del sintetizador `kind`: cada eje
+/// (`bend`, `pressure`, `slide`) a `"pitch"`, `"gain"` o un parámetro del
+/// sintetizador que se mueva por nota, como texto o como tabla con `range`
+/// y `curve` (`{ "cutoff", range = 3, curve = 2 }`). Sin tabla, ninguno.
+fn mpe_options(
+    lua: &Lua,
+    kind: &str,
+    table: Option<&Table>,
+) -> mlua::Result<[Option<engine::synth::ExprMap>; engine::synth::AXES]> {
+    use engine::synth::{AXIS_NAMES, BEND, ExprMap, ExprTarget, PARAMS};
+    let mut out = [None; engine::synth::AXES];
+    let Some(table) = table else {
+        return Ok(out);
+    };
+    let preset = engine::synth::preset::preset(kind)
+        .expect("cada sintetizador del registro está en el motor");
+    let movable = || {
+        preset
+            .params
+            .iter()
+            .filter(|p| matches!(p.target, engine::synth::preset::Target::Param(k) if engine::synth::expressive(k)))
+            .map(|p| p.name)
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    for pair in table.pairs::<Value, Value>() {
+        let (key, value) = pair?;
+        let axis_name = match &key {
+            Value::String(k) => k.to_str()?.to_string(),
+            other => {
+                return Err(fail(
+                    lua,
+                    format!("mpe: clave no válida ({})", other.type_name()),
+                ));
+            }
+        };
+        let Some(axis) = AXIS_NAMES.iter().position(|a| *a == axis_name) else {
+            return Err(fail(
+                lua,
+                format!(
+                    "mpe: el eje \"{axis_name}\" no existe (hay: {})",
+                    AXIS_NAMES.join(", ")
+                ),
+            ));
+        };
+        let who = format!("mpe: {axis_name}");
+        let (target, range, curve) = match &value {
+            Value::Boolean(false) | Value::Nil => continue,
+            Value::String(t) => (t.to_str()?.to_string(), None, None),
+            Value::Table(t) => {
+                let target: Option<String> = t.get(1)?;
+                let Some(target) = target else {
+                    return Err(fail(
+                        lua,
+                        format!(
+                            "{who}: la tabla empieza por adónde va: {{ \"cutoff\", range = 2 }}"
+                        ),
+                    ));
+                };
+                for pair in t.pairs::<Value, Value>() {
+                    let (k, _) = pair?;
+                    let known = match &k {
+                        Value::Integer(1) => true,
+                        Value::String(k) => matches!(k.to_str()?.as_ref(), "range" | "curve"),
+                        _ => false,
+                    };
+                    if !known {
+                        return Err(fail(
+                            lua,
+                            format!(
+                                "{who}: clave desconocida {} (hay: range, curve)",
+                                value_text(&k)
+                            ),
+                        ));
+                    }
+                }
+                let range: Option<f64> = t.get("range")?;
+                let curve: Option<f64> = t.get("curve")?;
+                (target, range.map(|r| r as f32), curve.map(|c| c as f32))
+            }
+            other => {
+                return Err(fail(
+                    lua,
+                    format!(
+                        "{who}: va a un texto (\"pitch\", \"gain\" o un parámetro) o a una tabla, no a {}",
+                        other.type_name()
+                    ),
+                ));
+            }
+        };
+        // El rango, en las unidades del motor; por defecto, lo que se espera
+        // de cada uno.
+        let (target, range) = match target.as_str() {
+            "pitch" => (
+                ExprTarget::Pitch,
+                range.unwrap_or(if axis == BEND { 12.0 } else { 2.0 }),
+            ),
+            "gain" => (ExprTarget::Gain, range.unwrap_or(1.0)),
+            name => {
+                let param = preset.param(name).filter(|p| {
+                    matches!(p.target, engine::synth::preset::Target::Param(k) if engine::synth::expressive(k))
+                });
+                let Some(p) = param else {
+                    return Err(fail(
+                        lua,
+                        format!(
+                            "{who}: \"{name}\" no se mueve por nota en {kind} (hay: pitch, gain, {})",
+                            movable()
+                        ),
+                    ));
+                };
+                let engine::synth::preset::Target::Param(k) = p.target else {
+                    unreachable!("filtrado arriba")
+                };
+                let range = if PARAMS[k].log {
+                    range.unwrap_or(2.0)
+                } else {
+                    range.unwrap_or((p.max - p.min) / 2.0) * p.scale
+                };
+                (ExprTarget::Param(k), range)
+            }
+        };
+        let map = ExprMap {
+            target,
+            range,
+            curve: curve.unwrap_or(1.0),
+        };
+        if let Err(reason) = map.validate() {
+            let (lo, hi) = (
+                engine::synth::EXPR_CURVE.start(),
+                engine::synth::EXPR_CURVE.end(),
+            );
+            return Err(fail(
+                lua,
+                format!(
+                    "{who}: {reason} (range de -{max} a {max}; con gain, de 0 a 1; curve de {lo} a {hi})",
+                    max = engine::synth::MAX_EXPR_RANGE
+                ),
+            ));
+        }
+        out[axis] = Some(map);
+    }
+    Ok(out)
+}
+
 /// La tabla de una capa del subharm (`o1 = { div = 1, pan = -0.6 }`),
 /// sobre la que tenía (claves del registro `api::LAYER_PARAMS`).
 fn layer_options(
@@ -5195,6 +5340,32 @@ impl UserData for TrackHandle {
             this.with_track(|t| {
                 t.def.formant = Some(semitones);
                 t.def.formant_curve = curve;
+            });
+            Ok(this.clone())
+        });
+
+        // `:mpe{ bend = "pitch", pressure = "cutoff", slide = "pw" }`: la
+        // expresión por nota de un sintetizador (MIDI en vivo, MPE).
+        methods.add_method("mpe", |lua, this, table: Option<Table>| {
+            let (name, synth) = this.with_track(|t| {
+                (
+                    t.def.name.clone(),
+                    t.def.instrument.and_then(|i| i.synth),
+                )
+            });
+            let Some(synth) = synth else {
+                return Err(fail(
+                    lua,
+                    format!(
+                        "mpe: la pista \"{name}\" no es un sintetizador (la expresión por nota es de synth(...), subharm{{...}} y sh101{{...}})"
+                    ),
+                ));
+            };
+            let expr = mpe_options(lua, synth.kind, table.as_ref())?;
+            this.with_track(|t| {
+                if let Some(s) = t.def.instrument.as_mut().and_then(|i| i.synth.as_mut()) {
+                    s.patch.expr = expr;
+                }
             });
             Ok(this.clone())
         });

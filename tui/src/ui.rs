@@ -53,6 +53,8 @@ fn meter_color() -> Color {
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let view = app.view();
     if view.editor_outside {
+        // Sin editor aquí, el ratón no tiene dónde escribir.
+        app.editor_area = None;
         draw_main_window(frame, &view);
         return;
     }
@@ -701,6 +703,13 @@ fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rect) -
                 .bg(Color::Yellow),
         );
     }
+    if let Some(mode) = view.vim.filter(|_| !view.playing_mode) {
+        block = block.title(
+            Line::from(format!(" {mode} "))
+                .fg(Color::Black)
+                .bg(accent()),
+        );
+    }
     if view.playing_mode {
         // (En la principal con el editor fuera no se vuelve al editor.)
         let esc = if view.link.is_some() { "" } else { " · Esc" };
@@ -793,6 +802,8 @@ fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rect) -
     app.editor
         .set_search_style(Style::new().fg(Color::Black).bg(warning_color()));
     frame.render_widget(&app.editor, editor_area);
+    // Dónde quedó el texto: lo que necesita el ratón para saber qué se pulsa.
+    app.editor_area = Some(editor_area);
 
     // Celdas de unas columnas de una fila del texto, si están a la vista.
     let (top, left) = app.editor.scroll_offset();
@@ -1037,6 +1048,10 @@ fn transport_line(view: &ViewModel) -> Line<'static> {
             "   {:.1} BPM   compás {}   paso {step}",
             t.bpm, t.bar
         )),
+        match &view.cue {
+            Some(cue) => Span::from(format!("   ⏮ cue {cue}")).fg(accent()),
+            None => Span::raw(""),
+        },
         if view.metronome {
             Span::from("   ♩ clic").fg(Color::Yellow)
         } else {
@@ -1069,11 +1084,13 @@ impl TimelineBar<'_> {
             .iter()
             .enumerate()
             .map(|(i, (name, bars))| {
+                // El cue, delante de su entrada.
+                let cue = if view.cue == Some(i) { "⏮ " } else { "" };
                 if i == view.current {
                     let mark = if view.looping { " ⟳" } else { "" };
-                    format!("▶ {name} {}/{bars}{mark}", view.bar + 1)
+                    format!("{cue}▶ {name} {}/{bars}{mark}", view.bar + 1)
                 } else {
-                    format!("{name} {bars}")
+                    format!("{cue}{name} {bars}")
                 }
             })
             .collect()
@@ -1185,11 +1202,11 @@ impl Widget for HelpLine<'_> {
         } else if !self.0.key_help.is_empty() {
             self.0.key_help.as_str()
         } else if self.0.playing_mode && self.0.editor_outside {
-            "TOCAR: 1-0 q-i cortes · ←→ preescucha · m mute · s solo · Ctrl-O pista · Ctrl-T marcha/paro · F1 paleta"
+            "TOCAR: 1-0 q-i cortes · ←→ preescucha · m mute · s solo · Ctrl-O pista · Ctrl-Espacio marcha/paro · F1 paleta"
         } else if self.0.playing_mode {
-            "TOCAR: 1-0 q-i cortes · ←→ preescucha · m mute · s solo · Ctrl-O pista · Ctrl-T marcha/paro · F1 paleta · Esc editor"
+            "TOCAR: 1-0 q-i cortes · ←→ preescucha · m mute · s solo · Ctrl-O pista · Ctrl-Espacio marcha/paro · F1 paleta · Esc editor"
         } else {
-            "Ctrl-S guardar y cargar · Ctrl-L cargar · Ctrl-T marcha/paro · \
+            "Ctrl-S guardar y cargar · Ctrl-L cargar · Ctrl-Espacio marcha/paro · \
              Ctrl-G ir al error · Ctrl-O pista · Esc tocar · F1 paleta · F2 órdenes · \
              F4 completar · Ctrl-Q salir"
         };

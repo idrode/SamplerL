@@ -133,6 +133,7 @@ pub fn patch(root: f32) -> Patch {
         layers: None,
         analog: None,
         params: super::PARAMS.map(|p| p.default),
+        expr: [None; super::AXES],
     };
     defaults(&mut patch, &PARAMS);
     patch

@@ -44,7 +44,12 @@ pub const BINDABLE: &[(&str, Bound, &[&str])] = &[
     (
         "marcha",
         Bound::Action(Action::Transport),
-        &["ctrl-t", "f8"],
+        &["ctrl-space", "ctrl-t", "f8"],
+    ),
+    (
+        "cue",
+        Bound::Action(Action::Cue),
+        &["shift-ctrl-space", "f9"],
     ),
     ("ir_al_error", Bound::Action(Action::GotoError), &["ctrl-g"]),
     ("ir_a_linea", Bound::Action(Action::GotoLine), &["alt-g"]),
@@ -134,21 +139,28 @@ const HIGHLIGHT_KEYS: &[(&str, &str, &str)] = &[
     ),
 ];
 
-/// Una combinación de teclas: `ctrl-s`, `alt-x`, `f5`, `esc`.
+/// Una combinación de teclas: `ctrl-s`, `alt-x`, `f5`, `esc`,
+/// `shift-ctrl-space`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct KeyCombo {
     pub key: Key,
     pub ctrl: bool,
     pub alt: bool,
+    /// Con Shift. Solo distingue si la terminal lo dice (Shift-Ctrl-Espacio
+    /// llega como Ctrl-Espacio sin el protocolo de teclado de kitty o las
+    /// teclas extendidas de tmux); una combinación sin Shift vale también
+    /// con él si no hay otra que lo pida.
+    pub shift: bool,
 }
 
 impl KeyCombo {
-    /// Lee `ctrl-s`, `alt-shift`... no: modificadores `ctrl-` y `alt-` y una
-    /// letra, un número, `f1`-`f12` o `esc`. Sin modificador solo valen las
-    /// F y Esc (una letra sola escribiría texto).
+    /// Lee `ctrl-s`, `alt-x`, `shift-ctrl-space`: modificadores `ctrl-`,
+    /// `alt-` y `shift-` y una letra, un número, `space`, `f1`-`f12` o
+    /// `esc`. Sin `ctrl-` ni `alt-` solo valen las F y Esc (una letra o
+    /// un espacio solos escribirían texto).
     pub fn parse(text: &str) -> Result<KeyCombo, String> {
         let lower = text.trim().to_lowercase();
-        let (mut ctrl, mut alt) = (false, false);
+        let (mut ctrl, mut alt, mut shift) = (false, false, false);
         let mut rest = lower.as_str();
         loop {
             if let Some(r) = rest.strip_prefix("ctrl-") {
@@ -157,12 +169,23 @@ impl KeyCombo {
             } else if let Some(r) = rest.strip_prefix("alt-") {
                 alt = true;
                 rest = r;
+            } else if let Some(r) = rest.strip_prefix("shift-") {
+                shift = true;
+                rest = r;
             } else {
                 break;
             }
         }
         let key = match rest {
             "esc" => Key::Esc,
+            "space" | "espacio" => {
+                if !ctrl && !alt {
+                    return Err(format!(
+                        "«{text}»: un espacio sin ctrl- ni alt- escribiría texto"
+                    ));
+                }
+                Key::Char(' ')
+            }
             f if f.starts_with('f') && f.len() > 1 => {
                 let n: u8 = f[1..]
                     .parse()
@@ -181,20 +204,33 @@ impl KeyCombo {
             }
             _ => return Err(format!("«{text}»: tecla desconocida")),
         };
-        Ok(KeyCombo { key, ctrl, alt })
+        Ok(KeyCombo {
+            key,
+            ctrl,
+            alt,
+            shift,
+        })
     }
 
+    /// Si `input` es esta combinación. Sin `shift`, también con Shift (ver
+    /// [`Keymap::lookup`]: antes se busca la que lo pide).
     pub fn matches(&self, input: &Input) -> bool {
         let key = match input.key {
             Key::Char(c) => Key::Char(c.to_ascii_lowercase()),
             k => k,
         };
-        key == self.key && input.ctrl == self.ctrl && input.alt == self.alt
+        key == self.key
+            && input.ctrl == self.ctrl
+            && input.alt == self.alt
+            && (input.shift || !self.shift)
     }
 
-    /// Como se ve: `Ctrl-S`, `Alt-X`, `F5`, `Esc`.
+    /// Como se ve: `Ctrl-S`, `Alt-X`, `F5`, `Esc`, `Shift-Ctrl-Espacio`.
     pub fn text(&self) -> String {
         let mut out = String::new();
+        if self.shift {
+            out.push_str("Shift-");
+        }
         if self.ctrl {
             out.push_str("Ctrl-");
         }
@@ -202,6 +238,7 @@ impl KeyCombo {
             out.push_str("Alt-");
         }
         match self.key {
+            Key::Char(' ') => out.push_str("Espacio"),
             Key::Char(c) => out.push(c.to_ascii_uppercase()),
             Key::F(n) => out.push_str(&format!("F{n}")),
             Key::Esc => out.push_str("Esc"),
@@ -222,6 +259,7 @@ const PALETTE_KEY: KeyCombo = KeyCombo {
     key: Key::F(1),
     ctrl: false,
     alt: false,
+    shift: false,
 };
 
 impl Default for Keymap {
@@ -242,8 +280,12 @@ impl Keymap {
         if PALETTE_KEY.matches(input) {
             return Some(Bound::Palette);
         }
+        // Primero la que pide Shift (Shift-Ctrl-Espacio antes que
+        // Ctrl-Espacio), luego las demás.
         self.bindings
             .iter()
+            .filter(|(k, _)| k.shift)
+            .chain(self.bindings.iter().filter(|(k, _)| !k.shift))
             .find(|(k, _)| k.matches(input))
             .map(|(_, b)| *b)
     }
@@ -393,6 +435,28 @@ impl Keymap {
     }
 }
 
+/// `[editor]`, además de `terminal`: el ratón y el modo vim.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EditorConfig {
+    /// El ratón en el editor (`raton`): clic, arrastrar y rueda. Sin él,
+    /// la terminal selecciona como siempre.
+    pub mouse: bool,
+    /// `modo = "vim"` (si no, `"clasico"`, el de siempre).
+    pub vim: bool,
+    /// Las dos teclas que salen de Insert en vim (`salir_insert`).
+    pub insert_exit: [char; 2],
+}
+
+impl Default for EditorConfig {
+    fn default() -> Self {
+        EditorConfig {
+            mouse: true,
+            vim: false,
+            insert_exit: crate::app::VIM_EXIT,
+        }
+    }
+}
+
 /// Lo que se lee del archivo.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Config {
@@ -404,6 +468,8 @@ pub struct Config {
     /// editor en su ventana (`tui --edit … --split`); detrás va
     /// `tui --window-editor <script>`.
     pub editor_terminal: Option<Vec<String>>,
+    /// `[editor]`: el ratón.
+    pub editor: EditorConfig,
     /// `[resaltado]`: encendido y retardo (los colores y el estilo van en
     /// `theme`).
     pub highlight: HighlightConfig,
@@ -488,13 +554,18 @@ impl Config {
                                 config.midi.channel = Some(n as u8)
                             }
                             ("reloj", _, Some(on)) => config.midi.clock = on,
-                            ("nota_base" | "canal" | "reloj", _, _) => config.warnings.push(
-                                format!(
-                                    "[midi] {key}: valor no válido (nota_base 0-127, canal 1-16, reloj true/false)"
-                                ),
-                            ),
+                            ("mpe", _, Some(on)) => config.midi.mpe = on,
+                            ("bend", Some(n), _) if (1..=96).contains(&n) => {
+                                config.midi.bend = Some(n as u8)
+                            }
+                            ("nota_base" | "canal" | "reloj" | "mpe" | "bend", _, _) => {
+                                config.warnings.push(format!(
+                                    "[midi] {key}: valor no válido (nota_base 0-127, canal 1-16, \
+                                     reloj true/false, mpe true/false, bend 1-96 semitonos)"
+                                ))
+                            }
                             _ => config.warnings.push(format!(
-                                "[midi] «{key}» no existe (hay: nota_base, canal, reloj)"
+                                "[midi] «{key}» no existe (hay: nota_base, canal, reloj, mpe, bend)"
                             )),
                         }
                     }
@@ -517,8 +588,33 @@ impl Config {
                             ("terminal", _) => config.warnings.push(
                                 "[editor] terminal: un comando, como \"kitty --class sampler-editor -e\" o una lista de palabras".into(),
                             ),
+                            ("raton", _) => match value.as_bool() {
+                                Some(on) => config.editor.mouse = on,
+                                None => config
+                                    .warnings
+                                    .push("[editor] raton: true o false".into()),
+                            },
+                            ("modo", _) => match value.as_str() {
+                                Some("vim") => config.editor.vim = true,
+                                Some("clasico" | "clásico") => config.editor.vim = false,
+                                _ => config
+                                    .warnings
+                                    .push("[editor] modo: \"clasico\" o \"vim\"".into()),
+                            },
+                            ("salir_insert", _) => {
+                                let keys: Vec<char> =
+                                    value.as_str().map_or(Vec::new(), |s| s.chars().collect());
+                                match keys[..] {
+                                    [a, b] if a.is_alphanumeric() && b.is_alphanumeric() => {
+                                        config.editor.insert_exit = [a, b]
+                                    }
+                                    _ => config.warnings.push(
+                                        "[editor] salir_insert: dos letras seguidas, como \"jk\"".into(),
+                                    ),
+                                }
+                            }
                             _ => config.warnings.push(format!(
-                                "[editor] «{key}» no existe (hay: terminal)"
+                                "[editor] «{key}» no existe (hay: terminal, raton, modo, salir_insert)"
                             )),
                         }
                     }
@@ -791,7 +887,7 @@ brillo = "red"
             [
                 "[teclas] cargar: F1 es siempre la paleta de comandos",
                 "[teclas] explorador: Alt-S ya es de guardar; no se usa",
-                "[teclas] «inventada» no existe (hay: paleta, guardar, cargar, marcha, ir_al_error, ir_a_linea, buscar, buscar_siguiente, buscar_anterior, siguiente_pista, recargar, ordenes, completar, salir, modo_tocar, deshacer, rehacer, explorador, tap_tempo, metronomo, exportar, seccion_siguiente, seccion_anterior, repetir_seccion, variante, resaltado)",
+                "[teclas] «inventada» no existe (hay: paleta, guardar, cargar, marcha, cue, ir_al_error, ir_a_linea, buscar, buscar_siguiente, buscar_anterior, siguiente_pista, recargar, ordenes, completar, salir, modo_tocar, deshacer, rehacer, explorador, tap_tempo, metronomo, exportar, seccion_siguiente, seccion_anterior, repetir_seccion, variante, resaltado)",
                 "[teclas] salir: «q»: una letra sin ctrl- ni alt- escribiría texto",
                 "[teclas] Ctrl-G era de ir_al_error; ahora es de marcha",
                 "[colores] tenue: color no válido",
@@ -823,7 +919,7 @@ brillo = "red"
         let config = Config::parse("[editor]\nterminal = 3\nventana = 1\n", true, "c.toml");
         assert_eq!(config.editor_terminal, None);
         assert_eq!(config.warnings.len(), 2, "{:?}", config.warnings);
-        assert!(config.warnings[1].contains("(hay: terminal)"));
+        assert!(config.warnings[1].contains("(hay: terminal, raton, modo, salir_insert)"));
     }
 
     #[test]

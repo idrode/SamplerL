@@ -128,6 +128,7 @@ fn the_timeline_bar_shows_where_the_song_is() {
         current: 9,
         bar: 2,
         looping: false,
+        cue: None,
     };
     let line = text(&draw_widget(ui::TimelineBar(&view), 40, 1));
     assert!(line.starts_with("… "), "{line}");

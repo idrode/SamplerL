@@ -153,6 +153,10 @@ fn every_template_is_valid_code() {
             )),
             Receiver::Global => source.push_str(&format!("local _ = {text}\n")),
             Receiver::Bar => bar.push_str(&format!("c:{text}\n")),
+            // La expresión por nota es de un sintetizador.
+            Receiver::Track if f.name == "mpe" => source.push_str(&format!(
+                "local _ = track(\"ts\", subharm{{ voices = 4 }}):{text}\n"
+            )),
             r => source.push_str(&format!("local _ = {}:{text}\n", variable(r))),
         }
     }

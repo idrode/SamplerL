@@ -378,6 +378,16 @@ mínima entre cortes, 40) y `--detector flux|energy` (flux). `--metronome`
 render nunca lo lleva, aunque el script llame a `metronome(true)`. Imprime los
 cortes detectados con su posición en ms.
 
+Con `--script`, `--from N` empieza el render en el compás N (desde 0, como
+la barra de estado), como si la canción hubiera llegado hasta él: las
+vueltas de `every`, las rampas, los `lfo()` y la sección de la línea de
+tiempo son las de ese compás. `--bars M` cuenta desde ahí; sin `--bars`,
+con línea de tiempo, hasta su final:
+
+```sh
+cargo run -p tui -- --script canciones/tema.lua --render renders/drop.wav --from 16 --bars 8
+```
+
 Desde la interfaz, la orden `exportar` (F2) hace lo mismo con lo que está
 cargado.
 
@@ -502,7 +512,8 @@ cortado en rejilla (`slice_grid(16)`), el número de cortes se escribe
 | --- | --- |
 | Ctrl-S | Guardar el script y cargarlo (entra en el siguiente compás) |
 | Ctrl-L o F5 | Cargar el texto del editor sin guardar |
-| Ctrl-T o F8 | Marcha / paro del secuenciador |
+| Ctrl-Espacio, Ctrl-T o F8 | Marcha / paro del secuenciador (también en el modo tocar; arranca en el cue si hay uno) |
+| Shift-Ctrl-Espacio o F9 | Fijar el cue: el siguiente arranque empieza ahí (ver «Arrancar desde un compás: el cue») |
 | Ctrl-G | Ir a la línea del error |
 | Alt-G | Ir a una línea (escribe el número y Enter) |
 | Ctrl-F | Buscar en el script (escribe el texto y Enter) |
@@ -518,6 +529,50 @@ cortado en rejilla (`slice_grid(16)`), el número de cortes se escribe
 Con un cambio externo pendiente, Ctrl-S pide un segundo Ctrl-S antes de
 sobrescribir. F3 guarda antes tu texto sin guardar en
 `<nombre>.sin-guardar.lua`.
+
+### Arrancar desde un compás: el cue
+
+Para ensayar un trozo sin volver cada vez al principio, fija un **cue**
+con Shift-Ctrl-Espacio (o F9, o «Fijar el cue» en la paleta):
+
+- Con la canción en marcha, el cue es el compás que suena.
+- Con la canción parada, el compás del cursor del tracker («Editar los
+  efectos de un paso desde el tracker»: la fila elegida en la vuelta que
+  se ve). Sin el cursor abierto, el compás en que se paró.
+- Con secciones (`arrange`), siempre el principio de una entrada de la
+  línea de tiempo: la que suena o en la que se paró.
+
+Desde entonces, Ctrl-Espacio (marcha) arranca en el cue, cada vez, hasta
+que lo borres con «Borrar el cue» en la paleta. Suena como si la canción
+hubiera llegado hasta ahí: `every`, los ciclos de compases, `chance`, las
+rampas de `ramp()` y `bpm_ramp()`, los `lfo()` y la sección que toca
+siguen por donde irían. La barra de estado lo enseña (`⏮ cue compás 8`, o
+`⏮ cue drop (entrada 2)`) y, con secciones, la línea de tiempo lo marca
+delante de su entrada (`⏮ drop 4`). Los compases se cuentan desde 0, como
+en la barra de estado. Funciona igual desde la ventana del editor con
+`--split`: las teclas van a la principal por el socket. Un `Start` de
+reloj MIDI de entrada sigue arrancando desde el principio.
+
+El render offline arranca en un compás con `--from N` (ver «Renderizar a
+WAV»).
+
+**Shift-Ctrl-Espacio y la terminal.** Sin ayuda, la terminal manda
+Ctrl-Espacio y Shift-Ctrl-Espacio como el mismo byte (NUL): los dos son
+marcha. Para distinguirlos hace falta el protocolo de teclado de kitty
+(kitty, foot, WezTerm, Ghostty, Alacritty y otras lo tienen y la interfaz
+lo pide sola) o, dentro de tmux (3.2 o más nuevo), las teclas extendidas
+en `~/.tmux.conf`:
+
+```
+set -g extended-keys always
+set -g extended-keys-format csi-u
+set -as terminal-features 'xterm*:extkeys'
+```
+
+(`extended-keys-format` es de tmux 3.5; en uno más viejo, sin esa línea.
+Cambia `xterm*` por el `TERM` de la terminal de fuera si es otro, y
+reinicia el servidor de tmux con `tmux kill-server`.) Si aun así no llega,
+F9 hace lo mismo, y en `[teclas]` se le puede dar otra (`cue = "alt-c"`).
 
 ### Ayuda contextual
 
@@ -557,7 +612,9 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Autocompletar | Abre el autocompletado en el cursor | F4 |
 | Guardar y cargar | Guarda el script y lo carga (entra en el siguiente compás) | Ctrl-S |
 | Cargar sin guardar | Carga el texto del editor sin guardarlo | Ctrl-L o F5 |
-| Marcha / paro | Arranca o para el secuenciador | Ctrl-T o F8 |
+| Marcha / paro | Arranca o para el secuenciador (en el cue, si hay uno) | Ctrl-Espacio o Ctrl-T o F8 |
+| Fijar el cue | El siguiente arranque empieza ahí: el compás que suena (con secciones, su entrada) o, parado, el del cursor del tracker | Shift-Ctrl-Espacio o F9 |
+| Borrar el cue | Vuelve a arrancar desde el principio | — |
 | Ir al error | Lleva el cursor a la línea del error | Ctrl-G |
 | Siguiente pista | Selecciona la pista siguiente (vista del sample y modo tocar) | Ctrl-O |
 | Modo tocar | Entra o sale del modo tocar | Esc |
@@ -601,6 +658,7 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Choques de frecuencia | Renderiza offline cada pista en solo (un ciclo entero de la canción) y muestra en qué bandas se pisan: tabla pareja × banda con su puntuación (0 a 1), un resumen y el EQ sugerido para la que cede; Enter lo propone y Enter otra vez lo inserta en el script sin guardar; no toca lo que suena | — |
 | Abrir el editor en su ventana | Saca el editor a una terminal nueva ([editor] terminal en config.toml) con su texto, cursor e historial de deshacer; con el editor ya fuera, lo vuelve a abrir si no está conectado | — |
 | Volver a meter el editor en la principal | Con el editor en su ventana: lo cierra y vuelve a la principal con su texto, cursor e historial de deshacer (sin guardar) | — |
+| Modo vim | Enciende o apaga el modo vim del editor en esta sesión (el de siempre, `[editor] modo`) | — |
 | Salir | Sale (pide confirmación si hay cambios sin guardar) | Ctrl-Q |
 | Snippet: `amen`, `fill`, `ghost`, `intro`, `euclid`, `melodia`, `polirritmo`, `barrido`, `groove`, `instrumento` | Inserta el snippet en el cursor (ver «Snippets» en la sección 4) | — |
 
@@ -891,7 +949,7 @@ de siempre y lo dice al arrancar; lo que no entiende lo avisa y lo ignora.
 ```toml
 [teclas]
 guardar = "alt-s"            # una tecla
-marcha = ["ctrl-t", "f8"]    # o varias
+marcha = ["ctrl-space", "f8"]    # o varias
 paleta = "ctrl-p"            # además de F1
 
 [colores]
@@ -900,10 +958,15 @@ sonando = 22
 ```
 
 La sección `[editor]` tiene `terminal`, el comando que abre el editor en
-su ventana con `--split` (ver «El editor en su propia ventana»).
+su ventana con `--split` (ver «El editor en su propia ventana»), `raton`
+(`true` por defecto), `modo` (`"clasico"` o `"vim"`) y `salir_insert` (las
+dos teclas que salen de Insert en vim, `"jk"` por defecto; ver «Editor»).
 
-Las teclas son `ctrl-` y/o `alt-` con una letra o un número, `f1` a `f12`
-o `esc`. Una letra sola no vale (escribiría texto). F1 abre siempre la
+Las teclas son `ctrl-`, `alt-` y/o `shift-` con una letra, un número o
+`space` (también `espacio`), `f1` a `f12` o `esc`. Una letra o un espacio
+solos no valen (escribirían texto). `shift-` solo cuenta si la terminal
+distingue la tecla con Shift (ver «Arrancar desde un compás: el cue»); una
+tecla sin `shift-` vale también con Shift si ninguna otra lo pide. F1 abre siempre la
 paleta, aunque se le dé otra tecla: así ninguna configuración la deja
 fuera de alcance. Si una tecla va a dos acciones, se avisa y se queda con
 la primera; si la tecla de siempre de una acción la coge otra, esa acción
@@ -919,7 +982,8 @@ paleta de 256.
 | `paleta` | Abrir la paleta de comandos (F1 la abre siempre) | `f1` |
 | `guardar` | Guardar y cargar | `ctrl-s` |
 | `cargar` | Cargar sin guardar | `ctrl-l`, `f5` |
-| `marcha` | Marcha / paro | `ctrl-t`, `f8` |
+| `marcha` | Marcha / paro | `ctrl-space`, `ctrl-t`, `f8` |
+| `cue` | Fijar el cue | `shift-ctrl-space`, `f9` |
 | `ir_al_error` | Ir al error | `ctrl-g` |
 | `ir_a_linea` | Ir a la línea | `alt-g` |
 | `buscar` | Buscar | `ctrl-f` |
@@ -992,6 +1056,32 @@ tempo: se calcula con los pulsos de las últimas cuatro negras (por mínimos
 cuadrados, así el jitter no lo mueve) y solo cambia si cambia de verdad;
 entra al empezar el compás, como un `bpm()`. Start y Continue arrancan el
 secuenciador y Stop lo para. Sin `--allow-midi` no se abre nada.
+
+**Expresión por nota (MPE, Roli Seaboard).** Un sintetizador con
+`:mpe{ ... }` (ver la API) recibe el pitch bend, la presión y el CC74
+(«slide») de cada nota MIDI en vivo. Con un controlador MPE, cada nota
+llega por su propio canal (del 2 al 16; el 1 es el maestro) y lo que llega
+por ese canal es solo de ella: cada dedo dobla, aprieta y desliza su nota.
+Se activa en la configuración:
+
+```toml
+[midi]
+mpe = true         # cada nota en su canal (zona baja: el 1 es el maestro)
+bend = 48          # semitonos del bend entero de una nota (48 con MPE, 2 sin él)
+```
+
+Con `mpe = true`, `canal` no filtra (las notas llegan por todos). El bend
+del canal maestro (±2 semitonos) se suma al de todas las notas. Lo que un
+canal trae antes de la nota (el bend del dedo al caer fuera del centro)
+es con lo que la nota empieza. Sin `mpe`, lo de un canal (bend, presión de
+canal, CC74) mueve todas sus notas, como en un teclado de siempre, y la
+presión por nota (aftertouch polifónico) solo la suya. `bend` tiene que
+coincidir con el del controlador (en el Seaboard, el de su app,
+ROLI Dashboard o Equator). Para conectar el Seaboard: `aconnect -l`, y
+`aconnect 24:0 129:0` (sus números cambian al reiniciar: mira los de
+«Seaboard» y «sampler entrada»). Con un sintetizador mono (`acid`,
+`sh101`), la expresión es la de la nota que suena; para que cada dedo
+tenga la suya, uno polifónico: `subharm{ voices = 6 }`.
 
 **Salida hacia un synth (Surge XT).** Con `--allow-midi` también se abre
 **sampler salida**. Una pista con `:midi(canal, nota_base)` manda cada
@@ -1066,6 +1156,45 @@ paste) al entrar y lo quita al salir; si el terminal no lo sabe hacer, una
 ráfaga de teclas con saltos de línea también se toma como un pegado. En la
 línea de órdenes (F2) solo entra la primera línea, y en el modo tocar no
 se pega nada.
+
+**Ratón.** Un clic lleva el cursor a donde se pulsa (también con el texto
+desplazado y en las líneas largas), arrastrar selecciona (Ctrl-C lo copia)
+y la rueda desplaza el texto tres líneas. Funciona en el modo editor sin
+nada abierto encima (la paleta, la línea de órdenes...), también en la
+ventana del editor de `--split`. Mientras la interfaz tiene el ratón, la
+terminal no selecciona sola: **Shift y arrastrar** selecciona como siempre
+para copiar con la terminal (en casi todas; en algunas, Alt). Dentro de
+tmux, si no llegan los clics, `set -g mouse on`. Con `raton = false` en
+`[editor]`, la interfaz no pide el ratón.
+
+**Modo vim.** Con `modo = "vim"` en `[editor]` (o «Modo vim» en la paleta,
+para la sesión), el editor tiene dos modos, que se ven en su borde
+(`NORMAL`, `INSERT`). Empieza en Normal, donde las letras son órdenes:
+
+| En Normal | Qué hace |
+| --- | --- |
+| `h` `j` `k` `l` | Izquierda, abajo, arriba, derecha (sin pasar de línea con `h` y `l`) |
+| `w` `b` `e` | Palabra siguiente, anterior, final de la palabra |
+| `0` `$` | Principio y final de la línea |
+| `gg` `G` | Principio y final del texto |
+| `i` `a` | Insert antes o después del cursor |
+| `I` `A` | Insert al principio (tras la sangría) o al final de la línea |
+| `o` `O` | Una línea nueva debajo o encima, en Insert |
+| `x` | Borra el carácter del cursor (y lo copia) |
+| `dd` `yy` | Borra o copia la línea entera |
+| `p` `P` | Pega detrás o delante (una línea copiada, debajo o encima) |
+| `u` Ctrl-R | Deshacer y rehacer |
+| `/` `n` `N` | Buscar (como Ctrl-F), la siguiente y la anterior |
+| `:w` | Guarda y carga (como Ctrl-S) |
+
+En Insert se escribe como siempre (con el autocompletado y las
+plantillas). **Esc sigue llevando al modo tocar**, también desde Insert:
+para volver a Normal se escriben **`jk`** seguidas (la `j` no se queda).
+Se cambian con `salir_insert = "fd"` en `[editor]`. Ctrl-[ no sirve: la
+terminal lo manda igual que Esc. Los atajos (Ctrl-S, Ctrl-Espacio, F1, Alt-G,
+F6/F7...) funcionan en los dos modos. Es la fase 1: sin cuentas (`3j`),
+operadores con movimientos (`dw`, `cw`), Visual, `.`, macros, registros,
+marcas ni `:s`.
 
 ### Resaltado en vivo
 
@@ -2330,6 +2459,27 @@ track("bajo", amen)
   :gain(0.3)
 ```
 
+### `pista:mpe{ eje = destino, ... }`
+
+Devuelve: pista.
+
+Expresión por nota de un sintetizador: el bend, la presión y el slide de cada nota MIDI en vivo mueven su altura, su volumen o un parámetro. Para tocar con un controlador expresivo (MPE, como un Roli Seaboard; ver «MIDI» en la sección 2) o con un teclado con aftertouch. Tres ejes: `bend` (el pitch bend de la nota, en semitonos: el rango lo dice `bend` en `[midi]`), `pressure` (la presión, de 0 a 1: aftertouch del canal o por nota) y `slide` (el CC74, deslizar en vertical, de 0 a 1). Cada uno va a `"pitch"` (semitonos), `"gain"` (el volumen de la nota: con `range = 1`, sin presión calla; con 0,5, suena a la mitad) o a un parámetro del sintetizador que la voz lea muestra a muestra (el corte, la resonancia, la saturación, el ancho de pulso...; no el glide, ni los decays, ni las voces). Como texto (`pressure = "cutoff"`) o como tabla con `range` (lo que mueve el eje entero: semitonos, octavas en el corte, unidades del parámetro en los demás) y `curve` (exponente del eje: 2 responde poco al principio y mucho al final). En el bend, el eje entero es una octava de bend (12 semitonos): `bend = "pitch"` sigue al dedo tal cual. Por defecto `range` es 12 en el bend al pitch, 2 en los demás al pitch, 1 en el volumen, 2 octavas en el corte y medio rango en los demás parámetros; `curve`, 1. Cada nota mueve solo su voz (en un sintetizador polifónico, como el `subharm` con `voices`, cada dedo la suya; en uno mono, la nota que suena), suavizado unos 8 ms. Las notas del patrón y los pads del teclado no tienen expresión: suenan como sin `:mpe`. Sin tabla (`:mpe()`), ninguno.
+
+- `ejes`: tabla con `bend`, `pressure` y `slide`: un destino o `{ destino, range = n, curve = n }`
+
+```lua
+-- Un subharm de 6 voces para el Seaboard: cada dedo dobla su nota,
+-- la presión abre su filtro y el slide le sube la resonancia.
+track("tecla", subharm{ voices = 6, cutoff = 300 })
+  :mpe{
+    bend = "pitch",
+    pressure = { "cutoff", range = 3, curve = 1.5 },
+    slide = { "res", range = 0.4 },
+  }
+  -- Las notas del patrón suenan sin expresión.
+  :melody("c . . .  . . . .  eb . . .  . . . .")
+```
+
 ### `pista:grains([parámetros])`
 
 Devuelve: pista.
@@ -3079,6 +3229,47 @@ track("b", sh101{
   :melody("c _ _ _  _ _ _ _  eb _ _ _  _ _ _ _")
 ```
 
+### Tocar con expresión por nota (MPE)
+
+Con un controlador MPE (el Roli Seaboard, por ejemplo) y `mpe = true` en
+`[midi]` (ver «MIDI» en la sección 2), un sintetizador polifónico con
+`:mpe{}` da a cada dedo su bend, su presión y su slide. Las notas del
+patrón no tienen expresión: suenan como sin `:mpe`. Selecciona la pista
+«pad» y toca:
+
+```lua
+-- 14-mpe.lua
+bpm(96)
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen)
+  :steps("1 . . .  3 . . .  . . 1 .  3 . . .")
+  :gain(0.5)
+
+-- Un pad de subarmónicos de seis voces para tocar con un controlador
+-- MPE: cada dedo dobla su nota, la presión le da volumen y abre su
+-- filtro, y deslizar hacia arriba le sube la resonancia.
+local pad = subharm{
+  voices = 6, root = "C3",
+  o1 = { div = 1, level = 0.7 },
+  s1 = { div = 2, level = 0.5 },
+  cutoff = 350, res = 0.3, envmod = 0.2, attack = 40, decay = 900,
+}
+track("pad", pad)
+  :mpe{
+    bend = "pitch",
+    pressure = { "cutoff", range = 3, curve = 1.5 },
+    slide = { "res", range = 0.4 },
+  }
+  -- Un acorde largo del patrón, sin expresión, para tocar encima.
+  :melody("c+eb+g _ _ _  _ _ _ _  _ _ _ _  _ _ _ _")
+  :gain(0.7)
+```
+
+Con `pressure = { "gain", range = 1 }` la nota solo suena mientras se
+aprieta (como un instrumento de viento); con `range = 0.5`, la presión
+añade la otra mitad del volumen. En un `sh101` (mono), la expresión es la
+de la nota que suena.
+
 ### Una caja más grave que dura lo mismo
 
 `%` transpone sin cambiar la duración: la caja una octava abajo sigue
@@ -3710,7 +3901,7 @@ numerados (el que suena, resaltado).
 
 - No oyes nada pero el tracker se mueve: falta `--allow-audio`, o el
   volumen del sistema está a cero.
-- Ni el tracker se mueve: Ctrl-T arranca y para el secuenciador.
+- Ni el tracker se mueve: Ctrl-Espacio (o Ctrl-T) arranca y para el secuenciador.
 - Borde rojo: el pie dice el error y Ctrl-G lleva a su línea. Mientras
   tanto sigue sonando lo anterior.
 - Al pie sale `el corte 8 no existe ("drums" tiene 6)`: el detector ha
@@ -4647,7 +4838,7 @@ end)
 | Lo que pasa | Mira esto |
 | --- | --- |
 | No se oye nada, pero el tracker se mueve | ¿Abriste con `--allow-audio`? ¿El volumen del sistema está a cero (`wpctl get-volume @DEFAULT_AUDIO_SINK@`)? ¿Hay alguna pista en solo (`S` en el tracker)? F1 «Quitar mute y solo» |
-| El tracker no se mueve | Ctrl-T arranca. El secuenciador arranca solo con la primera carga buena: si el script tiene un error desde el principio, corrígelo y Ctrl-S |
+| El tracker no se mueve | Ctrl-Espacio (o Ctrl-T) arranca. El secuenciador arranca solo con la primera carga buena: si el script tiene un error desde el principio, corrígelo y Ctrl-S |
 | Borde rojo en el editor | El error está al pie; Ctrl-G va a su línea. Sigue sonando lo anterior |
 | `el script no existe (buscado en ...)` al abrir | Estás en otra carpeta o el nombre tiene una errata. Para empezar un script nuevo, `--new` (paso 2) |
 | `error leyendo WAV` | La ruta del sample (paso 1): nombre, mayúsculas, carpeta. ¿Es un WAV de verdad? Conviértelo con `ffmpeg` |

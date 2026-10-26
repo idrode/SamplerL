@@ -111,6 +111,7 @@ pub fn patch(root: f32) -> Patch {
         layers: None,
         analog: None,
         params: super::PARAMS.map(|p| p.default),
+        expr: [None; super::AXES],
     };
     patch.params[RESONANCE] = 0.0;
     patch.params[super::ENV_AMOUNT] = 0.0;

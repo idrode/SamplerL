@@ -2404,6 +2404,8 @@ mod main_window;
 mod masking;
 mod midi_in;
 mod midi_out;
+mod mouse;
+mod mpe;
 mod navigation;
 mod record;
 mod resample;
@@ -2418,7 +2420,9 @@ mod swap;
 mod tempo;
 mod tracker_edit;
 mod tracker_rows;
+mod transport;
 mod variants;
+mod vim;
 
 const PASTED: &str = "track(\"hats\", amen)\r\n  :steps(\"x . x .\") -- abiertos\r\n  :gain(0.5)";
 

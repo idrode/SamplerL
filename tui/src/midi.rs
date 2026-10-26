@@ -1,4 +1,5 @@
-//! MIDI sin dispositivos: leer los mensajes que llegan (notas y reloj),
+//! MIDI sin dispositivos: leer los mensajes que llegan (notas, reloj y la
+//! expresión: pitch bend, presión y controladores),
 //! pasar notas a cortes y el reloj a un tempo estable. Los puertos reales
 //! (ALSA, con `--allow-midi`) están en `midi_io`; todo esto se prueba con
 //! mensajes simulados.
@@ -22,6 +23,29 @@ pub enum MidiEvent {
         channel: u8,
         note: u8,
     },
+    /// Pitch bend del canal: de -8192 a 8191 (0, en el centro).
+    PitchBend {
+        channel: u8,
+        value: i16,
+    },
+    /// Presión (aftertouch) del canal entero; en MPE, la de la nota de ese
+    /// canal.
+    ChannelPressure {
+        channel: u8,
+        value: u8,
+    },
+    /// Presión de una nota (aftertouch polifónico).
+    PolyPressure {
+        channel: u8,
+        note: u8,
+        value: u8,
+    },
+    /// Un controlador (CC): en MPE, el 74 es el «slide» (timbre) de la nota.
+    Controller {
+        channel: u8,
+        number: u8,
+        value: u8,
+    },
     /// Pulso de reloj (24 por negra).
     Clock,
     Start,
@@ -37,11 +61,30 @@ pub struct TimedEvent {
 }
 
 /// Lee un mensaje. Una nota con velocidad 0 es un note off. Lo demás
-/// (controladores, sysex...), `None`.
+/// (cambio de programa, sysex...), `None`; también un byte de datos con el
+/// bit alto (no es un mensaje bien formado).
 pub fn parse(bytes: &[u8]) -> Option<MidiEvent> {
     let status = *bytes.first()?;
     let channel = (status & 0x0f) + 1;
+    if bytes[1..].iter().any(|b| b & 0x80 != 0) && status < 0xf0 {
+        return None;
+    }
     match (status & 0xf0, bytes.get(1), bytes.get(2)) {
+        (0xe0, Some(&lsb), Some(&msb)) => Some(MidiEvent::PitchBend {
+            channel,
+            value: (((msb as i16) << 7) | lsb as i16) - 8192,
+        }),
+        (0xd0, Some(&value), _) => Some(MidiEvent::ChannelPressure { channel, value }),
+        (0xa0, Some(&note), Some(&value)) => Some(MidiEvent::PolyPressure {
+            channel,
+            note,
+            value,
+        }),
+        (0xb0, Some(&number), Some(&value)) => Some(MidiEvent::Controller {
+            channel,
+            number,
+            value,
+        }),
         (0x90, Some(&note), Some(&0)) => Some(MidiEvent::NoteOff { channel, note }),
         (0x90, Some(&note), Some(&velocity)) => Some(MidiEvent::NoteOn {
             channel,
@@ -86,6 +129,13 @@ pub struct MidiConfig {
     pub channel: Option<u8>,
     /// El reloj MIDI pone el tempo (y Start/Stop, la marcha).
     pub clock: bool,
+    /// MPE: cada nota llega en su canal (del 2 al 16; el 1 es el maestro)
+    /// con su bend, su presión y su slide (ver `crate::expression`). Con
+    /// MPE, `channel` no filtra (las notas van por todos).
+    pub mpe: bool,
+    /// Semitonos del bend entero de una nota (el que dice el controlador);
+    /// `None`: 48 con MPE, 2 sin él.
+    pub bend: Option<u8>,
 }
 
 impl Default for MidiConfig {
@@ -94,6 +144,8 @@ impl Default for MidiConfig {
             base_note: 36,
             channel: None,
             clock: false,
+            mpe: false,
+            bend: None,
         }
     }
 }
@@ -225,9 +277,69 @@ mod tests {
         assert_eq!(parse(&[0xf8]), Some(MidiEvent::Clock));
         assert_eq!(parse(&[0xfa]), Some(MidiEvent::Start));
         assert_eq!(parse(&[0xfc]), Some(MidiEvent::Stop));
-        assert_eq!(parse(&[0xb0, 7, 100]), None, "controlador");
         assert_eq!(parse(&[0x90, 36]), None, "incompleto");
+        assert_eq!(parse(&[0xc0, 5]), None, "cambio de programa");
+        assert_eq!(parse(&[0x90, 0x80, 1]), None, "dato con el bit alto");
         assert_eq!(parse(&[]), None);
+    }
+
+    #[test]
+    fn expression_messages_parse() {
+        // Bend: 14 bits, LSB primero, centrado en 0x2000.
+        let bend = |lsb, msb| parse(&[0xe1, lsb, msb]);
+        assert_eq!(
+            bend(0, 0x40),
+            Some(MidiEvent::PitchBend {
+                channel: 2,
+                value: 0
+            })
+        );
+        assert_eq!(
+            bend(0, 0),
+            Some(MidiEvent::PitchBend {
+                channel: 2,
+                value: -8192
+            })
+        );
+        assert_eq!(
+            bend(0x7f, 0x7f),
+            Some(MidiEvent::PitchBend {
+                channel: 2,
+                value: 8191
+            })
+        );
+        assert_eq!(
+            bend(1, 0x40),
+            Some(MidiEvent::PitchBend {
+                channel: 2,
+                value: 1
+            })
+        );
+        assert_eq!(
+            parse(&[0xdf, 90]),
+            Some(MidiEvent::ChannelPressure {
+                channel: 16,
+                value: 90
+            })
+        );
+        assert_eq!(
+            parse(&[0xa3, 60, 33]),
+            Some(MidiEvent::PolyPressure {
+                channel: 4,
+                note: 60,
+                value: 33
+            })
+        );
+        assert_eq!(
+            parse(&[0xb4, 74, 127]),
+            Some(MidiEvent::Controller {
+                channel: 5,
+                number: 74,
+                value: 127
+            })
+        );
+        assert_eq!(parse(&[0xd0]), None, "presión sin valor");
+        assert_eq!(parse(&[0xe0, 0]), None, "bend incompleto");
     }
 
     #[test]
@@ -239,7 +351,7 @@ mod tests {
         let ch10 = MidiConfig {
             base_note: 60,
             channel: Some(10),
-            clock: false,
+            ..MidiConfig::default()
         };
         assert_eq!(ch10.slice_for(10, 62), Some(2));
         assert_eq!(ch10.slice_for(1, 62), None);

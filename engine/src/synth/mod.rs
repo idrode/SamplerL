@@ -696,6 +696,85 @@ impl Accent {
     };
 }
 
+/// Ejes de la expresión por nota (MPE y similares): cada nota que suena
+/// en vivo lleva su valor de cada eje ([`Synth::note_mod`]).
+pub const AXES: usize = 3;
+/// Pitch bend de la nota, en semitonos (la interfaz aplica el rango del
+/// controlador).
+pub const BEND: usize = 0;
+/// Presión de la nota (aftertouch por nota o del canal de la nota), de 0 a 1.
+pub const PRESSURE: usize = 1;
+/// Deslizar en vertical (CC74, «timbre» o «slide» en MPE), de 0 a 1.
+pub const SLIDE: usize = 2;
+/// Nombres de los ejes (los de `:mpe{}` en Lua).
+pub const AXIS_NAMES: [&str; AXES] = ["bend", "pressure", "slide"];
+
+/// Adónde va un eje de la expresión.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ExprTarget {
+    /// La altura de la nota, en semitonos.
+    Pitch,
+    /// El volumen de la nota: con `range` 1, la nota sigue el eje entero (en
+    /// 0, calla); con menos, solo esa parte.
+    Gain,
+    /// Un parámetro continuo que la voz lee muestra a muestra
+    /// ([`expressive`]): en octavas si es logarítmico (el corte), si no en
+    /// sus unidades; siempre dentro de su rango.
+    Param(usize),
+}
+
+/// Un eje asignado: adónde va, cuánto mueve el eje entero y con qué curva.
+/// El eje se lee como `x`: la presión y el slide, de 0 a 1; el bend, sus
+/// semitonos entre 12 (una octava de bend, `x` = 1). Lo que suma es
+/// `range · signo(x) · |x|^curve`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ExprMap {
+    pub target: ExprTarget,
+    pub range: f32,
+    pub curve: f32,
+}
+
+/// Rango de la curva de un eje.
+pub const EXPR_CURVE: std::ops::RangeInclusive<f32> = 0.1..=8.0;
+/// Lo más que mueve un eje: semitonos (pitch), octavas (corte) o unidades.
+pub const MAX_EXPR_RANGE: f32 = 48.0;
+
+/// Si un parámetro admite expresión por nota: los que la voz lee muestra a
+/// muestra (no los que se fijan por trozo: decay del filtro, glide,
+/// desafinado, apertura y las envolventes de las capas).
+pub fn expressive(param: usize) -> bool {
+    param < PARAM_COUNT
+        && !matches!(
+            param,
+            FILTER_DECAY | GLIDE | DETUNE | SPREAD | LAYER_ATTACK | LAYER_DECAY
+        )
+}
+
+impl ExprMap {
+    /// Lo que suma con el eje en `value` (ver [`ExprMap`]).
+    fn amount(&self, axis: usize, value: f32) -> f32 {
+        let x = if axis == BEND { value / 12.0 } else { value };
+        self.range * x.signum() * x.abs().powf(self.curve)
+    }
+
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if !(EXPR_CURVE.contains(&self.curve)
+            && (-MAX_EXPR_RANGE..=MAX_EXPR_RANGE).contains(&self.range))
+        {
+            return Err("expresión por nota: rango o curva fuera de rango");
+        }
+        match self.target {
+            ExprTarget::Param(k) if !expressive(k) => {
+                Err("expresión por nota: ese parámetro no se mueve por nota")
+            }
+            ExprTarget::Gain if !(0.0..=1.0).contains(&self.range) => {
+                Err("expresión por nota: el volumen va de 0 a 1")
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
 /// Cómo suena un sintetizador.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Patch {
@@ -740,6 +819,9 @@ pub struct Patch {
     pub analog: Option<Analog>,
     /// Valores de los parámetros continuos ([`PARAMS`]).
     pub params: [f32; PARAM_COUNT],
+    /// La expresión por nota: adónde va cada eje ([`AXES`]); sin ninguno,
+    /// las notas suenan como siempre.
+    pub expr: [Option<ExprMap>; AXES],
 }
 
 impl Patch {
@@ -774,6 +856,7 @@ impl Patch {
             layers: None,
             analog: None,
             params: PARAMS.map(|p| p.default),
+            expr: [None; AXES],
         }
     }
 
@@ -817,6 +900,9 @@ impl Patch {
             if !(p.min..=p.max).contains(value) {
                 return Err("parámetro del sintetizador fuera de rango");
             }
+        }
+        for map in self.expr.iter().flatten() {
+            map.validate()?;
         }
         for env in [&self.amp, &self.filter_env] {
             let ms = 0.0..=crate::instrument::MAX_ENVELOPE_MS;
@@ -964,6 +1050,17 @@ struct Voice {
     gate: u64,
     /// Robada o cortada: frames que le quedan al fundido.
     killed: Option<u32>,
+    /// La expresión de la nota: el valor de cada eje (suavizado) y al que
+    /// va.
+    expr: [f32; AXES],
+    expr_goal: [f32; AXES],
+    /// La nota acaba de empezar (no se ha ligado): su expresión inicial
+    /// entra sin suavizar.
+    expr_fresh: bool,
+    /// La nota tiene expresión (una nota MIDI en vivo: ver
+    /// [`Synth::set_expr`]); las demás (el patrón, los pads del teclado)
+    /// suenan sin ella, aunque el patch asigne ejes.
+    expressive: bool,
 }
 
 impl Default for Voice {
@@ -1010,6 +1107,10 @@ impl Default for Voice {
             sweep: 0.0,
             gate: HELD,
             killed: None,
+            expr: [0.0; AXES],
+            expr_goal: [0.0; AXES],
+            expr_fresh: false,
+            expressive: false,
         }
     }
 }
@@ -1073,6 +1174,12 @@ impl Voice {
         self.gate = ev.gate;
         self.killed = None;
         self.sub_note = ev.sub;
+        // La expresión es de la nota: la nueva empieza sin ella (la de una
+        // nota en vivo llega justo después, `Synth::set_expr`).
+        self.expr = [0.0; AXES];
+        self.expr_goal = [0.0; AXES];
+        self.expr_fresh = true;
+        self.expressive = false;
         self.amp.trigger();
         self.fenv.trigger();
         // Las capas suenan con la nota y su compás virtual empieza aquí.
@@ -1088,6 +1195,11 @@ impl Voice {
         self.born = born;
         self.key = ev.key;
         self.sub_note = ev.sub;
+        // La expresión de la nota ligada va hacia la de la nueva (sin
+        // saltar: se suaviza desde la que había).
+        self.expr_goal = [0.0; AXES];
+        self.expr_fresh = false;
+        self.expressive = false;
         self.target = ev.pitch;
         self.gain = ev.gain;
         self.accent = if ev.accent { 1.0 } else { 0.0 };
@@ -1119,6 +1231,7 @@ impl Voice {
 
 /// Lo que una voz necesita de un bloque: los parámetros al principio y al
 /// final (los interpola) y lo que se calcula una vez por bloque.
+#[derive(Clone, Copy)]
 struct Block<'a> {
     patch: &'a Patch,
     from: [f32; PARAM_COUNT],
@@ -1147,6 +1260,12 @@ struct Block<'a> {
     bar_length: u64,
     sample_rate: f32,
     fade: u32,
+    /// Con expresión por nota (solo entonces se miran los dos de abajo):
+    /// los semitonos de bend y el factor de volumen de la voz, al principio
+    /// y al final del bloque.
+    expr: bool,
+    bend: (f32, f32),
+    gain: (f32, f32),
 }
 
 /// Coeficiente de un polo de `ms` (99 % del camino en ese tiempo); con 0,
@@ -1367,6 +1486,14 @@ impl Voice {
                 }
                 self.dt = cycles(self.pitch, b.sample_rate);
             }
+            if b.expr {
+                // El bend de la nota, sobre la altura (con glide).
+                let bend = b.bend.0 + (b.bend.1 - b.bend.0) * t;
+                if bend != 0.0 || self.bent {
+                    self.dt = cycles(self.pitch + bend, b.sample_rate);
+                    self.bent = bend != 0.0;
+                }
+            }
             let (mut l, mut r, stereo, sub_on, sub) = match &patch.layers {
                 Some(layers) => {
                     self.layer_rhythm(layers, b, i as u64);
@@ -1456,7 +1583,10 @@ impl Voice {
                 + patch.accent.octaves * self.sweep;
             let g = warp(octaves.exp2(), b.sample_rate);
             let res = p(RESONANCE);
-            let level = self.amp.next(&b.amp) * self.gain * (1.0 + patch.accent.gain * accent);
+            let mut level = self.amp.next(&b.amp) * self.gain * (1.0 + patch.accent.gain * accent);
+            if b.expr {
+                level *= b.gain.0 + (b.gain.1 - b.gain.0) * t;
+            }
             let mut yl = self.filter[0].next(l, g, res, patch.filter);
             let mut yr = if stereo {
                 self.filter[1].next(r, g, res, patch.filter)
@@ -1585,8 +1715,13 @@ impl Voice {
             }
             // La altura que suena: la nota (con glide), el LFO y la deriva.
             let lfo_pitch = p(LFO_PITCH);
-            if moved || lfo_pitch > 0.0 || drift > 0.0 || self.bent {
-                let bend = lfo_pitch * lfo + drift * DRIFT_CENTS / 100.0 * self.drift;
+            let expr_bend = if b.expr {
+                b.bend.0 + (b.bend.1 - b.bend.0) * t
+            } else {
+                0.0
+            };
+            if moved || lfo_pitch > 0.0 || drift > 0.0 || self.bent || expr_bend != 0.0 {
+                let bend = lfo_pitch * lfo + drift * DRIFT_CENTS / 100.0 * self.drift + expr_bend;
                 self.dt = cycles(self.pitch + bend, b.sample_rate);
                 self.bent = bend != 0.0;
             }
@@ -1686,7 +1821,10 @@ impl Voice {
             } else {
                 yl
             };
-            let level = vca * self.gain * patch.level;
+            let mut level = vca * self.gain * patch.level;
+            if b.expr {
+                level *= b.gain.0 + (b.gain.1 - b.gain.0) * t;
+            }
             yl *= level;
             yr *= level;
             let drive = p(DRIVE);
@@ -1953,6 +2091,36 @@ impl Synth {
         }
     }
 
+    /// La expresión de la nota de la tecla `key` en el eje `axis` ([`AXES`]):
+    /// va a `value` suavizada. Sin esa nota sonando, nada.
+    pub fn note_mod(&mut self, key: u8, axis: usize, value: f32) {
+        if axis >= AXES {
+            return;
+        }
+        for voice in self.voices.iter_mut().filter(|v| v.is_voice()) {
+            if voice.key == Some(key) {
+                voice.expr_goal[axis] = value;
+            }
+        }
+    }
+
+    /// La expresión con la que empieza la nota número `born` (la que
+    /// devuelve [`Synth::note_on`]): ya, sin suavizar (si la nota se liga a
+    /// otra que sonaba, hacia ella, suavizada). Solo las notas con
+    /// expresión la siguen.
+    pub fn set_expr(&mut self, born: u64, expr: [f32; AXES]) {
+        for voice in self.voices.iter_mut().filter(|v| v.is_voice()) {
+            if voice.born == born {
+                voice.expr_goal = expr;
+                if voice.expr_fresh {
+                    voice.expr = expr;
+                }
+                voice.expr_fresh = false;
+                voice.expressive = true;
+            }
+        }
+    }
+
     /// Corta todas las voces con el fundido mínimo.
     pub fn kill(&mut self) {
         self.held_len = 0;
@@ -1980,6 +2148,9 @@ impl Synth {
             return;
         }
         let keep = (-(block as f32) / (crate::engine::GAIN_SMOOTHING_SECONDS * sr)).exp();
+        // La expresión por nota se suaviza por trozo (un polo de
+        // `EXPR_SMOOTHING_SECONDS`) y cada voz la interpola muestra a muestra.
+        let expr_follow = 1.0 - (-(block as f32) / (EXPR_SMOOTHING_SECONDS * sr)).exp();
         for (k, sub) in out.chunks_mut(2 * block).enumerate() {
             let frames = (k * block + sub.len() / 2) as f64;
             let steps = clock.steps + frames / clock.frames_per_step;
@@ -2045,9 +2216,26 @@ impl Synth {
                 bar_length: clock.bar_length,
                 sample_rate: sr,
                 fade: self.fade(),
+                expr: false,
+                bend: (0.0, 0.0),
+                gain: (1.0, 1.0),
             };
+            let expressive = patch.expr.iter().any(Option::is_some);
             for voice in self.voices.iter_mut().filter(|v| v.active) {
-                voice.render(sub, &b);
+                if expressive && voice.expressive {
+                    // Cada voz con su expresión: sus parámetros movidos.
+                    let from = voice.expr;
+                    for a in 0..AXES {
+                        voice.expr[a] += (voice.expr_goal[a] - voice.expr[a]) * expr_follow;
+                    }
+                    let mut own = b;
+                    own.expr = true;
+                    (own.from, own.bend.0, own.gain.0) = expressed(patch, &b.from, &from);
+                    (own.to, own.bend.1, own.gain.1) = expressed(patch, &b.to, &voice.expr);
+                    voice.render(sub, &own);
+                } else {
+                    voice.render(sub, &b);
+                }
             }
         }
     }
@@ -2058,6 +2246,44 @@ impl Synth {
             .iter()
             .all(|v| v.filter.iter().all(Filter::is_finite))
     }
+}
+
+/// Suavizado de la expresión por nota: el controlador manda sus valores a
+/// saltos (cada pocos ms, con 7 o 14 bits); sin suavizar, el corte o el
+/// volumen harían clic.
+const EXPR_SMOOTHING_SECONDS: f32 = 0.008;
+
+/// Los parámetros de una voz con su expresión `expr` (ver [`ExprMap`]),
+/// dentro de su rango, y sus semitonos de bend y su factor de volumen.
+fn expressed(
+    patch: &Patch,
+    base: &[f32; PARAM_COUNT],
+    expr: &[f32; AXES],
+) -> ([f32; PARAM_COUNT], f32, f32) {
+    let mut params = *base;
+    let (mut bend, mut gain) = (0.0, 1.0);
+    for (axis, map) in patch.expr.iter().enumerate() {
+        let Some(map) = map else { continue };
+        let amount = map.amount(axis, expr[axis]);
+        match map.target {
+            ExprTarget::Pitch => bend += amount,
+            ExprTarget::Gain => {
+                // `range` 1: el volumen es el eje (con su curva); menos, esa
+                // parte. El bend, por su tamaño.
+                gain *= (1.0 - map.range + amount.abs()).clamp(0.0, 1.0);
+            }
+            ExprTarget::Param(k) => {
+                let p = &PARAMS[k];
+                let value = if p.log {
+                    params[k] * amount.exp2()
+                } else {
+                    params[k] + amount
+                };
+                params[k] = value.clamp(p.min, p.max);
+            }
+        }
+    }
+    (params, bend, gain)
 }
 
 /// Renderiza notas sin el motor: `notes` son (frame de inicio, nota),
