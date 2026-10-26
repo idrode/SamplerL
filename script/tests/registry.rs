@@ -50,6 +50,7 @@ fn variable(receiver: Receiver) -> &'static str {
         Receiver::Bar => "c",
         Receiver::Scale => "escala",
         Receiver::Instrument => "inst",
+        Receiver::Group => "gr",
     }
 }
 
@@ -57,8 +58,11 @@ const PRELUDE: &str = r#"
 local s = sample("amen.wav")
 local amen = s:slice(8)
 local t = track("t", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
--- La pista que escuchan las plantillas con sidechain.
+-- La pista que escuchan las plantillas con sidechain (y las del grupo de
+-- la plantilla de group).
 track("kick", amen:slice_at(1))
+track("snare", amen:slice_at(3))
+local gr = group("gr", { "t" })
 local escala = scale("minor", "C")
 local inst = s:instrument({ root = "C3" })
 "#;

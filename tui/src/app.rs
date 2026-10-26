@@ -15,13 +15,14 @@ use crate::config::{Bound, Config, Keymap};
 use crate::diagnose;
 use crate::editing;
 use crate::model::{
-    BlockPickerView, BrowserView, ClashRow, ClashTableView, CompletionView, ErrorView,
+    BlockPickerView, BrowserView, ClashRow, ClashTableView, CompletionView, ErrorView, GroupView,
     InstrumentView, MasterView, PaletteView, SlotsView, SynthView, TimelineView, TrackView,
     TransportView, ViewModel, Waveform, error_line,
 };
 use crate::palette::{self, Action, Item};
 
 mod cue;
+mod macros;
 mod mouse;
 mod vim;
 pub use mouse::MouseAction;
@@ -247,6 +248,10 @@ pub struct App {
     sent_mix: [(bool, bool); MAX_TRACKS],
     status: Option<Status>,
     meters: [f32; MAX_TRACKS],
+    /// Medidor de cada grupo (pico con caída).
+    group_meters: [f32; engine::MAX_GROUPS],
+    /// Panel de las macros abierto, con la elegida.
+    macro_panel: Option<usize>,
     /// Medidor del master (pico antes del limitador, con caída; puede
     /// pasar de 1).
     master_meter: f32,
@@ -398,6 +403,8 @@ impl App {
             sent_mix: [(false, false); MAX_TRACKS],
             status: None,
             meters: [0.0; MAX_TRACKS],
+            group_meters: [0.0; engine::MAX_GROUPS],
+            macro_panel: None,
             master_meter: 0.0,
             limiting_until: None,
             clipping_until: None,
@@ -1791,6 +1798,11 @@ impl App {
                     self.live_note_off(note);
                 }
             }
+            MidiEvent::Controller {
+                channel,
+                number,
+                value,
+            } if self.midi_macro(channel, number, value) => {}
             MidiEvent::PitchBend { .. }
             | MidiEvent::ChannelPressure { .. }
             | MidiEvent::PolyPressure { .. }
@@ -3154,6 +3166,7 @@ impl App {
             Action::Browser => self.open_browser(),
             Action::EditTracker => self.open_tracker_edit(),
             Action::TapTempo => self.start_tap(Instant::now()),
+            Action::Macros => self.open_macros(),
             Action::Record => {
                 if self.recording.is_some() {
                     self.finish_recording();
@@ -3432,6 +3445,7 @@ impl App {
     /// Vacía los medidores y los avisos de saturación.
     pub fn reset_meters(&mut self) {
         self.meters = [0.0; MAX_TRACKS];
+        self.group_meters = [0.0; engine::MAX_GROUPS];
         self.master_meter = 0.0;
         self.limiting_until = None;
         self.clipping_until = None;
@@ -3560,6 +3574,9 @@ impl App {
         }
         if self.tapping.is_some() {
             return self.handle_tap(input);
+        }
+        if self.macro_panel.is_some() {
+            return self.handle_macros(input);
         }
         if let Some(op) = self.slot_prompt.take() {
             match input.key {
@@ -3818,6 +3835,9 @@ impl App {
                 self.track_clip_until[t] = hold;
             }
         }
+        for (meter, peak) in self.group_meters.iter_mut().zip(status.groups) {
+            *meter = peak.max(*meter * METER_DECAY).min(1.0);
+        }
         self.master_meter = status.master.peak.max(self.master_meter * METER_DECAY);
         if status.master.limited_frames > 0 {
             self.limiting_until = hold;
@@ -3935,6 +3955,12 @@ impl App {
                                         .collect(),
                                 })
                                 .collect(),
+                            group: self.host.song().and_then(|song| {
+                                song.groups
+                                    .iter()
+                                    .find(|g| g.tracks.contains(&t.name))
+                                    .map(|g| g.name.clone())
+                            }),
                         }
                     })
                     .collect()
@@ -3976,7 +4002,39 @@ impl App {
                     cue: self.cue_entry(),
                 }
             });
+        let groups = self.host.song().map_or_else(Vec::new, |song| {
+            song.groups
+                .iter()
+                .enumerate()
+                .map(|(g, def)| GroupView {
+                    name: def.name.clone(),
+                    tracks: def.tracks.clone(),
+                    gain: def.gain,
+                    pan: def.pan,
+                    sends: def.sends,
+                    mix_moving: def.mix_curves.map(|c| c.is_some()),
+                    fx: def.fx.clone(),
+                    automated: def
+                        .automation
+                        .iter()
+                        .filter_map(|a| {
+                            let name = def.fx.get(a.fx)?.params().get(a.param)?;
+                            Some((a.fx, *name))
+                        })
+                        .collect(),
+                    level: self.group_meters.get(g).copied().unwrap_or(0.0),
+                })
+                .collect()
+        });
         let mut view = ViewModel {
+            groups,
+            macros: self
+                .host
+                .macros()
+                .iter()
+                .map(|m| (m.name.clone(), m.value))
+                .collect(),
+            macro_panel: self.macro_panel,
             vim: self.vim.as_ref().map(vim::Vim::label),
             timeline,
             cue: self.cue.map(|bar| self.cue_text(bar)),

@@ -7,6 +7,7 @@ pub mod bus;
 mod engine;
 mod fx;
 pub mod grain;
+pub mod group;
 pub mod instrument;
 mod interp;
 mod limiter;
@@ -27,7 +28,8 @@ pub mod synth;
 
 pub use arrangement::{Arrangement, MAX_ENTRIES, MAX_SECTIONS};
 pub use automation::{
-    Automation, Curve, LfoRate, MAX_AUTOMATIONS, MIX_GAIN, MIX_PAN, MIX_PARAMS, MIX_SEND, MixCurves,
+    Automation, Curve, LfoRate, MAX_AUTOMATIONS, MAX_MACROS, MIX_GAIN, MIX_PAN, MIX_PARAMS,
+    MIX_SEND, Macros, MixCurves,
 };
 pub use bpm::{BpmGuess, detect_bpm};
 pub use bus::{Buses, DelayParams, Division, ReverbParams};
@@ -42,6 +44,7 @@ pub use fx::{
     EQ_Q_RANGE, EqBand, EqKind, FilterKind, Fx, MAX_FX, MAX_LEVEL, MAX_PARAMS,
 };
 pub use grain::{GRAIN_PARAMS, Granular, Knob, MAX_GRAINS};
+pub use group::{Group, Groups, MAX_GROUPS};
 pub use instrument::{Adsr, Instrument, MAX_VOICES};
 pub use limiter::{LIMIT_THRESHOLD, soft_limit};
 pub use output::{NullOutput, Output, open_null_output, open_output};

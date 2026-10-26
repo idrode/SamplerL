@@ -208,6 +208,7 @@ pub(crate) struct BusClock {
     pub steps: f64,
     pub seconds: f64,
     pub frames_per_step: f64,
+    pub macros: crate::automation::Macros,
 }
 
 impl Rack {
@@ -228,11 +229,12 @@ impl Rack {
     /// `seconds`: los fijos, o los de su curva suavizados desde el bloque
     /// anterior (`keep`). Un parámetro sin curva que vuelve a su valor fijo
     /// deja de moverse.
-    fn drive(&mut self, steps: f64, seconds: f64, keep: f32) -> Buses {
+    fn drive(&mut self, clock: &BusClock, steps: f64, seconds: f64, keep: f32) -> Buses {
         let mut params = self.params;
         for (i, current) in self.moving.iter_mut().enumerate() {
             let fixed = self.params.value(i);
-            let target = self.params.curves[i].map(|c| c.value(steps, seconds, false));
+            let target =
+                self.params.curves[i].map(|c| c.value(steps, seconds, &clock.macros, false));
             if target.is_none() && current.is_none() {
                 continue;
             }
@@ -280,6 +282,7 @@ impl Rack {
             if curved {
                 let offset = start as f64;
                 params = self.drive(
+                    clock,
                     clock.steps + offset / clock.frames_per_step,
                     clock.seconds + offset / rate as f64,
                     keep,

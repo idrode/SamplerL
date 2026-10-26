@@ -77,7 +77,7 @@ fn the_track_pitch_curve_transposes_each_hit_by_its_value() {
         .unwrap();
     let audio = render(moving, 16);
     for k in 0..16 {
-        let st = curve.value(k as f64, 0.0, false);
+        let st = curve.value(k as f64, 0.0, &[0.0; engine::MAX_MACROS], false);
         let fixed = Pattern::from_steps(
             sample.clone(),
             &slices,
@@ -203,7 +203,14 @@ fn shape_curves_give_each_hit_its_value() {
             .unwrap()
             .with_gate(true);
         let audio = render(moving, 16);
-        let value = |k: usize| curve.value(k as f64, k as f64 * STEP as f64 / RATE as f64, false);
+        let value = |k: usize| {
+            curve.value(
+                k as f64,
+                k as f64 * STEP as f64 / RATE as f64,
+                &[0.0; engine::MAX_MACROS],
+                false,
+            )
+        };
         let mut differ = 0;
         for k in 0..16 {
             let mut steps = vec![None; 16];
@@ -262,7 +269,7 @@ fn the_formant_curve_gives_each_kept_hit_its_value() {
         .unwrap();
     let audio = render(moving, 16);
     for k in [0, 3, 8, 15] {
-        let value = curve.value(k as f64, 0.0, false);
+        let value = curve.value(k as f64, 0.0, &[0.0; engine::MAX_MACROS], false);
         let fixed = Pattern::from_steps(sample.clone(), &slices, only(k, kept))
             .unwrap()
             .with_formant(Some(value))

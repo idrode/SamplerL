@@ -121,6 +121,7 @@ mod tests {
             global: 0,
             bar_steps: 16,
             tracks: Default::default(),
+            groups: Default::default(),
             master: Default::default(),
             section: None,
             section_lost: false,

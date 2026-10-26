@@ -28,6 +28,8 @@ pub enum Receiver {
     Scale,
     /// Instrumento: `sample("..."):instrument({ ... })`.
     Instrument,
+    /// Grupo de pistas: `group("bateria", { ... })`.
+    Group,
 }
 
 impl Receiver {
@@ -41,6 +43,7 @@ impl Receiver {
             Receiver::Bar => "compás",
             Receiver::Scale => "escala",
             Receiver::Instrument => "instrumento",
+            Receiver::Group => "grupo",
         }
     }
 }
@@ -745,6 +748,116 @@ pub const FUNCTIONS: &[Function] = &[
         ),
     },
     Function {
+        name: "group",
+        receiver: Receiver::Global,
+        signature: "group(nombre, pistas)",
+        returns: Some(Receiver::Group),
+        summary: "Junta varias pistas: se suman y pasan juntas por los efectos, el volumen, el pan y los envíos del grupo.",
+        doc: "Cada pista del grupo manda su salida (después de su volumen, pan, mute y \
+              solo) al grupo en vez de al master; el grupo pasa la suma por su cadena \
+              (`grupo:fx`, como la de una pista) y la manda al master con su volumen y \
+              su pan. Así un compresor o una saturación reaccionan a todas a la vez, \
+              como en una mesa de mezclas. Los envíos de cada pista (`pista:send`) no \
+              pasan por el grupo; los del grupo (`grupo:send`) mandan la suma. Cada \
+              pista va a un grupo como mucho, y hay 4 grupos; un grupo no va a otro. \
+              Es de toda la canción (va fuera de `section()`) y entra al empezar el \
+              compás, como los buses. Para cambiar uno ya creado, `group(nombre)` sin \
+              la lista. Las pistas pueden definirse después; si alguna no existe, \
+              error.",
+        params: &[
+            Param {
+                name: "nombre",
+                description: "nombre del grupo",
+            },
+            Param {
+                name: "pistas",
+                description: "lista de nombres de pista: `{ \"kick\", \"snare\" }` (sin ella, el grupo ya creado)",
+            },
+        ],
+        template: "group(\"${bateria}\", { \"${kick}\", \"${snare}\" })",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             track(\"kick\", amen:slice_at(1)):steps(\"x . . .  x . . .  x . . .  x . . .\")\n\
+             track(\"caja\", amen:slice_at(3)):steps(\". . . .  x . . .  . . . .  x . . .\")\n\
+             -- El compresor oye las dos a la vez y las pega.\n\
+             group(\"bateria\", { \"kick\", \"caja\" })\n  \
+             :fx(\"compressor\", { threshold = -20, ratio = 4, makeup = 3 })\n  \
+             :gain(0.9)\n  \
+             :send(\"reverb\", 0.1)\n",
+        ),
+    },
+    Function {
+        name: "fx",
+        receiver: Receiver::Group,
+        signature: "grupo:fx(nombre, parámetros)",
+        returns: Some(Receiver::Group),
+        summary: "Añade un efecto a la cadena del grupo (sobre la suma de sus pistas).",
+        doc: "Los mismos efectos y parámetros que `pista:fx` (hasta 4, en orden), con \
+              `ramp()`, `lfo()` y `macro()` en los que se mueven. El `sidechain` del \
+              EQ dinámico puede ser cualquier pista, también una del grupo.",
+        params: &[
+            Param {
+                name: "nombre",
+                description: "efecto (los de `pista:fx`)",
+            },
+            Param {
+                name: "parámetros",
+                description: "tabla con sus parámetros",
+            },
+        ],
+        template: "fx(\"${compressor}\", { threshold = ${-20}, ratio = ${4} })",
+        example: None,
+    },
+    Function {
+        name: "gain",
+        receiver: Receiver::Group,
+        signature: "grupo:gain(g)",
+        returns: Some(Receiver::Group),
+        summary: "Volumen del grupo (lineal, 0 a 4), después de sus efectos.",
+        doc: "Se suma al de cada pista. Admite `ramp()`, `lfo()` y `macro()`.",
+        params: &[Param {
+            name: "g",
+            description: "volumen (1 = tal cual), `ramp()`, `lfo()` o `macro()`",
+        }],
+        template: "gain(${0.8})",
+        example: None,
+    },
+    Function {
+        name: "pan",
+        receiver: Receiver::Group,
+        signature: "grupo:pan(p)",
+        returns: Some(Receiver::Group),
+        summary: "Pan del grupo (-1 izquierda, 1 derecha), después de su volumen.",
+        doc: "Admite `ramp()`, `lfo()` y `macro()`.",
+        params: &[Param {
+            name: "p",
+            description: "de -1 a 1, `ramp()`, `lfo()` o `macro()`",
+        }],
+        template: "pan(${-0.3})",
+        example: None,
+    },
+    Function {
+        name: "send",
+        receiver: Receiver::Group,
+        signature: "grupo:send(bus, nivel)",
+        returns: Some(Receiver::Group),
+        summary: "Manda la suma del grupo (tras su volumen y su pan) al delay o a la reverb.",
+        doc: "Aparte de los envíos de cada pista, que no pasan por el grupo. Admite \
+              `ramp()`, `lfo()` y `macro()`.",
+        params: &[
+            Param {
+                name: "bus",
+                description: "`\"delay\"` o `\"reverb\"`",
+            },
+            Param {
+                name: "nivel",
+                description: "cuánto se manda (0 a 1)",
+            },
+        ],
+        template: "send(\"${reverb}\", ${0.3})",
+        example: None,
+    },
+    Function {
         name: "euclid",
         receiver: Receiver::Global,
         signature: "euclid(k, n [, golpe [, pasos]])",
@@ -967,6 +1080,68 @@ pub const FUNCTIONS: &[Function] = &[
              :fx(\"lowpass\", { cutoff = lfo(\"2 compases\", 400, 6000), q = 2 })\n  \
              :fx(\"distortion\", { drive = 6, mix = lfo(0.5, 0, 0.8) })\n",
         ),
+    },
+    Function {
+        name: "macro",
+        receiver: Receiver::Global,
+        signature: "macro(nombre, desde, hasta)",
+        returns: None,
+        summary: "Valor que sigue a una macro: un control de 0 a 1 que se mueve en vivo (en lugar de un número).",
+        doc: "Como `ramp` y `lfo`, va en lugar de un número, en los mismos sitios (la \
+              tabla de «Qué se puede automatizar», justo antes): con la macro a 0 vale \
+              `desde`, a 1 `hasta` (las frecuencias, en escala logarítmica). Varios \
+              parámetros pueden seguir la misma macro, cada uno con su rango, en una o \
+              en varias pistas y grupos: al moverla se mueven todos a la vez, ya, sin \
+              esperar al compás y sin clics. Se mueve desde «Macros» en la paleta o \
+              con un control MIDI (`[midi] macros` en la configuración). Empieza en 0, \
+              o en lo que diga `macro_init`; recargar el script la deja donde se haya \
+              puesto. Hay 8 macros como mucho; su número es el orden en que aparecen.",
+        params: &[
+            Param {
+                name: "nombre",
+                description: "nombre de la macro",
+            },
+            Param {
+                name: "desde",
+                description: "valor con la macro a 0",
+            },
+            Param {
+                name: "hasta",
+                description: "valor con la macro a 1",
+            },
+        ],
+        template: "macro(\"${brillo}\", ${300}, ${8000})",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             macro_init(\"brillo\", 0.5)\n\
+             track(\"drums\", amen)\n  \
+             :steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\")\n  \
+             -- Una macro abre el filtro y sube la reverb a la vez.\n  \
+             :fx(\"lowpass\", { cutoff = macro(\"brillo\", 300, 9000) })\n  \
+             :send(\"reverb\", macro(\"brillo\", 0, 0.4))\n",
+        ),
+    },
+    Function {
+        name: "macro_init",
+        receiver: Receiver::Global,
+        signature: "macro_init(nombre, valor)",
+        returns: None,
+        summary: "Valor con el que empieza una macro (0 a 1).",
+        doc: "Lo toma al cargar el script por primera vez, y al exportar. Después la \
+              macro se queda donde se mueva en vivo, salvo que se cambie este valor en \
+              el script. Va fuera de `section()`.",
+        params: &[
+            Param {
+                name: "nombre",
+                description: "nombre de la macro",
+            },
+            Param {
+                name: "valor",
+                description: "de 0 a 1",
+            },
+        ],
+        template: "macro_init(\"${brillo}\", ${0.5})",
+        example: None,
     },
     Function {
         name: "scale",

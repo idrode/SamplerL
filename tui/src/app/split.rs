@@ -158,6 +158,7 @@ fn opens_in_main(action: Action) -> bool {
         action,
         Action::Browser
             | Action::TapTempo
+            | Action::Macros
             | Action::AnalyzeMasking
             | Action::Record
             | Action::JumpSection

@@ -1,0 +1,10 @@
+-- 15-grupo-bateria.lua
+bpm(170)
+local amen = sample("amen.wav"):slice(8)
+track("kick", amen:slice_at(1)):steps("x . . .  . . x .  . . . .  . x . .")
+track("caja", amen:slice_at(3)):steps(". . . .  x . . .  . . . .  x . . x")
+track("hats", amen:slice_at(6)):steps("x x x x  x x x x  x x x x  x x x x"):gain(0.4)
+group("bateria", { "kick", "caja", "hats" })
+  :fx("compressor", { threshold = -22, ratio = 4, attack = 10, makeup = 4 })
+  :fx("distortion", { drive = 2, mix = 0.3 })
+  :send("reverb", 0.1)

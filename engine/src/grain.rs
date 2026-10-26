@@ -35,7 +35,7 @@
 
 use std::sync::Arc;
 
-use crate::automation::Curve;
+use crate::automation::{Curve, Macros};
 use crate::sample::Sample;
 
 /// Granos que pueden sonar a la vez en una pista.
@@ -49,11 +49,12 @@ pub enum Knob {
 }
 
 impl Knob {
-    /// Valor en la posición de la canción (`steps` pasos, `seconds`).
-    pub fn at(&self, steps: f64, seconds: f64, log: bool) -> f32 {
+    /// Valor en la posición de la canción (`steps` pasos, `seconds`) con
+    /// las macros en `macros`.
+    pub fn at(&self, steps: f64, seconds: f64, macros: &Macros, log: bool) -> f32 {
         match self {
             Knob::Fixed(v) => *v,
-            Knob::Moving(curve) => curve.value(steps, seconds, log),
+            Knob::Moving(curve) => curve.value(steps, seconds, macros, log),
         }
     }
 
@@ -171,9 +172,9 @@ impl Granular {
         Ok(())
     }
 
-    fn values(&self, steps: f64, seconds: f64) -> [f32; 7] {
+    fn values(&self, steps: f64, seconds: f64, macros: &Macros) -> [f32; 7] {
         let knobs = self.knobs();
-        std::array::from_fn(|i| knobs[i].at(steps, seconds, GRAIN_PARAMS[i].4))
+        std::array::from_fn(|i| knobs[i].at(steps, seconds, macros, GRAIN_PARAMS[i].4))
     }
 }
 
@@ -289,6 +290,7 @@ pub(crate) struct Position {
     pub seconds: f64,
     pub frames_per_step: f64,
     pub sample_rate: u32,
+    pub macros: Macros,
 }
 
 impl Cloud {
@@ -392,7 +394,7 @@ impl Cloud {
             if let Some(e) = &mut self.emission {
                 if e.next <= 0.0 {
                     let [size_ms, density, position, _, jitter_ms, pitch, spread] =
-                        params.values(steps, seconds);
+                        params.values(steps, seconds, &at.macros);
                     // Azar de este grano: la semilla y el frame de la canción
                     // (en vivo, el reloj de la emisión).
                     let clock = match &e.live {
@@ -445,7 +447,7 @@ impl Cloud {
                     live.elapsed += 1;
                 }
                 // La lectura avanza con la velocidad de ese momento.
-                e.scan += params.speed.at(steps, seconds, false) as f64;
+                e.scan += params.speed.at(steps, seconds, &at.macros, false) as f64;
                 if e.left == 0 {
                     done = self.emission.take();
                 }

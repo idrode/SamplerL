@@ -7,11 +7,22 @@
 //! en escala logarítmica para las frecuencias) antes de pasarlo al efecto:
 //! nada salta de golpe ni hace clic. Los valores por paso (`3~800`, el
 //! corte del primer filtro de la pista) se suavizan igual.
+//!
+//! Una macro ([`Curve::Macro`]) es la excepción: no depende de la posición
+//! sino de un valor de 0 a 1 que se mueve en vivo
+//! ([`crate::Controller::set_macro`]); el motor lo pasa a cada evaluación
+//! ([`Macros`]) y se suaviza igual que las curvas.
 
 use crate::fx::Fx;
 
 /// Automatizaciones por pista como máximo.
 pub const MAX_AUTOMATIONS: usize = 8;
+
+/// Macros como máximo.
+pub const MAX_MACROS: usize = 8;
+
+/// El valor de cada macro (de 0 a 1) en el momento de evaluar una curva.
+pub type Macros = [f32; MAX_MACROS];
 
 /// Velocidad de un LFO.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -37,21 +48,39 @@ pub enum Curve {
     /// queda en `to`. Solo vale en los efectos de un paso (la voz sabe
     /// cuándo sonó su paso).
     Hit { from: f32, to: f32, steps: f64 },
+    /// Sigue a la macro `index`: `from` con la macro a 0 y `to` a 1 (las
+    /// frecuencias, en escala logarítmica).
+    Macro { index: u8, from: f32, to: f32 },
 }
 
 impl Curve {
     /// Valor en la posición `steps` de la canción (pasos con decimales
-    /// desde que arrancó) y `seconds` (segundos desde que arrancó). Con
-    /// `log`, se interpola en escala logarítmica (frecuencias).
-    pub fn value(&self, steps: f64, seconds: f64, log: bool) -> f32 {
-        self.value_at(steps, seconds, 0.0, log)
+    /// desde que arrancó) y `seconds` (segundos desde que arrancó), con las
+    /// macros en `macros`. Con `log`, se interpola en escala logarítmica
+    /// (frecuencias).
+    pub fn value(&self, steps: f64, seconds: f64, macros: &Macros, log: bool) -> f32 {
+        self.value_at(steps, seconds, 0.0, macros, log)
     }
 
     /// Como [`Curve::value`], para una curva que suena en un golpe cuyo
     /// paso cayó en `origin` (pasos de la canción): la rampa de un golpe
     /// cuenta desde ahí; las demás, desde que arrancó la canción.
-    pub fn value_at(&self, steps: f64, seconds: f64, origin: f64, log: bool) -> f32 {
+    pub fn value_at(
+        &self,
+        steps: f64,
+        seconds: f64,
+        origin: f64,
+        macros: &Macros,
+        log: bool,
+    ) -> f32 {
         let (a, b, t) = match *self {
+            Curve::Macro { index, from, to } => (
+                from,
+                to,
+                macros
+                    .get(index as usize)
+                    .map_or(0.0, |v| v.clamp(0.0, 1.0) as f64),
+            ),
             Curve::Hit {
                 from,
                 to,
@@ -77,7 +106,9 @@ impl Curve {
     /// Los dos extremos de la curva.
     pub fn bounds(&self) -> (f32, f32) {
         match *self {
-            Curve::Ramp { from, to, .. } | Curve::Hit { from, to, .. } => (from, to),
+            Curve::Ramp { from, to, .. }
+            | Curve::Hit { from, to, .. }
+            | Curve::Macro { from, to, .. } => (from, to),
             Curve::Lfo { min, max, .. } => (min, max),
         }
     }
@@ -166,6 +197,9 @@ pub(crate) fn check_curve(curve: &Curve) -> Result<(), &'static str> {
             ..
         } if !(steps >= 1.0 && steps.is_finite()) => {
             Err("un ciclo del LFO tiene que durar al menos un paso")
+        }
+        Curve::Macro { index, .. } if index as usize >= MAX_MACROS => {
+            Err("no existe esa macro (hay 8)")
         }
         _ => Ok(()),
     }

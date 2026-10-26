@@ -2,7 +2,7 @@
 //! asignador global cuenta las reservas que hace este hilo mientras corre
 //! `Engine::process`, con retrasos (swing, humanize), retrigger, pitch,
 //! instrumentos (polifonía, ADSR, bucles), el EQ (suavizado y automatizado),
-//! el EQ dinámico con sidechain, efectos por corte (con sus colas), bucles de corte con fundido, nubes de granos en vivo, sintetizadores (mono con accent, slide y el sub de cada nota, polifónicos con unison y sub abierto, un subharm de 8 voces con sus seis capas, un sh101 con legato, curvas y notas en vivo), cambios de
+//! el EQ dinámico con sidechain, efectos por corte (con sus colas), bucles de corte con fundido, nubes de granos en vivo, sintetizadores (mono con accent, slide y el sub de cada nota, polifónicos con unison y sub abierto, un subharm de 8 voces con sus seis capas, un sh101 con legato, curvas y notas en vivo), grupos con sus efectos y macros que se mueven en vivo, cambios de
 //! patrón al compás, un patrón que se suelta a la cola de basura y el paso
 //! de cada pista y el retardo de salida que se publican para la interfaz.
 
@@ -1413,6 +1413,71 @@ fn the_audio_thread_never_allocates() {
         }
     });
     assert_eq!(n, 0, "reservas al parar y arrancar");
+
+    // Grupos: dos pistas a uno con compresor, un filtro que sigue a una
+    // macro, un EQ dinámico que escucha a la pista 6 y envíos con curva;
+    // otra a un segundo grupo con distorsión. Las macros se mueven en vivo.
+    let macro_cutoff = engine::Automation {
+        fx: 1,
+        param: 0,
+        curve: engine::Curve::Macro {
+            index: 0,
+            from: 300.0,
+            to: 8000.0,
+        },
+    };
+    let glue = engine::Group::new()
+        .with_fx(&[
+            Fx::compressor(-24.0, 4.0),
+            Fx::lowpass(2000.0),
+            Fx::DynEq(engine::DynEqParams::new(200.0).with_sidechain(6)),
+        ])
+        .unwrap()
+        .with_automation(&[macro_cutoff])
+        .unwrap()
+        .with_sends([0.3, 0.5])
+        .unwrap()
+        .with_mix_automation({
+            let mut curves = [None; engine::MIX_PARAMS];
+            curves[engine::MIX_GAIN] = Some(engine::Curve::Lfo {
+                min: 0.5,
+                max: 1.0,
+                rate: engine::LfoRate::Hz(2.0),
+            });
+            curves[engine::MIX_PAN] = Some(engine::Curve::Macro {
+                index: 1,
+                from: -1.0,
+                to: 1.0,
+            });
+            curves
+        })
+        .unwrap();
+    let mut groups = engine::Groups::new();
+    groups.groups[0] = Some(glue);
+    groups.groups[1] = Some(
+        engine::Group::new()
+            .with_fx(&[Fx::distortion(6.0, 0.5)])
+            .unwrap(),
+    );
+    groups.member[0] = Some(0);
+    groups.member[5] = Some(0);
+    groups.member[3] = Some(1);
+    let mut batch = engine::Batch::new();
+    batch
+        .set_groups(groups)
+        .set_macros([0.5; engine::MAX_MACROS]);
+    controller.apply(batch).unwrap();
+    let n = counted(|| {
+        for k in 0..400 {
+            if k % 10 == 0 {
+                controller
+                    .set_macro(k / 10 % 2, (k % 70) as f32 / 70.0)
+                    .unwrap();
+            }
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas con grupos y macros");
 
     // Arrancar en un compás cualquiera (con la rampa de tempo: cuenta sus
     // compases de antes).

@@ -1,0 +1,10 @@
+-- 16-macro-subidon.lua
+bpm(170)
+macro_init("tension", 0)
+bus("delay", { time = "3/16", feedback = macro("tension", 0.2, 0.7) })
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen)
+  :steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+  :fx("lowpass", { cutoff = macro("tension", 600, 12000), q = 1.5 })
+  :send("reverb", macro("tension", 0, 0.35))
+  :send("delay", 0.2)

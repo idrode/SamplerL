@@ -2395,6 +2395,7 @@ mod formant;
 mod grains;
 mod grains_live;
 mod grid;
+mod groups_macros;
 mod highlight;
 mod history;
 mod import;

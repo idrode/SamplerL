@@ -627,3 +627,9 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
    el sample entero (es `slice_grid(1)`); las llaves en `melody()` dicen
    dónde valen; «1 compás» en singular; y `tui --edit` con una ruta que
    no existe es un error, salvo con `--new`.
+10. ✅ **Grupos y macros**: `group(nombre, pistas)` suma varias pistas y
+    las pasa juntas por su cadena de efectos, volumen, pan y envíos (4
+    grupos, un nivel: no es el mezclador con buses de «fuera de
+    alcance»); `macro(nombre, desde, hasta)` es un valor de 0 a 1 que
+    siguen los parámetros en lugar de un número, y se mueve en vivo desde
+    la paleta («Macros») o con un CC (`[midi] macros`).

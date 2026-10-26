@@ -10,6 +10,7 @@
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering::Relaxed};
 
 use crate::engine::MAX_TRACKS;
+use crate::group::MAX_GROUPS;
 use crate::sequencer::frames_per_step;
 
 /// Etiqueta de patrón más alta ([`crate::Pattern::with_tag`]): va en 20
@@ -32,6 +33,8 @@ pub struct Status {
     /// Pasos del compás que suena (16 en 4/4).
     pub bar_steps: usize,
     pub tracks: [TrackStatus; MAX_TRACKS],
+    /// Pico de cada grupo (tras su volumen) desde la lectura anterior.
+    pub groups: [f32; MAX_GROUPS],
     pub master: MasterStatus,
     /// Con un arreglo: dónde va la canción en la línea de tiempo.
     pub section: Option<SectionStatus>,
@@ -120,6 +123,7 @@ pub(crate) struct SharedStatus {
     /// altavoces, y la frecuencia del motor (para pasarlos a pasos).
     output_delay: AtomicU64,
     sample_rate: AtomicU32,
+    group_peak: [AtomicU32; MAX_GROUPS],
     master_peak: AtomicU32,
     limited: AtomicU64,
     section_entry: AtomicU64,
@@ -145,6 +149,7 @@ impl SharedStatus {
             cursor: std::array::from_fn(|_| AtomicU64::new(NONE)),
             output_delay: AtomicU64::new(0),
             sample_rate: AtomicU32::new(sample_rate),
+            group_peak: std::array::from_fn(|_| AtomicU32::new(0)),
             master_peak: AtomicU32::new(0),
             limited: AtomicU64::new(0),
             section_entry: AtomicU64::new(NONE),
@@ -215,6 +220,13 @@ impl SharedStatus {
     pub fn add_peak(&self, track: usize, peak: f32) {
         if peak > 0.0 && peak.is_finite() {
             self.peak[track].fetch_max(peak.to_bits(), Relaxed);
+        }
+    }
+
+    /// Acumula el pico de un grupo.
+    pub fn add_group_peak(&self, group: usize, peak: f32) {
+        if peak > 0.0 && peak.is_finite() {
+            self.group_peak[group].fetch_max(peak.to_bits(), Relaxed);
         }
     }
 
@@ -304,6 +316,7 @@ impl SharedStatus {
                 grains: self.grains[t].swap(0, Relaxed),
                 cursor: cursor(self.cursor[t].load(Relaxed)),
             }),
+            groups: std::array::from_fn(|g| f32::from_bits(self.group_peak[g].swap(0, Relaxed))),
             master: MasterStatus {
                 peak: f32::from_bits(self.master_peak.swap(0, Relaxed)),
                 limited_frames: self.limited.swap(0, Relaxed),

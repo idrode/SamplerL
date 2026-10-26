@@ -60,7 +60,12 @@ la sección 4 (con sus parámetros, rangos y un ejemplo cada una).
   distorsión, volumen (`gain`), EQ de 4 bandas y EQ dinámico con
   sidechain; y los mismos por corte (`cortes:fx`).
 - Moverlos en el tiempo con `ramp()` y `lfo()`, o por paso con `~`.
+- Macros (`macro`): un control de 0 a 1 que mueve a la vez varios
+  parámetros de varias pistas, en vivo desde la paleta («Macros») o con
+  un control MIDI.
 - Delay y reverb como envíos (`bus`, `pista:send`).
+- Grupos de pistas (`group`): se suman y pasan juntas por sus efectos (un
+  compresor que pega la batería), su volumen, su pan y sus envíos.
 - Instrumentos con polifonía y ADSR (`sample:instrument`), transponer sin
   cambiar la duración (`%`, `keep`) y conservar los formantes
   (`pista:formant`).
@@ -231,12 +236,18 @@ Abajo, una columna por pista. Cada una dice:
 | `· formant 0`, `· formant -3` | Formantes al transponer con `%` |
 | `· ⁘ 80 ms · 20/s`, `· ❄ 0.4 · 120 ms · 25/s` | Granos (tamaño y densidad) o congelado (posición); `∿` si se mueve con `ramp`/`lfo` |
 | `· choke 1` | Grupo de choke |
+| `· ▣ bateria` | Va al grupo `bateria` (`group`) |
 | `vol 0.70 ███░░` y `→ d0.30 r0.15` | Volumen de la pista (`:gain`) y sus envíos al delay y a la reverb |
 | `nivel ███░░`, `SAT` | Lo que suena ahora; `SAT` si la pista sola pasa de ±1 |
 | `◇ 3 snare › crush 6b ÷1 · LP 800 Hz` | Efectos de ese corte (`cortes:fx`), que suenan antes que los de la pista. Si no caben, una línea: `◇ efectos en 1, 3 snare` |
 | `› LP 3000 Hz q0.71` | Cada efecto de la pista, en orden |
 | `∿cutoff` | Ese parámetro se mueve (`ramp`, `lfo` o `~` por paso) |
 | `sin efectos` | Ni la pista ni sus cortes tienen efectos |
+
+Detrás de las pistas, una columna por grupo: `▣ bateria ← kick, caja`
+(sus pistas), su volumen, pan y envíos, su nivel y su cadena de efectos.
+Si el script tiene macros, el título del panel las lista con su valor:
+`macros: brillo 0.50 · eco 0.00`.
 
 ### El editor en su propia ventana
 
@@ -642,6 +653,7 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Unir el corte seleccionado con el anterior | Quita su marca: el anterior se alarga hasta donde acababa este (se guarda en el proyecto) | — |
 | Grabar lo tocado | Abre «grabar 1»: graba N compases de lo que tocas (pads o MIDI) en la pista seleccionada, desde el compás siguiente, y lo escribe como steps("...") en el cursor; otra vez, para antes | — |
 | Tap tempo | Golpea el pulso con espacio (media de los últimos 8 golpes); Enter pone bpm(N) en el script | espacio (al golpear) |
+| Macros | Mueve en vivo las macros del script (`macro()`): ↑↓ elegir, ←→ y -+ mover, 0-9, Esc | — |
 | Editar los efectos de un paso en el tracker | Cursor en el tracker: ↑↓ paso, ←→ pista, Enter escribe los efectos del paso (lp=800,q=4 crush=6) en su token del código y carga, Supr los quita, Esc sale; un paso de deshacer | — |
 | Explorador de samples | Los WAV de la carpeta de muestras: filtra, ↑↓ preescucha (sin tocar las pistas), Enter inserta sample("...") | — |
 | Remuestrear la pista seleccionada | Abre «remuestrear pista »: graba su salida (render offline) como un WAV nuevo en la carpeta de samples | — |
@@ -1010,6 +1022,7 @@ paleta de 256.
 | `rehacer` | Rehacer | `ctrl-r` |
 | `explorador` | Explorador de samples | — |
 | `tap_tempo` | Tap tempo | — |
+| `macros` | Macros | — |
 | `metronomo` | Metrónomo | — |
 | `exportar` | Exportar la mezcla | — |
 | `seccion_siguiente` | Saltar a la sección siguiente | — |
@@ -1060,7 +1073,12 @@ configuración:
 nota_base = 60     # la nota del corte 1
 canal = 10         # solo este canal (sin él, todos)
 reloj = true       # el reloj MIDI pone el tempo
+macros = [21, 22]  # el CC 21 mueve la macro 1 y el 22 la 2
 ```
+
+Con `macros`, cada controlador (CC) de la lista mueve una macro del script
+(`macro()`), en el orden en que aparecen: de 0 a 127 es de 0 a 1. Un CC que
+mueve una macro no llega como expresión a las notas.
 
 Con `reloj = true`, el reloj MIDI que llegue (24 pulsos por negra) pone el
 tempo: se calcula con los pulsos de las últimas cuatro negras (por mínimos
@@ -1650,6 +1668,60 @@ track("caja", amen:slice_at(2))
   :send("delay", 0.6)
 ```
 
+### `group(nombre, pistas)`
+
+Devuelve: grupo.
+
+Junta varias pistas: se suman y pasan juntas por los efectos, el volumen, el pan y los envíos del grupo. Cada pista del grupo manda su salida (después de su volumen, pan, mute y solo) al grupo en vez de al master; el grupo pasa la suma por su cadena (`grupo:fx`, como la de una pista) y la manda al master con su volumen y su pan. Así un compresor o una saturación reaccionan a todas a la vez, como en una mesa de mezclas. Los envíos de cada pista (`pista:send`) no pasan por el grupo; los del grupo (`grupo:send`) mandan la suma. Cada pista va a un grupo como mucho, y hay 4 grupos; un grupo no va a otro. Es de toda la canción (va fuera de `section()`) y entra al empezar el compás, como los buses. Para cambiar uno ya creado, `group(nombre)` sin la lista. Las pistas pueden definirse después; si alguna no existe, error.
+
+- `nombre`: nombre del grupo
+- `pistas`: lista de nombres de pista: `{ "kick", "snare" }` (sin ella, el grupo ya creado)
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+track("kick", amen:slice_at(1)):steps("x . . .  x . . .  x . . .  x . . .")
+track("caja", amen:slice_at(3)):steps(". . . .  x . . .  . . . .  x . . .")
+-- El compresor oye las dos a la vez y las pega.
+group("bateria", { "kick", "caja" })
+  :fx("compressor", { threshold = -20, ratio = 4, makeup = 3 })
+  :gain(0.9)
+  :send("reverb", 0.1)
+```
+
+### `grupo:fx(nombre, parámetros)`
+
+Devuelve: grupo.
+
+Añade un efecto a la cadena del grupo (sobre la suma de sus pistas). Los mismos efectos y parámetros que `pista:fx` (hasta 4, en orden), con `ramp()`, `lfo()` y `macro()` en los que se mueven. El `sidechain` del EQ dinámico puede ser cualquier pista, también una del grupo.
+
+- `nombre`: efecto (los de `pista:fx`)
+- `parámetros`: tabla con sus parámetros
+
+### `grupo:gain(g)`
+
+Devuelve: grupo.
+
+Volumen del grupo (lineal, 0 a 4), después de sus efectos. Se suma al de cada pista. Admite `ramp()`, `lfo()` y `macro()`.
+
+- `g`: volumen (1 = tal cual), `ramp()`, `lfo()` o `macro()`
+
+### `grupo:pan(p)`
+
+Devuelve: grupo.
+
+Pan del grupo (-1 izquierda, 1 derecha), después de su volumen. Admite `ramp()`, `lfo()` y `macro()`.
+
+- `p`: de -1 a 1, `ramp()`, `lfo()` o `macro()`
+
+### `grupo:send(bus, nivel)`
+
+Devuelve: grupo.
+
+Manda la suma del grupo (tras su volumen y su pan) al delay o a la reverb. Aparte de los envíos de cada pista, que no pasan por el grupo. Admite `ramp()`, `lfo()` y `macro()`.
+
+- `bus`: `"delay"` o `"reverb"`
+- `nivel`: cuánto se manda (0 a 1)
+
 ### `euclid(k, n [, golpe [, pasos]])`
 
 Patrón euclídeo: k golpes repartidos por igual en n pasos, repetido hasta llenar el patrón. Devuelve texto en mini-notación para `steps`. Empieza por un golpe (el paso `i` suena si `i·k mod n < k`); para desplazarlo, `rotate`. El ritmo se repite hasta llenar `pasos` (16 por defecto; para una pista con `:length(n)`, pasa su longitud) y se corta ahí si `n` no lo divide. El golpe puede ser cualquier paso que suene, con sufijos o una etiqueta.
@@ -1816,6 +1888,31 @@ track("drums", amen)
 | `synth("sh101")` | `a`, `d`, `s`, `r` | la envolvente se fija con el sintetizador al cargar; para mover el volumen en el tiempo, el de la pista (`:gain()` con `ramp()` o `lfo()`) |
 | `synth("sh101")` | `seed` | es la semilla del azar: entre dos semillas no hay nada continuo |
 | `sample` | `trim`, `normalize`, `fade_in`, `fade_out` | se aplica al cargar, en el hilo de control (el sample o el bucle se preparan una vez): no suena en el tiempo |
+
+### `macro(nombre, desde, hasta)`
+
+Valor que sigue a una macro: un control de 0 a 1 que se mueve en vivo (en lugar de un número). Como `ramp` y `lfo`, va en lugar de un número, en los mismos sitios (la tabla de «Qué se puede automatizar», justo antes): con la macro a 0 vale `desde`, a 1 `hasta` (las frecuencias, en escala logarítmica). Varios parámetros pueden seguir la misma macro, cada uno con su rango, en una o en varias pistas y grupos: al moverla se mueven todos a la vez, ya, sin esperar al compás y sin clics. Se mueve desde «Macros» en la paleta o con un control MIDI (`[midi] macros` en la configuración). Empieza en 0, o en lo que diga `macro_init`; recargar el script la deja donde se haya puesto. Hay 8 macros como mucho; su número es el orden en que aparecen.
+
+- `nombre`: nombre de la macro
+- `desde`: valor con la macro a 0
+- `hasta`: valor con la macro a 1
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+macro_init("brillo", 0.5)
+track("drums", amen)
+  :steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+  -- Una macro abre el filtro y sube la reverb a la vez.
+  :fx("lowpass", { cutoff = macro("brillo", 300, 9000) })
+  :send("reverb", macro("brillo", 0, 0.4))
+```
+
+### `macro_init(nombre, valor)`
+
+Valor con el que empieza una macro (0 a 1). Lo toma al cargar el script por primera vez, y al exportar. Después la macro se queda donde se mueva en vivo, salvo que se cambie este valor en el script. Va fuera de `section()`.
+
+- `nombre`: nombre de la macro
+- `valor`: de 0 a 1
 
 ### `scale(nombre [, tónica])`
 
@@ -3389,6 +3486,46 @@ local amen = sample("amen.wav"):slice(8)
 track("drums", amen)
   :steps("1 . 4 .  7 . 2 3  . 5 6 .  3 . 8 7")
   :every(2, function(c) c:steps("5 . 1 .  3 . 2 .  1 6 7 .  3 4 3 8") end)
+```
+
+### Pegar la batería con un grupo
+
+Un compresor en cada pista reacciona a cada una por separado; en un grupo,
+reacciona a la suma: cuando entra el bombo, baja también la caja y los
+charles, y la batería suena como un bloque. Los envíos de cada pista
+siguen saliendo de ella; el del grupo manda la suma.
+
+```lua
+-- 15-grupo-bateria.lua
+bpm(170)
+local amen = sample("amen.wav"):slice(8)
+track("kick", amen:slice_at(1)):steps("x . . .  . . x .  . . . .  . x . .")
+track("caja", amen:slice_at(3)):steps(". . . .  x . . .  . . . .  x . . x")
+track("hats", amen:slice_at(6)):steps("x x x x  x x x x  x x x x  x x x x"):gain(0.4)
+group("bateria", { "kick", "caja", "hats" })
+  :fx("compressor", { threshold = -22, ratio = 4, attack = 10, makeup = 4 })
+  :fx("distortion", { drive = 2, mix = 0.3 })
+  :send("reverb", 0.1)
+```
+
+### Una macro para el subidón
+
+Una macro mueve varios parámetros a la vez, cada uno en su rango. Aquí,
+«tension» abre el filtro del break, sube su envío a la reverb y el
+feedback del delay. Muévela con «Macros» en la paleta (←→) o con un mando
+MIDI (`[midi] macros = [21]`); recargar no la devuelve a su sitio.
+
+```lua
+-- 16-macro-subidon.lua
+bpm(170)
+macro_init("tension", 0)
+bus("delay", { time = "3/16", feedback = macro("tension", 0.2, 0.7) })
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen)
+  :steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+  :fx("lowpass", { cutoff = macro("tension", 600, 12000), q = 1.5 })
+  :send("reverb", macro("tension", 0, 0.35))
+  :send("delay", 0.2)
 ```
 
 ### Varias pistas

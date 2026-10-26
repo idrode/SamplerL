@@ -192,6 +192,7 @@ impl VoiceFx {
                 clock.steps + frames / clock.frames_per_step,
                 clock.seconds + frames / rate as f64,
                 self.origin,
+                &clock.macros,
                 snap,
                 snap && block == 0,
                 keep,

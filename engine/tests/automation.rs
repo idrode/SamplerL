@@ -18,29 +18,38 @@ fn curves_follow_the_song_position() {
         to: 4000.0,
         steps: 64.0,
     };
-    assert_eq!(ramp.value(0.0, 0.0, true), 200.0);
+    assert_eq!(
+        ramp.value(0.0, 0.0, &[0.0; engine::MAX_MACROS], true),
+        200.0
+    );
     // A mitad: la media geométrica (escala logarítmica).
-    let mid = ramp.value(32.0, 0.0, true);
+    let mid = ramp.value(32.0, 0.0, &[0.0; engine::MAX_MACROS], true);
     assert!((mid - (200.0f32 * 4000.0).sqrt()).abs() < 0.5, "{mid}");
     // Lineal: la media.
-    assert_eq!(ramp.value(32.0, 0.0, false), 2100.0);
+    assert_eq!(
+        ramp.value(32.0, 0.0, &[0.0; engine::MAX_MACROS], false),
+        2100.0
+    );
     // Diente de sierra: vuelve a empezar cada 64 pasos.
-    assert_eq!(ramp.value(64.0, 0.0, true), 200.0);
-    assert_eq!(ramp.value(96.0, 9.0, true), mid);
+    assert_eq!(
+        ramp.value(64.0, 0.0, &[0.0; engine::MAX_MACROS], true),
+        200.0
+    );
+    assert_eq!(ramp.value(96.0, 9.0, &[0.0; engine::MAX_MACROS], true), mid);
     // LFO en pasos y en Hz: empieza en el mínimo, a medio ciclo el máximo.
     let lfo = Curve::Lfo {
         min: 0.0,
         max: 1.0,
         rate: LfoRate::Steps(16.0),
     };
-    assert_eq!(lfo.value(0.0, 0.0, false), 0.0);
-    assert!((lfo.value(8.0, 0.0, false) - 1.0).abs() < 1e-6);
+    assert_eq!(lfo.value(0.0, 0.0, &[0.0; engine::MAX_MACROS], false), 0.0);
+    assert!((lfo.value(8.0, 0.0, &[0.0; engine::MAX_MACROS], false) - 1.0).abs() < 1e-6);
     let hz = Curve::Lfo {
         min: 0.0,
         max: 1.0,
         rate: LfoRate::Hz(2.0),
     };
-    assert!((hz.value(123.0, 0.25, false) - 1.0).abs() < 1e-6);
+    assert!((hz.value(123.0, 0.25, &[0.0; engine::MAX_MACROS], false) - 1.0).abs() < 1e-6);
 }
 
 /// Un golpe de un seno de 2 kHz que dura `len` frames, en cada paso que

@@ -6,10 +6,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::arrangement::{Arrangement, Place, Playlist, resume};
-use crate::automation::{Automation, MIX_GAIN, MIX_PAN, MIX_PARAMS, MIX_SEND, mix};
+use crate::automation::{
+    Automation, MAX_MACROS, MIX_GAIN, MIX_PAN, MIX_PARAMS, MIX_SEND, Macros, MixCurves, mix,
+};
 use crate::bus::{BUSES, Buses, Rack};
 use crate::fx::{Fx, FxState, MAX_FX, MAX_PARAMS};
 use crate::grain::{Cloud, Position};
+use crate::group::{GROUP_TAIL_SECONDS, GroupState, Groups, MAX_GROUPS};
 use crate::instrument::{MAX_VOICES, Note, NoteOn};
 use crate::limiter::{LIMIT_THRESHOLD, soft_limit};
 use crate::metronome::Metronome;
@@ -124,6 +127,12 @@ enum Command {
     SetBpm(f64),
     /// Parámetros de los buses de envío para el siguiente compás.
     SetBuses(Buses),
+    /// Grupos (y a cuál va cada pista) para el siguiente compás.
+    SetGroups(Groups),
+    /// Valor de todas las macros desde el siguiente compás (al cargar).
+    SetMacros(Macros),
+    /// Valor de una macro (inmediato: en vivo).
+    SetMacro { index: usize, value: f32 },
     /// Rampa de tempo que entra en el siguiente compás.
     SetTempoRamp(TempoRamp),
     /// Compás (pasos y pulso) desde el siguiente compás.
@@ -311,12 +320,13 @@ impl SliceShape {
     }
 
     /// La forma con la que suena un golpe en `steps`/`seconds` de la
-    /// canción: los parámetros con curva toman su valor ahí.
-    pub(crate) fn at(&self, steps: f64, seconds: f64) -> SliceShape {
+    /// canción (con las macros en `macros`): los parámetros con curva
+    /// toman su valor ahí.
+    pub(crate) fn at(&self, steps: f64, seconds: f64, macros: &Macros) -> SliceShape {
         let mut shape = *self;
         for (param, curve) in self.curves.iter().enumerate() {
             let Some(curve) = curve else { continue };
-            let value = curve.value(steps, seconds, false);
+            let value = curve.value(steps, seconds, macros, false);
             match param {
                 SHAPE_ATTACK => shape.attack_ms = value,
                 SHAPE_RELEASE => shape.release_ms = value,
@@ -734,6 +744,11 @@ pub enum SendError {
     InvalidTag(u32),
     /// Compás de arranque por encima de [`MAX_START_BAR`].
     InvalidStartBar(u64),
+    /// Grupo con parámetros fuera de rango (o una pista que va a un grupo
+    /// que no existe).
+    InvalidGroup(&'static str),
+    /// Macro que no existe o valor fuera de 0 a 1.
+    InvalidMacro(&'static str),
 }
 
 impl fmt::Display for SendError {
@@ -749,6 +764,8 @@ impl fmt::Display for SendError {
             SendError::InvalidGranular(reason) => write!(f, "granos: {reason}"),
             SendError::InvalidSynth(reason) => write!(f, "sintetizador: {reason}"),
             SendError::InvalidArrangement(reason) => write!(f, "arreglo: {reason}"),
+            SendError::InvalidGroup(reason) => write!(f, "grupo: {reason}"),
+            SendError::InvalidMacro(reason) => write!(f, "macro: {reason}"),
             SendError::InvalidStartBar(bar) => write!(
                 f,
                 "compás de arranque {bar} fuera de rango (0 a {MAX_START_BAR})"
@@ -791,6 +808,15 @@ impl fmt::Display for SendError {
 
 impl std::error::Error for SendError {}
 
+/// Cada macro, de 0 a 1.
+fn check_macros(macros: &Macros) -> Result<(), SendError> {
+    if macros.iter().all(|v| (0.0..=1.0).contains(v)) {
+        Ok(())
+    } else {
+        Err(SendError::InvalidMacro("el valor va de 0 a 1"))
+    }
+}
+
 /// Cambios que se aplican juntos, en el mismo inicio de compás. Se prepara
 /// en el hilo de control y se envía con [`Controller::apply`].
 #[derive(Default)]
@@ -799,6 +825,8 @@ pub struct Batch {
     ramp: Option<TempoRamp>,
     meter: Option<Meter>,
     buses: Option<Buses>,
+    groups: Option<Groups>,
+    macros: Option<Macros>,
     patterns: Vec<(usize, Option<Pattern>)>,
     arrangement: Option<Option<Arrangement>>,
 }
@@ -828,6 +856,19 @@ impl Batch {
     /// Parámetros de los buses de envío (delay y reverb).
     pub fn set_buses(&mut self, buses: Buses) -> &mut Self {
         self.buses = Some(buses);
+        self
+    }
+
+    /// Grupos y a cuál va cada pista (ver [`crate::group`]).
+    pub fn set_groups(&mut self, groups: Groups) -> &mut Self {
+        self.groups = Some(groups);
+        self
+    }
+
+    /// Valor de cada macro (de 0 a 1) desde el compás en que entra el
+    /// lote; después se mueven en vivo con [`Controller::set_macro`].
+    pub fn set_macros(&mut self, macros: Macros) -> &mut Self {
+        self.macros = Some(macros);
         self
     }
 
@@ -1075,6 +1116,18 @@ pub struct Engine {
     /// otra escucha por sidechain, en el trozo que se está mezclando. En el
     /// heap, como las pistas.
     side_buf: Box<[[f32; 2 * CHUNK]; MAX_TRACKS]>,
+    /// Grupos: los que suenan, los que entran en el siguiente compás y los
+    /// de un lote abierto; el estado de cada uno y lo que le llega de sus
+    /// pistas en cada trozo (en el heap).
+    groups: Groups,
+    pending_groups: Option<Groups>,
+    staged_groups: Option<Groups>,
+    group_state: [GroupState; MAX_GROUPS],
+    group_buf: Box<[[f32; 2 * CHUNK]; MAX_GROUPS]>,
+    /// Valor de cada macro, y los de un lote (pendiente o abierto).
+    macros: Macros,
+    pending_macros: Option<Macros>,
+    staged_macros: Option<Macros>,
 }
 
 /// Silencio para el sidechain de una pista que calla en este trozo.
@@ -1179,6 +1232,17 @@ pub fn new_engine(sample_rate: u32) -> (Controller, Engine) {
                 .into_boxed_slice()
                 .try_into()
                 .unwrap_or_else(|_| unreachable!("son MAX_TRACKS pistas")),
+            groups: Groups::default(),
+            pending_groups: None,
+            staged_groups: None,
+            group_state: [GroupState::default(); MAX_GROUPS],
+            group_buf: vec![[0.0; 2 * CHUNK]; MAX_GROUPS]
+                .into_boxed_slice()
+                .try_into()
+                .unwrap_or_else(|_| unreachable!("son MAX_GROUPS grupos")),
+            macros: [0.0; MAX_MACROS],
+            pending_macros: None,
+            staged_macros: None,
         },
     )
 }
@@ -1548,6 +1612,12 @@ impl Controller {
         if let Some(buses) = &batch.buses {
             buses.validate().map_err(SendError::InvalidBus)?;
         }
+        if let Some(groups) = &batch.groups {
+            groups.validate().map_err(SendError::InvalidGroup)?;
+        }
+        if let Some(macros) = &batch.macros {
+            check_macros(macros)?;
+        }
         if let Some(Some(arrangement)) = &batch.arrangement {
             arrangement.validate()?;
         }
@@ -1563,6 +1633,8 @@ impl Controller {
             + usize::from(batch.ramp.is_some())
             + usize::from(batch.meter.is_some())
             + usize::from(batch.buses.is_some())
+            + usize::from(batch.groups.is_some())
+            + usize::from(batch.macros.is_some())
             + usize::from(batch.arrangement.is_some());
         if self.commands.slots() < needed {
             return Err(SendError::QueueFull);
@@ -1584,6 +1656,12 @@ impl Controller {
         if let Some(buses) = batch.buses {
             push(Command::SetBuses(buses));
         }
+        if let Some(groups) = batch.groups {
+            push(Command::SetGroups(groups));
+        }
+        if let Some(macros) = batch.macros {
+            push(Command::SetMacros(macros));
+        }
         if let Some(arrangement) = batch.arrangement {
             push(Command::SetArrangement(arrangement));
         }
@@ -1599,6 +1677,19 @@ impl Controller {
     pub fn set_buses(&mut self, buses: Buses) -> Result<(), SendError> {
         buses.validate().map_err(SendError::InvalidBus)?;
         self.send(Command::SetBuses(buses), None)
+    }
+
+    /// Mueve la macro `index` a `value` (de 0 a 1) ya, sin esperar al
+    /// compás: los parámetros que la siguen van hacia su valor nuevo con su
+    /// suavizado de siempre (~5 ms).
+    pub fn set_macro(&mut self, index: usize, value: f32) -> Result<(), SendError> {
+        if index >= MAX_MACROS {
+            return Err(SendError::InvalidMacro("no existe (hay 8)"));
+        }
+        if !(0.0..=1.0).contains(&value) {
+            return Err(SendError::InvalidMacro("el valor va de 0 a 1"));
+        }
+        self.send(Command::SetMacro { index, value }, None)
     }
 
     /// Con un arreglo: salta a la entrada `entry` de la línea de tiempo al
@@ -1894,6 +1985,34 @@ impl Engine {
                     self.pending_buses = Some(buses);
                 }
             }
+            Command::SetGroups(groups) => {
+                if self.batch_open {
+                    self.staged_groups = Some(groups);
+                } else {
+                    self.pending_groups = Some(groups);
+                }
+            }
+            Command::SetMacros(macros) => {
+                if self.batch_open {
+                    self.staged_macros = Some(macros);
+                } else {
+                    self.pending_macros = Some(macros);
+                }
+            }
+            Command::SetMacro { index, value } => {
+                // También en los que esperan: un lote no deshace lo que se
+                // ha movido después de mandarlo.
+                for macros in [
+                    Some(&mut self.macros),
+                    self.pending_macros.as_mut(),
+                    self.staged_macros.as_mut(),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    macros[index] = value;
+                }
+            }
             Command::SetArrangement(arrangement) => {
                 let slot = if self.batch_open {
                     &mut self.staged_arrangement
@@ -1926,6 +2045,12 @@ impl Engine {
                 }
                 if let Some(buses) = self.staged_buses.take() {
                     self.pending_buses = Some(buses);
+                }
+                if let Some(groups) = self.staged_groups.take() {
+                    self.pending_groups = Some(groups);
+                }
+                if let Some(macros) = self.staged_macros.take() {
+                    self.pending_macros = Some(macros);
                 }
                 if let Some(ramp) = self.staged_ramp.take() {
                     self.transport.pending_ramp = Some(ramp);
@@ -2126,6 +2251,20 @@ impl Engine {
         {
             self.rack.params = buses;
         }
+        if step == 0
+            && let Some(groups) = self.pending_groups.take()
+        {
+            for (g, state) in self.group_state.iter_mut().enumerate() {
+                let (old, new) = (self.groups.groups[g], groups.groups[g]);
+                state.update(old.as_ref(), new.as_ref(), self.sample_rate);
+            }
+            self.groups = groups;
+        }
+        if step == 0
+            && let Some(macros) = self.pending_macros.take()
+        {
+            self.macros = macros;
+        }
         if step == 0 {
             self.advance_playlist(bar, global, now);
         }
@@ -2296,7 +2435,7 @@ impl Engine {
         }
         let (steps, seconds) = self.song_position();
         if let Some(curve) = pattern.pitch_curve {
-            let semitones = curve.value(steps, seconds, false) as f64;
+            let semitones = curve.value(steps, seconds, &self.macros, false) as f64;
             let factor = 2f64.powf(semitones / 12.0);
             let limit = 2f64.powf(crate::sequencer::MAX_SEMITONES as f64 / 12.0);
             let rate = hit.playback.rate;
@@ -2306,10 +2445,10 @@ impl Engine {
                 .map(|r| r.map(|r| (r * factor).clamp(1.0 / limit, limit)));
         }
         if let Some(curve) = pattern.formant_curve {
-            hit.playback.formant = Some(curve.value(steps, seconds, false));
+            hit.playback.formant = Some(curve.value(steps, seconds, &self.macros, false));
         }
         if shaped {
-            let shape = hit.playback.shape.at(steps, seconds);
+            let shape = hit.playback.shape.at(steps, seconds, &self.macros);
             hit.end = shape.range(hit.start..hit.full_end).end;
             hit.playback.shape = shape;
         }
@@ -2667,6 +2806,13 @@ impl Engine {
             buf[..2 * n].fill(0.0);
         }
         let mut fed = [false; BUSES];
+        // Lo que les llega a los grupos de sus pistas.
+        let mut group_fed = [false; MAX_GROUPS];
+        for (g, buf) in self.group_buf.iter_mut().enumerate() {
+            if self.groups.groups[g].is_some() {
+                buf[..2 * n].fill(0.0);
+            }
+        }
         // Posición de la canción al empezar el trozo (para las curvas).
         let rate = self.sample_rate;
         // Las curvas cuentan desde el inicio de la sección (sin arreglo,
@@ -2680,6 +2826,7 @@ impl Engine {
             seconds: (self.transport.frame - origin_frame) as f64 / rate as f64,
             frames_per_step: crate::sequencer::frames_per_step(self.transport.bpm(), rate),
             sample_rate: rate,
+            macros: self.macros,
         };
         // Quién escucha a quién por sidechain: las que se escuchan se mezclan
         // antes y guardan su salida en `side_buf`.
@@ -2690,6 +2837,15 @@ impl Engine {
             for k in chain.iter().flatten().filter_map(Fx::sidechain) {
                 if k != t && k < MAX_TRACKS {
                     listens[t][k] = true;
+                    heard[k] = true;
+                }
+            }
+        }
+        // Los grupos se mezclan después de todas las pistas: las que
+        // escuchan ya están.
+        for group in self.groups.groups.iter().flatten() {
+            for k in group.fx.iter().flatten().filter_map(Fx::sidechain) {
+                if k < MAX_TRACKS {
                     heard[k] = true;
                 }
             }
@@ -2709,22 +2865,8 @@ impl Engine {
                 .as_ref()
                 .map_or([None; MIX_PARAMS], |p| p.mix_curves);
             let curved = curves.iter().any(Option::is_some);
-            let mix_at = |k: usize| {
-                if !curved {
-                    return base;
-                }
-                let steps = clock.steps + k as f64 / clock.frames_per_step;
-                let seconds = clock.seconds + k as f64 / rate as f64;
-                let at = |i: usize, fixed: f32| {
-                    curves[i].map_or(fixed, |c| c.value(steps, seconds, false))
-                };
-                (
-                    at(MIX_GAIN, base.0),
-                    at(MIX_PAN, base.1),
-                    std::array::from_fn(|b| at(MIX_SEND + b, base.2[b])),
-                )
-            };
-            let (mut target, mut target_pan, mut target_sends) = mix_at(0);
+            let (mut target, mut target_pan, mut target_sends) =
+                mix_target(base, &curves, &clock, 0);
             let audible = if track.muted() || (any_solo && !track.soloed()) {
                 0.0
             } else {
@@ -2764,6 +2906,13 @@ impl Engine {
             let fresh = std::mem::take(&mut track.fresh);
             if fresh {
                 track.audible = audible;
+                // Con curvas, la voz que empieza desde el silencio suena ya
+                // con su valor (como los efectos automatizados).
+                if curved {
+                    track.gain = target;
+                    track.pan = target_pan;
+                    track.sends = target_sends;
+                }
             }
             let buf = &mut self.track_buf[..2 * n];
             buf.fill(0.0);
@@ -2799,6 +2948,7 @@ impl Engine {
                     frame: self.transport.frame,
                     bar: self.transport.running.then(|| self.transport.current_bar()),
                     bar_length: self.transport.bar_length(rate),
+                    macros: clock.macros,
                 };
                 track.synth.mix_into(buf, &patch, &curves, &at);
             }
@@ -2816,6 +2966,7 @@ impl Engine {
                     seconds: clock.seconds,
                     frames_per_step: clock.frames_per_step,
                     sample_rate: rate,
+                    macros: clock.macros,
                 };
                 let fade = ((FADE_SECONDS * rate as f32) as u32).max(1);
                 ended = track.cloud.mix_into(buf, &params, &at, fade);
@@ -2830,6 +2981,7 @@ impl Engine {
                     seconds: clock.seconds,
                     frames_per_step: clock.frames_per_step,
                     sample_rate: rate,
+                    macros: clock.macros,
                 };
                 track
                     .cloud
@@ -2852,7 +3004,12 @@ impl Engine {
                 live[t] = true;
             }
 
-            let master = &mut self.master[..2 * n];
+            // A su grupo, o al master.
+            let group = self.groups.of(t);
+            let master = match group {
+                Some(g) => &mut self.group_buf[g][..2 * n],
+                None => &mut self.master[..2 * n],
+            };
             let mut peak = 0.0f32;
             let sending: [bool; BUSES] = std::array::from_fn(|b| {
                 target_sends[b] > 0.0 || track.sends[b] > 0.0 || curves[MIX_SEND + b].is_some()
@@ -2865,7 +3022,7 @@ impl Engine {
                 .enumerate()
             {
                 if curved && k > 0 && k % MOD_BLOCK == 0 {
-                    (target, target_pan, target_sends) = mix_at(k);
+                    (target, target_pan, target_sends) = mix_target(base, &curves, &clock, k);
                 }
                 track.gain += (target - track.gain) * smoothing;
                 // Mute y solo también se suavizan: las voces siguen su curso
@@ -2893,6 +3050,9 @@ impl Engine {
                     self.send_buf[b][2 * k + 1] += send * r;
                     fed[b] |= send > 0.0 && (l != 0.0 || r != 0.0);
                 }
+            }
+            if let Some(g) = group {
+                group_fed[g] |= peak > 0.0;
             }
             self.status.add_peak(t, peak);
             self.status.add_voices(t, voices);
@@ -2924,6 +3084,7 @@ impl Engine {
                 }
             }
         }
+        self.mix_groups(n, &clock, group_fed, &live, &mut fed);
         // Lo que devuelven los buses (los dormidos no tocan nada).
         self.rack.mix_into(
             &self.send_buf,
@@ -2934,6 +3095,7 @@ impl Engine {
                 steps: clock.steps,
                 seconds: clock.seconds,
                 frames_per_step: clock.frames_per_step,
+                macros: clock.macros,
             },
             &mut self.master[..2 * n],
         );
@@ -2964,6 +3126,103 @@ impl Engine {
             frame[1] = soft_limit(frame[1]);
         }
         self.status.add_master(peak, limited);
+    }
+
+    /// Los grupos: cada uno despierto pasa lo que le han mandado sus pistas
+    /// por su cadena y lo suma al master y a los buses con su volumen, pan y
+    /// envíos (suavizados, con sus curvas, como los de una pista). Un grupo
+    /// que lleva [`GROUP_TAIL_SECONDS`] sin recibir nada y ya no suena se
+    /// duerme.
+    fn mix_groups(
+        &mut self,
+        n: usize,
+        clock: &Clock,
+        group_fed: [bool; MAX_GROUPS],
+        live: &[bool; MAX_TRACKS],
+        fed: &mut [bool; BUSES],
+    ) {
+        let rate = self.sample_rate;
+        let smoothing = 1.0 - (-1.0 / (GAIN_SMOOTHING_SECONDS * rate as f32)).exp();
+        let tail = (GROUP_TAIL_SECONDS * rate as f32) as usize;
+        for (g, &fed_group) in group_fed.iter().enumerate() {
+            let Some(group) = self.groups.groups[g] else {
+                continue;
+            };
+            let state = &mut self.group_state[g];
+            if fed_group {
+                state.awake = true;
+                state.idle = 0;
+            } else {
+                state.idle += n;
+            }
+            if !state.awake {
+                continue;
+            }
+            let buf = &mut self.group_buf[g][..2 * n];
+            let moving = state.mods.iter().flatten().any(Option::is_some)
+                || group.automation.iter().any(Option::is_some);
+            if moving {
+                modulate_chain(
+                    &group.fx,
+                    &group.automation,
+                    None,
+                    &mut state.fx,
+                    &mut state.mods,
+                    buf,
+                    clock,
+                    false,
+                    NO_TRACK,
+                    &self.side_buf,
+                    live,
+                );
+            } else {
+                run_fx(&mut state.fx, buf, NO_TRACK, &self.side_buf, live, 0..2 * n);
+            }
+            let base = (group.gain, group.pan, group.sends);
+            let curves = group.mix_curves;
+            let (mut target, mut target_pan, mut target_sends) =
+                mix_target(base, &curves, clock, 0);
+            let curved = curves.iter().any(Option::is_some);
+            let sending: [bool; BUSES] = std::array::from_fn(|b| {
+                target_sends[b] > 0.0 || state.sends[b] > 0.0 || curves[MIX_SEND + b].is_some()
+            });
+            let mut peak = 0.0f32;
+            for (k, (dst, src)) in self.master[..2 * n]
+                .as_chunks_mut::<2>()
+                .0
+                .iter_mut()
+                .zip(buf.as_chunks::<2>().0)
+                .enumerate()
+            {
+                if curved && k > 0 && k % MOD_BLOCK == 0 {
+                    (target, target_pan, target_sends) = mix_target(base, &curves, clock, k);
+                }
+                state.gain += (target - state.gain) * smoothing;
+                let (mut l, mut r) = (state.gain * src[0], state.gain * src[1]);
+                if target_pan != 0.0 || state.pan != 0.0 {
+                    state.pan += (target_pan - state.pan) * smoothing;
+                    l *= (1.0 - state.pan).min(1.0);
+                    r *= (1.0 + state.pan).min(1.0);
+                }
+                dst[0] += l;
+                dst[1] += r;
+                peak = peak.max(l.abs()).max(r.abs());
+                for b in 0..BUSES {
+                    if !sending[b] {
+                        continue;
+                    }
+                    state.sends[b] += (target_sends[b] - state.sends[b]) * smoothing;
+                    let send = state.sends[b];
+                    self.send_buf[b][2 * k] += send * l;
+                    self.send_buf[b][2 * k + 1] += send * r;
+                    fed[b] |= send > 0.0 && (l != 0.0 || r != 0.0);
+                }
+            }
+            self.status.add_group_peak(g, peak);
+            if state.idle > tail && peak < 1e-6 {
+                state.sleep(&group, rate);
+            }
+        }
     }
 
     /// Pasa una voz interrumpida a la ranura de fundido de su pista. Si ya
@@ -3218,6 +3477,8 @@ pub(crate) struct Clock {
     pub seconds: f64,
     pub frames_per_step: f64,
     pub sample_rate: u32,
+    /// El valor de cada macro en este trozo.
+    pub macros: Macros,
 }
 
 /// Pasa `buf` por los efectos de la pista con sus parámetros movidos:
@@ -3239,24 +3500,83 @@ fn modulate(
         run_fx(&mut track.fx, buf, own, side, live, 0..buf.len());
         return;
     };
-    let rate = clock.sample_rate;
-    let keep = (-(MOD_BLOCK as f32) / (GAIN_SMOOTHING_SECONDS * rate as f32)).exp();
     let first_filter = pattern
         .fx
         .iter()
         .position(|f| matches!(f, Some(Fx::Filter { .. })));
     let lock = track.lock.zip(first_filter).map(|(hz, slot)| (slot, hz));
+    modulate_chain(
+        &pattern.fx,
+        &pattern.automation,
+        lock,
+        &mut track.fx,
+        &mut track.mods,
+        buf,
+        clock,
+        snap,
+        own,
+        side,
+        live,
+    );
+}
+
+/// Pista que no es ninguna (un grupo, para el sidechain de sus efectos).
+const NO_TRACK: usize = usize::MAX;
+
+/// El volumen, el pan y los envíos de una pista o un grupo a `k` frames
+/// del inicio del trozo: los fijos (`base`), o los de su curva.
+fn mix_target(
+    base: (f32, f32, [f32; BUSES]),
+    curves: &MixCurves,
+    clock: &Clock,
+    k: usize,
+) -> (f32, f32, [f32; BUSES]) {
+    if curves.iter().all(Option::is_none) {
+        return base;
+    }
+    let steps = clock.steps + k as f64 / clock.frames_per_step;
+    let seconds = clock.seconds + k as f64 / clock.sample_rate as f64;
+    let at = |i: usize, fixed: f32| {
+        curves[i].map_or(fixed, |c| c.value(steps, seconds, &clock.macros, false))
+    };
+    (
+        at(MIX_GAIN, base.0),
+        at(MIX_PAN, base.1),
+        std::array::from_fn(|b| at(MIX_SEND + b, base.2[b])),
+    )
+}
+
+/// Pasa `buf` por una cadena de efectos (la de una pista o un grupo) con
+/// sus parámetros movidos, por bloques de `MOD_BLOCK` frames (ver
+/// [`drive_block`]).
+#[allow(clippy::too_many_arguments)]
+fn modulate_chain(
+    chain: &[Option<Fx>; MAX_FX],
+    automation: &[Option<Automation>],
+    lock: Option<(usize, f32)>,
+    states: &mut [FxState; MAX_FX],
+    mods: &mut [[Option<f32>; MAX_PARAMS]; MAX_FX],
+    buf: &mut [f32],
+    clock: &Clock,
+    snap: bool,
+    own: usize,
+    side: &[[f32; 2 * CHUNK]; MAX_TRACKS],
+    live: &[bool; MAX_TRACKS],
+) {
+    let rate = clock.sample_rate;
+    let keep = (-(MOD_BLOCK as f32) / (GAIN_SMOOTHING_SECONDS * rate as f32)).exp();
     for (block, sub) in buf.chunks_mut(2 * MOD_BLOCK).enumerate() {
         let frames = (block * MOD_BLOCK) as f64;
         drive_block(
-            &pattern.fx,
-            &pattern.automation,
+            chain,
+            automation,
             lock,
-            &mut track.fx,
-            &mut track.mods,
+            states,
+            mods,
             clock.steps + frames / clock.frames_per_step,
             clock.seconds + frames / rate as f64,
             0.0,
+            &clock.macros,
             snap,
             snap && block == 0,
             keep,
@@ -3264,7 +3584,7 @@ fn modulate(
         );
         let from = block * 2 * MOD_BLOCK;
         let range = from..from + sub.len();
-        run_fx(&mut track.fx, sub, own, side, live, range);
+        run_fx(states, sub, own, side, live, range);
     }
 }
 
@@ -3286,6 +3606,7 @@ pub(crate) fn drive_block(
     steps: f64,
     seconds: f64,
     origin: f64,
+    macros: &Macros,
     snap: bool,
     first: bool,
     keep: f32,
@@ -3305,7 +3626,7 @@ pub(crate) fn drive_block(
             let lock = lock.filter(|&(s, _)| p == 0 && s == slot).map(|(_, hz)| hz);
             let target = match (lock, curve) {
                 (Some(hz), _) => Some(hz),
-                (None, Some(a)) => Some(a.curve.value_at(steps, seconds, origin, log)),
+                (None, Some(a)) => Some(a.curve.value_at(steps, seconds, origin, macros, log)),
                 (None, None) => None,
             };
             if target.is_none() && current.is_none() {

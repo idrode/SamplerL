@@ -53,6 +53,7 @@ pub enum Action {
     Browser,
     EditTracker,
     TapTempo,
+    Macros,
     Record,
     SaveBlock,
     InsertBlock,
@@ -338,6 +339,12 @@ pub const ACTIONS: &[ActionDef] = &[
         name: "Tap tempo",
         description: "Golpea el pulso con espacio (media de los últimos 8 golpes); Enter pone bpm(N) en el script",
         keys: "espacio (al golpear)",
+    },
+    ActionDef {
+        action: Action::Macros,
+        name: "Macros",
+        description: "Mueve en vivo las macros del script (`macro()`): ↑↓ elegir, ←→ y -+ mover, 0-9, Esc",
+        keys: "",
     },
     ActionDef {
         action: Action::EditTracker,

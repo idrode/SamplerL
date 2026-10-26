@@ -421,6 +421,12 @@ fn draw_popups(frame: &mut Frame, view: &ViewModel, popup: Option<Rect>) {
     if let Some(slots) = &view.slots {
         frame.render_widget(SlotsPopup(slots), slots_area(frame.area()));
     }
+    if let Some(selected) = view.macro_panel {
+        frame.render_widget(
+            MacrosPopup(&view.macros, selected),
+            macros_area(frame.area(), view.macros.len()),
+        );
+    }
     if let Some(browser) = &view.browser {
         frame.render_widget(BrowserPopup(browser), palette_area(frame.area()));
     }
@@ -444,6 +450,55 @@ pub fn slots_area(screen: Rect) -> Rect {
         y: screen.y + (screen.height - height).min(2),
         width,
         height,
+    }
+}
+
+/// Sitio del panel de las macros: centrado arriba, una fila por macro.
+pub fn macros_area(screen: Rect, count: usize) -> Rect {
+    let width = screen.width.saturating_sub(4).min(60);
+    let height = (count as u16 + 2).min(screen.height);
+    Rect {
+        x: screen.x + (screen.width - width) / 2,
+        y: screen.y + (screen.height - height).min(2),
+        width,
+        height,
+    }
+}
+
+/// Las macros con su valor en una barra; la elegida, marcada.
+pub struct MacrosPopup<'a>(pub &'a [(String, f32)], pub usize);
+
+impl Widget for MacrosPopup<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let MacrosPopup(macros, selected) = self;
+        Clear.render(area, buf);
+        let block = Block::bordered()
+            .border_style(Style::new().fg(accent()))
+            .title(" macros · ←→ -+ 0-9 · Esc ");
+        let name_width = macros
+            .iter()
+            .map(|(n, _)| n.chars().count())
+            .max()
+            .unwrap_or(0);
+        let bar = (block.inner(area).width as usize).saturating_sub(name_width + 11);
+        let lines: Vec<Line> = macros
+            .iter()
+            .enumerate()
+            .map(|(i, (name, value))| {
+                let number = Span::from(format!(" {} ", i + 1)).fg(accent()).bold();
+                let mut name = Span::from(format!("{name:<name_width$} "));
+                if i == selected {
+                    name = name.bold().fg(accent());
+                }
+                Line::from(vec![
+                    number,
+                    name,
+                    Span::from(meter(*value, bar)).fg(accent()),
+                    Span::raw(format!(" {value:.2}")),
+                ])
+            })
+            .collect();
+        Paragraph::new(lines).block(block).render(area, buf);
     }
 }
 
@@ -1196,6 +1251,8 @@ impl Widget for HelpLine<'_> {
             "PALETA: escribe para filtrar · ↑↓ elegir · Enter ejecutar · Esc cerrar"
         } else if self.0.slots.is_some() {
             "RANURA: pulsa 1-9 · cualquier otra tecla cancela"
+        } else if self.0.macro_panel.is_some() {
+            "MACROS: ↑↓ elegir · ←→ ±0.05 · - + ±0.01 · 0-9 valor · Inicio 0 · Fin 1 · Esc cerrar"
         } else if self.0.browser.is_some() {
             "SAMPLES: escribe para filtrar · ↑↓ elegir y preescuchar · Tab preescuchar · Enter insertar · Esc cerrar"
         } else if self.0.block_picker.is_some() {
@@ -1928,13 +1985,78 @@ pub fn sends_text_moving(sends: [f32; 2], moving: [bool; 2]) -> String {
 /// El pan de una pista para el panel de efectos: ` pan -0.30`, ` pan ∿`
 /// si se mueve, o nada al centro.
 fn pan_text(track: &crate::model::TrackView) -> String {
-    if track.mix_moving[engine::MIX_PAN] {
+    pan_text_of(track.pan, track.mix_moving[engine::MIX_PAN])
+}
+
+fn pan_text_of(pan: f32, moving: bool) -> String {
+    if moving {
         " pan ∿".into()
-    } else if track.pan != 0.0 {
-        format!(" pan {:+.2}", track.pan)
+    } else if pan != 0.0 {
+        format!(" pan {pan:+.2}")
     } else {
         String::new()
     }
+}
+
+/// La columna de un grupo en el panel de efectos: `▣ nombre ← pistas`,
+/// volumen, nivel y su cadena.
+fn group_column(group: &crate::model::GroupView, width: usize) -> Vec<Line<'static>> {
+    let mut lines = vec![
+        Line::from(vec![
+            Span::from(format!("▣ {}", group.name)).bold().fg(accent()),
+            Span::from(format!(" ← {}", group.tracks.join(", "))).fg(dim()),
+        ]),
+        Line::from(vec![
+            Span::raw(format!(
+                "vol {:.2}{} ",
+                group.gain,
+                if group.mix_moving[engine::MIX_GAIN] {
+                    "∿"
+                } else {
+                    ""
+                }
+            )),
+            Span::from(meter(
+                group.gain / engine::MAX_GAIN,
+                width.saturating_sub(4),
+            ))
+            .fg(accent()),
+            Span::from(pan_text_of(group.pan, group.mix_moving[engine::MIX_PAN])).fg(dim()),
+            Span::from(sends_text_moving(
+                group.sends,
+                [
+                    group.mix_moving[engine::MIX_SEND],
+                    group.mix_moving[engine::MIX_SEND + 1],
+                ],
+            ))
+            .fg(dim()),
+        ]),
+        Line::from(vec![
+            Span::raw("nivel "),
+            Span::from(meter(group.level, width)).fg(meter_color()),
+        ]),
+    ];
+    if group.fx.is_empty() {
+        lines.push(Line::from("sin efectos").fg(dim()));
+    }
+    for (i, fx) in group.fx.iter().enumerate() {
+        let moving: Vec<String> = group
+            .automated
+            .iter()
+            .filter(|(f, _)| *f == i)
+            .map(|(_, p)| format!("∿{p}"))
+            .collect();
+        lines.push(Line::from(vec![
+            Span::raw(format!("› {}", fx_text(fx))),
+            Span::from(if moving.is_empty() {
+                String::new()
+            } else {
+                format!(" {}", moving.join(" "))
+            })
+            .fg(accent()),
+        ]));
+    }
+    lines
 }
 
 /// Alto del panel de efectos: nombre, volumen, nivel y hasta 4 efectos.
@@ -1955,18 +2077,36 @@ pub struct FxPanel<'a>(pub &'a ViewModel);
 impl Widget for FxPanel<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let view = self.0;
-        let block = Block::bordered().title(" efectos por pista ");
+        let mut title = " efectos por pista ".to_string();
+        if !view.macros.is_empty() {
+            let macros: Vec<String> = view
+                .macros
+                .iter()
+                .map(|(name, value)| format!("{name} {value:.2}"))
+                .collect();
+            title.push_str(&format!("· macros: {} ", macros.join(" · ")));
+        }
+        let block = Block::bordered().title(title);
         let inner = block.inner(area);
         block.render(area, buf);
         if view.tracks.is_empty() {
             Line::from("sin pistas").fg(dim()).render(inner, buf);
             return;
         }
-        // Tantas columnas como quepan; las pistas que no caben no se dibujan.
+        // Tantas columnas como quepan (las pistas y detrás los grupos); las
+        // que no caben no se dibujan.
         let fit = (inner.width / FX_COLUMN_MIN).max(1) as usize;
-        let shown = view.tracks.len().min(fit);
+        let shown = (view.tracks.len() + view.groups.len()).min(fit);
         let columns =
             Layout::horizontal(vec![Constraint::Ratio(1, shown as u32); shown]).split(inner);
+        for (group, column) in view
+            .groups
+            .iter()
+            .zip(columns.iter().skip(view.tracks.len()))
+        {
+            let width = column.width.saturating_sub(7).clamp(4, 12) as usize;
+            Paragraph::new(group_column(group, width)).render(*column, buf);
+        }
         for (i, (track, column)) in view.tracks.iter().zip(columns.iter()).enumerate() {
             let width = column.width.saturating_sub(7).clamp(4, 12) as usize;
             let name = Span::from(track.name.clone()).bold();
@@ -2025,6 +2165,9 @@ impl Widget for FxPanel<'_> {
             }
             if let Some(group) = track.choke {
                 title.push(Span::from(format!(" · choke {group}")).fg(dim()));
+            }
+            if let Some(group) = &track.group {
+                title.push(Span::from(format!(" · ▣ {group}")).fg(dim()));
             }
             let mut lines = vec![
                 Line::from(title),

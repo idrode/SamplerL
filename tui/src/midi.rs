@@ -136,6 +136,9 @@ pub struct MidiConfig {
     /// Semitonos del bend entero de una nota (el que dice el controlador);
     /// `None`: 48 con MPE, 2 sin él.
     pub bend: Option<u8>,
+    /// El controlador (CC) que mueve cada macro (`macros[i]`, la macro
+    /// `i`), si lo tiene.
+    pub macros: [Option<u8>; engine::MAX_MACROS],
 }
 
 impl Default for MidiConfig {
@@ -146,6 +149,7 @@ impl Default for MidiConfig {
             clock: false,
             mpe: false,
             bend: None,
+            macros: [None; engine::MAX_MACROS],
         }
     }
 }
@@ -157,6 +161,15 @@ impl MidiConfig {
             return None;
         }
         note.checked_sub(self.base_note).map(usize::from)
+    }
+
+    /// La macro (desde 0) que mueve un controlador de un canal, si mueve
+    /// alguna.
+    pub fn macro_for(&self, channel: u8, number: u8) -> Option<usize> {
+        if !self.mpe && self.channel.is_some_and(|c| c != channel) {
+            return None;
+        }
+        self.macros.iter().position(|&cc| cc == Some(number))
     }
 }
 

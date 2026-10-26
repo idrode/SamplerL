@@ -128,6 +128,11 @@ impl PresetParam {
                 max: max * s,
                 rate,
             },
+            Curve::Macro { index, from, to } => Curve::Macro {
+                index,
+                from: from * s,
+                to: to * s,
+            },
         };
         Some((index, scaled))
     }

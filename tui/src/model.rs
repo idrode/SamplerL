@@ -43,6 +43,12 @@ pub struct ViewModel {
     pub browser: Option<BrowserView>,
     /// Esperando el número de una ranura rápida.
     pub slots: Option<SlotsView>,
+    /// Grupos de pistas (`group()`), en su orden.
+    pub groups: Vec<GroupView>,
+    /// Macros (`macro()`): nombre y valor.
+    pub macros: Vec<(String, f32)>,
+    /// Panel de las macros abierto, con la elegida.
+    pub macro_panel: Option<usize>,
     /// Nombre del proyecto abierto, si lo hay.
     pub project: Option<String>,
     /// Mensaje informativo de la última acción.
@@ -307,6 +313,26 @@ pub struct TrackView {
     /// 0) con sus efectos y los parámetros que se mueven de cada uno
     /// (índice en sus efectos).
     pub slice_fx: Vec<SliceFxView>,
+    /// El grupo al que va (`group()`), si va a uno.
+    pub group: Option<String>,
+}
+
+/// Un grupo de pistas para el panel de efectos: como una pista, sin
+/// sample.
+#[derive(Debug, Clone, Default)]
+pub struct GroupView {
+    pub name: String,
+    /// Sus pistas, por nombre.
+    pub tracks: Vec<String>,
+    pub gain: f32,
+    pub pan: f32,
+    pub sends: [f32; 2],
+    /// Volumen, pan y envíos que se mueven (como en [`TrackView`]).
+    pub mix_moving: [bool; engine::MIX_PARAMS],
+    pub fx: Vec<Fx>,
+    pub automated: Vec<(usize, &'static str)>,
+    /// Medidor de nivel (pico con caída), de 0 a 1.
+    pub level: f32,
 }
 
 /// Resumen de los granos de una pista para el panel de efectos:

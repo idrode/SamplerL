@@ -78,6 +78,7 @@ pub const BINDABLE: &[(&str, Bound, &[&str])] = &[
     ("rehacer", Bound::Action(Action::Redo), &["ctrl-r"]),
     ("explorador", Bound::Action(Action::Browser), &[]),
     ("tap_tempo", Bound::Action(Action::TapTempo), &[]),
+    ("macros", Bound::Action(Action::Macros), &[]),
     ("metronomo", Bound::Action(Action::Metronome), &[]),
     ("exportar", Bound::Action(Action::Export), &[]),
     ("seccion_siguiente", Bound::Action(Action::NextSection), &[]),
@@ -90,6 +91,21 @@ pub const BINDABLE: &[(&str, Bound, &[&str])] = &[
     ("variante", Bound::Action(Action::ToggleVariant), &[]),
     ("resaltado", Bound::Action(Action::Highlight), &[]),
 ];
+
+/// `[midi] macros`: el controlador (CC) de cada macro, por orden; `None`
+/// si no es una lista de números de 0 a 127 (como mucho uno por macro).
+fn midi_macros(value: &toml::Value) -> Option<[Option<u8>; engine::MAX_MACROS]> {
+    let list = value.as_array()?;
+    if list.len() > engine::MAX_MACROS {
+        return None;
+    }
+    let mut out = [None; engine::MAX_MACROS];
+    for (slot, v) in out.iter_mut().zip(list) {
+        let n = v.as_integer().filter(|n| (0..=127).contains(n))?;
+        *slot = Some(n as u8);
+    }
+    Some(out)
+}
 
 /// `[resaltado]`: el resaltado en vivo del código al sonar.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -558,6 +574,14 @@ impl Config {
                             ("bend", Some(n), _) if (1..=96).contains(&n) => {
                                 config.midi.bend = Some(n as u8)
                             }
+                            ("macros", _, _) => match midi_macros(value) {
+                                Some(list) => config.midi.macros = list,
+                                None => config.warnings.push(format!(
+                                    "[midi] macros: una lista de hasta {} controladores (0-127), \
+                                     uno por macro: [21, 22, 23]",
+                                    engine::MAX_MACROS
+                                )),
+                            },
                             ("nota_base" | "canal" | "reloj" | "mpe" | "bend", _, _) => {
                                 config.warnings.push(format!(
                                     "[midi] {key}: valor no válido (nota_base 0-127, canal 1-16, \
@@ -565,7 +589,7 @@ impl Config {
                                 ))
                             }
                             _ => config.warnings.push(format!(
-                                "[midi] «{key}» no existe (hay: nota_base, canal, reloj, mpe, bend)"
+                                "[midi] «{key}» no existe (hay: nota_base, canal, reloj, mpe, bend, macros)"
                             )),
                         }
                     }
@@ -887,7 +911,7 @@ brillo = "red"
             [
                 "[teclas] cargar: F1 es siempre la paleta de comandos",
                 "[teclas] explorador: Alt-S ya es de guardar; no se usa",
-                "[teclas] «inventada» no existe (hay: paleta, guardar, cargar, marcha, cue, ir_al_error, ir_a_linea, buscar, buscar_siguiente, buscar_anterior, siguiente_pista, recargar, ordenes, completar, salir, modo_tocar, deshacer, rehacer, explorador, tap_tempo, metronomo, exportar, seccion_siguiente, seccion_anterior, repetir_seccion, variante, resaltado)",
+                "[teclas] «inventada» no existe (hay: paleta, guardar, cargar, marcha, cue, ir_al_error, ir_a_linea, buscar, buscar_siguiente, buscar_anterior, siguiente_pista, recargar, ordenes, completar, salir, modo_tocar, deshacer, rehacer, explorador, tap_tempo, macros, metronomo, exportar, seccion_siguiente, seccion_anterior, repetir_seccion, variante, resaltado)",
                 "[teclas] salir: «q»: una letra sin ctrl- ni alt- escribiría texto",
                 "[teclas] Ctrl-G era de ir_al_error; ahora es de marcha",
                 "[colores] tenue: color no válido",

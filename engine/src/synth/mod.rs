@@ -1890,6 +1890,8 @@ pub struct SongClock {
     pub bar: Option<(u64, u64)>,
     /// Lo que dura un compás al tempo de ahora (el del compás virtual).
     pub bar_length: u64,
+    /// El valor de cada macro en este trozo.
+    pub macros: crate::automation::Macros,
 }
 
 impl SongClock {
@@ -1903,6 +1905,7 @@ impl SongClock {
             frame: 0,
             bar: None,
             bar_length,
+            macros: [0.0; crate::automation::MAX_MACROS],
         }
     }
 }
@@ -2158,7 +2161,9 @@ impl Synth {
             let from = self.values;
             let mut to = [0.0; PARAM_COUNT];
             for (i, p) in PARAMS.iter().enumerate() {
-                let goal = curves[i].map_or(patch.params[i], |c| c.value(steps, seconds, p.log));
+                let goal = curves[i].map_or(patch.params[i], |c| {
+                    c.value(steps, seconds, &clock.macros, p.log)
+                });
                 to[i] = if self.primed {
                     mix(goal, from[i], keep, p.log)
                 } else {
@@ -2324,6 +2329,7 @@ pub fn render(
             frame: at as u64,
             bar: Some((bar_start, bar_length)),
             bar_length,
+            macros: [0.0; crate::automation::MAX_MACROS],
         };
         synth.mix_into(&mut out[2 * at..2 * until], patch, curves, &clock);
         at = until;

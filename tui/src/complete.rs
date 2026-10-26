@@ -889,7 +889,7 @@ pub fn help_at(lines: &[String], row: usize, col: usize) -> Option<Help> {
         // El efecto elegido en `fx("...")` o `chance(p, "...")`.
         let chosen = |i: usize| strings.get(i).cloned().flatten();
         match (f.receiver, f.name) {
-            (Receiver::Track, "fx") => {
+            (Receiver::Track | Receiver::Group, "fx") => {
                 if let Some(e) = chosen(0).as_deref().and_then(api::effect) {
                     description = format!("{} · {}: {}", description, e.name, e.summary);
                 }

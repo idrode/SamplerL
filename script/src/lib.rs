@@ -99,6 +99,8 @@ const GLOBAL_ONLY: &[&str] = &[
     "meter",
     "metronome",
     "bus",
+    "group",
+    "macro_init",
     "section",
     "arrange",
     "variant",
@@ -151,6 +153,56 @@ pub struct Song {
     /// Prioridad entre pistas para los choques de frecuencia
     /// (`priority()`): la primera manda. Vacía, manda la más fuerte.
     pub priority: Vec<String>,
+    /// Grupos (`group()`), en el orden en que se definieron (el índice es
+    /// el del grupo en el motor).
+    pub groups: Vec<GroupDef>,
+    /// Macros (`macro()`), en el orden en que aparecen (el índice es el de
+    /// la macro en el motor), con el valor con el que suenan.
+    pub macros: Vec<MacroDef>,
+}
+
+/// Un grupo (`group(nombre, pistas)`): sus pistas se suman y pasan juntas
+/// por sus efectos, su volumen, su pan y sus envíos.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GroupDef {
+    pub name: String,
+    /// Las pistas que van a él, por su nombre.
+    pub tracks: Vec<String>,
+    pub gain: f32,
+    pub pan: f32,
+    pub sends: [f32; engine::bus::BUSES],
+    /// Volumen, pan y envíos con curva (como los de [`TrackDef`]).
+    pub mix_curves: engine::MixCurves,
+    pub fx: Vec<Fx>,
+    pub automation: Vec<engine::Automation>,
+    /// Pistas que escucha por sidechain cada EQ dinámico de la cadena.
+    pub sidechains: Vec<(usize, String)>,
+}
+
+impl GroupDef {
+    fn new(name: String, tracks: Vec<String>) -> Self {
+        GroupDef {
+            name,
+            tracks,
+            gain: 1.0,
+            pan: 0.0,
+            sends: [0.0; engine::bus::BUSES],
+            mix_curves: [None; engine::MIX_PARAMS],
+            fx: Vec::new(),
+            automation: Vec::new(),
+            sidechains: Vec::new(),
+        }
+    }
+}
+
+/// Una macro (`macro(nombre, desde, hasta)`): un valor de 0 a 1 que se
+/// mueve en vivo y que siguen los parámetros que la usan.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MacroDef {
+    pub name: String,
+    /// El valor con el que suena: el de `macro_init()` (0 sin él) o, tras
+    /// recargar, el que se le dio en vivo (ver [`ScriptHost::set_macro`]).
+    pub value: f32,
 }
 
 /// Una sección: su nombre y sus pistas (las de fuera de las secciones con
@@ -525,6 +577,10 @@ pub struct ScriptHost {
     stretched: Vec<Stretched>,
     /// Última etiqueta dada a una pista ([`TrackDef::tag`]).
     last_tag: u32,
+    /// Cada macro por su nombre: el valor que le daba el script en la
+    /// última carga y el que tiene en vivo. Recargar conserva el de vivo
+    /// salvo que el script cambie el suyo.
+    macro_values: HashMap<String, (f32, f32)>,
 }
 
 impl ScriptHost {
@@ -546,6 +602,7 @@ impl ScriptHost {
             imported: Vec::new(),
             stretched: Vec::new(),
             last_tag: 0,
+            macro_values: HashMap::new(),
         }
     }
 
@@ -779,7 +836,22 @@ impl ScriptHost {
             }
         }
         let slots = self.assign_slots(&names);
-        let batch = song_batch(&song, &slots)?;
+        // Las macros siguen donde estaban en vivo (si el script no cambia su
+        // valor inicial).
+        let mut values = self.macro_values.clone();
+        for def in &mut song.macros {
+            let script = def.value;
+            if let Some(&(before, live)) = values.get(&def.name)
+                && before == script
+            {
+                def.value = live;
+            }
+            values.insert(def.name.clone(), (script, def.value));
+        }
+        if let Some(other) = &mut other {
+            other.macros = song.macros.clone();
+        }
+        let batch = song_batch(&song, &slots, self.song.as_ref())?;
         controller
             .apply(batch)
             .map_err(|e| ScriptError::new(format!("no se pudo enviar al motor: {e}")))?;
@@ -787,7 +859,39 @@ impl ScriptHost {
         self.slots = slots;
         self.song = Some(song);
         self.other = other;
+        self.macro_values = values;
         Ok(self.song.as_ref().unwrap())
+    }
+
+    /// Las macros de lo que suena, con su valor.
+    pub fn macros(&self) -> &[MacroDef] {
+        self.song.as_ref().map_or(&[], |s| &s.macros)
+    }
+
+    /// Mueve la macro `index` a `value` (de 0 a 1) en vivo: el motor la
+    /// sigue ya, y recargar el script la deja donde está (salvo que el
+    /// script cambie su `macro_init`).
+    pub fn set_macro(
+        &mut self,
+        controller: &mut Controller,
+        index: usize,
+        value: f32,
+    ) -> Result<(), ScriptError> {
+        let Some(name) = self.macros().get(index).map(|m| m.name.clone()) else {
+            return Err(ScriptError::new(format!("no hay macro {}", index + 1)));
+        };
+        controller
+            .set_macro(index, value)
+            .map_err(|e| ScriptError::new(format!("no se pudo enviar al motor: {e}")))?;
+        for song in self.song.iter_mut().chain(self.other.iter_mut()) {
+            if let Some(def) = song.macros.get_mut(index) {
+                def.value = value;
+            }
+        }
+        if let Some((_, live)) = self.macro_values.get_mut(&name) {
+            *live = value;
+        }
+        Ok(())
     }
 
     /// La variante que suena (`'A'` o `'B'`); `None` sin variantes.
@@ -812,7 +916,7 @@ impl ScriptHost {
             let Some(other) = self.other.take().filter(|o| o.variant == Some(letter)) else {
                 return Err(ScriptError::new(format!("no hay variante {letter}")));
             };
-            let batch = match song_batch(&other, &self.slots) {
+            let batch = match song_batch(&other, &self.slots, self.song.as_ref()) {
                 Ok(batch) => batch,
                 Err(e) => {
                     self.other = Some(other);
@@ -888,6 +992,8 @@ impl ScriptHost {
             names: Vec::new(),
             variants: Vec::new(),
             priority: Vec::new(),
+            groups: Vec::new(),
+            macros: Vec::new(),
         }));
         // La caché pasa al estado de Lua durante la evaluación y vuelve después.
         let cache = Rc::new(RefCell::new(std::mem::take(&mut self.samples)));
@@ -915,6 +1021,8 @@ impl ScriptHost {
         let versions = result.map_err(|e| ScriptError::from_lua(&e))?;
 
         let priority = std::mem::take(&mut state.borrow_mut().priority);
+        let groups = std::mem::take(&mut state.borrow_mut().groups);
+        let macros = std::mem::take(&mut state.borrow_mut().macros);
         let (bpm, metronome, buses, tempo_ramp, meter, tracks, expanding, arrange) = {
             let mut builder = state.borrow_mut();
             (
@@ -1064,6 +1172,8 @@ impl ScriptHost {
                 variant: version.letter,
                 alternate: None,
                 priority: priority.clone(),
+                groups: groups.clone(),
+                macros: macros.clone(),
             });
         }
         self.stretched = used;
@@ -1091,6 +1201,7 @@ impl ScriptHost {
             }
             song.alternate = Some(Box::new(b));
         }
+        check_groups(&song)?;
         Ok(song)
     }
 
@@ -1700,6 +1811,131 @@ impl ScriptHost {
             })?,
         )?;
 
+        let st = state.clone();
+        let g = guard.clone();
+        globals.set(
+            "group",
+            lua.create_function(move |lua, (name, tracks): (String, Option<Table>)| {
+                g(lua, "group")?;
+                let who = format!("group(\"{name}\")");
+                let mut builder = st.borrow_mut();
+                let exists = builder.groups.iter().any(|g| g.name == name);
+                match (tracks, exists) {
+                    (None, true) => {}
+                    (None, false) => {
+                        return Err(fail(
+                            lua,
+                            format!(
+                                "{who}: no existe; la primera vez va con sus pistas: group(\"{name}\", {{ \"kick\", \"snare\" }})"
+                            ),
+                        ));
+                    }
+                    (Some(_), true) => {
+                        return Err(fail(
+                            lua,
+                            format!(
+                                "{who}: ya existe (para cambiar sus efectos, group(\"{name}\") sin las pistas)"
+                            ),
+                        ));
+                    }
+                    (Some(list), false) => {
+                        if name.trim().is_empty() {
+                            return Err(fail(lua, "group: el grupo necesita un nombre"));
+                        }
+                        if builder.groups.len() >= engine::MAX_GROUPS {
+                            return Err(fail(
+                                lua,
+                                format!("{who}: hay {} grupos como mucho", engine::MAX_GROUPS),
+                            ));
+                        }
+                        let mut members: Vec<String> = Vec::new();
+                        for value in list.sequence_values::<Value>() {
+                            let track = match value? {
+                                Value::String(s) => s.to_str()?.to_string(),
+                                other => {
+                                    return Err(fail(
+                                        lua,
+                                        format!(
+                                            "{who}: cada pista va por su nombre, entre comillas (no {})",
+                                            other.type_name()
+                                        ),
+                                    ));
+                                }
+                            };
+                            if members.contains(&track) {
+                                return Err(fail(
+                                    lua,
+                                    format!("{who}: \"{track}\" está dos veces"),
+                                ));
+                            }
+                            if let Some(other) =
+                                builder.groups.iter().find(|g| g.tracks.contains(&track))
+                            {
+                                return Err(fail(
+                                    lua,
+                                    format!(
+                                        "{who}: \"{track}\" ya va al grupo \"{}\" (cada pista, a uno)",
+                                        other.name
+                                    ),
+                                ));
+                            }
+                            members.push(track);
+                        }
+                        if members.is_empty() {
+                            return Err(fail(
+                                lua,
+                                format!(
+                                    "{who}: falta la lista de pistas ({{ \"kick\", \"snare\" }})"
+                                ),
+                            ));
+                        }
+                        builder.groups.push(GroupDef::new(name.clone(), members));
+                    }
+                }
+                Ok(GroupHandle {
+                    name,
+                    state: st.clone(),
+                })
+            })?,
+        )?;
+
+        let st = state.clone();
+        let g = guard.clone();
+        globals.set(
+            "macro",
+            lua.create_function(move |lua, (name, from, to): (String, f32, f32)| {
+                g(lua, "macro")?;
+                let index = st
+                    .borrow_mut()
+                    .macro_index(&name)
+                    .map_err(|e| fail(lua, format!("macro(\"{name}\", ...): {e}")))?;
+                Ok(CurveHandle(engine::Curve::Macro {
+                    index: index as u8,
+                    from,
+                    to,
+                }))
+            })?,
+        )?;
+
+        let st = state.clone();
+        let g = guard.clone();
+        globals.set(
+            "macro_init",
+            lua.create_function(move |lua, (name, value): (String, f32)| {
+                g(lua, "macro_init")?;
+                let who = format!("macro_init(\"{name}\", {value})");
+                if !(0.0..=1.0).contains(&value) {
+                    return Err(fail(lua, format!("{who}: el valor va de 0 a 1")));
+                }
+                let mut builder = st.borrow_mut();
+                let index = builder
+                    .macro_index(&name)
+                    .map_err(|e| fail(lua, format!("{who}: {e}")))?;
+                builder.macros[index].value = value;
+                Ok(())
+            })?,
+        )?;
+
         globals.set(
             "ramp",
             lua.create_function(|lua, (from, to, duration): (f32, f32, String)| {
@@ -1847,7 +2083,14 @@ impl ScriptHost {
 
 /// Lote que lleva la canción al motor: tempo y el patrón de cada pista en su
 /// ranura (`slots[i]` es el nombre de la pista de la ranura `i`).
-fn song_batch(song: &Song, slots: &[Option<String>; MAX_TRACKS]) -> Result<Batch, ScriptError> {
+/// El lote que hace sonar `song`. `before`, lo que sonaba (para quitar sus
+/// grupos si `song` ya no tiene): los grupos y las macros solo van si hacen
+/// falta, para no gastar sitio en la cola de comandos.
+fn song_batch(
+    song: &Song,
+    slots: &[Option<String>; MAX_TRACKS],
+    before: Option<&Song>,
+) -> Result<Batch, ScriptError> {
     let mut batch = Batch::new();
     match (song.tempo_ramp, song.bpm) {
         (Some(ramp), _) => {
@@ -1861,6 +2104,16 @@ fn song_batch(song: &Song, slots: &[Option<String>; MAX_TRACKS]) -> Result<Batch
     // Sin `meter()`, 4/4 (así quitarlo vuelve al compás de siempre).
     batch.set_meter(song.meter.unwrap_or(engine::Meter::COMMON));
     batch.set_buses(song.buses);
+    if !song.groups.is_empty() || before.is_some_and(|b| !b.groups.is_empty()) {
+        batch.set_groups(song_groups(song, slots)?);
+    }
+    if !song.macros.is_empty() {
+        let mut macros = [0.0; engine::MAX_MACROS];
+        for (value, def) in macros.iter_mut().zip(&song.macros) {
+            *value = def.value;
+        }
+        batch.set_macros(macros);
+    }
     if !song.timeline.is_empty() {
         // Con línea de tiempo, el motor lleva todas las secciones.
         let mut arrangement = engine::Arrangement::new();
@@ -1904,6 +2157,79 @@ fn song_batch(song: &Song, slots: &[Option<String>; MAX_TRACKS]) -> Result<Batch
         batch.set_pattern(slot, pattern);
     }
     Ok(batch)
+}
+
+/// Los grupos de la canción para el motor: cada uno en su índice y cada
+/// pista con ranura en el suyo.
+fn song_groups(
+    song: &Song,
+    slots: &[Option<String>; MAX_TRACKS],
+) -> Result<engine::Groups, ScriptError> {
+    let mut groups = engine::Groups::new();
+    for (g, def) in song.groups.iter().enumerate() {
+        let mut fx = def.fx.clone();
+        resolve_sidechains(&mut fx, &def.sidechains, slots);
+        let group = engine::Group::new()
+            .with_fx(&fx)
+            .and_then(|g| g.with_automation(&def.automation))
+            .and_then(|g| g.with_gain(def.gain))
+            .and_then(|g| g.with_pan(def.pan))
+            .and_then(|g| g.with_sends(def.sends))
+            .and_then(|g| g.with_mix_automation(def.mix_curves))
+            .map_err(|e| ScriptError::new(format!("grupo \"{}\": {e}", def.name)))?;
+        groups.groups[g] = Some(group);
+        for name in &def.tracks {
+            if let Some(slot) = slots.iter().position(|s| s.as_deref() == Some(name)) {
+                groups.member[slot] = Some(g);
+            }
+        }
+    }
+    Ok(groups)
+}
+
+/// Pone en cada EQ dinámico de `fx` la ranura de la pista que escucha.
+fn resolve_sidechains(
+    fx: &mut [Fx],
+    sidechains: &[(usize, String)],
+    slots: &[Option<String>; MAX_TRACKS],
+) {
+    for (index, name) in sidechains {
+        let slot = slots
+            .iter()
+            .position(|s| s.as_deref() == Some(name.as_str()));
+        if let (Some(Fx::DynEq(params)), Some(slot)) = (fx.get_mut(*index), slot) {
+            params.sidechain = Some(slot);
+        }
+    }
+}
+
+/// Comprueba que las pistas de cada grupo y las que escuchan sus EQ
+/// dinámicos existen (en alguna sección o variante).
+fn check_groups(song: &Song) -> Result<(), ScriptError> {
+    let mut known = song.track_names();
+    for n in song.alternate.iter().flat_map(|b| b.track_names()) {
+        if !known.contains(&n) {
+            known.push(n);
+        }
+    }
+    for group in &song.groups {
+        let names = group.tracks.iter().map(|t| (t, "group")).chain(
+            group
+                .sidechains
+                .iter()
+                .map(|(_, t)| (t, "fx(\"dyneq\"): sidechain")),
+        );
+        for (name, what) in names {
+            if !known.contains(&name.as_str()) {
+                return Err(ScriptError::new(format!(
+                    "grupo \"{}\": {what} \"{name}\" no es ninguna pista (hay: {})",
+                    group.name,
+                    known.join(", ")
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Comprueba el sidechain de los EQ dinámicos de `tracks`: que cada pista
@@ -1966,14 +2292,7 @@ fn track_pattern(
     slots: &[Option<String>; MAX_TRACKS],
 ) -> Result<Pattern, ScriptError> {
     let mut fx = track.fx.clone();
-    for (index, name) in &track.sidechains {
-        let slot = slots
-            .iter()
-            .position(|s| s.as_deref() == Some(name.as_str()));
-        if let (Some(Fx::DynEq(params)), Some(slot)) = (fx.get_mut(*index), slot) {
-            params.sidechain = Some(slot);
-        }
-    }
+    resolve_sidechains(&mut fx, &track.sidechains, slots);
     let chains = track
         .slice_fx
         .iter()
@@ -2207,7 +2526,9 @@ impl Song {
         }
         let (mut controller, mut engine) = engine::new_engine(sample_rate);
         let send = |e: SendError| ScriptError::new(format!("motor: {e}"));
-        controller.apply(song_batch(self, &slots)?).map_err(send)?;
+        controller
+            .apply(song_batch(self, &slots, None)?)
+            .map_err(send)?;
         if metronome {
             controller.set_metronome(true).map_err(send)?;
         }
@@ -2496,6 +2817,37 @@ struct Builder {
     variants: Vec<VariantBuild>,
     /// `priority()`: las pistas de la que más manda a la que menos.
     priority: Vec<String>,
+    /// Grupos (`group()`) y macros (`macro()`, `macro_init()`).
+    groups: Vec<GroupDef>,
+    macros: Vec<MacroDef>,
+}
+
+impl Builder {
+    /// El índice de la macro `name` (la añade si es nueva).
+    fn macro_index(&mut self, name: &str) -> Result<usize, String> {
+        if let Some(i) = self.macros.iter().position(|m| m.name == name) {
+            return Ok(i);
+        }
+        if name.trim().is_empty() {
+            return Err("la macro necesita un nombre".into());
+        }
+        if self.macros.len() >= engine::MAX_MACROS {
+            return Err(format!(
+                "hay {} macros como mucho ({})",
+                engine::MAX_MACROS,
+                self.macros
+                    .iter()
+                    .map(|m| m.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        self.macros.push(MacroDef {
+            name: name.to_string(),
+            value: 0.0,
+        });
+        Ok(self.macros.len() - 1)
+    }
 }
 
 /// `variant(nombre, letra, función)`: lo que cambia una sección o una
@@ -4617,6 +4969,71 @@ impl TrackHandle {
     }
 }
 
+/// `group(nombre, ...)` en Lua: sus métodos cambian el grupo y lo
+/// devuelven (para encadenar).
+#[derive(Clone)]
+struct GroupHandle {
+    name: String,
+    state: Rc<RefCell<Builder>>,
+}
+
+impl GroupHandle {
+    fn with_group<R>(&self, f: impl FnOnce(&mut GroupDef) -> R) -> R {
+        let mut builder = self.state.borrow_mut();
+        let group = builder
+            .groups
+            .iter_mut()
+            .find(|g| g.name == self.name)
+            .expect("el grupo existe desde group()");
+        f(group)
+    }
+}
+
+impl UserData for GroupHandle {
+    fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        // Como los de una pista, sobre la suma de las suyas.
+        methods.add_method(
+            "fx",
+            |lua, this, (name, params): (String, Option<Table>)| {
+                let count = this.with_group(|g| g.fx.len());
+                let (fx, automations, sidechain) = fx_arg(lua, &name, params, count, None)?;
+                this.with_group(|g| {
+                    if let Some(key) = sidechain {
+                        g.sidechains.push((g.fx.len(), key));
+                    }
+                    g.fx.push(fx);
+                    g.automation.extend(automations);
+                });
+                Ok(this.clone())
+            },
+        );
+        methods.add_method("gain", |lua, this, gain: Value| {
+            let (gain, curve) = gain_arg(lua, gain)?;
+            this.with_group(|g| {
+                g.gain = gain;
+                g.mix_curves[engine::MIX_GAIN] = curve;
+            });
+            Ok(this.clone())
+        });
+        methods.add_method("pan", |lua, this, pan: Value| {
+            let (pan, curve) = pan_arg(lua, pan)?;
+            this.with_group(|g| {
+                g.pan = pan;
+                g.mix_curves[engine::MIX_PAN] = curve;
+            });
+            Ok(this.clone())
+        });
+        methods.add_method("send", |lua, this, (bus, level): (String, Value)| {
+            let (index, level, curve) = send_arg(lua, &bus, level)?;
+            this.with_group(|g| {
+                g.sends[index] = level;
+                g.mix_curves[engine::MIX_SEND + index] = curve;
+            });
+            Ok(this.clone())
+        });
+    }
+}
+
 /// Etiquetas del proyecto que no se aplican a una pista (de otro
 /// `slice(n)`), con el número de cortes que usa el script.
 struct StaleLabels<'a> {
@@ -4927,10 +5344,110 @@ fn value_text(value: &Value) -> String {
         Value::UserData(ud) => match ud.borrow::<CurveHandle>().map(|c| c.0) {
             Ok(engine::Curve::Ramp { .. }) => "ramp(...)".into(),
             Ok(engine::Curve::Lfo { .. }) => "lfo(...)".into(),
+            Ok(engine::Curve::Macro { .. }) => "macro(...)".into(),
             _ => "...".into(),
         },
         _ => "...".into(),
     }
+}
+
+/// `:gain(g)` de una pista o un grupo (lineal, de 0 a 4): el valor fijo y
+/// su curva.
+fn gain_arg(lua: &Lua, gain: Value) -> mlua::Result<(f32, Option<engine::Curve>)> {
+    let who = format!("gain({})", value_text(&gain));
+    let (gain, curve) = number_or_curve(lua, &who, "gain", gain, (0.0, MAX_GAIN))?;
+    if !(0.0..=MAX_GAIN).contains(&gain) {
+        return Err(fail(lua, SendError::InvalidTrackGain(gain)));
+    }
+    Ok((gain, curve))
+}
+
+/// `:pan(p)` de una pista o un grupo (de -1 a 1).
+fn pan_arg(lua: &Lua, pan: Value) -> mlua::Result<(f32, Option<engine::Curve>)> {
+    let who = format!("pan({})", value_text(&pan));
+    let (pan, curve) = number_or_curve(lua, &who, "pan", pan, (-1.0, 1.0))?;
+    if !(-1.0..=1.0).contains(&pan) {
+        return Err(fail(lua, format!("{who}: el pan va de -1 a 1")));
+    }
+    Ok((pan, curve))
+}
+
+/// `:send(bus, nivel)` de una pista o un grupo: el bus, el nivel fijo y su
+/// curva.
+fn send_arg(
+    lua: &Lua,
+    bus: &str,
+    level: Value,
+) -> mlua::Result<(usize, f32, Option<engine::Curve>)> {
+    let index = match bus {
+        "delay" => engine::bus::DELAY,
+        "reverb" => engine::bus::REVERB,
+        other => {
+            return Err(fail(
+                lua,
+                format!(
+                    "send(\"{other}\"): el bus no existe ({})",
+                    names(api::BUSES.iter().map(|b| b.name))
+                ),
+            ));
+        }
+    };
+    let who = format!("send(\"{bus}\", {})", value_text(&level));
+    let (level, curve) = number_or_curve(lua, &who, "send", level, (0.0, engine::bus::MAX_SEND))?;
+    if !(0.0..=engine::bus::MAX_SEND).contains(&level) {
+        return Err(fail(lua, format!("{who}: el nivel va de 0 a 1")));
+    }
+    Ok((index, level, curve))
+}
+
+/// `:fx(nombre, { parámetros })` de una pista (`own`, su nombre) o un
+/// grupo, que ya tiene `count` efectos: el efecto, sus automatizaciones
+/// (los parámetros con `ramp()`, `lfo()` o `macro()`) y la pista que
+/// escucha por sidechain el EQ dinámico (se busca al acabar el script:
+/// puede definirse después).
+fn fx_arg(
+    lua: &Lua,
+    name: &str,
+    params: Option<Table>,
+    count: usize,
+    own: Option<&str>,
+) -> mlua::Result<(Fx, Vec<engine::Automation>, Option<String>)> {
+    if let (Some(effect), Some(p)) = (api::effect(name), &params) {
+        table_curves(lua, &format!("fx(\"{name}\")"), p, effect.params)?;
+    }
+    let sidechain = match (&params, name) {
+        (Some(p), "dyneq") => match p.get::<Value>("sidechain")? {
+            Value::Nil => None,
+            Value::String(s) => Some(s.to_str()?.to_string()),
+            _ => {
+                return Err(fail(
+                    lua,
+                    "fx(\"dyneq\"): sidechain es el nombre de una pista, entre comillas",
+                ));
+            }
+        },
+        _ => None,
+    };
+    if let Some(own) = own
+        && sidechain.as_deref() == Some(own)
+    {
+        return Err(fail(
+            lua,
+            format!(
+                "fx(\"dyneq\"): \"{own}\" no puede escucharse a sí misma por sidechain (sin sidechain ya escucha la propia pista)"
+            ),
+        ));
+    }
+    let (fx, curves) = parse_fx(lua, name, params)?;
+    if count >= MAX_FX {
+        let whose = if own.is_some() { "pista" } else { "grupo" };
+        return Err(fail(
+            lua,
+            format!("fx: máximo {MAX_FX} efectos por {whose}"),
+        ));
+    }
+    let automations = fx_automations(lua, name, fx, count, &curves)?;
+    Ok((fx, automations, sidechain))
 }
 
 /// Lista separada por comas.
@@ -5186,11 +5703,7 @@ impl UserData for TrackHandle {
 
         // `:gain(g)`: volumen de la pista (lineal, de 0 a 4).
         methods.add_method("gain", |lua, this, gain: Value| {
-            let who = format!("gain({})", value_text(&gain));
-            let (gain, curve) = number_or_curve(lua, &who, "gain", gain, (0.0, MAX_GAIN))?;
-            if !(0.0..=MAX_GAIN).contains(&gain) {
-                return Err(fail(lua, SendError::InvalidTrackGain(gain)));
-            }
+            let (gain, curve) = gain_arg(lua, gain)?;
             this.with_track(|t| {
                 t.def.gain = gain;
                 t.def.mix_curves[engine::MIX_GAIN] = curve;
@@ -5200,11 +5713,7 @@ impl UserData for TrackHandle {
 
         // `:pan(p)`: pan de la pista (de -1 a 1), después de su volumen.
         methods.add_method("pan", |lua, this, pan: Value| {
-            let who = format!("pan({})", value_text(&pan));
-            let (pan, curve) = number_or_curve(lua, &who, "pan", pan, (-1.0, 1.0))?;
-            if !(-1.0..=1.0).contains(&pan) {
-                return Err(fail(lua, format!("{who}: el pan va de -1 a 1")));
-            }
+            let (pan, curve) = pan_arg(lua, pan)?;
             this.with_track(|t| {
                 t.def.pan = pan;
                 t.def.mix_curves[engine::MIX_PAN] = curve;
@@ -5412,25 +5921,7 @@ impl UserData for TrackHandle {
 
         // `:send(bus, nivel)`: parte de la pista al delay o a la reverb.
         methods.add_method("send", |lua, this, (bus, level): (String, Value)| {
-            let index = match bus.as_str() {
-                "delay" => engine::bus::DELAY,
-                "reverb" => engine::bus::REVERB,
-                other => {
-                    return Err(fail(
-                        lua,
-                        format!(
-                            "send(\"{other}\"): el bus no existe ({})",
-                            names(api::BUSES.iter().map(|b| b.name))
-                        ),
-                    ));
-                }
-            };
-            let who = format!("send(\"{bus}\", {})", value_text(&level));
-            let (level, curve) =
-                number_or_curve(lua, &who, "send", level, (0.0, engine::bus::MAX_SEND))?;
-            if !(0.0..=engine::bus::MAX_SEND).contains(&level) {
-                return Err(fail(lua, format!("{who}: el nivel va de 0 a 1")));
-            }
+            let (index, level, curve) = send_arg(lua, &bus, level)?;
             this.with_track(|t| {
                 t.def.sends[index] = level;
                 t.def.mix_curves[engine::MIX_SEND + index] = curve;
@@ -5452,40 +5943,9 @@ impl UserData for TrackHandle {
         methods.add_method(
             "fx",
             |lua, this, (name, params): (String, Option<Table>)| {
-                if let (Some(effect), Some(p)) = (api::effect(&name), &params) {
-                    table_curves(lua, &format!("fx(\"{name}\")"), p, effect.params)?;
-                }
-                // `sidechain = "pista"` del EQ dinámico: la pista se busca al
-                // acabar el script (puede definirse después).
-                let sidechain = match (&params, name.as_str()) {
-                    (Some(p), "dyneq") => match p.get::<Value>("sidechain")? {
-                        Value::Nil => None,
-                        Value::String(s) => Some(s.to_str()?.to_string()),
-                        _ => {
-                            return Err(fail(
-                                lua,
-                                "fx(\"dyneq\"): sidechain es el nombre de una pista, entre comillas",
-                            ));
-                        }
-                    },
-                    _ => None,
-                };
-                if sidechain.as_deref() == Some(this.name.as_str()) {
-                    return Err(fail(
-                        lua,
-                        format!(
-                            "fx(\"dyneq\"): \"{}\" no puede escucharse a sí misma por sidechain (sin sidechain ya escucha la propia pista)",
-                            this.name
-                        ),
-                    ));
-                }
-                let (fx, curves) = parse_fx(lua, &name, params)?;
                 let count = this.with_track(|t| t.def.fx.len());
-                if count >= MAX_FX {
-                    return Err(fail(lua, format!("fx: máximo {MAX_FX} efectos por pista")));
-                }
-                // Los parámetros con ramp() o lfo(): automatizaciones.
-                let automations = fx_automations(lua, &name, fx, count, &curves)?;
+                let (fx, automations, sidechain) =
+                    fx_arg(lua, &name, params, count, Some(&this.name))?;
                 this.with_track(|t| {
                     if let Some(key) = sidechain {
                         t.def.sidechains.push((t.def.fx.len(), key));
