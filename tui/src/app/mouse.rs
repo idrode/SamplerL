@@ -11,7 +11,10 @@
 //! cambia dónde empieza (y dónde acaba el anterior): mientras se arrastra
 //! solo cambia la vista; al soltar, se pone como con `,`/`.`
 //! ([`App::place_slice`]: al proyecto, recarga y preescucha). Pulsar en
-//! otro sitio de la onda selecciona el corte que hay ahí.
+//! otro sitio de la onda selecciona el corte que hay ahí. El clic derecho
+//! pone un corte nuevo donde se pulsa, o quita el de la marca pulsada; la
+//! rueda acerca y aleja la vista alrededor del ratón (ver `zoom.rs`) y la
+//! rueda horizontal (o Shift y la rueda) la desplaza.
 
 use ratatui_textarea::{CursorMove, Scrolling};
 
@@ -26,8 +29,12 @@ pub enum MouseAction {
     Drag,
     /// Botón izquierdo soltado.
     Up,
+    /// Botón derecho pulsado.
+    RightDown,
     ScrollUp,
     ScrollDown,
+    ScrollLeft,
+    ScrollRight,
 }
 
 /// Líneas que mueve cada paso de la rueda.
@@ -81,6 +88,7 @@ impl App {
             return;
         };
         match action {
+            MouseAction::RightDown | MouseAction::ScrollLeft | MouseAction::ScrollRight => {}
             MouseAction::ScrollUp | MouseAction::ScrollDown => {
                 let inside = area.contains(ratatui::layout::Position::new(column, row));
                 if inside {
@@ -154,9 +162,10 @@ impl App {
 }
 
 impl App {
-    /// Pulsa en la forma de onda de una pista con sample, sin nada encima.
+    /// Pulsa (o mueve la rueda) en la forma de onda de una pista con
+    /// sample, sin nada encima.
     fn on_sample(&self, action: MouseAction, column: u16, row: u16) -> bool {
-        action == MouseAction::Down
+        !matches!(action, MouseAction::Drag | MouseAction::Up)
             && self.nothing_on_top()
             && self
                 .sample_area
@@ -166,16 +175,33 @@ impl App {
             })
     }
 
-    /// Agarra, arrastra o suelta la marca de un corte en la vista del sample.
+    /// Agarra, arrastra o suelta la marca de un corte en la vista del
+    /// sample; con el botón derecho, pone o quita un corte; con la rueda,
+    /// zoom.
     fn mouse_sample(&mut self, action: MouseAction, column: u16) {
         match action {
-            MouseAction::Down => self.grab_slice(column),
+            MouseAction::Down => {
+                // Con zoom, la vista se queda donde está aunque cambie el
+                // corte seleccionado.
+                self.pin_wave_view();
+                self.grab_slice(column);
+            }
+            MouseAction::RightDown => {
+                self.pin_wave_view();
+                self.right_click_sample(column);
+            }
+            MouseAction::ScrollUp | MouseAction::ScrollDown => {
+                let Some(area) = self.sample_area else { return };
+                let x = column.saturating_sub(area.x) as f64 + 0.5;
+                let anchor = x / area.width.max(1) as f64;
+                self.zoom_wave(action == MouseAction::ScrollUp, Some(anchor));
+            }
+            MouseAction::ScrollLeft | MouseAction::ScrollRight => {
+                self.pan_wave(action == MouseAction::ScrollRight);
+            }
             MouseAction::Drag => {
                 let Some(area) = self.sample_area else { return };
-                let frames = self
-                    .tracks()
-                    .get(self.selected)
-                    .map_or(0, |t| t.sample.frames());
+                let frames = self.shown_frames().len();
                 let Some(drag) = self.slice_drag.as_mut() else {
                     return;
                 };
@@ -209,34 +235,67 @@ impl App {
                 let ms = self.frame_ms(drag.at);
                 self.place_slice(drag.index, Some(ms));
             }
-            MouseAction::ScrollUp | MouseAction::ScrollDown => {}
+        }
+    }
+
+    /// El frame del sample (y la columna desde el borde, al centro de la
+    /// celda) que hay en la columna `column` de la terminal.
+    fn frame_at(&self, column: u16) -> Option<(f64, f64)> {
+        let area = self.sample_area?;
+        let shown = self.shown_frames();
+        let x = column.saturating_sub(area.x) as f64 + 0.5;
+        let frame = shown.start as f64 + x / area.width.max(1) as f64 * shown.len() as f64;
+        Some((frame, x))
+    }
+
+    /// La columna (desde el borde, fraccionaria) del frame `frame`.
+    fn column_of(&self, frame: usize) -> f64 {
+        let width = self.sample_area.map_or(1, |a| a.width.max(1)) as f64;
+        let shown = self.shown_frames();
+        (frame as f64 - shown.start as f64) / shown.len().max(1) as f64 * width
+    }
+
+    /// La marca más cerca de la columna `x` (desde el borde) y a cuántas
+    /// columnas está.
+    fn nearest_mark(&self, x: f64) -> Option<(usize, f64)> {
+        let track = self.tracks().get(self.selected)?;
+        track
+            .slices
+            .iter()
+            .enumerate()
+            .map(|(i, r)| (i, (self.column_of(r.start) - x).abs()))
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+    }
+
+    /// Clic derecho en la onda: en una marca, quita ese corte; si no, pone
+    /// uno nuevo donde se pulsa.
+    fn right_click_sample(&mut self, column: u16) {
+        let Some((frame, x)) = self.frame_at(column) else {
+            return;
+        };
+        match self.nearest_mark(x) {
+            Some((index, distance)) if distance <= GRAB_COLUMNS + 0.5 => self.delete_slice(index),
+            _ => self.split_at(frame.round() as usize),
         }
     }
 
     /// Clic en la onda: cerca de una marca, la agarra; si no, selecciona
     /// el corte que hay donde se pulsa.
     fn grab_slice(&mut self, column: u16) {
-        let Some(area) = self.sample_area else { return };
         let Some(track) = self.tracks().get(self.selected).cloned() else {
             return;
         };
-        let frames = track.sample.frames().max(1) as f64;
-        let width = area.width.max(1) as f64;
         // Centro de la columna pulsada, en columnas desde el borde.
-        let x = column.saturating_sub(area.x) as f64 + 0.5;
-        let nearest = track
-            .slices
-            .iter()
-            .enumerate()
-            .map(|(i, r)| (i, (r.start as f64 / frames * width - x).abs()))
-            .min_by(|a, b| a.1.total_cmp(&b.1));
-        let Some((index, distance)) = nearest else {
+        let Some((frame, x)) = self.frame_at(column) else {
+            return;
+        };
+        let Some((index, distance)) = self.nearest_mark(x) else {
             return;
         };
         self.selected_slice = index;
         if distance > GRAB_COLUMNS + 0.5 {
             // Lejos de las marcas: el corte de ahí.
-            let at = (x / width * frames) as usize;
+            let at = frame as usize;
             let index = track
                 .slices
                 .iter()

@@ -38,7 +38,9 @@ la sección 4 (con sus parámetros, rangos y un ejemplo cada una).
   (`sample(ruta, { trim, normalize, fade_in, fade_out })`), y estirarlo al
   tempo de la canción sin cambiar el tono (`sample:stretch()`).
 - Etiquetar cortes (`cortes:name`, o desde la interfaz), moverlos a oído
-  (`,` `.` en el modo tocar, o `cortes:move`), partirlos y unirlos.
+  (`,` `.` en el modo tocar, o `cortes:move`), crearlos y quitarlos (`n` y
+  Supr, o con el clic derecho en la onda), con zoom en la vista del sample
+  para afinar (`+` `-`, la rueda del ratón).
 - Saber qué nota toca cada corte de una melodía, en cifrado americano
   (`C#4`): la vista del sample la escribe en cada marca, «Notas de los
   cortes» en la paleta las lista y `cortes:note(i)` la da en Lua.
@@ -649,8 +651,11 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Quitar el ajuste del corte | El corte seleccionado vuelve a empezar donde lo pone el detector | — |
 | Corte siguiente | Selecciona el corte siguiente de la pista (sin tocarlo) | — |
 | Corte anterior | Selecciona el corte anterior de la pista (sin tocarlo) | — |
-| Partir el corte seleccionado | Añade un corte en su mitad (se guarda en el proyecto; las etiquetas y ajustes siguientes se corren) | — |
-| Unir el corte seleccionado con el anterior | Quita su marca: el anterior se alarga hasta donde acababa este (se guarda en el proyecto) | — |
+| Partir el corte seleccionado | Añade un corte en su mitad (se guarda en el proyecto; las etiquetas y ajustes siguientes se corren); con el ratón, clic derecho en la onda lo pone ahí | n (modo tocar) |
+| Unir el corte seleccionado con el anterior | Quita su marca: el anterior se alarga hasta donde acababa este (se guarda en el proyecto); con el ratón, clic derecho en la marca | Supr (modo tocar) |
+| Acercar la vista del sample | Ve la mitad del sample alrededor del corte seleccionado, para ajustar los cortes con más detalle (también la rueda del ratón sobre la onda) | + (modo tocar; Shift-←→ desplaza) |
+| Alejar la vista del sample | Ve el doble del sample (hasta verlo entero) | - (modo tocar) |
+| Ver el sample entero | Quita el zoom de la vista del sample | — |
 | Grabar lo tocado | Abre «grabar 1»: graba N compases de lo que tocas (pads o MIDI) en la pista seleccionada, desde el compás siguiente, y lo escribe como steps("...") en el cursor; otra vez, para antes | — |
 | Tap tempo | Golpea el pulso con espacio (media de los últimos 8 golpes); Enter pone bpm(N) en el script | espacio (al golpear) |
 | Macros | Mueve en vivo las macros del script (`macro()`): ↑↓ elegir, ←→ y -+ mover, 0-9, Esc | — |
@@ -760,6 +765,10 @@ editor como un solo paso de deshacer.
 | espacio | preescucha otra vez el corte seleccionado |
 | , . | adelanta o retrasa el inicio del corte seleccionado 5 ms |
 | < > | lo mismo, de 1 en 1 ms |
+| n | parte el corte seleccionado en su mitad (un corte nuevo) |
+| Supr, Retroceso | quita el corte seleccionado (el anterior se alarga) |
+| + - | acerca o aleja la vista del sample (zoom) |
+| Shift-← Shift-→ | con zoom, desplaza la vista |
 | m | mute de la pista seleccionada (en vivo, sin esperar al compás) |
 | s | solo de la pista seleccionada (en vivo) |
 | [ ] | con `arrange()`: salta a la sección anterior o siguiente de la línea de tiempo (en el compás siguiente) |
@@ -824,8 +833,31 @@ Lua, `cortes:move(i, ms)`.
 (o justo a su lado) y arrástrala; el corte anterior se alarga o se acorta
 con ella. Al soltar se guarda como el ajuste de las teclas (en el
 proyecto, con preescucha). Va de columna en columna; para afinar, `<` y
-`>`. Un clic en otro sitio de la onda selecciona el corte que hay ahí.
-Sirve en los dos modos y en la ventana principal con el editor fuera.
+`>`, o el zoom. Un clic en otro sitio de la onda selecciona el corte que
+hay ahí. El **clic derecho** en la onda pone un corte nuevo justo ahí, y
+sobre una marca, quita ese corte. Sirve en los dos modos y en la ventana
+principal con el editor fuera.
+
+**Crear y quitar cortes.** `n` parte el corte seleccionado en su mitad
+(luego se afina con `,` `.` o arrastrando la marca) y Supr (o Retroceso)
+quita el seleccionado: el anterior se alarga hasta donde acababa. Con el
+ratón, el clic derecho (ver arriba). Se guardan en el proyecto como
+«Partir» y «Unir» de la paleta (`partir = amen.wav 8 180.25`, `unir =
+amen.wav 8 7`), y las etiquetas y los ajustes de los cortes siguientes se
+corren. El corte 1 no se puede quitar, y un corte nuevo tiene que quedar a
+más de 1 ms de sus vecinos. Los añadidos en el script con `cortes:add` se
+cambian en el script.
+
+**Zoom de la vista del sample.** `+` acerca la vista (cada vez, la mitad
+del sample) alrededor del corte seleccionado, y `-` la aleja hasta verlo
+entero; la vista sigue al corte que eliges con ← →. Con el ratón, la rueda
+sobre la onda acerca y aleja alrededor de donde apuntas y deja la vista
+ahí; Shift y la rueda (o la rueda horizontal) y Shift-← → la desplazan. El
+título del panel dice el zoom y los ms que se ven (`zoom ×8 120-245 ms`).
+Con zoom, arrastrar una marca o poner un corte con el clic derecho tiene
+mucha más precisión (hasta unos 6 ms en todo el ancho). Solo en la pista
+seleccionada: las otras se ven enteras. También en la paleta: «Acercar la
+vista del sample», «Alejar…» y «Ver el sample entero».
 
 **Grabar lo tocado.** «Grabar lo tocado» (paleta) deja escrita la orden
 `grabar 1`; cambia el número por los compases que quieras (Enter). La

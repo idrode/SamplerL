@@ -25,6 +25,7 @@ mod cue;
 mod macros;
 mod mouse;
 mod vim;
+mod zoom;
 pub use mouse::MouseAction;
 pub use vim::DEFAULT_EXIT as VIM_EXIT;
 mod split;
@@ -89,6 +90,15 @@ struct HeldNote {
 }
 
 /// Modo de la interfaz: escribir en el editor o tocar cortes con el teclado.
+/// Partir o quitar un corte ([`App::edit_slices`]).
+#[derive(Debug, Clone, Copy)]
+enum SliceOp {
+    /// Un corte nuevo en ese frame (`None`: en la mitad del seleccionado).
+    Split(Option<f64>),
+    /// Quitar la marca del seleccionado.
+    Join,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Mode {
     #[default]
@@ -211,6 +221,10 @@ pub struct App {
     pub sample_area: Option<ratatui::layout::Rect>,
     /// Arrastrando la marca de un corte con el ratón.
     slice_drag: Option<mouse::SliceDrag>,
+    /// Zoom de la vista del sample.
+    wave_zoom: Option<zoom::WaveZoom>,
+    /// Resumen de la onda del trozo con zoom (se recalcula si cambia).
+    zoom_cache: std::cell::RefCell<Option<zoom::ZoomedWave>>,
     /// El ratón en el editor (`[editor] raton`).
     mouse_enabled: bool,
     /// El modo vim (`[editor] modo = "vim"`): su modo y lo que lleva entre
@@ -380,6 +394,8 @@ impl App {
             drag_from: None,
             sample_area: None,
             slice_drag: None,
+            wave_zoom: None,
+            zoom_cache: Default::default(),
             mouse_enabled: true,
             vim: None,
             vim_exit: vim::DEFAULT_EXIT,
@@ -811,6 +827,7 @@ impl App {
             return;
         };
         let current = self.frame_ms(range.start);
+        self.follow_selected_slice();
         self.place_slice(index, delta_ms.map(|d| current + d));
     }
 
@@ -1205,33 +1222,67 @@ impl App {
     /// en el proyecto como `partir`; las etiquetas y los ajustes de los
     /// siguientes se corren uno).
     pub fn split_selected(&mut self) {
-        self.edit_slices(true);
+        self.edit_slices(SliceOp::Split(None));
+    }
+
+    /// Un corte nuevo en el frame `frame` del sample que suena (clic
+    /// derecho en la onda): parte el corte donde cae, o añade uno antes
+    /// del primero. Se guarda como «Partir».
+    pub fn split_at(&mut self, frame: usize) {
+        self.edit_slices(SliceOp::Split(Some(frame as f64)));
     }
 
     /// «Unir el corte seleccionado con el anterior»: quita su marca (se
     /// guarda en el proyecto como `unir`).
     pub fn join_selected(&mut self) {
-        self.edit_slices(false);
+        self.edit_slices(SliceOp::Join);
     }
 
-    fn edit_slices(&mut self, split: bool) {
+    /// Borra el corte `index` (quita su marca: el anterior se alarga).
+    pub fn delete_slice(&mut self, index: usize) {
+        self.selected_slice = index;
+        self.edit_slices(SliceOp::Join);
+    }
+
+    fn edit_slices(&mut self, op: SliceOp) {
         let Some(track) = self.tracks().get(self.selected) else {
             self.message = "no hay pistas".into();
             return;
         };
-        let index = self
+        let selected = self
             .selected_slice
             .min(track.slices.len().saturating_sub(1));
         let (origin, name) = (track.origin.clone(), track.name.clone());
-        let Some(range) = track.slices.get(index) else {
+        let Some(range) = track.slices.get(selected) else {
             return;
         };
-        let Some(original) = origin.indices.get(index).copied().flatten() else {
-            self.message = format!(
-                "el corte {} de {name} lo añade el script con :add(): cámbialo en el script",
-                index + 1
-            );
-            return;
+        // El corte que se parte o se quita (`None`: el nuevo va antes del
+        // primero) y dónde cae el nuevo, en frames.
+        let (index, frame) = match op {
+            SliceOp::Split(Some(frame)) => (
+                track
+                    .slices
+                    .iter()
+                    .take_while(|r| r.start as f64 <= frame)
+                    .count()
+                    .checked_sub(1),
+                frame,
+            ),
+            SliceOp::Split(None) => (Some(selected), (range.start + range.end) as f64 / 2.0),
+            SliceOp::Join => (Some(selected), 0.0),
+        };
+        let original = match index {
+            Some(index) => match origin.indices.get(index).copied().flatten() {
+                Some(original) => Some(original),
+                None => {
+                    self.message = format!(
+                        "el corte {} de {name} lo añade el script con :add(): cámbialo en el script",
+                        index + 1
+                    );
+                    return;
+                }
+            },
+            None => None,
         };
         if self.error.is_some() {
             self.message =
@@ -1247,19 +1298,24 @@ impl App {
         let ratio = track.stretch.map_or(1.0, |s| s.ratio);
         let rate = track.sample.sample_rate() as f64;
         let slices_before = track.slices.len();
+        let split = matches!(op, SliceOp::Split(_));
+        // Al microsegundo: el corte cae en ese frame.
+        let ms = (frame * 1000.0 / rate / ratio * 1000.0).round() / 1000.0;
         if split {
-            let middle = (range.start + range.end) as f64 / 2.0;
-            // Al microsegundo: el corte cae en el frame de la mitad.
-            let ms = (middle * 1000.0 / rate / ratio * 1000.0).round() / 1000.0;
+            // El número (desde 1, sin los de :add()) del corte nuevo.
+            let new_slice = original.map_or(1, |o| o + 2);
             self.host
-                .split_slice(&origin.sample, origin.cut(), original + 2, ms);
+                .split_slice(&origin.sample, origin.cut(), new_slice, ms);
         } else {
-            if original == 0 {
-                self.message = format!("el corte 1 de {name} no tiene anterior");
+            if original.unwrap_or(0) == 0 {
+                self.message = format!(
+                    "el corte {} de {name} no tiene anterior: no se puede quitar",
+                    index.unwrap_or(0) + 1
+                );
                 return;
             }
             self.host
-                .join_slice(&origin.sample, origin.cut(), original + 1);
+                .join_slice(&origin.sample, origin.cut(), original.unwrap_or(0) + 1);
         }
         self.load();
         let after = self
@@ -1286,13 +1342,22 @@ impl App {
             return;
         }
         let saved = self.save_project_file();
-        if split {
-            self.selected_slice = index + 1;
-            self.message = format!(
-                "corte {} de {name} partido: ahora hay {after} (el nuevo es el {}){saved}",
-                index + 1,
-                index + 2
-            );
+        let index = index.unwrap_or(0);
+        if let SliceOp::Split(at) = op {
+            // El nuevo: el siguiente del partido, o el primero.
+            let new = if original.is_none() { 0 } else { index + 1 };
+            self.selected_slice = new;
+            self.message = match at {
+                Some(_) => format!(
+                    "corte nuevo en {name}: el {} empieza en {ms:.1} ms; ahora hay {after}{saved}",
+                    new + 1
+                ),
+                None => format!(
+                    "corte {} de {name} partido: ahora hay {after} (el nuevo es el {}){saved}",
+                    index + 1,
+                    index + 2
+                ),
+            };
         } else {
             self.selected_slice = index - 1;
             self.message = format!(
@@ -3162,6 +3227,9 @@ impl App {
             Action::ClearSliceAdjust => self.adjust_slice(None),
             Action::NextSlice => self.select_slice(true),
             Action::SplitSlice => self.split_selected(),
+            Action::ZoomIn => self.zoom_wave(true, None),
+            Action::ZoomOut => self.zoom_wave(false, None),
+            Action::ZoomReset => self.reset_wave_zoom(),
             Action::Resample => self.start_resample(),
             Action::Browser => self.open_browser(),
             Action::EditTracker => self.open_tracker_edit(),
@@ -3470,6 +3538,7 @@ impl App {
         };
         let count = track.slices.len().max(1);
         let current = self.selected_slice.min(count - 1);
+        self.follow_selected_slice();
         self.selected_slice = if forward {
             (current + 1) % count
         } else {
@@ -3711,7 +3780,19 @@ impl App {
                     self.toggle_section_loop();
                 } else if c == 'v' {
                     self.toggle_variant();
+                } else if c == 'n' {
+                    self.split_selected();
+                } else if c == '+' || c == '=' {
+                    self.zoom_wave(true, None);
+                } else if c == '-' {
+                    self.zoom_wave(false, None);
                 }
+            }
+            (Key::Delete | Key::Backspace, false) if self.mode == Mode::Play && !input.alt => {
+                self.join_selected();
+            }
+            (Key::Left | Key::Right, _) if self.mode == Mode::Play && input.shift => {
+                self.pan_wave(input.key == Key::Right);
             }
             (Key::Left, _) if self.mode == Mode::Play => self.browse_slice(false),
             (Key::Right, _) if self.mode == Mode::Play => self.browse_slice(true),
@@ -3859,6 +3940,10 @@ impl App {
             bar: s.bar,
             step: s.step,
         });
+        let selected_name = self
+            .tracks()
+            .get(self.selected)
+            .map_or(String::new(), |t| t.name.clone());
         let tracks: Vec<TrackView> = Some(self.tracks())
             .map(|tracks| {
                 tracks
@@ -3873,10 +3958,18 @@ impl App {
                         // último paso que sonó.
                         let global = status.map_or(0, section_global);
                         let (lap, position) = t.lap(global);
-                        let waveform = self
-                            .waveforms
-                            .get(&(Arc::as_ptr(&t.sample) as usize))
-                            .map_or_else(Default::default, |(_, w)| w.clone());
+                        let zoomed = (t.name == selected_name)
+                            .then(|| self.zoomed_waveform())
+                            .flatten();
+                        let (window, waveform) = match zoomed {
+                            Some((window, wave)) => (Some(window), wave),
+                            None => (
+                                None,
+                                self.waveforms
+                                    .get(&(Arc::as_ptr(&t.sample) as usize))
+                                    .map_or_else(Default::default, |(_, w)| w.clone()),
+                            ),
+                        };
                         TrackView {
                             name: t.name.clone(),
                             slot,
@@ -3887,6 +3980,7 @@ impl App {
                             sample_frames: t.sample.frames(),
                             sample_rate: t.sample.sample_rate(),
                             waveform,
+                            window,
                             slices: t.slices.iter().collect(),
                             cycle: t.bars.len(),
                             length: t.length,

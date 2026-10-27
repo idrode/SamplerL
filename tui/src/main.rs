@@ -801,8 +801,24 @@ fn run_terminal(
                             MouseEventKind::Down(MouseButton::Left) => Some(MouseAction::Down),
                             MouseEventKind::Drag(MouseButton::Left) => Some(MouseAction::Drag),
                             MouseEventKind::Up(MouseButton::Left) => Some(MouseAction::Up),
+                            // Shift y la rueda: hacia los lados.
+                            MouseEventKind::ScrollUp
+                                if m.modifiers.contains(event::KeyModifiers::SHIFT) =>
+                            {
+                                Some(MouseAction::ScrollLeft)
+                            }
+                            MouseEventKind::ScrollDown
+                                if m.modifiers.contains(event::KeyModifiers::SHIFT) =>
+                            {
+                                Some(MouseAction::ScrollRight)
+                            }
                             MouseEventKind::ScrollUp => Some(MouseAction::ScrollUp),
                             MouseEventKind::ScrollDown => Some(MouseAction::ScrollDown),
+                            MouseEventKind::Down(MouseButton::Right) => {
+                                Some(MouseAction::RightDown)
+                            }
+                            MouseEventKind::ScrollLeft => Some(MouseAction::ScrollLeft),
+                            MouseEventKind::ScrollRight => Some(MouseAction::ScrollRight),
                             _ => None,
                         };
                         if let Some(action) = action {

@@ -1359,8 +1359,19 @@ fn sample_title(view: &ViewModel, track: &crate::model::TrackView) -> String {
         let round = |b: f64| ((b * 10.0).round() / 10.0).to_string();
         format!(" · {}→{} BPM", round(source), round(source / ratio))
     });
+    // Con zoom, el trozo que se ve (en ms del original).
+    let zoom = track.window.as_ref().map_or(String::new(), |w| {
+        let ratio = track.stretch.map_or(1.0, |(_, r)| r);
+        let ms = |f: usize| f as f64 * 1000.0 / track.sample_rate.max(1) as f64 / ratio;
+        format!(
+            " · zoom ×{:.0} {:.0}-{:.0} ms",
+            track.sample_frames as f64 / w.len().max(1) as f64,
+            ms(w.start),
+            ms(w.end)
+        )
+    });
     format!(
-        " sample · {} · {}{stretch} · {seconds:.2} s · {} cortes{chosen} ",
+        " sample · {} · {}{stretch} · {seconds:.2} s{zoom} · {} cortes{chosen} ",
         track.name,
         track.sample_name,
         track.slices.len()
@@ -1375,11 +1386,23 @@ fn slice_ms(track: &crate::model::TrackView, i: usize) -> f64 {
     })
 }
 
-/// Columna (desde 0, dentro de `width`) donde empieza el corte `i`.
-fn slice_column(track: &crate::model::TrackView, i: usize, width: u16) -> u16 {
-    let frames = track.sample_frames.max(1) as f64;
-    let start = track.slices.get(i).map_or(0, |r| r.start);
-    (start as f64 / frames * width as f64).floor() as u16
+/// Los frames del sample que se ven: con zoom, su trozo; si no, entero.
+fn shown(track: &crate::model::TrackView) -> std::ops::Range<usize> {
+    track.window.clone().unwrap_or(0..track.sample_frames)
+}
+
+/// Fracción (0 a 1 dentro de lo que se ve) del frame `frame`.
+fn shown_fraction(track: &crate::model::TrackView, frame: usize) -> f64 {
+    let shown = shown(track);
+    (frame as f64 - shown.start as f64) / shown.len().max(1) as f64
+}
+
+/// Columna (desde 0, dentro de `width`) donde empieza el corte `i`, si se
+/// ve (con zoom, puede quedar fuera).
+fn slice_column(track: &crate::model::TrackView, i: usize, width: u16) -> Option<u16> {
+    let start = track.slices.get(i)?.start;
+    let column = (shown_fraction(track, start) * width as f64).floor();
+    (column >= 0.0 && column < width as f64).then_some(column as u16)
 }
 
 /// La forma de onda en barras (una por columna, de lo más bajo a lo más
@@ -1387,15 +1410,13 @@ fn slice_column(track: &crate::model::TrackView, i: usize, width: u16) -> u16 {
 /// los cortes y el corte que suena resaltado.
 fn draw_wave(track: &crate::model::TrackView, inner: Rect, buf: &mut Buffer) {
     let columns = inner.width as usize;
-    let frames = track.sample_frames as f64;
     let playing = track
         .playing_slice
         .and_then(|i| track.slices.get(i))
-        .map(|r| (r.start as f64 / frames, r.end as f64 / frames));
-    let marks: Vec<usize> = track
-        .slices
-        .iter()
-        .map(|slice| (slice.start as f64 / frames * columns as f64).floor() as usize)
+        .map(|r| (shown_fraction(track, r.start), shown_fraction(track, r.end)));
+    let marks: Vec<usize> = (0..track.slices.len())
+        .filter_map(|i| slice_column(track, i, inner.width))
+        .map(usize::from)
         .collect();
     let wave = &track.waveform;
     for x in 0..columns {
@@ -1439,8 +1460,7 @@ fn slice_numbers(
     buf: &mut Buffer,
 ) {
     let put = |i: usize, style: Style, buf: &mut Buffer| {
-        let column = slice_column(track, i, area.width);
-        if column < area.width {
+        if let Some(column) = slice_column(track, i, area.width) {
             let text = slice_mark(track, i);
             let room = (area.width - column) as usize;
             buf.set_string(
@@ -1509,9 +1529,16 @@ impl Widget for BigSamplePanel<'_> {
         draw_wave(track, wave, buf);
         // Al pie, los ms de cada corte que quepan (sin pisar al anterior).
         let mut free = 0u16;
+        // Con mucho zoom, con un decimal.
+        let decimals =
+            usize::from(track.window.as_ref().is_some_and(|w| {
+                w.len() as f64 * 1000.0 / (track.sample_rate.max(1) as f64) < 200.0
+            }));
         for i in 0..track.slices.len() {
-            let column = slice_column(track, i, times.width);
-            let text = format!("{:.0}", slice_ms(track, i));
+            let Some(column) = slice_column(track, i, times.width) else {
+                continue;
+            };
+            let text = format!("{:.*}", decimals, slice_ms(track, i));
             let width = text.chars().count() as u16;
             if column < free || column + width > times.width {
                 continue;

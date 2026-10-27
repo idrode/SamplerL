@@ -245,8 +245,11 @@ pub struct TrackView {
     pub sample_name: String,
     pub sample_frames: usize,
     pub sample_rate: u32,
-    /// Resumen de la forma de onda del sample.
+    /// Resumen de la forma de onda del sample (con zoom, solo del trozo
+    /// que se ve).
     pub waveform: Arc<Waveform>,
+    /// Con zoom, los frames del sample que se ven (`None`: entero).
+    pub window: Option<Range<usize>>,
     pub slices: Vec<Range<usize>>,
     /// Vueltas del ciclo (`every`/`chance`; con 16 pasos, compases).
     pub cycle: usize,
@@ -514,12 +517,18 @@ pub const WAVEFORM_BUCKETS: usize = 2048;
 
 impl Waveform {
     pub fn of(sample: &Sample) -> Self {
+        Waveform::window(sample, 0..sample.frames())
+    }
+
+    /// El resumen solo de los frames `window` del sample (para el zoom).
+    pub fn window(sample: &Sample, window: Range<usize>) -> Self {
         let frames = sample.frames();
-        let count = WAVEFORM_BUCKETS.min(frames.max(1));
+        let (first, len) = (window.start, window.len());
+        let count = WAVEFORM_BUCKETS.min(len.max(1));
         let buckets = (0..count)
             .map(|b| {
-                let range =
-                    b * frames / count..((b + 1) * frames / count).max(b * frames / count + 1);
+                let range = first + b * len / count
+                    ..first + ((b + 1) * len / count).max(b * len / count + 1);
                 range
                     .filter(|&i| i < frames)
                     .map(|i| {
