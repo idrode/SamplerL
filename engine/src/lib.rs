@@ -11,6 +11,7 @@ pub mod grain;
 pub mod group;
 pub mod instrument;
 mod interp;
+pub mod key;
 mod limiter;
 pub mod masking;
 pub mod metronome;
@@ -50,6 +51,7 @@ pub use fx::{
 pub use grain::{GRAIN_PARAMS, Granular, Knob, MAX_GRAINS};
 pub use group::{Group, Groups, MAX_GROUPS};
 pub use instrument::{Adsr, Instrument, MAX_VOICES};
+pub use key::{KeyAnalysis, KeyGuess, LOW_CONFIDENCE, detect_key};
 pub use limiter::{LIMIT_THRESHOLD, soft_limit};
 pub use output::{NullOutput, Output, open_null_output, open_output};
 pub use pitch::{NoteGuess, detect_note, detect_notes, note_name};
