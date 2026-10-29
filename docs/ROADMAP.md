@@ -662,6 +662,36 @@ ampliado); `golden.rs` idéntico; portable (x86_64 y ARM64); la feature
 Queda por comprobar con dispositivos reales (ver «Sin verificar» en
 ESTADO): PipeWire, auriculares USB y Bluetooth, un controlador MIDI.
 
+## Fase V: afinación, mandos y congelar
+
+Pedida por el usuario: seis funciones, un commit por función (o por parte
+si es grande). Detalle y decisiones en «Fase V» de
+[docs/ESTADO.md](ESTADO.md); el uso, en [docs/GUIA.md](GUIA.md) y un
+recuadro en el tutorial donde encaja cada una.
+
+Reglas de siempre: hilo de audio sin reservas, mutex ni E/S (`no_alloc.rs`
+ampliado); `golden.rs` idéntico; cambios por lotes atómicos al compás;
+error con la línea y sigue sonando lo anterior; portable (Rust puro);
+registro único de la API; resaltado de la fase M y tracker compatibles;
+versión nueva del protocolo si cambia.
+
+1. ✅ **Cortes en el cruce por cero**: `zero_cross` en `slice` y
+   `slice_grid` (ms máximos de desplazamiento), que vale también para
+   `add`, `move` y los ajustes del proyecto; apagada por defecto.
+2. **MIDI learn**: elegir un parámetro automatizable desde la paleta,
+   mover un mando y queda asignado (rango y curva), en el proyecto y
+   exportable a `config.toml`; lista para verlas, cambiarlas y borrarlas;
+   el mando manda sobre `ramp`/`lfo` mientras se mueve.
+3. **Tonalidad de un sample**: cromagrama y perfiles mayor/menor fuera
+   del hilo de audio; un panel con las tres más probables y la confianza,
+   desde la paleta y el explorador; usarla como raíz del instrumento.
+4. **Tonalidad global**: `key()` y `transpose()`; `scale()`, `melody()` e
+   instrumentos la usan por defecto; la detección la propone.
+5. **Sidechain visual**: reducción de ganancia en tiempo real y su curva,
+   y quién dispara a quién, publicadas con atómicos.
+6. **Congelar pista**: render de una pista a un WAV del proyecto que la
+   sustituye; reversible y en un paso de deshacer.
+
 ## Mejoras sueltas
 
 Arreglos pequeños fuera de las fases, con las reglas de siempre. Detalle

@@ -747,6 +747,7 @@ impl Scan {
             ("bus", 1) => api::bus(strings.first()?.as_deref()?),
             ("set", 0 | 1) => Some(&api::SLICE_TABLE),
             ("sample", 1) => Some(&api::SAMPLE_TABLE),
+            ("slice" | "slice_grid", 1) => Some(&api::CUT_TABLE),
             ("instrument", 0) => Some(&api::INSTRUMENT_TABLE),
             ("synth", 1) => api::synth(strings.first()?.as_deref()?),
             ("subharm", 0) => api::synth("subharm"),
@@ -839,6 +840,8 @@ pub fn help_at(lines: &[String], row: usize, col: usize) -> Option<Help> {
         };
         let signature = if std::ptr::eq(effect, &api::SLICE_TABLE) {
             "cortes:set([i,] { ... })".to_string()
+        } else if std::ptr::eq(effect, &api::CUT_TABLE) {
+            "sample:slice(n, { ... })".to_string()
         } else if std::ptr::eq(effect, &api::SAMPLE_TABLE) {
             "sample(ruta, { ... })".to_string()
         } else if std::ptr::eq(effect, &api::INSTRUMENT_TABLE) {

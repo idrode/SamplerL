@@ -208,6 +208,73 @@ impl Slices {
         }
         Ok(Slices(ranges))
     }
+
+    /// Los mismos cortes con cada inicio llevado al cruce por cero más
+    /// cercano (ver [`nearest_zero_crossing`]) a no más de `max` frames, sin
+    /// acercarse a menos de `min_gap` de sus vecinos ni del final de su
+    /// corte. El anterior acaba donde empieza el siguiente, como siempre.
+    /// Con `max` = 0, los mismos cortes.
+    pub fn snapped(&self, sample: &Sample, max: usize, min_gap: usize) -> Slices {
+        let mut ranges = self.0.clone();
+        if max == 0 {
+            return Slices(ranges);
+        }
+        for i in 0..ranges.len() {
+            let low = if i == 0 {
+                0
+            } else {
+                ranges[i - 1].start + min_gap
+            };
+            let high = ranges[i].end.saturating_sub(min_gap);
+            if low > high {
+                continue;
+            }
+            let start = snap_frame(sample, ranges[i].start, max, low..high + 1);
+            ranges[i].start = start;
+            if i > 0 {
+                ranges[i - 1].end = start;
+            }
+        }
+        Slices(ranges)
+    }
+}
+
+/// Lleva `frame` al cruce por cero más cercano dentro de `bounds`, a no más
+/// de `max` frames; si no hay ninguno, lo deja donde estaba.
+pub fn snap_frame(sample: &Sample, frame: usize, max: usize, bounds: Range<usize>) -> usize {
+    nearest_zero_crossing(sample, frame, max, bounds).unwrap_or(frame)
+}
+
+/// El cruce por cero más cercano a `frame` (a no más de `max` frames y
+/// dentro de `bounds`): el frame donde la mezcla mono `(l + r) / 2` cambia
+/// de signo (o vale 0), el de los dos lados del cambio que más cerca de
+/// cero queda. A igual distancia, el de antes. `None` si no hay ninguno.
+pub fn nearest_zero_crossing(
+    sample: &Sample,
+    frame: usize,
+    max: usize,
+    bounds: Range<usize>,
+) -> Option<usize> {
+    let frames = sample.frames();
+    let end = bounds.end.min(frames);
+    let mono = |i: usize| {
+        let (l, r) = sample.frame(i);
+        0.5 * (l + r)
+    };
+    let changes = |a: f32, b: f32| (a < 0.0) != (b < 0.0);
+    // `f` es un cruce si vale 0, o si la señal cambia de signo entre él y
+    // un vecino y él es el que más se acerca a cero de los dos.
+    let is_zero = |f: usize| {
+        let x = mono(f);
+        x == 0.0
+            || (f > 0 && changes(mono(f - 1), x) && x.abs() <= mono(f - 1).abs())
+            || (f + 1 < frames && changes(x, mono(f + 1)) && x.abs() < mono(f + 1).abs())
+    };
+    let inside = |f: usize| bounds.start <= f && f < end;
+    (0..=max)
+        .flat_map(|d| [frame.checked_sub(d), frame.checked_add(d)])
+        .flatten()
+        .find(|&f| inside(f) && is_zero(f))
 }
 
 /// Posiciones (en frames) de hasta `n` transitorios, ordenadas.

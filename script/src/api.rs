@@ -1276,15 +1276,26 @@ pub const FUNCTIONS: &[Function] = &[
         doc: "Para un break bien cuadrado (un compás en 16 o en 8) o para material \
               sin golpes claros. Las etiquetas y los ajustes del proyecto de un \
               sample cortado en rejilla son distintos de los de `slice(n)` (en el \
-              proyecto, el número de cortes se escribe `rejilla16`).",
-        params: &[Param {
-            name: "n",
-            description: "partes (1 a 64)",
-        }],
+              proyecto, el número de cortes se escribe `rejilla16`). Admite las \
+              mismas opciones que `slice` (`zero_cross`); en rejilla es donde más se \
+              nota, porque las divisiones caen en cualquier punto de la onda.",
+        params: &[
+            Param {
+                name: "n",
+                description: "partes (1 a 64)",
+            },
+            Param {
+                name: "opciones",
+                description: "tabla con `zero_cross` (la de `slice`)",
+            },
+        ],
         template: "slice_grid(${16})",
         example: Some(
             "local amen = sample(\"amen.wav\"):slice_grid(16)\n\
-             track(\"drums\", amen):steps(\"1 2 3 4  5 6 7 8  9 10 11 12  13 14 15 16\")\n",
+             track(\"drums\", amen):steps(\"1 2 3 4  5 6 7 8  9 10 11 12  13 14 15 16\")\n\
+             -- La misma rejilla, con cada inicio en el cruce por cero más cercano\n\
+             -- (a no más de 3 ms): sin clics al empezar cada parte.\n\
+             local limpio = sample(\"amen.wav\"):slice_grid(16, { zero_cross = 3 })\n",
         ),
     },
     Function {
@@ -1443,15 +1454,25 @@ pub const FUNCTIONS: &[Function] = &[
     Function {
         name: "slice",
         receiver: Receiver::Sample,
-        signature: "sample:slice(n)",
+        signature: "sample:slice(n [, opciones])",
         returns: Some(Receiver::Slices),
         summary: "Corta el sample en sus n golpes más fuertes.",
         doc: "Si hay menos golpes, devuelve menos cortes. Usa el detector por flujo \
-              espectral con 40 ms de separación mínima.",
-        params: &[Param {
-            name: "n",
-            description: "cortes a buscar (1 a 64)",
-        }],
+              espectral con 40 ms de separación mínima. Con `zero_cross` (tabla de abajo), \
+              cada inicio de corte se lleva al cruce por cero más cercano, a no más de esos \
+              ms, para que el golpe no empiece en un salto (un clic); vale también para los \
+              cortes de `add`, `move` y los ajustes del proyecto. Sin la opción, los cortes \
+              son exactamente los de siempre.",
+        params: &[
+            Param {
+                name: "n",
+                description: "cortes a buscar (1 a 64)",
+            },
+            Param {
+                name: "opciones",
+                description: "tabla con `zero_cross` (ver abajo)",
+            },
+        ],
         template: "slice(${8})",
         example: Some(
             "local amen = sample(\"amen.wav\"):slice(8)\n\
@@ -2837,6 +2858,17 @@ pub const SAMPLE_PARAMS: &[FxParam] = &[
     },
 ];
 
+/// Opciones de `sample:slice(n, { ... })` y `sample:slice_grid(n, { ... })`.
+pub const CUT_PARAMS: &[FxParam] = &[FxParam {
+    name: "zero_cross",
+    description: "lleva cada inicio de corte al cruce por cero más cercano, a no más de estos ms (`true`: 2 ms); también los de `add`, `move` y los ajustes del proyecto",
+    default: Some("false"),
+    valid: "`true`, `false` o 0–50",
+    values: &[],
+    template: "zero_cross = ${2}",
+    automate: Auto::No(AT_LOAD),
+}];
+
 /// Opciones de `sample:instrument({ ... })`.
 pub const INSTRUMENT_PARAMS: &[FxParam] = &[
     FxParam {
@@ -3768,6 +3800,16 @@ pub const SAMPLE_TABLE: Effect = Effect {
     template: "{ trim = ${true}, normalize = ${true} }",
 };
 
+/// La tabla de opciones de `slice()` y `slice_grid()`, como un efecto
+/// (para el autocompletado y la ayuda de sus claves).
+pub const CUT_TABLE: Effect = Effect {
+    name: "slice",
+    aliases: &[],
+    summary: "Cómo se corta el sample.",
+    params: CUT_PARAMS,
+    template: "{ zero_cross = ${2} }",
+};
+
 /// La tabla de `cortes:set()`, como un efecto (para el autocompletado y la
 /// ayuda de sus claves).
 pub const SLICE_TABLE: Effect = Effect {
@@ -4183,6 +4225,7 @@ pub fn sound_params() -> Vec<(String, &'static FxParam)> {
     for b in BUSES {
         add(format!("bus(\"{}\")", b.name), b.params);
     }
+    add("slice".into(), CUT_PARAMS);
     add("cortes:set".into(), SLICE_PARAMS);
     add(":grains".into(), GRAIN_PARAMS);
     add("instrument".into(), INSTRUMENT_PARAMS);
@@ -4269,6 +4312,7 @@ pub fn guide_markdown() -> String {
                 out.push_str(&params_table("Tabla", std::slice::from_ref(&LAYER_TABLE)))
             }
             (Receiver::Slices, "set")
+            | (Receiver::Sample, "slice")
             | (Receiver::Global, "sample")
             | (Receiver::Sample, "instrument")
             | (Receiver::Track, "grains") => {
@@ -4279,6 +4323,7 @@ pub fn guide_markdown() -> String {
                     "set" => SLICE_PARAMS,
                     "instrument" => INSTRUMENT_PARAMS,
                     "grains" => GRAIN_PARAMS,
+                    "slice" => CUT_PARAMS,
                     _ => SAMPLE_PARAMS,
                 };
                 for p in params {

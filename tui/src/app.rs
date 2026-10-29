@@ -854,7 +854,19 @@ impl App {
         let Some(range) = track.slices.get(index) else {
             return;
         };
-        let current = self.frame_ms(range.start);
+        // Con `zero_cross` el inicio real es el cruce más cercano al ajuste
+        // guardado: se mueve el ajuste, no el cruce (si no, con un paso más
+        // corto que la distancia al siguiente cruce volvería siempre al
+        // mismo).
+        let origin = &track.origin;
+        let stored = origin.zero_cross.and(origin.indices[index]).and_then(|i| {
+            self.host
+                .positions()
+                .iter()
+                .find(|p| p.sample == origin.sample && p.slices == origin.cut() && p.slice == i + 1)
+                .map(|p| p.ms)
+        });
+        let current = stored.unwrap_or_else(|| self.frame_ms(range.start));
         self.follow_selected_slice();
         self.place_slice(index, delta_ms.map(|d| current + d));
     }
@@ -919,8 +931,22 @@ impl App {
         }
         let saved = self.save_project_file();
         self.preview_selected();
+        // Con `zero_cross`, dónde quedó de verdad.
+        let snapped = self
+            .tracks()
+            .get(self.selected)
+            .filter(|t| t.origin.zero_cross.is_some())
+            .and_then(|t| t.slices.get(index))
+            .map(|r| (self.frame_ms(r.start) * 10.0).round() / 10.0);
+        let zero = match (target, snapped) {
+            (Some(ms), Some(at)) if at != ms => format!(" (cruce por cero en {at} ms)"),
+            _ => String::new(),
+        };
         self.message = match target {
-            Some(ms) => format!("corte {} de {name}: empieza en {ms} ms{saved}", index + 1),
+            Some(ms) => format!(
+                "corte {} de {name}: empieza en {ms} ms{zero}{saved}",
+                index + 1
+            ),
             None => format!(
                 "corte {} de {name}: sin ajuste, donde lo pone el detector{saved}",
                 index + 1

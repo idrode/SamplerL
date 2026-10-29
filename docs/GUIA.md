@@ -2208,6 +2208,7 @@ track("drums", amen)
 | `fx("dyneq")` | `type` | elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer |
 | `fx("dyneq")` | `sidechain` | es una pista, no un número |
 | `bus("delay")` | `time` | es una figura ("1/8"), no un número; además, mover el retardo de una línea con repeticiones dentro suena a cambio de pitch |
+| `slice` | `zero_cross` | se aplica al cargar, en el hilo de control (el sample o el bucle se preparan una vez): no suena en el tiempo |
 | `cortes:set` | `play` | elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer |
 | `:grains` | `seed` | es la semilla del azar: entre dos semillas no hay nada continuo |
 | `instrument` | `root`, `adsr`, `formant` | cada nota lo lee al nacer y el instrumento se valida entero al cargar; para cambiar la nota, la del paso (`^`) |
@@ -2346,13 +2347,17 @@ local otro = sample("amen.wav"):stretch():slice(8)
 
 Devuelve: cortes.
 
-Corta el sample en n partes iguales (rejilla), sin mirar los golpes. Para un break bien cuadrado (un compás en 16 o en 8) o para material sin golpes claros. Las etiquetas y los ajustes del proyecto de un sample cortado en rejilla son distintos de los de `slice(n)` (en el proyecto, el número de cortes se escribe `rejilla16`).
+Corta el sample en n partes iguales (rejilla), sin mirar los golpes. Para un break bien cuadrado (un compás en 16 o en 8) o para material sin golpes claros. Las etiquetas y los ajustes del proyecto de un sample cortado en rejilla son distintos de los de `slice(n)` (en el proyecto, el número de cortes se escribe `rejilla16`). Admite las mismas opciones que `slice` (`zero_cross`); en rejilla es donde más se nota, porque las divisiones caen en cualquier punto de la onda.
 
 - `n`: partes (1 a 64)
+- `opciones`: tabla con `zero_cross` (la de `slice`)
 
 ```lua
 local amen = sample("amen.wav"):slice_grid(16)
 track("drums", amen):steps("1 2 3 4  5 6 7 8  9 10 11 12  13 14 15 16")
+-- La misma rejilla, con cada inicio en el cruce por cero más cercano
+-- (a no más de 3 ms): sin clics al empezar cada parte.
+local limpio = sample("amen.wav"):slice_grid(16, { zero_cross = 3 })
 ```
 
 ### `sample:instrument([opciones])`
@@ -2526,13 +2531,18 @@ local bass = sh101{
 track("bass", bass):melody("c . c c/  eb . c . g1 . bb1 c/  . c eb f")
 ```
 
-### `sample:slice(n)`
+### `sample:slice(n [, opciones])`
 
 Devuelve: cortes.
 
-Corta el sample en sus n golpes más fuertes. Si hay menos golpes, devuelve menos cortes. Usa el detector por flujo espectral con 40 ms de separación mínima.
+Corta el sample en sus n golpes más fuertes. Si hay menos golpes, devuelve menos cortes. Usa el detector por flujo espectral con 40 ms de separación mínima. Con `zero_cross` (tabla de abajo), cada inicio de corte se lleva al cruce por cero más cercano, a no más de esos ms, para que el golpe no empiece en un salto (un clic); vale también para los cortes de `add`, `move` y los ajustes del proyecto. Sin la opción, los cortes son exactamente los de siempre.
 
 - `n`: cortes a buscar (1 a 64)
+- `opciones`: tabla con `zero_cross` (ver abajo)
+
+| Parámetro | Qué es | Por defecto | Valores |
+| --- | --- | --- | --- |
+| `zero_cross` | lleva cada inicio de corte al cruce por cero más cercano, a no más de estos ms (`true`: 2 ms); también los de `add`, `move` y los ajustes del proyecto | `false` | `true`, `false` o 0–50 |
 
 ```lua
 local amen = sample("amen.wav"):slice(8)
@@ -4066,6 +4076,28 @@ arrange({ {"intro", 4}, {"drop", 8} })
 - En Lua, `:slice(n)` usa siempre el detector por flujo con 40 ms; los
   ajustes `--min-gap` y `--detector` son de la línea de comandos. Para
   probarlos, renderiza el WAV con `--pattern` y mira la lista de cortes.
+
+### Un corte hace clic al empezar
+
+Si el golpe empieza en un punto de la onda lejos del cero, el salto suena
+como un clic corto (el fundido de entrada de 1,5 ms lo suaviza, pero con
+graves o con la rejilla se sigue oyendo).
+
+- **Lleva los inicios al cruce por cero**: `slice(8, { zero_cross = 2 })`
+  o `slice_grid(16, { zero_cross = 2 })`. Cada inicio va al cruce más
+  cercano a no más de esos ms (`true` es 2 ms; hasta 50). Sin la opción,
+  los cortes son exactamente los de siempre.
+- **Los ajustes a mano mandan como objetivo**: con la opción, `move`,
+  `add`, las teclas `,` `.` `<` `>` y arrastrar la marca guardan el ms que
+  elijas, y el corte empieza en el cruce más cercano a él (el mensaje lo
+  dice: «empieza en 260 ms (cruce por cero en 259,4 ms)»). Las teclas
+  mueven el ms guardado, no el cruce, así que nunca se quedan atascadas.
+- **Si no se mueve**: el sample no cruza el cero a esa distancia (un
+  grave muy lento, o una señal con corriente continua). Sube el máximo, o
+  prepara el sample con `sample(ruta, { fade_in = ... })` o un `highpass`.
+- **Errores típicos**: `zero_cross = 80` («zero_cross es true, false o los
+  ms de 0 a 50»), una clave mal escrita (`{ zero = 2 }`, «opción
+  desconocida») o una curva (`ramp()` no vale: se aplica al cargar).
 
 ### No suena nada o no llega el MIDI
 

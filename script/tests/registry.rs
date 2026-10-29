@@ -334,6 +334,22 @@ fn every_instrument_parameter_is_accepted() {
 }
 
 #[test]
+fn every_cut_option_is_accepted() {
+    let mut source = String::from(PRELUDE);
+    let (table, _) = expand_template(api::CUT_TABLE.template);
+    let all: Vec<String> = api::CUT_PARAMS
+        .iter()
+        .map(|p| expand_template(p.template).0)
+        .collect();
+    source.push_str(&format!(
+        "track(\"a\", s:slice(8, {table})):steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\")\n\
+         track(\"b\", s:slice_grid(8, {{ {} }})):steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\")\n",
+        all.join(", ")
+    ));
+    eval(&source);
+}
+
+#[test]
 fn every_synth_parameter_is_accepted() {
     for synth in api::SYNTHS {
         let (table, _) = expand_template(synth.template);
@@ -469,6 +485,7 @@ fn every_sound_parameter_takes_a_curve_or_says_why_not() {
             ":grains" => format!("t:grains({{ {} = {curve} }})", p.name),
             "instrument" => format!("local i = s:instrument({{ {} = {curve} }})", p.name),
             "sample" => format!("local x = sample(\"amen.wav\", {{ {} = {curve} }})", p.name),
+            "slice" => format!("local x = s:slice(4, {{ {} = {curve} }})", p.name),
             synth if synth.starts_with("synth(") => {
                 format!(
                     "local x = {}, {{ {} = {curve} }})",

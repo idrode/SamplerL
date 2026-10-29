@@ -1155,6 +1155,69 @@ Todo lo de arriba está probado con los backends falsos y nunca con la tarjeta n
 - **midir**: conectar a un teclado o al Seaboard por nombre, el indicador de actividad, desenchufarlo y refrescar, y conectar la salida a Surge XT.
 - **La ventana de dispositivos** lanzada con una terminal de verdad (kitty, foot) y la regla de Hyprland.
 
+## Fase V: afinación, mandos y congelar
+
+Pedida por el usuario: seis funciones, un commit por función (o por
+parte). El plan, en «Fase V» de [ROADMAP.md](ROADMAP.md).
+
+### Parte 1: cortes en el cruce por cero
+
+- **Antes**: no había nada. Cada voz pone su fundido de entrada de 1,5 ms,
+  que suaviza el salto de un inicio lejos del cero pero no lo quita (con
+  graves y en rejilla se oye un clic corto).
+- **Motor** (`engine/src/slice.rs`): `nearest_zero_crossing(sample, frame,
+  máx, límites)` busca hacia los dos lados, de uno en uno, el frame más
+  cercano en el que la mezcla mono `(l + r) / 2` vale 0 o cambia de signo
+  con un vecino, quedándose con el de los dos lados del cambio que más se
+  acerca a cero (a igual distancia, el de antes); `snap_frame` lo deja donde
+  estaba si no hay ninguno. `Slices::snapped(sample, máx, separación)` lo
+  hace con cada inicio, sin acercarse a menos de la separación mínima de su
+  vecino anterior (ya movido) ni del final de su corte, y el anterior acaba
+  donde empieza el siguiente.
+- **Lua**: `sample:slice(n, { zero_cross = ms })` y `slice_grid(n, { ... })`
+  (`true` = 2 ms, `DEFAULT_ZERO_CROSS_MS`; 0 o `false`, apagada; hasta 50).
+  `cut_options` lee la tabla con las claves del registro (`api::CUT_PARAMS`,
+  `CUT_TABLE` para el autocompletado y la ayuda; `Auto::No(AT_LOAD)`).
+  `cut_sample` aplica la opción al final, después de las ediciones
+  (`partir`, `unir`) y los ajustes del proyecto, así que todo inicio queda
+  en un cruce. `SliceOrigin::zero_cross` la guarda y la heredan `slice_at`,
+  `add` (el cruce más cercano en todo el sample, antes de partir) y `move`
+  (el más cercano entre sus vecinos). La clave del corte (`Cut`) no cambia:
+  etiquetas y ajustes del proyecto son los mismos con la opción o sin ella.
+- **Interfaz**: `App::adjust_slice` mueve el ms guardado (no el inicio real)
+  cuando la pista tiene la opción, y el mensaje dice dónde quedó el cruce
+  («empieza en 260 ms (cruce por cero en 259,4 ms)»).
+- **Tests**: `engine/tests/zero_cross.rs` (el cruce más cercano por los dos
+  lados, máximo y límites, corriente continua sin cruces, una rejilla de 8
+  sobre un seno de 113 Hz con cada inicio a menos de un paso del seno del
+  cero y contigua, y que nunca pasa al otro lado de un vecino) y
+  `script/tests/zero_cross.rs` (sin la opción, `{}`, `false` o 0, los mismos
+  cortes y el mismo audio; con ella, cada inicio a menos de 3 ms y en el
+  cruce; el golpe renderizado sale de cero —lo más alto de sus primeros 18
+  frames, menos de 0,05 frente a más de 0,1 sin ella—; `add` y `move`; un
+  ajuste del proyecto es el objetivo y su ms no cambia; errores con la
+  línea). `registry.rs` prueba la tabla nueva.
+
+#### Decisiones
+
+- **Una opción del corte, no del sample**: es lo que se decide al cortar,
+  la pide quien llama a `slice`/`slice_grid` y la heredan los cortes que
+  salen de ahí (`add`, `move`, `slice_at`). En `sample()` afectaría
+  también a los instrumentos y los granos, que no la necesitan.
+- **El ajuste manual es el objetivo**: el ms que se guarda (con `move`, las
+  teclas, arrastrar o el proyecto) es lo que elige el usuario, y el inicio
+  real es el cruce más cercano a él. Así quitar la opción devuelve
+  exactamente el ajuste, y las teclas no se quedan atascadas en un cruce
+  (mueven el ms guardado). Lo malo: con la opción, el ms escrito no es
+  exactamente donde empieza; el mensaje y la vista enseñan el real.
+- **Mono para buscar el cruce**: los dos canales rara vez cruzan a la vez;
+  el cruce de la mezcla deja los dos cerca de cero en material casi mono
+  (lo normal en un break) y es lo que pesa en el salto que se oye.
+- **Sin cruce, se queda**: una señal con corriente continua o un grave más
+  lento que el máximo no se mueven (mejor que irse lejos del golpe).
+- **Coste**: solo al cargar (hilo de control), como mucho `2·máx` lecturas
+  por corte: 4800 con 50 ms a 48 kHz, nada al lado del detector.
+
 ## Mejoras sueltas
 
 - **Pegado multilínea**: ya lo hacían el pegado con bracketed paste (`App::paste`, `editing::burst_text` para terminales sin él) y la parte 1 de la fase L en la ventana del editor; verificado con sus tests (`pasting_keeps_the_lines_and_the_indent_and_undoes_at_once`, `pasting_with_the_completion_open_accepts_nothing`, `a_burst_of_keys_with_line_breaks_is_a_paste`, `split::pasting_in_the_editor_window_keeps_the_indent_and_undoes_at_once`): líneas y sangría tal cual, sin autocompletado ni sangrado automático, un solo Ctrl-Z.

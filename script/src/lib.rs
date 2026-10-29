@@ -425,6 +425,9 @@ pub struct SliceOrigin {
     /// con `slice_at`. `None`: un corte añadido en el script (`:add()`), que
     /// no se puede etiquetar ni mover desde la interfaz.
     pub indices: Vec<Option<usize>>,
+    /// `zero_cross` de `slice`/`slice_grid`: cada inicio va al cruce por
+    /// cero más cercano, a no más de estos ms. `None`: tal cual.
+    pub zero_cross: Option<f64>,
 }
 
 impl SliceOrigin {
@@ -2733,6 +2736,7 @@ fn track_source(lua: &Lua, name: &str, source: &AnyUserData) -> mlua::Result<Tra
             count: 1,
             grid: true,
             indices: vec![None],
+            zero_cross: None,
         };
         let slices = Slices::grid(&source.sample, 1);
         let mut def = def(&source.sample, &source.path, slices, origin);
@@ -2758,6 +2762,7 @@ fn track_source(lua: &Lua, name: &str, source: &AnyUserData) -> mlua::Result<Tra
             count: 1,
             grid: true,
             indices: vec![None],
+            zero_cross: None,
         };
         let slices = Slices::grid(&silence, 1);
         let mut def = def(&silence, Path::new(""), slices, origin);
@@ -3153,6 +3158,57 @@ fn min_slice_gap(sample: &Sample) -> usize {
     (sample.sample_rate() as usize / 1000).max(1)
 }
 
+/// Frames de `zero_cross` (ms) en `sample`.
+fn zero_frames(ms: f64, sample: &Sample) -> usize {
+    ms_to_frame(ms, sample)
+}
+
+/// Lee las opciones de `slice(n, { ... })` y `slice_grid(n, { ... })`
+/// (claves del registro `api::CUT_PARAMS`): el `zero_cross` en ms.
+fn cut_options(lua: &Lua, who: &str, table: Option<&Table>) -> mlua::Result<Option<f64>> {
+    let Some(table) = table else {
+        return Ok(None);
+    };
+    table_curves(lua, who, table, api::CUT_PARAMS)?;
+    let mut zero = None;
+    for pair in table.pairs::<Value, Value>() {
+        let (key, value) = pair?;
+        let key = match key {
+            Value::String(s) => s.to_str()?.to_string(),
+            other => format!("{other:?}"),
+        };
+        if key != "zero_cross" {
+            let known: Vec<&str> = api::CUT_PARAMS.iter().map(|p| p.name).collect();
+            return Err(fail(
+                lua,
+                format!(
+                    "{who}: opción desconocida «{key}» (valen: {})",
+                    known.join(", ")
+                ),
+            ));
+        }
+        zero = match value {
+            Value::Boolean(true) => Some(DEFAULT_ZERO_CROSS_MS),
+            Value::Boolean(false) => None,
+            Value::Integer(i) if (0..=50).contains(&i) => (i > 0).then_some(i as f64),
+            Value::Number(n) if (0.0..=50.0).contains(&n) => (n > 0.0).then_some(n),
+            other => {
+                return Err(fail(
+                    lua,
+                    format!(
+                        "{who}: zero_cross es true, false o los ms de 0 a 50 (no {})",
+                        value_text(&other)
+                    ),
+                ));
+            }
+        };
+    }
+    Ok(zero)
+}
+
+/// `zero_cross = true`: hasta 2 ms (medio ciclo de 250 Hz).
+const DEFAULT_ZERO_CROSS_MS: f64 = 2.0;
+
 fn ms_to_frame(ms: f64, sample: &Sample) -> usize {
     (ms / 1000.0 * sample.sample_rate() as f64).round() as usize
 }
@@ -3280,29 +3336,35 @@ impl UserData for SampleHandle {
                 .unzip())
         });
 
-        // `:slice(n)`: corta en los `n` transitorios más fuertes.
-        methods.add_method("slice", |lua, this, n: i64| {
+        // `:slice(n [, { zero_cross }])`: corta en los `n` transitorios más
+        // fuertes.
+        methods.add_method("slice", |lua, this, (n, options): (i64, Option<Table>)| {
             if !(1..=64).contains(&n) {
                 return Err(fail(
                     lua,
                     format!("slice({n}): el número de cortes va de 1 a 64"),
                 ));
             }
+            let zero = cut_options(lua, &format!("slice({n})"), options.as_ref())?;
             let slices = Slices::detect(&this.sample, n as usize);
-            cut_sample(lua, this, slices, Cut::detect(n as usize))
+            cut_sample(lua, this, slices, Cut::detect(n as usize), zero)
         });
 
-        // `:slice_grid(n)`: `n` cortes iguales (rejilla).
-        methods.add_method("slice_grid", |lua, this, n: i64| {
-            if !(1..=64).contains(&n) {
-                return Err(fail(
-                    lua,
-                    format!("slice_grid({n}): el número de cortes va de 1 a 64"),
-                ));
-            }
-            let slices = Slices::grid(&this.sample, n as usize);
-            cut_sample(lua, this, slices, Cut::grid(n as usize))
-        });
+        // `:slice_grid(n [, { zero_cross }])`: `n` cortes iguales (rejilla).
+        methods.add_method(
+            "slice_grid",
+            |lua, this, (n, options): (i64, Option<Table>)| {
+                if !(1..=64).contains(&n) {
+                    return Err(fail(
+                        lua,
+                        format!("slice_grid({n}): el número de cortes va de 1 a 64"),
+                    ));
+                }
+                let zero = cut_options(lua, &format!("slice_grid({n})"), options.as_ref())?;
+                let slices = Slices::grid(&this.sample, n as usize);
+                cut_sample(lua, this, slices, Cut::grid(n as usize), zero)
+            },
+        );
     }
 }
 
@@ -4216,6 +4278,7 @@ fn cut_sample(
     this: &SampleHandle,
     mut slices: Slices,
     cut: Cut,
+    zero: Option<f64>,
 ) -> mlua::Result<SlicedHandle> {
     let _ = lua;
     let gap = min_slice_gap(&this.sample);
@@ -4271,6 +4334,11 @@ fn cut_sample(
                 frame_to_ms(bounds.end, &this.sample),
             )),
         }
+    }
+    // Con `zero_cross`, todos los inicios (detectados, en rejilla, partidos
+    // o ajustados en el proyecto) van al cruce por cero más cercano.
+    if let Some(ms) = zero {
+        slices = slices.snapped(&this.sample, zero_frames(ms, &this.sample), gap);
     }
     // Etiquetas del proyecto para este sample, pero cortado de otra forma:
     // no se aplican (los cortes son otros). Se avisa, y el error de una de
@@ -4335,6 +4403,7 @@ fn cut_sample(
             count: cut.count,
             grid: cut.grid,
             indices: (0..count).map(Some).collect(),
+            zero_cross: zero,
         },
         slices,
         labels: Rc::new(RefCell::new(labels)),
@@ -4732,7 +4801,15 @@ impl UserData for SlicedHandle {
             if !(ms.is_finite() && ms >= 0.0) {
                 return Err(fail(lua, format!("add({ms}): ms desde el principio (0 o más)")));
             }
-            let frame = ms_to_frame(ms, &this.sample);
+            let mut frame = ms_to_frame(ms, &this.sample);
+            if let Some(zero) = this.origin.zero_cross {
+                frame = engine::snap_frame(
+                    &this.sample,
+                    frame,
+                    zero_frames(zero, &this.sample),
+                    0..this.sample.frames(),
+                );
+            }
             let (slices, k) = this
                 .slices
                 .split(frame, min_slice_gap(&this.sample))
@@ -4815,20 +4892,31 @@ impl UserData for SlicedHandle {
                     format!("move({index}, {ms}): ms desde el principio (0 o más)"),
                 ));
             }
-            let frame = ms_to_frame(ms, &this.sample);
-            this.slices = this
-                .slices
-                .with_start(i, frame, min_slice_gap(&this.sample))
-                .map_err(|bounds| {
-                    fail(
-                        lua,
-                        format!(
-                            "move({index}, {ms}): se sale de sus vecinos ({:.1} a {:.1} ms)",
-                            frame_to_ms(bounds.start, &this.sample),
-                            frame_to_ms(bounds.end, &this.sample)
-                        ),
-                    )
-                })?;
+            let gap = min_slice_gap(&this.sample);
+            let mut frame = ms_to_frame(ms, &this.sample);
+            if let Some(zero) = this.origin.zero_cross {
+                // Sin salirse de sus vecinos: el cruce más cercano dentro.
+                let low = i
+                    .checked_sub(1)
+                    .map_or(0, |p| this.slices.get(p).map_or(0, |r| r.start + gap));
+                let high = this.slices.get(i).map_or(0, |r| r.end.saturating_sub(gap));
+                frame = engine::snap_frame(
+                    &this.sample,
+                    frame,
+                    zero_frames(zero, &this.sample),
+                    low..high + 1,
+                );
+            }
+            this.slices = this.slices.with_start(i, frame, gap).map_err(|bounds| {
+                fail(
+                    lua,
+                    format!(
+                        "move({index}, {ms}): se sale de sus vecinos ({:.1} a {:.1} ms)",
+                        frame_to_ms(bounds.start, &this.sample),
+                        frame_to_ms(bounds.end, &this.sample)
+                    ),
+                )
+            })?;
             this.adjusted[i] = true;
             Ok(this.clone())
         });
