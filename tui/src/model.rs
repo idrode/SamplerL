@@ -49,6 +49,8 @@ pub struct ViewModel {
     pub macros: Vec<(String, f32)>,
     /// Panel de las macros abierto, con la elegida.
     pub macro_panel: Option<usize>,
+    /// El panel de dispositivos abierto en esta ventana.
+    pub devices: Option<DevicesPopup>,
     /// Nombre del proyecto abierto, si lo hay.
     pub project: Option<String>,
     /// Mensaje informativo de la última acción.
@@ -223,6 +225,15 @@ pub struct TransportView {
     pub bar: u64,
     /// Último paso disparado.
     pub step: Option<usize>,
+}
+
+/// El panel de dispositivos encima de la ventana principal.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct DevicesPopup {
+    pub view: crate::devices::DevicesView,
+    pub cursor: crate::devices_panel::Cursor,
+    /// El indicador de actividad MIDI, encendido.
+    pub lit: bool,
 }
 
 /// Los efectos de un corte, para el panel de efectos.

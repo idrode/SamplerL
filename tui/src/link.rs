@@ -1,6 +1,7 @@
 //! Enlace entre la ventana principal y el editor en su propia ventana
-//! (fase L): un socket Unix local, solo del usuario, con un protocolo de
-//! líneas de texto. Sin hilos: los dos extremos se leen y escriben sin
+//! (fase L), y entre la principal y el panel de dispositivos en la suya
+//! (fase U, en un socket aparte): un socket Unix local, solo del usuario,
+//! con un protocolo de líneas de texto. Sin hilos: los dos extremos se leen y escriben sin
 //! bloquear desde el bucle de la interfaz, y el audio no pasa por aquí.
 //!
 //! Cada mensaje es una línea: el verbo y sus campos separados por
@@ -13,12 +14,15 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use crate::devices::{DevicesView, Entry, Kind};
 use crate::highlight::Highlight;
 
 /// Versión del protocolo: los dos extremos tienen que tener la misma (la
 /// 2 añade el traspaso del editor: `historial`, `devuelve` y `vuelvo`; la
-/// 3, lo que suena para resaltarlo en el código: `suena`).
-pub const VERSION: u32 = 3;
+/// 3, lo que suena para resaltarlo en el código: `suena`; la 4, el panel de
+/// dispositivos en su ventana, en su propio socket: [`ToDevices`] y
+/// [`FromDevices`]).
+pub const VERSION: u32 = 4;
 
 /// Lo que se deja pendiente de escribir antes de dar el otro extremo por
 /// perdido (no lee).
@@ -138,6 +142,34 @@ pub struct RemoteState {
     pub slice: usize,
     /// El cue como se ve (vacío: no hay).
     pub cue: String,
+}
+
+/// Del panel de dispositivos (en su ventana) a la principal.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FromDevices {
+    Hello {
+        version: u32,
+    },
+    /// Volver a leer las listas.
+    Refresh,
+    /// Usar el dispositivo `name` de la lista `kind`.
+    Choose {
+        kind: Kind,
+        name: String,
+    },
+}
+
+/// De la principal al panel de dispositivos.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ToDevices {
+    /// Respuesta al saludo: la versión y el script (para el título).
+    Welcome { version: u32, title: String },
+    /// Las listas y el estado, cada vez que cambian.
+    View(DevicesView),
+    /// La principal cierra esta conexión (y por qué): no se reintenta.
+    Bye(String),
+    /// La principal vuelve a meter el panel: la ventana se cierra.
+    GiveBack,
 }
 
 /// Escapa un campo.
@@ -372,6 +404,121 @@ impl Message for ToEditor {
     }
 }
 
+impl Message for FromDevices {
+    fn encode(&self) -> String {
+        match self {
+            FromDevices::Hello { version } => line("hola", &[&version.to_string()]),
+            FromDevices::Refresh => line("refrescar", &[]),
+            FromDevices::Choose { kind, name } => line("elegir", &[kind.key(), name]),
+        }
+    }
+
+    fn decode(text: &str) -> Result<Self, String> {
+        let (verb, f) = split(text)?;
+        let v = verb.as_str();
+        Ok(match v {
+            "hola" => FromDevices::Hello {
+                version: number(field(&f, 0, v)?, v)?,
+            },
+            "refrescar" => FromDevices::Refresh,
+            "elegir" => {
+                let key = field(&f, 0, v)?;
+                FromDevices::Choose {
+                    kind: Kind::from_key(key)
+                        .ok_or_else(|| format!("«{v}»: lista desconocida «{key}»"))?,
+                    name: field(&f, 1, v)?.into(),
+                }
+            }
+            other => return Err(format!("mensaje desconocido «{other}»")),
+        })
+    }
+}
+
+impl Message for ToDevices {
+    fn encode(&self) -> String {
+        match self {
+            ToDevices::Welcome { version, title } => line("hola", &[&version.to_string(), title]),
+            ToDevices::View(view) => {
+                // El estado, el aviso, la actividad, las tres notas y cada
+                // lista: cuántas filas y, por fila, nombre, detalle y marcas
+                // (`a` en uso, `d` predeterminado).
+                let mut fields = vec![
+                    view.status.clone(),
+                    view.notice.clone(),
+                    view.activity.to_string(),
+                ];
+                fields.extend(view.notes.iter().cloned());
+                for kind in Kind::ALL {
+                    let list = view.list(kind);
+                    fields.push(list.len().to_string());
+                    for e in list {
+                        let mut flags = String::new();
+                        if e.active {
+                            flags.push('a');
+                        }
+                        if e.default {
+                            flags.push('d');
+                        }
+                        fields.extend([e.name.clone(), e.detail.clone(), flags]);
+                    }
+                }
+                fields_line("vista", &fields)
+            }
+            ToDevices::Bye(reason) => line("adios", &[reason]),
+            ToDevices::GiveBack => line("devuelve", &[]),
+        }
+    }
+
+    fn decode(text: &str) -> Result<Self, String> {
+        let (verb, f) = split(text)?;
+        let v = verb.as_str();
+        Ok(match v {
+            "hola" => ToDevices::Welcome {
+                version: number(field(&f, 0, v)?, v)?,
+                title: field(&f, 1, v)?.into(),
+            },
+            "vista" => {
+                let mut view = DevicesView {
+                    status: field(&f, 0, v)?.into(),
+                    notice: field(&f, 1, v)?.into(),
+                    activity: number(field(&f, 2, v)?, v)?,
+                    notes: [
+                        field(&f, 3, v)?.into(),
+                        field(&f, 4, v)?.into(),
+                        field(&f, 5, v)?.into(),
+                    ],
+                    ..DevicesView::default()
+                };
+                let mut at = 6;
+                for kind in Kind::ALL {
+                    let count: usize = number(field(&f, at, v)?, v)?;
+                    at += 1;
+                    let mut list = Vec::new();
+                    for _ in 0..count {
+                        let flags = field(&f, at + 2, v)?;
+                        list.push(Entry {
+                            name: field(&f, at, v)?.into(),
+                            detail: field(&f, at + 1, v)?.into(),
+                            active: flags.contains('a'),
+                            default: flags.contains('d'),
+                        });
+                        at += 3;
+                    }
+                    match kind {
+                        Kind::Audio => view.audio = list,
+                        Kind::MidiIn => view.midi_in = list,
+                        Kind::MidiOut => view.midi_out = list,
+                    }
+                }
+                ToDevices::View(view)
+            }
+            "adios" => ToDevices::Bye(field(&f, 0, v)?.into()),
+            "devuelve" => ToDevices::GiveBack,
+            other => return Err(format!("mensaje desconocido «{other}»")),
+        })
+    }
+}
+
 /// Una conexión sin bloqueos: lo leído se junta hasta tener líneas
 /// enteras y lo que no se pudo escribir espera a la siguiente vuelta.
 pub struct Conn {
@@ -392,7 +539,12 @@ impl Conn {
 
     /// Pone un mensaje en la cola y escribe lo que se pueda.
     pub fn send(&mut self, message: &impl Message) -> io::Result<()> {
-        self.output.extend_from_slice(message.encode().as_bytes());
+        self.send_line(&message.encode())
+    }
+
+    /// Lo mismo con un mensaje ya escrito.
+    fn send_line(&mut self, line: &str) -> io::Result<()> {
+        self.output.extend_from_slice(line.as_bytes());
         self.flush()
     }
 
@@ -576,6 +728,16 @@ pub fn socket_path(dir: &Path, script: &Path) -> PathBuf {
     ))
 }
 
+/// Socket del panel de dispositivos de la instancia de un script (aparte
+/// del del editor: los dos pueden estar fuera a la vez).
+pub fn devices_socket_path(dir: &Path, script: &Path) -> PathBuf {
+    let editor = socket_path(dir, script);
+    let stem = editor
+        .file_stem()
+        .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
+    dir.join(format!("{stem}-disp.sock"))
+}
+
 /// Hash FNV-1a de 64 bits (estable entre versiones de Rust, a diferencia
 /// de `DefaultHasher`: los dos procesos pueden ser binarios distintos).
 fn fnv1a(bytes: &[u8]) -> u64 {
@@ -589,12 +751,21 @@ pub struct Server {
     path: PathBuf,
     listener: UnixListener,
     client: Option<Conn>,
+    /// Lo que se le dice al cliente que se queda fuera cuando llega otro.
+    replaced: String,
 }
 
 impl Server {
-    /// Escucha en `path`. Si ya hay otra instancia viva ahí, error; si el
-    /// socket es de una que se cayó, lo sustituye.
+    /// Escucha en `path` (a un editor). Si ya hay otra instancia viva ahí,
+    /// error; si el socket es de una que se cayó, lo sustituye.
     pub fn bind(path: &Path) -> io::Result<Server> {
+        let replaced = ToEditor::Bye("se ha conectado otro editor a esta ventana principal".into());
+        Server::bind_with(path, replaced.encode())
+    }
+
+    /// Como [`Server::bind`], diciendo `replaced` (un mensaje ya escrito) al
+    /// cliente que se queda fuera cuando se conecta otro.
+    pub fn bind_with(path: &Path, replaced: String) -> io::Result<Server> {
         if path.exists() {
             if UnixStream::connect(path).is_ok() {
                 return Err(io::Error::new(
@@ -615,6 +786,7 @@ impl Server {
             path: path.to_path_buf(),
             listener,
             client: None,
+            replaced,
         })
     }
 
@@ -634,9 +806,7 @@ impl Server {
                     match conn.peer_uid() {
                         Ok(uid) if uid == my_uid() => {
                             if let Some(mut old) = self.client.replace(conn) {
-                                let _ = old.send(&ToEditor::Bye(
-                                    "se ha conectado otro editor a esta ventana principal".into(),
-                                ));
+                                let _ = old.send_line(&self.replaced);
                             }
                             fresh = true;
                         }
@@ -676,17 +846,26 @@ pub struct Client {
     path: PathBuf,
     conn: Option<Conn>,
     last_try: Option<Instant>,
+    /// El saludo que se manda al conectar (ya escrito).
+    hello: String,
     /// La principal cerró a propósito (otro editor, otra versión): no se
     /// reintenta solo.
     pub stopped: bool,
 }
 
 impl Client {
+    /// El lado de un editor.
     pub fn new(path: &Path) -> Client {
+        Client::with_hello(path, ToMain::Hello { version: VERSION }.encode())
+    }
+
+    /// Un cliente que saluda con `hello` (un mensaje ya escrito).
+    pub fn with_hello(path: &Path, hello: String) -> Client {
         Client {
             path: path.to_path_buf(),
             conn: None,
             last_try: None,
+            hello,
             stopped: false,
         }
     }
@@ -707,7 +886,7 @@ impl Client {
         if conn.peer_uid().ok() != Some(my_uid()) {
             return None;
         }
-        conn.send(&ToMain::Hello { version: VERSION }).ok()?;
+        conn.send_line(&self.hello).ok()?;
         self.stopped = false;
         self.conn = Some(conn);
         self.conn.as_mut()
@@ -809,6 +988,43 @@ mod tests {
             base: 0,
             marks: vec![],
         });
+    }
+
+    #[test]
+    fn the_devices_messages_survive_the_wire() {
+        roundtrip(FromDevices::Hello { version: VERSION });
+        roundtrip(FromDevices::Refresh);
+        roundtrip(FromDevices::Choose {
+            kind: Kind::MidiIn,
+            name: "Seaboard:Seaboard MIDI 1\tñ".into(),
+        });
+        roundtrip(ToDevices::Welcome {
+            version: VERSION,
+            title: "canción.lua".into(),
+        });
+        roundtrip(ToDevices::Bye("otra versión".into()));
+        roundtrip(ToDevices::GiveBack);
+        roundtrip(ToDevices::View(DevicesView::default()));
+        let entry = |name: &str, active, default| Entry {
+            name: name.into(),
+            detail: "2 canales · 48000 Hz".into(),
+            active,
+            default,
+        };
+        roundtrip(ToDevices::View(DevicesView {
+            audio: vec![
+                entry("Altavoces", false, true),
+                entry("USB\n«x»", true, false),
+            ],
+            midi_in: vec![entry("virtual", true, true)],
+            midi_out: vec![],
+            status: "«USB» · 48000 Hz".into(),
+            notes: ["".into(), "MIDI apagado".into(), "otra".into()],
+            activity: 42,
+            notice: "audio: suena por «USB»".into(),
+        }));
+        assert!(FromDevices::decode("elegir\tbluetooth\tx").is_err());
+        assert!(ToDevices::decode("vista\ta\tb\t1\t\t\t\t2\tsolo uno").is_err());
     }
 
     #[test]

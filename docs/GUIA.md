@@ -682,6 +682,10 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Choques de frecuencia | Renderiza offline cada pista en solo (un ciclo entero de la canción) y muestra en qué bandas se pisan: tabla pareja × banda con su puntuación (0 a 1), un resumen y el EQ sugerido para la que cede; Enter lo propone y Enter otra vez lo inserta en el script sin guardar; no toca lo que suena | — |
 | Abrir el editor en su ventana | Saca el editor a una terminal nueva ([editor] terminal en config.toml) con su texto, cursor e historial de deshacer; con el editor ya fuera, lo vuelve a abrir si no está conectado | — |
 | Volver a meter el editor en la principal | Con el editor en su ventana: lo cierra y vuelve a la principal con su texto, cursor e historial de deshacer (sin guardar) | — |
+| Dispositivos | Panel de dispositivos: audio de salida, MIDI de entrada y de salida con el que está en uso marcado; ↑↓ elegir, ←→/Tab lista, Enter usar (se guarda en [dispositivos] de config.toml), r refrescar, Esc | — |
+| Refrescar los dispositivos | Vuelve a leer las listas de dispositivos (no se sondean solas); si el puerto MIDI en uso ya no está, vuelve al virtual | — |
+| Abrir el panel de dispositivos en su ventana | El panel de dispositivos en una terminal nueva ([dispositivos] terminal, o [editor] terminal, en config.toml); si no se puede lanzar, se abre aquí | — |
+| Volver a meter el panel de dispositivos en la principal | Con el panel de dispositivos en su ventana: la cierra y lo abre aquí | — |
 | Modo vim | Enciende o apaga el modo vim del editor en esta sesión (el de siempre, `[editor] modo`) | — |
 | Salir | Sale (pide confirmación si hay cambios sin guardar) | Ctrl-Q |
 | Snippet: `amen`, `fill`, `ghost`, `intro`, `euclid`, `melodia`, `polirritmo`, `barrido`, `groove`, `instrumento` | Inserta el snippet en el cursor (ver «Snippets» en la sección 4) | — |
@@ -1098,6 +1102,7 @@ paleta de 256.
 | `audio` | dispositivo de salida de audio, por su nombre (el de `tui --list-devices` o el panel de dispositivos); se guarda solo al elegirlo en el panel; `--audio-device` manda sobre él | el predeterminado |
 | `midi_entrada` | puerto MIDI de entrada, por su nombre sin los números de ALSA del final (`"Seaboard:Seaboard MIDI 1"`); `--midi-in` manda sobre él | el puerto virtual |
 | `midi_salida` | puerto MIDI de salida, igual; `--midi-out` manda sobre él | el puerto virtual |
+| `terminal` | comando que abre una terminal nueva para el panel de dispositivos en su ventana (`"kitty --class sampler-dispositivos -e"`); detrás va `tui --window-devices <script>` | la de `[editor] terminal` |
 
 <!-- config:fin -->
 

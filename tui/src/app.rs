@@ -23,6 +23,8 @@ use crate::palette::{self, Action, Item};
 
 mod cue;
 mod devices;
+#[cfg(test)]
+pub use devices::devices_command;
 mod macros;
 mod mouse;
 mod vim;
@@ -365,6 +367,13 @@ pub struct App {
     devices: Option<crate::devices::Devices>,
     /// Dónde se guarda lo elegido (`[dispositivos]` de `config.toml`).
     devices_config: Option<PathBuf>,
+    /// El panel de dispositivos abierto aquí, con su cursor; el indicador
+    /// de actividad MIDI; y el panel en su ventana (`--window-devices`).
+    devices_panel: Option<crate::devices_panel::Cursor>,
+    devices_blink: crate::devices_panel::Blink,
+    devices_link: Option<devices::DevicesLink>,
+    /// `[dispositivos] terminal` (si no, la del editor).
+    devices_terminal: Option<Vec<String>>,
     /// Con el editor en su propia ventana: de qué lado está esta (ver
     /// `split`). Sin él, una sola ventana como siempre.
     link: Option<split::Link>,
@@ -478,6 +487,10 @@ impl App {
             midi_out: None,
             devices: None,
             devices_config: None,
+            devices_panel: None,
+            devices_blink: Default::default(),
+            devices_link: None,
+            devices_terminal: None,
             link: None,
             loaded_text: None,
             cursors: Default::default(),
@@ -549,6 +562,7 @@ impl App {
     /// en el hilo que dibuja). Sus avisos van al mensaje.
     pub fn set_config(&mut self, config: &Config) {
         self.editor_terminal = config.editor_terminal.clone();
+        self.devices_terminal = config.devices_terminal.clone();
         self.mouse_enabled = config.editor.mouse;
         self.vim_exit = config.editor.insert_exit;
         // El modo vim se queda como estaba si ya lo era (con su modo).
@@ -3283,6 +3297,10 @@ impl App {
             Action::PreviousSlice => self.select_slice(false),
             Action::EditorWindow => self.launch_editor(),
             Action::EditorBack => self.reclaim_editor(),
+            Action::Devices => self.open_devices_panel(),
+            Action::RefreshDevices => self.refresh_devices(),
+            Action::DevicesWindow => self.launch_devices_window(),
+            Action::DevicesBack => self.reclaim_devices_window(),
             Action::Quit => {
                 let armed = std::mem::replace(&mut self.quit_armed, false);
                 return self.request_quit(armed);
@@ -3669,6 +3687,9 @@ impl App {
         }
         if self.macro_panel.is_some() {
             return self.handle_macros(input);
+        }
+        if self.devices_panel.is_some() {
+            return self.handle_devices_panel(input);
         }
         if let Some(op) = self.slot_prompt.take() {
             match input.key {
@@ -4170,6 +4191,7 @@ impl App {
                 .map(|m| (m.name.clone(), m.value))
                 .collect(),
             macro_panel: self.macro_panel,
+            devices: self.devices_popup(),
             vim: self.vim.as_ref().map(vim::Vim::label),
             timeline,
             cue: self.cue.map(|bar| self.cue_text(bar)),

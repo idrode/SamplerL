@@ -161,6 +161,11 @@ const DEVICES_KEYS: &[(&str, &str, &str)] = &[
         "puerto MIDI de salida, igual; `--midi-out` manda sobre él",
         "el puerto virtual",
     ),
+    (
+        "terminal",
+        "comando que abre una terminal nueva para el panel de dispositivos en su ventana (`\"kitty --class sampler-dispositivos -e\"`); detrás va `tui --window-devices <script>`",
+        "la de `[editor] terminal`",
+    ),
 ];
 
 /// Retardo a mano más largo del resaltado, en ms.
@@ -530,6 +535,9 @@ pub struct Config {
     pub occupancy: OccupancyConfig,
     /// `[dispositivos]`: los elegidos la última vez.
     pub devices: crate::devices::Choice,
+    /// `[dispositivos] terminal`: la terminal del panel de dispositivos en
+    /// su ventana (si no, la de `[editor] terminal`).
+    pub devices_terminal: Option<Vec<String>>,
     /// Avisos (archivo que falta o roto, claves desconocidas, choques...).
     pub warnings: Vec<String>,
 }
@@ -637,19 +645,8 @@ impl Config {
                 }
                 "editor" => {
                     for (key, value) in inner {
-                        let words: Option<Vec<String>> = match value {
-                            toml::Value::String(s) => {
-                                Some(s.split_whitespace().map(String::from).collect())
-                            }
-                            toml::Value::Array(list) => {
-                                list.iter().map(|v| v.as_str().map(String::from)).collect()
-                            }
-                            _ => None,
-                        };
-                        match (key.as_str(), words) {
-                            ("terminal", Some(words)) if !words.is_empty() => {
-                                config.editor_terminal = Some(words)
-                            }
+                        match (key.as_str(), terminal_words(value)) {
+                            ("terminal", Some(words)) => config.editor_terminal = Some(words),
                             ("terminal", _) => config.warnings.push(
                                 "[editor] terminal: un comando, como \"kitty --class sampler-editor -e\" o una lista de palabras".into(),
                             ),
@@ -700,6 +697,15 @@ impl Config {
                 }
                 "dispositivos" => {
                     for (key, value) in inner {
+                        if key == "terminal" {
+                            match terminal_words(value) {
+                                Some(words) => config.devices_terminal = Some(words),
+                                None => config.warnings.push(
+                                    "[dispositivos] terminal: un comando, como \"kitty --class sampler-dispositivos -e\" o una lista de palabras".into(),
+                                ),
+                            }
+                            continue;
+                        }
                         let kind = crate::devices::Kind::from_key(key);
                         match (kind, value.as_str()) {
                             (Some(kind), Some(name)) => config
@@ -709,7 +715,7 @@ impl Config {
                                 "[dispositivos] {key}: el nombre entre comillas"
                             )),
                             (None, _) => config.warnings.push(format!(
-                                "[dispositivos] «{key}» no existe (hay: audio, midi_entrada, midi_salida)"
+                                "[dispositivos] «{key}» no existe (hay: audio, midi_entrada, midi_salida, terminal)"
                             )),
                         }
                     }
@@ -834,6 +840,17 @@ fn guide_markdown() -> String {
         out.push_str(&format!("| `{name}` | {what} | {default} |\n"));
     }
     out
+}
+
+/// Un comando de terminal: un texto (se parte por los espacios) o una
+/// lista de palabras; `None` si no es ninguna de las dos o está vacío.
+fn terminal_words(value: &toml::Value) -> Option<Vec<String>> {
+    let words: Option<Vec<String>> = match value {
+        toml::Value::String(s) => Some(s.split_whitespace().map(String::from).collect()),
+        toml::Value::Array(list) => list.iter().map(|v| v.as_str().map(String::from)).collect(),
+        _ => None,
+    };
+    words.filter(|w| !w.is_empty())
 }
 
 /// Guarda lo elegido en `[dispositivos]` de `path` sin tocar lo demás

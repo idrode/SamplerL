@@ -481,6 +481,17 @@ fn draw_popups(frame: &mut Frame, view: &ViewModel, popup: Option<Rect>) {
     if let Some(browser) = &view.browser {
         frame.render_widget(BrowserPopup(browser), palette_area(frame.area()));
     }
+    if let Some(popup) = &view.devices {
+        frame.render_widget(
+            crate::devices_panel::DevicesPanel {
+                view: &popup.view,
+                cursor: popup.cursor,
+                lit: popup.lit,
+                title: "dispositivos",
+            },
+            crate::devices_panel::popup_area(frame.area(), &popup.view),
+        );
+    }
     if let Some(picker) = &view.block_picker {
         frame.render_widget(BlockPickerPopup(picker), picker_area(frame.area(), picker));
     }

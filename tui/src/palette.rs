@@ -78,6 +78,10 @@ pub enum Action {
     Highlight,
     EditorWindow,
     EditorBack,
+    Devices,
+    RefreshDevices,
+    DevicesWindow,
+    DevicesBack,
     ToggleVim,
     Quit,
 }
@@ -506,6 +510,30 @@ pub const ACTIONS: &[ActionDef] = &[
         action: Action::EditorBack,
         name: "Volver a meter el editor en la principal",
         description: "Con el editor en su ventana: lo cierra y vuelve a la principal con su texto, cursor e historial de deshacer (sin guardar)",
+        keys: "",
+    },
+    ActionDef {
+        action: Action::Devices,
+        name: "Dispositivos",
+        description: "Panel de dispositivos: audio de salida, MIDI de entrada y de salida con el que está en uso marcado; ↑↓ elegir, ←→/Tab lista, Enter usar (se guarda en [dispositivos] de config.toml), r refrescar, Esc",
+        keys: "",
+    },
+    ActionDef {
+        action: Action::RefreshDevices,
+        name: "Refrescar los dispositivos",
+        description: "Vuelve a leer las listas de dispositivos (no se sondean solas); si el puerto MIDI en uso ya no está, vuelve al virtual",
+        keys: "",
+    },
+    ActionDef {
+        action: Action::DevicesWindow,
+        name: "Abrir el panel de dispositivos en su ventana",
+        description: "El panel de dispositivos en una terminal nueva ([dispositivos] terminal, o [editor] terminal, en config.toml); si no se puede lanzar, se abre aquí",
+        keys: "",
+    },
+    ActionDef {
+        action: Action::DevicesBack,
+        name: "Volver a meter el panel de dispositivos en la principal",
+        description: "Con el panel de dispositivos en su ventana: la cierra y lo abre aquí",
         keys: "",
     },
     ActionDef {

@@ -159,6 +159,7 @@ fn opens_in_main(action: Action) -> bool {
         Action::Browser
             | Action::TapTempo
             | Action::Macros
+            | Action::Devices
             | Action::AnalyzeMasking
             | Action::FillGap
             | Action::SuggestFills

@@ -14,9 +14,6 @@
 //! `engine::AudioBackend` y el MIDI de un [`MidiBackend`]; los tests usan
 //! los falsos.
 
-// El panel de dispositivos (que usa las listas) llega en la parte 3.
-#![allow(dead_code)]
-
 use std::any::Any;
 
 use engine::{AudioDeviceInfo, AudioEvent, AudioOutput};
@@ -239,10 +236,6 @@ impl Devices {
     /// Lo elegido ahora (para guardarlo).
     pub fn choice(&self) -> &Choice {
         &self.chosen
-    }
-
-    pub fn midi_enabled(&self) -> bool {
-        self.midi.is_some()
     }
 
     pub fn audio_info(&self) -> Option<engine::OutputInfo> {
@@ -531,6 +524,11 @@ impl Devices {
         changes
     }
 
+    /// Notas MIDI recibidas hasta ahora.
+    pub fn activity(&self) -> u64 {
+        self.activity
+    }
+
     /// Una nota MIDI que ha llegado (para el indicador de actividad).
     pub fn note_received(&mut self) {
         self.activity = self.activity.wrapping_add(1);
@@ -633,12 +631,6 @@ impl Devices {
             activity: self.activity,
             notice: self.notice.clone(),
         }
-    }
-
-    /// Marca lo elegido sin abrir nada (lo pedido al arrancar que ya está
-    /// abierto: el dispositivo de audio con el que se abrió la salida).
-    pub fn set_chosen(&mut self, kind: Kind, value: Option<String>) {
-        self.chosen.set(kind, value);
     }
 }
 

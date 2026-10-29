@@ -2392,6 +2392,7 @@ mod browser;
 mod clipboard;
 mod config;
 mod devices;
+mod devices_panel;
 mod formant;
 mod grains;
 mod grains_live;

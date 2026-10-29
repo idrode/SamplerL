@@ -4,6 +4,8 @@ mod clipboard;
 mod complete;
 mod config;
 mod devices;
+mod devices_panel;
+mod devices_window;
 mod diagnose;
 mod editing;
 mod expression;
@@ -35,6 +37,7 @@ uso: tui --edit <canción.lua | proyecto.sampler> [--allow-audio] [--allow-midi]
      tui --window-editor <canción.lua | proyecto.sampler>    (editor de una --split en marcha)
      tui --edit <canción.lua> [--allow-audio --audio-device NOMBRE] [--midi-in PUERTO] [--midi-out PUERTO]
      tui --list-devices                           (dispositivos de audio y puertos MIDI, y sale)
+     tui --window-devices <canción.lua | proyecto.sampler>   (panel de dispositivos de una principal)
      tui <archivo.wav> --render <salida.wav>
      tui <archivo.wav> --detect-bpm               (propone bpm() y compases)
      tui --script <canción.lua> --render <salida.wav> [--bars M] [--from N] [--metronome] [--track pista]
@@ -65,6 +68,9 @@ uso: tui --edit <canción.lua | proyecto.sampler> [--allow-audio] [--allow-midi]
   --midi-in, --midi-out  con --edit: conecta la entrada o la salida MIDI a ese puerto (su
                nombre, con o sin los números de ALSA del final); abren el MIDI sin
                --allow-midi y mandan sobre [dispositivos] de config.toml
+  --window-devices  abre solo el panel de dispositivos y conecta con la ventana principal
+               de ese script (F1 «Abrir el panel de dispositivos en su ventana» lo lanza
+               con [dispositivos] terminal o [editor] terminal)
   --list-devices  lista los dispositivos de salida de audio (abre la tarjeta para
                preguntarle qué admite) y los puertos MIDI, y sale
   --new      con --edit: si el script no existe, empieza uno con la plantilla (se
@@ -130,6 +136,7 @@ fn run() -> Result<(), BoxError> {
     let mut midi_in = None;
     let mut midi_out = None;
     let mut list_devices = false;
+    let mut window_devices = None;
     while let Some(arg) = args.next() {
         let mut value = || {
             args.next()
@@ -143,6 +150,7 @@ fn run() -> Result<(), BoxError> {
             "--midi-in" => midi_in = Some(value()?),
             "--midi-out" => midi_out = Some(value()?),
             "--list-devices" => list_devices = true,
+            "--window-devices" => window_devices = Some(value()?),
             "--metronome" => metronome = true,
             "--detect-bpm" => detect = true,
             "--analyze-masking" => masking = true,
@@ -204,6 +212,16 @@ fn run() -> Result<(), BoxError> {
         }
         print!("{}", list_all_devices());
         return Ok(());
+    }
+    if let Some(target) = window_devices {
+        if std::env::args().count() != 3 {
+            return Err(format!(
+                "--window-devices no se combina con otras opciones (los dispositivos son de la \
+                 ventana principal)\n{USAGE}"
+            )
+            .into());
+        }
+        return run_devices_window(std::path::Path::new(&target));
     }
     if device_flags && edit.is_none() {
         return Err(
@@ -813,6 +831,50 @@ fn run_window_editor(path: &std::path::Path) -> Result<(), BoxError> {
     app.set_slots_dir(config::dir().map(|d| d.join("ranuras")));
     app.set_history_root(history::root());
     run_terminal(&mut app, Duration::from_millis(30), ui::draw_editor_window)
+}
+
+/// `--window-devices`: solo el panel de dispositivos, conectado con la
+/// ventana principal del mismo script (si aún no está, se reintenta). Nunca
+/// abre la tarjeta ni el MIDI: se lo pide todo a la principal.
+fn run_devices_window(path: &std::path::Path) -> Result<(), BoxError> {
+    use ratatui::crossterm::event::{self, Event, KeyEventKind};
+    // El socket va por el script (también si se abrió un proyecto).
+    let script = if path
+        .extension()
+        .is_some_and(|e| e == script::project::EXTENSION)
+    {
+        script::Project::load(path)?.script
+    } else {
+        path.to_path_buf()
+    };
+    let socket = link::devices_socket_path(&link::runtime_dir()?, &script);
+    let config = match config::dir() {
+        Some(dir) => config::Config::load(&dir.join("config.toml"), theme::truecolor()),
+        None => config::Config::default(),
+    };
+    theme::set(config.theme);
+    let mut window = devices_window::DevicesWindow::new(&socket);
+    let mut terminal = ratatui::init();
+    let result = (|| -> Result<(), BoxError> {
+        loop {
+            window.tick();
+            if window.leaving() {
+                return Ok(());
+            }
+            terminal.draw(|frame| window.draw(frame))?;
+            if !event::poll(Duration::from_millis(30))? {
+                continue;
+            }
+            if let Event::Key(key) = event::read()?
+                && key.kind != KeyEventKind::Release
+                && window.handle(key.into()) == app::Flow::Quit
+            {
+                return Ok(());
+            }
+        }
+    })();
+    ratatui::restore();
+    result
 }
 
 /// El bucle de la interfaz en la terminal: dibuja, lee teclas y pegados y
