@@ -619,7 +619,7 @@ protocolo del socket si cambia; registro único de la API; tests con
    no del texto); el paso actual con la sincronía del resaltado de la
    fase M; retrigger, `chance`/`every` y silencios por probabilidad con
    su marca; intensidad por volumen (`@`).
-2. **Dónde se ve**: panel propio, y en la ventana principal con el editor
+2. ✅ **Dónde se ve**: panel propio, y en la ventana principal con el editor
    en la suya; desplazamiento o compresión si no cabe; en la paleta (F1)
    para mostrarla y ocultarla, y colores en `config.toml`.
 3. **Rellenar desde la vista**: un cursor sobre un hueco y una acción que

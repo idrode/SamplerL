@@ -55,6 +55,7 @@ pub enum Action {
     Resample,
     Browser,
     EditTracker,
+    Occupancy,
     TapTempo,
     Macros,
     Record,
@@ -371,6 +372,12 @@ pub const ACTIONS: &[ActionDef] = &[
         action: Action::EditTracker,
         name: "Editar los efectos de un paso en el tracker",
         description: "Cursor en el tracker: ↑↓ paso, ←→ pista, Enter escribe los efectos del paso (lp=800,q=4 crush=6) en su token del código y carga, Supr los quita, Esc sale; un paso de deshacer",
+        keys: "",
+    },
+    ActionDef {
+        action: Action::Occupancy,
+        name: "Vista de ocupación",
+        description: "Enseña u oculta la rejilla de qué pista suena en cada paso (una fila por pista, Σ cuántas suenan y los pasos vacíos resaltados), de lo que toca el secuenciador; con el editor en su ventana, en la principal",
         keys: "",
     },
     ActionDef {

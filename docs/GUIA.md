@@ -660,6 +660,7 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Tap tempo | Golpea el pulso con espacio (media de los últimos 8 golpes); Enter pone bpm(N) en el script | espacio (al golpear) |
 | Macros | Mueve en vivo las macros del script (`macro()`): ↑↓ elegir, ←→ y -+ mover, 0-9, Esc | — |
 | Editar los efectos de un paso en el tracker | Cursor en el tracker: ↑↓ paso, ←→ pista, Enter escribe los efectos del paso (lp=800,q=4 crush=6) en su token del código y carga, Supr los quita, Esc sale; un paso de deshacer | — |
+| Vista de ocupación | Enseña u oculta la rejilla de qué pista suena en cada paso (una fila por pista, Σ cuántas suenan y los pasos vacíos resaltados), de lo que toca el secuenciador; con el editor en su ventana, en la principal | — |
 | Explorador de samples | Los WAV de la carpeta de muestras: filtra, ↑↓ preescucha (sin tocar las pistas), Enter inserta sample("...") | — |
 | Remuestrear la pista seleccionada | Abre «remuestrear pista »: graba su salida (render offline) como un WAV nuevo en la carpeta de samples | — |
 | Guardar la selección como bloque | Abre «bloque » para escribir nombre, etiquetas y `-- descripción`; va a la biblioteca global | — |
@@ -1062,6 +1063,7 @@ paleta de 256.
 | `repetir_seccion` | Repetir la sección | — |
 | `variante` | Alternar variante A/B | — |
 | `resaltado` | Resaltado en vivo | — |
+| `ocupacion` | Vista de ocupación | — |
 
 | En `[colores]` | Para |
 | --- | --- |
@@ -1075,6 +1077,8 @@ paleta de 256.
 | `cortes` | marcas de los cortes |
 | `sonando` | fondo del paso que suena en el tracker |
 | `nivel` | medidores de nivel |
+| `hueco` | fondo de los pasos donde no suena nada en la vista de ocupación |
+| `sugerencia` | fondo de los huecos que se sugiere rellenar en la vista de ocupación |
 
 | En `[resaltado]` | Para | Por defecto |
 | --- | --- | --- |
@@ -1082,6 +1086,10 @@ paleta de 256.
 | `estilo` | `"fondo"`, `"subrayado"` o `"invertido"` | `"fondo"` |
 | `colores` | un color o una lista, uno por pista en el orden del script (si hay menos, se repiten) | 8 de la paleta de 256 |
 | `retardo_ms` | ms que se suman a la latencia que dice la salida de audio (de 0 a 1000) | `0` |
+
+| En `[ocupacion]` | Para | Por defecto |
+| --- | --- | --- |
+| `visible` | enseñar la vista de ocupación al arrancar (`true`/`false`; la paleta la enseña y la oculta en vivo); sus colores, `hueco` y `sugerencia` en `[colores]` | `false` |
 
 <!-- config:fin -->
 
@@ -1307,6 +1315,63 @@ la salida de audio dice menos latencia de la que tiene (Bluetooth, una
 tarjeta externa): el resaltado se adelanta a lo que se oye. Con el editor
 en su ventana, cuentan el `retardo_ms` de la principal y el «Resaltado en
 vivo» de cada ventana.
+
+### Vista de ocupación
+
+Para ver los huecos entre pistas (breakcore, dos sonidos que se alternan):
+F1 «Vista de ocupación» abre un panel con una fila por pista y una
+columna por paso, y debajo `Σ`, cuántas pistas suenan en cada paso. Los
+pasos donde no suena ninguna salen en `Σ` como `0`, sobre el color de los
+huecos.
+
+```
+┌ ocupación · compás 0 · 7 huecos ──────┐
+│      0       :       :       :        │
+│drums █ · ▓ · █ · 4 · █ · ▒ · ░ ─ ─ ·  │
+│kick  █ · · · × · · · █ · · · × · · ·  │
+│Σ     2 0 1 0 1 0 1 0 2 0 1 0 1 1 1 0  │
+└───────────────────────────────────────┘
+```
+
+- **Lo que va a sonar, no el texto**: se lee del secuenciador, con
+  `every`, `fill` y `chance` ya aplicados (los dados de `chance` se tiran
+  al cargar), así que `euclid`, `rotate` o una cadena hecha a trozos se
+  ven igual que un patrón escrito a mano.
+- **Varias longitudes y vueltas**: la página dura lo que tardan todas las
+  pistas en volver a coincidir (una de `:length(12)` con otra de 16, 48
+  pasos), como mucho 4 compases; si no, un compás. Arriba, el número de
+  cada compás y `:` en cada tiempo. La página que se ve es la que suena, y
+  pasa a la siguiente sola.
+- **El paso que se oye**: `▼` arriba y su columna sobre el color del paso
+  que suena, con la misma sincronía que el resaltado en vivo (descuenta la
+  latencia de la salida y `[resaltado] retardo_ms`).
+- **Cada celda**: el sombreado dice el volumen del golpe (`@`): `░` hasta
+  0,3, `▒` hasta 0,6, `▓` hasta 0,9 y `█` más. Un retrigger (`2r4`) es la
+  cifra de sus partes (`4`). `─` sigue una nota alargada con `_` (cuenta
+  como sonando). `×` es un golpe del patrón que en esta vuelta no suena
+  (`chance(p, "mute")` o un `every` que lo quita) y no cuenta. `·` es un
+  silencio. La cola de un corte que sigue sonando después de su paso no se
+  pinta: la vista es de golpes.
+- **Mute y solo**: la pista que no se oye sale apagada y no cuenta en `Σ`.
+- Cada pista va en su color del resaltado en vivo (`[resaltado] colores`).
+  Si no cabe a dos celdas por paso, va a una; si ni así, se desplaza
+  siguiendo el paso que se oye, y el título dice qué pasos se ven. Si no
+  caben todas las pistas, las de alrededor de la seleccionada.
+
+Con una sola ventana se pone en la columna derecha, entre el motor y el
+sample (el sample se aprieta y el tracker se desplaza si hace falta); con
+el editor en su ventana (`--split`), en la principal, de lado a lado
+encima de la forma de onda. Desde la ventana del editor, F1 «Vista de
+ocupación» la abre y la cierra en la principal. En `config.toml`:
+
+```toml
+[ocupacion]
+visible = true        # abierta al arrancar (por defecto, no)
+
+[colores]
+hueco = "#5f0000"     # fondo de los pasos donde no suena nada
+sugerencia = "#005f00" # fondo de los huecos que se sugiere rellenar
+```
 
 ## 3. Mini-notación
 

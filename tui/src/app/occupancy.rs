@@ -43,4 +43,15 @@ impl App {
     pub fn set_occupancy(&mut self, visible: bool) {
         self.occupancy.visible = visible;
     }
+
+    /// «Vista de ocupación» en la paleta: la enseña o la esconde.
+    pub(super) fn toggle_occupancy(&mut self) {
+        self.set_occupancy(!self.occupancy.visible);
+        self.message = if self.occupancy.visible {
+            "vista de ocupación: qué pista suena en cada paso; Σ cuántas, los huecos resaltados"
+                .into()
+        } else {
+            "vista de ocupación oculta".into()
+        };
+    }
 }

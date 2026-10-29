@@ -90,6 +90,7 @@ pub const BINDABLE: &[(&str, Bound, &[&str])] = &[
     ("repetir_seccion", Bound::Action(Action::LoopSection), &[]),
     ("variante", Bound::Action(Action::ToggleVariant), &[]),
     ("resaltado", Bound::Action(Action::Highlight), &[]),
+    ("ocupacion", Bound::Action(Action::Occupancy), &[]),
 ];
 
 /// `[midi] macros`: el controlador (CC) de cada macro, por orden; `None`
@@ -125,6 +126,22 @@ impl Default for HighlightConfig {
         }
     }
 }
+
+/// `[ocupacion]`: la vista de ocupación por paso.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct OccupancyConfig {
+    /// Se ve al arrancar (`visible`).
+    pub visible: bool,
+}
+
+/// Claves de `[ocupacion]`, qué hacen y su valor por defecto (para la
+/// guía).
+#[cfg(test)]
+const OCCUPANCY_KEYS: &[(&str, &str, &str)] = &[(
+    "visible",
+    "enseñar la vista de ocupación al arrancar (`true`/`false`; la paleta la enseña y la oculta en vivo); sus colores, `hueco` y `sugerencia` en `[colores]`",
+    "`false`",
+)];
 
 /// Retardo a mano más largo del resaltado, en ms.
 const MAX_HIGHLIGHT_DELAY_MS: f64 = 1000.0;
@@ -489,6 +506,8 @@ pub struct Config {
     /// `[resaltado]`: encendido y retardo (los colores y el estilo van en
     /// `theme`).
     pub highlight: HighlightConfig,
+    /// `[ocupacion]`: si se ve al arrancar.
+    pub occupancy: OccupancyConfig,
     /// Avisos (archivo que falta o roto, claves desconocidas, choques...).
     pub warnings: Vec<String>,
 }
@@ -644,8 +663,21 @@ impl Config {
                     }
                 }
                 "resaltado" => config.apply_highlight(inner, truecolor),
+                "ocupacion" | "ocupación" => {
+                    for (key, value) in inner {
+                        match (key.as_str(), value.as_bool()) {
+                            ("visible", Some(on)) => config.occupancy.visible = on,
+                            ("visible", None) => config
+                                .warnings
+                                .push("[ocupacion] visible: true o false".into()),
+                            _ => config.warnings.push(format!(
+                                "[ocupacion] «{key}» no existe (hay: visible; los colores, hueco y sugerencia, en [colores])"
+                            )),
+                        }
+                    }
+                }
                 other => config.warnings.push(format!(
-                    "{name}: sección [{other}] desconocida (hay: teclas, colores, midi, editor, resaltado)"
+                    "{name}: sección [{other}] desconocida (hay: teclas, colores, midi, editor, resaltado, ocupacion)"
                 )),
             }
         }
@@ -755,6 +787,10 @@ fn guide_markdown() -> String {
     for (name, what, default) in HIGHLIGHT_KEYS {
         out.push_str(&format!("| `{name}` | {what} | {default} |\n"));
     }
+    out.push_str("\n| En `[ocupacion]` | Para | Por defecto |\n| --- | --- | --- |\n");
+    for (name, what, default) in OCCUPANCY_KEYS {
+        out.push_str(&format!("| `{name}` | {what} | {default} |\n"));
+    }
     out
 }
 
@@ -787,6 +823,23 @@ mod tests {
             "docs/GUIA.md no coincide con tui/src/config.rs: \
              ACTUALIZAR_GUIA=1 cargo test -p tui the_guide_lists_the_config"
         );
+    }
+
+    #[test]
+    fn the_occupancy_section_and_its_colors() {
+        let config = Config::parse(
+            "[ocupacion]\nvisible = true\n[colores]\nhueco = \"#330000\"\nsugerencia = \"22\"\n",
+            true,
+            "c",
+        );
+        assert!(config.warnings.is_empty(), "{:?}", config.warnings);
+        assert!(config.occupancy.visible);
+        assert_eq!(config.theme.gap, Color::Rgb(0x33, 0, 0));
+        assert_eq!(config.theme.suggestion, Color::Indexed(22));
+        assert!(!Config::default().occupancy.visible);
+        let config = Config::parse("[ocupacion]\nvisible = 1\ncolor = 2\n", false, "c");
+        assert_eq!(config.warnings.len(), 2, "{:?}", config.warnings);
+        assert!(!config.occupancy.visible);
     }
 
     #[test]
@@ -911,11 +964,11 @@ brillo = "red"
             [
                 "[teclas] cargar: F1 es siempre la paleta de comandos",
                 "[teclas] explorador: Alt-S ya es de guardar; no se usa",
-                "[teclas] «inventada» no existe (hay: paleta, guardar, cargar, marcha, cue, ir_al_error, ir_a_linea, buscar, buscar_siguiente, buscar_anterior, siguiente_pista, recargar, ordenes, completar, salir, modo_tocar, deshacer, rehacer, explorador, tap_tempo, macros, metronomo, exportar, seccion_siguiente, seccion_anterior, repetir_seccion, variante, resaltado)",
+                "[teclas] «inventada» no existe (hay: paleta, guardar, cargar, marcha, cue, ir_al_error, ir_a_linea, buscar, buscar_siguiente, buscar_anterior, siguiente_pista, recargar, ordenes, completar, salir, modo_tocar, deshacer, rehacer, explorador, tap_tempo, macros, metronomo, exportar, seccion_siguiente, seccion_anterior, repetir_seccion, variante, resaltado, ocupacion)",
                 "[teclas] salir: «q»: una letra sin ctrl- ni alt- escribiría texto",
                 "[teclas] Ctrl-G era de ir_al_error; ahora es de marcha",
                 "[colores] tenue: color no válido",
-                "[colores] «brillo» no existe (hay: acento, tenue, error, linea_error, aviso_pasos, aviso, onda, cortes, sonando, nivel)",
+                "[colores] «brillo» no existe (hay: acento, tenue, error, linea_error, aviso_pasos, aviso, onda, cortes, sonando, nivel, hueco, sugerencia)",
             ]
         );
         assert_eq!(config.theme.accent, Color::Rgb(0xff, 0x87, 0x00));

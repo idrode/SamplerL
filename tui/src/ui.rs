@@ -76,12 +76,28 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // queda sus filas mientras el sample tenga lo mínimo; si ni así, el
     // reparto de siempre y el tracker se desplaza.
     let rest = right.height.saturating_sub(engine_height);
-    let [engine_area, sample_area, tracker_area] = Layout::vertical([
+    // Con la vista de ocupación, ella primero: el sample se aprieta y el
+    // tracker se desplaza si hace falta.
+    let occupancy = occupancy_height(&view, rest, SAMPLE_SQUEEZED);
+    let rest = rest - occupancy;
+    let (sample_min, tracker) = if occupancy == 0 {
+        (
+            tracker_first(rest, SAMPLE_MIN, SAMPLE_SQUEEZED),
+            TRACKER_HEIGHT,
+        )
+    } else {
+        let tracker = TRACKER_HEIGHT.min(rest.saturating_sub(SAMPLE_SQUEEZED));
+        (rest - tracker, tracker)
+    };
+    let [engine_area, occupancy_area, rest_area] = Layout::vertical([
         Constraint::Length(engine_height),
-        Constraint::Min(tracker_first(rest, SAMPLE_MIN, SAMPLE_SQUEEZED)),
-        Constraint::Length(TRACKER_HEIGHT),
+        Constraint::Length(occupancy),
+        Constraint::Min(0),
     ])
     .areas(right);
+    let [sample_area, tracker_area] =
+        Layout::vertical([Constraint::Min(sample_min), Constraint::Length(tracker)])
+            .areas(rest_area);
     // Con línea de tiempo, una fila con las secciones bajo el motor (se la
     // quita al sample).
     let sample_area = match &view.timeline {
@@ -94,6 +110,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         _ => sample_area,
     };
     frame.render_widget(EnginePanel(&view), engine_area);
+    if occupancy > 0 {
+        frame.render_widget(OccupancyPanel(&view), occupancy_area);
+    }
     frame.render_widget(SamplePanel(&view), sample_area);
     app.sample_area = Some(Block::bordered().inner(sample_area));
     frame.render_widget(TrackerPanel(&view), tracker_area);
@@ -149,15 +168,25 @@ fn draw_main_window(frame: &mut Frame, view: &ViewModel) -> Rect {
     };
     // El tracker pide sus 16 filas; el sample se queda con lo demás (y
     // al menos un tercio, o lo mínimo para que el tracker quepa entero).
-    let [sample_area, lower] = Layout::vertical([
-        Constraint::Min(tracker_first(
-            body.height,
-            body.height / 3,
-            BIG_SAMPLE_SQUEEZED,
-        )),
-        Constraint::Length(TRACKER_HEIGHT),
-    ])
-    .areas(body);
+    // Con la vista de ocupación, ella primero, de lado a lado.
+    let occupancy = occupancy_height(view, body.height, BIG_SAMPLE_SQUEEZED);
+    let rest = body.height - occupancy;
+    let (sample_min, tracker) = if occupancy == 0 {
+        (
+            tracker_first(rest, rest / 3, BIG_SAMPLE_SQUEEZED),
+            TRACKER_HEIGHT,
+        )
+    } else {
+        let tracker = TRACKER_HEIGHT.min(rest.saturating_sub(BIG_SAMPLE_SQUEEZED));
+        (rest - tracker, tracker)
+    };
+    let [occupancy_area, body] =
+        Layout::vertical([Constraint::Length(occupancy), Constraint::Min(0)]).areas(body);
+    let [sample_area, lower] =
+        Layout::vertical([Constraint::Min(sample_min), Constraint::Length(tracker)]).areas(body);
+    if occupancy > 0 {
+        frame.render_widget(OccupancyPanel(view), occupancy_area);
+    }
     // Con un análisis de choques hecho, su tabla a la derecha del sample.
     let width = view
         .clash_table
@@ -180,6 +209,28 @@ fn draw_main_window(frame: &mut Frame, view: &ViewModel) -> Rect {
     frame.render_widget(HelpLine(view), help);
     draw_popups(frame, view, None);
     sample_area
+}
+
+/// Alto mínimo de la vista de ocupación para que diga algo (bordes, los
+/// compases y `Σ`, y una pista), y del tracker a su lado (bordes, cabecera
+/// y cuatro pasos).
+const OCCUPANCY_MIN: u16 = 5;
+const TRACKER_MIN: u16 = 7;
+
+/// Alto de la vista de ocupación (0 si no se ve) con `height` filas para
+/// ella, el sample y el tracker: la que pida, dejando al sample `squeezed`
+/// y al tracker lo mínimo para ver unas filas (el tracker se desplaza).
+fn occupancy_height(view: &ViewModel, height: u16, squeezed: u16) -> u16 {
+    let Some(grid) = &view.occupancy else {
+        return 0;
+    };
+    let room = height.saturating_sub(squeezed + TRACKER_MIN);
+    let wanted = OccupancyPanel::height(grid);
+    match wanted.min(room) {
+        h if h >= OCCUPANCY_MIN.min(wanted) => h,
+        // Sin sitio ni para lo mínimo: lo mínimo (y lo demás, apretado).
+        _ => OCCUPANCY_MIN.min(wanted).min(height),
+    }
 }
 
 /// Tabla de choques de frecuencia del último análisis (la de
@@ -1888,9 +1939,13 @@ impl Widget for OccupancyPanel<'_> {
             n => format!(" · {n} huecos"),
         });
         if shown < steps {
-            title.push_str(&format!(" · pasos {}–{} de {steps}", first + 1, first + shown));
+            title.push_str(&format!(
+                " · pasos {}–{} de {steps}",
+                first + 1,
+                first + shown
+            ));
         }
-        if track_rows < tracks {
+        if track_rows > 0 && track_rows < tracks {
             title.push_str(&format!(
                 " · pistas {}–{} de {tracks}",
                 first_track + 1,
@@ -1928,7 +1983,13 @@ impl Widget for OccupancyPanel<'_> {
             put(buf, column_x(c), row_y(0), &text, style);
         }
         // Una fila por pista.
-        for (r, row) in grid.rows.iter().enumerate().skip(first_track).take(track_rows) {
+        for (r, row) in grid
+            .rows
+            .iter()
+            .enumerate()
+            .skip(first_track)
+            .take(track_rows)
+        {
             let y = row_y(1 + r - first_track);
             let color = theme.highlight[row.color % theme.highlight.len()];
             let soft = theme.highlight_dim[row.color % theme.highlight_dim.len()];
@@ -1957,11 +2018,15 @@ impl Widget for OccupancyPanel<'_> {
             }
         }
         // El resumen: cuántas pistas se oyen; los huecos, en su color.
-        let y = row_y(inner.height as usize - 1);
+        let y = row_y(1 + track_rows.min(tracks));
         put(buf, inner.x, y, "Σ", Style::new().bold());
         for c in first..first + shown {
             let count = grid.counts[c];
-            let text = if count > 9 { "+".to_string() } else { count.to_string() };
+            let text = if count > 9 {
+                "+".to_string()
+            } else {
+                count.to_string()
+            };
             let style = if count == 0 {
                 Style::new().fg(Color::Black).bg(theme.gap).bold()
             } else if grid.current == Some(c) {

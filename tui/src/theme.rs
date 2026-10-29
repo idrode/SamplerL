@@ -115,6 +115,8 @@ pub const NAMES: &[&str] = &[
     "cortes",
     "sonando",
     "nivel",
+    "hueco",
+    "sugerencia",
 ];
 
 /// Qué pinta cada color de [`NAMES`] (para la guía).
@@ -130,6 +132,8 @@ pub const DESCRIPTIONS: &[&str] = &[
     "marcas de los cortes",
     "fondo del paso que suena en el tracker",
     "medidores de nivel",
+    "fondo de los pasos donde no suena nada en la vista de ocupación",
+    "fondo de los huecos que se sugiere rellenar en la vista de ocupación",
 ];
 
 impl Theme {
@@ -145,6 +149,8 @@ impl Theme {
             "cortes" => &mut self.slice,
             "sonando" => &mut self.playing,
             "nivel" => &mut self.meter,
+            "hueco" => &mut self.gap,
+            "sugerencia" => &mut self.suggestion,
             _ => return false,
         };
         *slot = color;

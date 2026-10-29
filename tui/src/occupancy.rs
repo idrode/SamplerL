@@ -141,9 +141,7 @@ pub fn page_len(tracks: &[TrackDef], bar_steps: usize) -> usize {
     if fit(cycles) {
         return cycles;
     }
-    let lengths = tracks
-        .iter()
-        .fold(bar, |acc, t| lcm(acc, t.length.max(1)));
+    let lengths = tracks.iter().fold(bar, |acc, t| lcm(acc, t.length.max(1)));
     if fit(lengths) {
         return lengths;
     }
@@ -199,8 +197,8 @@ pub fn grid(src: &Source) -> Grid {
                     match played {
                         Some((t, c)) => {
                             let cycle = (t.length.max(1) * t.bars.len().max(1)) as i64;
-                            let index = (c.index as i64 + abs - c.global as i64).rem_euclid(cycle)
-                                as usize;
+                            let index =
+                                (c.index as i64 + abs - c.global as i64).rem_euclid(cycle) as usize;
                             cell(t, index)
                         }
                         None => {
@@ -286,10 +284,38 @@ mod tests {
 
     #[test]
     fn glyphs_show_level_retrig_and_silences() {
-        assert_eq!(Cell::Hit { level: 3, retrig: 1 }.glyph(), '█');
-        assert_eq!(Cell::Hit { level: 0, retrig: 1 }.glyph(), '░');
-        assert_eq!(Cell::Hit { level: 2, retrig: 4 }.glyph(), '4');
-        assert_eq!(Cell::Hit { level: 2, retrig: 16 }.glyph(), '+');
+        assert_eq!(
+            Cell::Hit {
+                level: 3,
+                retrig: 1
+            }
+            .glyph(),
+            '█'
+        );
+        assert_eq!(
+            Cell::Hit {
+                level: 0,
+                retrig: 1
+            }
+            .glyph(),
+            '░'
+        );
+        assert_eq!(
+            Cell::Hit {
+                level: 2,
+                retrig: 4
+            }
+            .glyph(),
+            '4'
+        );
+        assert_eq!(
+            Cell::Hit {
+                level: 2,
+                retrig: 16
+            }
+            .glyph(),
+            '+'
+        );
         assert_eq!(Cell::Held.glyph(), '─');
         assert_eq!(Cell::Dropped.glyph(), '×');
         assert_eq!(Cell::Silence.glyph(), '·');

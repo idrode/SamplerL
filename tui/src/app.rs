@@ -31,8 +31,8 @@ pub use vim::DEFAULT_EXIT as VIM_EXIT;
 mod split;
 #[cfg(test)]
 pub use split::editor_command;
-mod tracker_edit;
 mod occupancy;
+mod tracker_edit;
 
 /// Plantilla para un script nuevo.
 const TEMPLATE: &str = r#"bpm(170)
@@ -557,6 +557,7 @@ impl App {
         self.expression = crate::expression::Expression::new(&config.midi);
         self.highlighting = config.highlight.enabled;
         self.highlight_delay_ms = config.highlight.delay_ms;
+        self.set_occupancy(config.occupancy.visible);
         if !config.warnings.is_empty() {
             self.message = config
                 .warnings
@@ -3237,6 +3238,7 @@ impl App {
             Action::Resample => self.start_resample(),
             Action::Browser => self.open_browser(),
             Action::EditTracker => self.open_tracker_edit(),
+            Action::Occupancy => self.toggle_occupancy(),
             Action::TapTempo => self.start_tap(Instant::now()),
             Action::Macros => self.open_macros(),
             Action::Record => {
