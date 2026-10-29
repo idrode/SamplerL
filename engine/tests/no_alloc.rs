@@ -2,7 +2,7 @@
 //! asignador global cuenta las reservas que hace este hilo mientras corre
 //! `Engine::process`, con retrasos (swing, humanize), retrigger, pitch,
 //! instrumentos (polifonía, ADSR, bucles), el EQ (suavizado y automatizado),
-//! el EQ dinámico con sidechain (y la reducción que publica para su vista), efectos por corte (con sus colas), bucles de corte con fundido, nubes de granos en vivo, sintetizadores (mono con accent, slide y el sub de cada nota, polifónicos con unison y sub abierto, un subharm de 8 voces con sus seis capas, un sh101 con legato, curvas y notas en vivo), grupos con sus efectos y macros que se mueven en vivo, cambios de
+//! el EQ dinámico con sidechain (y la reducción que publica para su vista), efectos por corte (con sus colas), bucles de corte con fundido, nubes de granos en vivo, sintetizadores (mono con accent, slide y el sub de cada nota, polifónicos con unison y sub abierto, un subharm de 8 voces con sus seis capas, un sh101 con legato, curvas y notas en vivo), grupos con sus efectos y macros que se mueven en vivo, mandos MIDI en todos sus destinos (moviéndose y soltándose), cambios de
 //! patrón al compás, un patrón que se suelta a la cola de basura y el paso
 //! de cada pista y el retardo de salida que se publican para la interfaz;
 //! y el callback de un dispositivo con el traspaso del motor de uno a otro.
@@ -1490,6 +1490,65 @@ fn the_audio_thread_never_allocates() {
         }
     });
     assert_eq!(n, 0, "reservas con grupos y macros");
+
+    // Mandos MIDI: uno por cada clase de destino (efecto de pista, volumen,
+    // envío, bus y sintetizador), uno sobre una curva, moviéndose en vivo y
+    // soltándose (vuelta de la curva), y una tabla nueva al compás.
+    let knob = |target, latch| {
+        Some(engine::KnobMap {
+            target,
+            min: 0.1,
+            max: 1.0,
+            curve: engine::KnobCurve::Log,
+            latch,
+        })
+    };
+    let mut knobs = [None; engine::MAX_KNOBS];
+    knobs[0] = knob(
+        engine::KnobTarget::Fx {
+            track: 0,
+            slot: 0,
+            param: 0,
+        },
+        true,
+    );
+    knobs[1] = knob(
+        engine::KnobTarget::Mix {
+            track: 0,
+            index: engine::MIX_GAIN as u8,
+        },
+        false,
+    );
+    knobs[2] = knob(
+        engine::KnobTarget::Mix {
+            track: 5,
+            index: (engine::MIX_SEND + 1) as u8,
+        },
+        true,
+    );
+    knobs[3] = knob(
+        engine::KnobTarget::Bus {
+            param: engine::bus::REVERB_SIZE as u8,
+        },
+        true,
+    );
+    knobs[4] = knob(engine::KnobTarget::Synth { track: 7, param: 0 }, true);
+    let mut batch = engine::Batch::new();
+    batch.set_knobs(knobs);
+    controller.apply(batch).unwrap();
+    let n = counted(|| {
+        for k in 0..600 {
+            if k < 200 && k % 5 == 0 {
+                for i in 0..5 {
+                    controller
+                        .move_knob(i, ((k + 13 * i) % 100) as f32 / 100.0)
+                        .unwrap();
+                }
+            }
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas con mandos MIDI");
 
     // Arrancar en un compás cualquiera (con la rampa de tempo: cuenta sus
     // compases de antes).

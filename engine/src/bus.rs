@@ -209,6 +209,8 @@ pub(crate) struct BusClock {
     pub seconds: f64,
     pub frames_per_step: f64,
     pub macros: crate::automation::Macros,
+    /// Lo que mandan los mandos MIDI en este trozo.
+    pub knobs: crate::knob::KnobLive,
 }
 
 impl Rack {
@@ -233,8 +235,13 @@ impl Rack {
         let mut params = self.params;
         for (i, current) in self.moving.iter_mut().enumerate() {
             let fixed = self.params.value(i);
-            let target =
+            let mut target =
                 self.params.curves[i].map(|c| c.value(steps, seconds, &clock.macros, false));
+            // Un mando MIDI encima, según su peso.
+            let knob = crate::knob::KnobTarget::Bus { param: i as u8 };
+            if clock.knobs.find(knob).is_some() {
+                target = Some(clock.knobs.apply(knob, target.unwrap_or(fixed), false));
+            }
             if target.is_none() && current.is_none() {
                 continue;
             }
@@ -266,7 +273,8 @@ impl Rack {
         let delay = delay_frames(self.params.delay.division, bpm, rate);
         // Con curvas (o volviendo de una), por bloques de MOD_BLOCK frames.
         let curved = self.params.curves.iter().any(Option::is_some)
-            || self.moving.iter().any(Option::is_some);
+            || self.moving.iter().any(Option::is_some)
+            || clock.knobs.on_buses();
         let block = if curved {
             crate::engine::MOD_BLOCK
         } else {

@@ -133,6 +133,10 @@ enum Command {
     SetMacros(Macros),
     /// Valor de una macro (inmediato: en vivo).
     SetMacro { index: usize, value: f32 },
+    /// Tabla de mandos MIDI desde el siguiente compás (al cargar).
+    SetKnobs(crate::knob::Knobs),
+    /// Un mando se ha movido a `value` (de 0 a 1; inmediato).
+    MoveKnob { index: usize, value: f32 },
     /// Rampa de tempo que entra en el siguiente compás.
     SetTempoRamp(TempoRamp),
     /// Compás (pasos y pulso) desde el siguiente compás.
@@ -821,6 +825,35 @@ impl fmt::Display for SendError {
 impl std::error::Error for SendError {}
 
 /// Cada macro, de 0 a 1.
+/// Cada mando con un destino que existe y un rango de números.
+fn check_knobs(knobs: &crate::knob::Knobs) -> Result<(), SendError> {
+    use crate::knob::KnobTarget;
+    for knob in knobs.iter().flatten() {
+        let ok = knob.min.is_finite()
+            && knob.max.is_finite()
+            && match knob.target {
+                KnobTarget::Fx { track, slot, param } => {
+                    (track as usize) < MAX_TRACKS
+                        && (slot as usize) < MAX_FX
+                        && (param as usize) < MAX_PARAMS
+                }
+                KnobTarget::Mix { track, index } => {
+                    (track as usize) < MAX_TRACKS && (index as usize) < MIX_PARAMS
+                }
+                KnobTarget::Bus { param } => (param as usize) < crate::bus::BUS_PARAMS,
+                KnobTarget::Synth { track, param } => {
+                    (track as usize) < MAX_TRACKS && (param as usize) < crate::synth::PARAM_COUNT
+                }
+            };
+        if !ok {
+            return Err(SendError::InvalidMacro(
+                "mando con un destino que no existe",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn check_macros(macros: &Macros) -> Result<(), SendError> {
     if macros.iter().all(|v| (0.0..=1.0).contains(v)) {
         Ok(())
@@ -839,6 +872,7 @@ pub struct Batch {
     buses: Option<Buses>,
     groups: Option<Groups>,
     macros: Option<Macros>,
+    knobs: Option<crate::knob::Knobs>,
     patterns: Vec<(usize, Option<Pattern>)>,
     arrangement: Option<Option<Arrangement>>,
 }
@@ -881,6 +915,13 @@ impl Batch {
     /// lote; después se mueven en vivo con [`Controller::set_macro`].
     pub fn set_macros(&mut self, macros: Macros) -> &mut Self {
         self.macros = Some(macros);
+        self
+    }
+
+    /// Mandos MIDI asignados (ver [`crate::knob`]): entran con el lote, y
+    /// sus valores se mueven en vivo con [`Controller::move_knob`].
+    pub fn set_knobs(&mut self, knobs: crate::knob::Knobs) -> &mut Self {
+        self.knobs = Some(knobs);
         self
     }
 
@@ -1143,6 +1184,8 @@ pub struct Engine {
     macros: Macros,
     pending_macros: Option<Macros>,
     staged_macros: Option<Macros>,
+    /// Mandos MIDI: su tabla y su estado (ver [`crate::knob`]).
+    knobs: crate::knob::KnobState,
 }
 
 /// Silencio para el sidechain de una pista que calla en este trozo.
@@ -1259,6 +1302,7 @@ pub fn new_engine(sample_rate: u32) -> (Controller, Engine) {
             macros: [0.0; MAX_MACROS],
             pending_macros: None,
             staged_macros: None,
+            knobs: crate::knob::KnobState::default(),
         },
     )
 }
@@ -1631,6 +1675,9 @@ impl Controller {
         if let Some(groups) = &batch.groups {
             groups.validate().map_err(SendError::InvalidGroup)?;
         }
+        if let Some(knobs) = &batch.knobs {
+            check_knobs(knobs)?;
+        }
         if let Some(macros) = &batch.macros {
             check_macros(macros)?;
         }
@@ -1651,6 +1698,7 @@ impl Controller {
             + usize::from(batch.buses.is_some())
             + usize::from(batch.groups.is_some())
             + usize::from(batch.macros.is_some())
+            + usize::from(batch.knobs.is_some())
             + usize::from(batch.arrangement.is_some());
         if self.commands.slots() < needed {
             return Err(SendError::QueueFull);
@@ -1677,6 +1725,9 @@ impl Controller {
         }
         if let Some(macros) = batch.macros {
             push(Command::SetMacros(macros));
+        }
+        if let Some(knobs) = batch.knobs {
+            push(Command::SetKnobs(knobs));
         }
         if let Some(arrangement) = batch.arrangement {
             push(Command::SetArrangement(arrangement));
@@ -1706,6 +1757,18 @@ impl Controller {
             return Err(SendError::InvalidMacro("el valor va de 0 a 1"));
         }
         self.send(Command::SetMacro { index, value }, None)
+    }
+
+    /// Mueve el mando `index` a `value` (de 0 a 1) ya: su parámetro lo
+    /// sigue suavizado (ver [`crate::knob`]).
+    pub fn move_knob(&mut self, index: usize, value: f32) -> Result<(), SendError> {
+        if index >= crate::knob::MAX_KNOBS {
+            return Err(SendError::InvalidMacro("ese mando no existe (hay 16)"));
+        }
+        if !(0.0..=1.0).contains(&value) {
+            return Err(SendError::InvalidMacro("el valor va de 0 a 1"));
+        }
+        self.send(Command::MoveKnob { index, value }, None)
     }
 
     /// Con un arreglo: salta a la entrada `entry` de la línea de tiempo al
@@ -2029,6 +2092,14 @@ impl Engine {
                     self.pending_macros = Some(macros);
                 }
             }
+            Command::SetKnobs(knobs) => {
+                if self.batch_open {
+                    self.knobs.staged = Some(knobs);
+                } else {
+                    self.knobs.pending = Some(knobs);
+                }
+            }
+            Command::MoveKnob { index, value } => self.knobs.moved(index, value),
             Command::SetMacro { index, value } => {
                 // También en los que esperan: un lote no deshace lo que se
                 // ha movido después de mandarlo.
@@ -2081,6 +2152,9 @@ impl Engine {
                 }
                 if let Some(macros) = self.staged_macros.take() {
                     self.pending_macros = Some(macros);
+                }
+                if let Some(knobs) = self.knobs.staged.take() {
+                    self.knobs.pending = Some(knobs);
                 }
                 if let Some(ramp) = self.staged_ramp.take() {
                     self.transport.pending_ramp = Some(ramp);
@@ -2294,6 +2368,11 @@ impl Engine {
             && let Some(macros) = self.pending_macros.take()
         {
             self.macros = macros;
+        }
+        if step == 0
+            && let Some(knobs) = self.knobs.pending.take()
+        {
+            self.knobs.set_map(knobs);
         }
         if step == 0 {
             self.advance_playlist(bar, global, now);
@@ -2819,7 +2898,14 @@ impl Engine {
     /// de salida.
     fn trigger(&mut self, track: usize, voice: Option<Voice>) {
         let t = &mut self.tracks[track];
-        if voice.is_some() && !t.voice.as_ref().is_some_and(Voice::is_active) && t.fading.is_none()
+        // Una voz sin fundidos que sigue a otra que acaba justo aquí (la de
+        // una pista congelada, vuelta tras vuelta) continúa: no empieza
+        // desde el silencio.
+        let continuing = voice.as_ref().is_some_and(|v| v.raw) && t.voice.is_some();
+        if voice.is_some()
+            && !continuing
+            && !t.voice.as_ref().is_some_and(Voice::is_active)
+            && t.fading.is_none()
         {
             t.fresh = true;
         }
@@ -2860,6 +2946,7 @@ impl Engine {
             frames_per_step: crate::sequencer::frames_per_step(self.transport.bpm(), rate),
             sample_rate: rate,
             macros: self.macros,
+            knobs: self.knobs.advance(n, rate),
         };
         // Quién escucha a quién por sidechain: las que se escuchan se mezclan
         // antes y guardan su salida en `side_buf`.
@@ -2902,9 +2989,9 @@ impl Engine {
                 .pattern
                 .as_ref()
                 .map_or([None; MIX_PARAMS], |p| p.mix_curves);
-            let curved = curves.iter().any(Option::is_some);
+            let curved = curves.iter().any(Option::is_some) || clock.knobs.on_mix(t);
             let (mut target, mut target_pan, mut target_sends) =
-                mix_target(base, &curves, &clock, 0);
+                mix_target(base, &curves, &clock, 0, t);
             let audible = if track.muted() || (any_solo && !track.soloed()) {
                 0.0
             } else {
@@ -2987,6 +3074,8 @@ impl Engine {
                     bar: self.transport.running.then(|| self.transport.current_bar()),
                     bar_length: self.transport.bar_length(rate),
                     macros: clock.macros,
+                    knobs: clock.knobs,
+                    track: t,
                 };
                 track.synth.mix_into(buf, &patch, &curves, &at);
             }
@@ -3027,6 +3116,7 @@ impl Engine {
             }
             let grains_born = track.cloud.born.wrapping_sub(born);
             let moving = track.lock.is_some()
+                || clock.knobs.on_fx(t)
                 || track.mods.iter().flatten().any(Option::is_some)
                 || track
                     .pattern
@@ -3057,7 +3147,16 @@ impl Engine {
             };
             let mut peak = 0.0f32;
             let sending: [bool; BUSES] = std::array::from_fn(|b| {
-                target_sends[b] > 0.0 || track.sends[b] > 0.0 || curves[MIX_SEND + b].is_some()
+                target_sends[b] > 0.0
+                    || track.sends[b] > 0.0
+                    || curves[MIX_SEND + b].is_some()
+                    || clock
+                        .knobs
+                        .find(crate::knob::KnobTarget::Mix {
+                            track: t as u8,
+                            index: (MIX_SEND + b) as u8,
+                        })
+                        .is_some()
             });
             for (k, (dst, src)) in master
                 .as_chunks_mut::<2>()
@@ -3067,7 +3166,7 @@ impl Engine {
                 .enumerate()
             {
                 if curved && k > 0 && k % MOD_BLOCK == 0 {
-                    (target, target_pan, target_sends) = mix_target(base, &curves, &clock, k);
+                    (target, target_pan, target_sends) = mix_target(base, &curves, &clock, k, t);
                 }
                 track.gain += (target - track.gain) * smoothing;
                 // Mute y solo también se suavizan: las voces siguen su curso
@@ -3141,6 +3240,7 @@ impl Engine {
                 seconds: clock.seconds,
                 frames_per_step: clock.frames_per_step,
                 macros: clock.macros,
+                knobs: clock.knobs,
             },
             &mut self.master[..2 * n],
         );
@@ -3235,7 +3335,7 @@ impl Engine {
             let base = (group.gain, group.pan, group.sends);
             let curves = group.mix_curves;
             let (mut target, mut target_pan, mut target_sends) =
-                mix_target(base, &curves, clock, 0);
+                mix_target(base, &curves, clock, 0, NO_TRACK);
             let curved = curves.iter().any(Option::is_some);
             let sending: [bool; BUSES] = std::array::from_fn(|b| {
                 target_sends[b] > 0.0 || state.sends[b] > 0.0 || curves[MIX_SEND + b].is_some()
@@ -3249,7 +3349,8 @@ impl Engine {
                 .enumerate()
             {
                 if curved && k > 0 && k % MOD_BLOCK == 0 {
-                    (target, target_pan, target_sends) = mix_target(base, &curves, clock, k);
+                    (target, target_pan, target_sends) =
+                        mix_target(base, &curves, clock, k, NO_TRACK);
                 }
                 state.gain += (target - state.gain) * smoothing;
                 let (mut l, mut r) = (state.gain * src[0], state.gain * src[1]);
@@ -3533,6 +3634,8 @@ pub(crate) struct Clock {
     pub sample_rate: u32,
     /// El valor de cada macro en este trozo.
     pub macros: Macros,
+    /// Lo que mandan los mandos MIDI en este trozo.
+    pub knobs: crate::knob::KnobLive,
 }
 
 /// Pasa `buf` por los efectos de la pista con sus parámetros movidos:
@@ -3584,14 +3687,25 @@ fn mix_target(
     curves: &MixCurves,
     clock: &Clock,
     k: usize,
+    track: usize,
 ) -> (f32, f32, [f32; BUSES]) {
-    if curves.iter().all(Option::is_none) {
+    let knobs = track < MAX_TRACKS && clock.knobs.on_mix(track);
+    if curves.iter().all(Option::is_none) && !knobs {
         return base;
     }
     let steps = clock.steps + k as f64 / clock.frames_per_step;
     let seconds = clock.seconds + k as f64 / clock.sample_rate as f64;
     let at = |i: usize, fixed: f32| {
-        curves[i].map_or(fixed, |c| c.value(steps, seconds, &clock.macros, false))
+        let value = curves[i].map_or(fixed, |c| c.value(steps, seconds, &clock.macros, false));
+        if knobs {
+            let target = crate::knob::KnobTarget::Mix {
+                track: track as u8,
+                index: i as u8,
+            };
+            clock.knobs.apply(target, value, false)
+        } else {
+            value
+        }
     };
     (
         at(MIX_GAIN, base.0),
@@ -3631,6 +3745,7 @@ fn modulate_chain(
             clock.seconds + frames / rate as f64,
             0.0,
             &clock.macros,
+            (own < MAX_TRACKS).then_some((&clock.knobs, own)),
             snap,
             snap && block == 0,
             keep,
@@ -3661,6 +3776,7 @@ pub(crate) fn drive_block(
     seconds: f64,
     origin: f64,
     macros: &Macros,
+    knobs: Option<(&crate::knob::KnobLive, usize)>,
     snap: bool,
     first: bool,
     keep: f32,
@@ -3678,11 +3794,22 @@ pub(crate) fn drive_block(
                 .flatten()
                 .find(|a| a.fx == slot && a.param == p);
             let lock = lock.filter(|&(s, _)| p == 0 && s == slot).map(|(_, hz)| hz);
-            let target = match (lock, curve) {
+            let mut target = match (lock, curve) {
                 (Some(hz), _) => Some(hz),
                 (None, Some(a)) => Some(a.curve.value_at(steps, seconds, origin, macros, log)),
                 (None, None) => None,
             };
+            // Un mando MIDI encima (de la pista): manda según su peso.
+            if let Some((knobs, track)) = knobs {
+                let knob = crate::knob::KnobTarget::Fx {
+                    track: track as u8,
+                    slot: slot as u8,
+                    param: p as u8,
+                };
+                if knobs.find(knob).is_some() {
+                    target = Some(knobs.apply(knob, target.unwrap_or(base), log));
+                }
+            }
             if target.is_none() && current.is_none() {
                 continue;
             }

@@ -1892,6 +1892,11 @@ pub struct SongClock {
     pub bar_length: u64,
     /// El valor de cada macro en este trozo.
     pub macros: crate::automation::Macros,
+    /// Lo que mandan los mandos MIDI en este trozo, y la pista del motor
+    /// del sintetizador (para saber cuáles son suyos; fuera del motor,
+    /// ninguna).
+    pub knobs: crate::knob::KnobLive,
+    pub track: usize,
 }
 
 impl SongClock {
@@ -1906,6 +1911,8 @@ impl SongClock {
             bar: None,
             bar_length,
             macros: [0.0; crate::automation::MAX_MACROS],
+            knobs: crate::knob::KnobLive::default(),
+            track: usize::MAX,
         }
     }
 }
@@ -2164,6 +2171,16 @@ impl Synth {
                 let goal = curves[i].map_or(patch.params[i], |c| {
                     c.value(steps, seconds, &clock.macros, p.log)
                 });
+                // Un mando MIDI encima, según su peso.
+                let goal = if clock.track < crate::engine::MAX_TRACKS {
+                    let knob = crate::knob::KnobTarget::Synth {
+                        track: clock.track as u8,
+                        param: i as u8,
+                    };
+                    clock.knobs.apply(knob, goal, p.log)
+                } else {
+                    goal
+                };
                 to[i] = if self.primed {
                     mix(goal, from[i], keep, p.log)
                 } else {
@@ -2330,6 +2347,8 @@ pub fn render(
             bar: Some((bar_start, bar_length)),
             bar_length,
             macros: [0.0; crate::automation::MAX_MACROS],
+            knobs: crate::knob::KnobLive::default(),
+            track: usize::MAX,
         };
         synth.mix_into(&mut out[2 * at..2 * until], patch, curves, &clock);
         at = until;
