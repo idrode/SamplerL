@@ -1315,7 +1315,10 @@ parte). Hechas las seis. El plan, en «Fase V» de [ROADMAP.md](ROADMAP.md).
 - **Coste**: sin mandos, nada (el estado avanza solo si hay alguno). Con
   ellos, por trozo de audio un `advance` de 16 entradas y, en cada sitio,
   una búsqueda lineal en 16 entradas cada 32 frames; una pista con un mando
-  que manda toma el camino de las curvas (como con un `ramp`). La tabla
+  que manda toma el camino de las curvas (como con un `ramp`). Medido en
+  release (8 pistas con filtro y compresor): 2,44 % de un núcleo sin
+  mandos y 2,75 % con 16 mandos (filtro y volumen de cada pista)
+  moviéndose. La tabla
   son 16 × 20 bytes y va dentro de `Command` sin agrandarlo (ya ocupaba
   2880 bytes).
 
