@@ -98,6 +98,10 @@ pub struct TrackStatus {
     /// Último paso que pasó por la pista con un patrón (aunque fuera un
     /// silencio); `None` sin patrón o antes del primero desde que arrancó.
     pub cursor: Option<Cursor>,
+    /// Reducción de ganancia más alta de cada efecto de dinámica de la
+    /// pista (EQ dinámico y compresor, por su ranura), en dB (0 o más),
+    /// desde la lectura anterior. 0 en las demás ranuras.
+    pub reduction: [f32; crate::fx::MAX_FX],
 }
 
 const NONE: u64 = u64::MAX;
@@ -114,6 +118,7 @@ pub(crate) struct SharedStatus {
     position: AtomicU64,
     hit_start: [AtomicU64; MAX_TRACKS],
     peak: [AtomicU32; MAX_TRACKS],
+    reduction: [[AtomicU32; crate::fx::MAX_FX]; MAX_TRACKS],
     voices: [AtomicU32; MAX_TRACKS],
     grains: [AtomicU32; MAX_TRACKS],
     /// Cursor de cada pista empaquetado en un solo atómico (se lee entero):
@@ -144,6 +149,7 @@ impl SharedStatus {
             position: AtomicU64::new(NONE),
             hit_start: std::array::from_fn(|_| AtomicU64::new(NONE)),
             peak: std::array::from_fn(|_| AtomicU32::new(0)),
+            reduction: std::array::from_fn(|_| std::array::from_fn(|_| AtomicU32::new(0))),
             voices: std::array::from_fn(|_| AtomicU32::new(0)),
             grains: std::array::from_fn(|_| AtomicU32::new(0)),
             cursor: std::array::from_fn(|_| AtomicU64::new(NONE)),
@@ -220,6 +226,14 @@ impl SharedStatus {
     pub fn add_peak(&self, track: usize, peak: f32) {
         if peak > 0.0 && peak.is_finite() {
             self.peak[track].fetch_max(peak.to_bits(), Relaxed);
+        }
+    }
+
+    /// Acumula la reducción (dB) del efecto de dinámica de la ranura
+    /// `slot`: como los picos, la más alta hasta que se lee.
+    pub fn add_reduction(&self, track: usize, slot: usize, db: f32) {
+        if db > 0.0 && db.is_finite() {
+            self.reduction[track][slot].fetch_max(db.to_bits(), Relaxed);
         }
     }
 
@@ -315,6 +329,9 @@ impl SharedStatus {
                 voices: self.voices[t].swap(0, Relaxed) as usize,
                 grains: self.grains[t].swap(0, Relaxed),
                 cursor: cursor(self.cursor[t].load(Relaxed)),
+                reduction: std::array::from_fn(|s| {
+                    f32::from_bits(self.reduction[t][s].swap(0, Relaxed))
+                }),
             }),
             groups: std::array::from_fn(|g| f32::from_bits(self.group_peak[g].swap(0, Relaxed))),
             master: MasterStatus {

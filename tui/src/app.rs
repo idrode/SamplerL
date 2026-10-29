@@ -273,6 +273,8 @@ pub struct App {
     macro_panel: Option<usize>,
     /// Panel «Tonalidad del sample» abierto.
     key_panel: Option<key::KeyPanel>,
+    /// Vista del sidechain abierta, con su historial.
+    sidechain: Option<crate::sidechain::Sidechain>,
     /// Medidor del master (pico antes del limitador, con caída; puede
     /// pasar de 1).
     master_meter: f32,
@@ -443,6 +445,7 @@ impl App {
             group_meters: [0.0; engine::MAX_GROUPS],
             macro_panel: None,
             key_panel: None,
+            sidechain: None,
             master_meter: 0.0,
             limiting_until: None,
             clipping_until: None,
@@ -3335,6 +3338,7 @@ impl App {
             Action::TapTempo => self.start_tap(Instant::now()),
             Action::Macros => self.open_macros(),
             Action::SampleKey => self.open_sample_key(),
+            Action::SidechainView => self.toggle_sidechain(),
             Action::Record => {
                 if self.recording.is_some() {
                     self.finish_recording();
@@ -3612,6 +3616,26 @@ impl App {
             }
         });
         self.message = format!("{line} en el script: Ctrl-S para guardar y cargar");
+    }
+
+    /// «Vista del sidechain»: la enseña (a la derecha, sobre el sample y el
+    /// tracker; con el editor en su ventana, junto a la forma de onda) o la
+    /// quita. Las curvas empiezan al abrirla.
+    pub fn toggle_sidechain(&mut self) {
+        if self.sidechain.take().is_some() {
+            self.message = "vista del sidechain cerrada".into();
+            return;
+        }
+        self.sidechain = Some(crate::sidechain::Sidechain::default());
+        let count = self
+            .sidechain
+            .as_ref()
+            .map_or(0, |s| s.view(self.host.song()).rows.len());
+        self.message = if count == 0 {
+            "vista del sidechain: ninguna pista tiene un EQ dinámico ni un compresor".into()
+        } else {
+            "vista del sidechain: F1 «Vista del sidechain» otra vez para cerrarla".into()
+        };
     }
 
     /// Vacía los medidores y los avisos de saturación.
@@ -4037,6 +4061,10 @@ impl App {
         self.watch_recording();
         let status = self.controller.status();
         self.cursors.observe(&status);
+        if let Some(sidechain) = &mut self.sidechain {
+            let host = &self.host;
+            sidechain.observe(host.song(), |name| host.track_slot(name), &status);
+        }
         let now = Instant::now();
         let hold = Some(now + WARNING_HOLD);
         for (t, track) in status.tracks.iter().enumerate() {
@@ -4259,6 +4287,10 @@ impl App {
                 .collect(),
             macro_panel: self.macro_panel,
             key: self.key_view(),
+            sidechain: self
+                .sidechain
+                .as_ref()
+                .map(|s| s.view(self.host.song())),
             devices: self.devices_popup(),
             vim: self.vim.as_ref().map(vim::Vim::label),
             timeline,

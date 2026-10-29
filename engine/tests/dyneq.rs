@@ -229,3 +229,66 @@ fn out_of_range_values_are_rejected() {
         ]
     );
 }
+
+/// La vista del sidechain: el motor publica la reducción de cada efecto de
+/// dinámica por su ranura (la más alta desde la lectura anterior), y vale 0
+/// cuando no reduce.
+#[test]
+fn the_reduction_is_published_by_slot() {
+    let (mut controller, mut engine) = new_engine(RATE);
+    controller.set_bpm(BPM).unwrap();
+    // Pista 1: un bombo grave en el paso 0; pista 0: un tono de 1 kHz que
+    // pasa por un compresor (ranura 1) que se escucha a sí mismo y le deja
+    // sitio con un EQ dinámico en 1 kHz (ranura 2) que escucha a la 1.
+    let (kick, kick_slices) = sine_sample(1000.0, 0.8, STEP);
+    controller
+        .set_track_pattern(
+            1,
+            Some(Pattern::from_steps(kick, &kick_slices, steps(&[0])).unwrap()),
+        )
+        .unwrap();
+    let chain = [
+        Fx::Gain { level: 1.0 },
+        Fx::Compressor {
+            threshold_db: -20.0,
+            ratio: 4.0,
+            attack_ms: 1.0,
+            release_ms: 50.0,
+            makeup_db: 0.0,
+        },
+        Fx::DynEq(
+            DynEqParams {
+                threshold_db: -30.0,
+                ratio: 4.0,
+                range_db: 12.0,
+                ..DynEqParams::new(1000.0)
+            }
+            .with_sidechain(1),
+        ),
+    ];
+    controller
+        .set_track_pattern(0, Some(tone(0.5, &chain)))
+        .unwrap();
+    controller.start().unwrap();
+    controller.status();
+    offline::render(&mut engine, STEP / 2, 2);
+    let during = controller.status().tracks[0].reduction;
+    assert_eq!(during[0], 0.0, "la ganancia no es de dinámica");
+    // El tono a -6 dBFS, 14 dB sobre el umbral: unos 10 dB con ratio 4.
+    assert!(during[1] > 7.0 && during[1] < 12.0, "compresor: {during:?}");
+    assert!(
+        during[2] > 6.0 && during[2] <= 12.0,
+        "EQ dinámico: {during:?}"
+    );
+    assert_eq!(during[3], 0.0);
+    // El bombo calla: pasada la caída del detector, el EQ dinámico deja de
+    // reducir (y el compresor sigue con el tono).
+    offline::render(&mut engine, 4 * STEP, 2);
+    controller.status();
+    offline::render(&mut engine, STEP, 2);
+    let after = controller.status().tracks[0].reduction;
+    assert_eq!(after[2], 0.0, "{after:?}");
+    assert!(after[1] > 7.0, "{after:?}");
+    // Las demás pistas, nada.
+    assert_eq!(controller.status().tracks[1].reduction, [0.0; 4]);
+}

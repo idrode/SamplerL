@@ -42,6 +42,7 @@ pub enum Action {
     DetectBpm,
     SliceNotes,
     SampleKey,
+    SidechainView,
     Preview,
     SliceEarlier,
     SliceLater,
@@ -278,6 +279,12 @@ pub const ACTIONS: &[ActionDef] = &[
         name: "Tonalidad del sample",
         description: "Analiza la tonalidad del sample de la pista (las tres más probables, la raíz y la confianza): r la pone de raíz del instrumento, i inserta un instrumento con ella, k propone key() para la canción",
         keys: "Ctrl-K en el explorador",
+    },
+    ActionDef {
+        action: Action::SidechainView,
+        name: "Vista del sidechain",
+        description: "Enseña o quita, por cada EQ dinámico y compresor, quién lo dispara, cuánto reduce ahora y sus curvas (disparo y reducción) en tiempo real",
+        keys: "",
     },
     ActionDef {
         action: Action::Metronome,

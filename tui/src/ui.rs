@@ -116,6 +116,16 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     frame.render_widget(SamplePanel(&view), sample_area);
     app.sample_area = Some(Block::bordered().inner(sample_area));
     frame.render_widget(TrackerPanel(&view), tracker_area);
+    // La vista del sidechain, encima del sample y el tracker (el editor
+    // sigue a la vista).
+    if let Some(sidechain) = &view.sidechain {
+        let height = sidechain.height().min(rest_area.height);
+        let area = Rect {
+            height,
+            ..rest_area
+        };
+        frame.render_widget(crate::sidechain::SidechainPanel(sidechain), area);
+    }
     frame.render_widget(FxPanel(&view), fx);
     frame.render_widget(HelpLine(&view), help);
     draw_popups(frame, &view, popup);
@@ -187,6 +197,18 @@ fn draw_main_window(frame: &mut Frame, view: &ViewModel) -> Rect {
     if occupancy > 0 {
         frame.render_widget(OccupancyPanel(view), occupancy_area);
     }
+    // Con la vista del sidechain, a la derecha del sample (hasta la
+    // mitad).
+    let side = if view.sidechain.is_some() {
+        (sample_area.width / 2).min(SIDECHAIN_WIDTH)
+    } else {
+        0
+    };
+    let [sample_area, sidechain_area] =
+        Layout::horizontal([Constraint::Min(0), Constraint::Length(side)]).areas(sample_area);
+    if let Some(sidechain) = &view.sidechain {
+        frame.render_widget(crate::sidechain::SidechainPanel(sidechain), sidechain_area);
+    }
     // Con un análisis de choques hecho, su tabla a la derecha del sample.
     let width = view
         .clash_table
@@ -210,6 +232,9 @@ fn draw_main_window(frame: &mut Frame, view: &ViewModel) -> Rect {
     draw_popups(frame, view, None);
     sample_area
 }
+
+/// Ancho de la vista del sidechain en la ventana principal sin editor.
+const SIDECHAIN_WIDTH: u16 = 64;
 
 /// Alto mínimo de la vista de ocupación para que diga algo (bordes, los
 /// compases y `Σ`, y una pista), y del tracker a su lado (bordes, cabecera

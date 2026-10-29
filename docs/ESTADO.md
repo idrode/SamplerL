@@ -1370,6 +1370,63 @@ parte). El plan, en «Fase V» de [ROADMAP.md](ROADMAP.md).
   cual en su raíz y lo natural es que el grado 1 quede cerca de ella (más
   calidad y menos cambio de duración), arriba o abajo.
 
+### Parte 5: sidechain visual
+
+- **Antes**: el compresor (`FxState::Comp::reduction`) y el EQ dinámico
+  (`DynState::applied`) ya llevaban dentro su reducción en dB, pero no la
+  veía nadie. El sidechain es del EQ dinámico (`Fx::sidechain`; el
+  compresor se escucha a sí mismo).
+- **Motor**: `FxState::reduction()` da la de los dos; tras la cadena de
+  cada pista (con o sin curvas), `Engine::mix` la publica por ranura con
+  `SharedStatus::add_reduction` (un `AtomicU32` por pista y ranura,
+  `fetch_max` sobre los bits del f32 positivo, como los picos), y
+  `Status::tracks[t].reduction` la da y la vacía al leerla: la más alta
+  desde la lectura anterior. Sin reservas, mutex ni E/S (`no_alloc.rs`: el
+  caso del EQ dinámico con sidechain cuenta también la publicación y
+  comprueba que llega).
+- **Interfaz** (`tui/src/sidechain.rs`): `Sidechain::observe` (en cada
+  `tick`, con la instantánea que ya se leía para los medidores) apunta por
+  cada EQ dinámico y compresor de la canción la reducción de su ranura y
+  el pico de la pista que lo dispara (la de su `sidechain`, o la propia),
+  en colas de `HISTORY` = 100 muestras; los que desaparecen del script se
+  olvidan. `view` da `SidechainView` (pista, efecto, quién dispara, la
+  reducción de ahora, la escala —el `range` del EQ dinámico, 24 dB en el
+  compresor— y las dos curvas) y `SidechainPanel` lo dibuja con barras de
+  octavos de celda (`sparkline`), en tres líneas por efecto o, sin sitio,
+  en una. «Vista del sidechain» (paleta, `Action::SidechainView`) la abre y
+  la cierra: con el editor aquí, encima del sample y el tracker (no
+  captura teclas); con el editor en su ventana, a la derecha de la forma
+  de onda grande (hasta la mitad, 64 columnas). El protocolo no cambia: la
+  vista es de la principal.
+- **Tests**: `engine/tests/dyneq.rs` (la reducción por ranura: el
+  compresor con un tono 14 dB sobre el umbral, unos 10 dB; el EQ dinámico
+  con el bombo, entre 6 y su `range`, y 0 cuando el bombo calla; 0 en las
+  ranuras sin dinámica y en otras pistas), `sidechain.rs` (las curvas) y
+  `tui/src/tests/sidechain.rs` (desde la paleta, quién dispara a quién, las
+  curvas siguen al motor, en 140×45, 100×30 y 80×24, el editor sigue a la
+  vista, cerrarla; sin dinámica lo dice; en la principal con el editor
+  fuera, junto a la forma de onda). `cargo test -p tui pantalla_sidechain
+  -- --ignored --nocapture` la enseña.
+
+#### Decisiones (sidechain visual)
+
+- **La reducción, no la envolvente del detector**: lo que se oye es cuánto
+  baja; el nivel del detector depende del filtro de su banda y del umbral,
+  y como curva del disparo basta el pico de la pista que dispara (el que
+  ya se publicaba). Así el motor solo añade un `fetch_max` por efecto de
+  dinámica y trozo.
+- **La más alta desde la lectura anterior** (como los medidores): entre
+  dos `tick` pasan varios trozos de audio y una bajada corta no se pierde.
+- **El historial en la interfaz**: el motor no guarda nada más; las curvas
+  empiezan al abrir la vista y viven solo mientras está abierta.
+- **También el compresor**: es la otra dinámica de pista y cuesta lo
+  mismo; sin sidechain, dice «← sí misma».
+- **Grupos fuera**: sus efectos se procesan en otro sitio (`Engine::mix`,
+  después de las pistas); se añadirían igual, con otro array de atómicos.
+- **Coste**: en el motor, 32 atómicos (8 pistas × 4 ranuras) y un
+  `fetch_max` por efecto de dinámica y trozo de hasta 256 frames; en la
+  interfaz, 2 × 100 `f32` por efecto.
+
 ## Mejoras sueltas
 
 - **Pegado multilínea**: ya lo hacían el pegado con bracketed paste (`App::paste`, `editing::burst_text` para terminales sin él) y la parte 1 de la fase L en la ventana del editor; verificado con sus tests (`pasting_keeps_the_lines_and_the_indent_and_undoes_at_once`, `pasting_with_the_completion_open_accepts_nothing`, `a_burst_of_keys_with_line_breaks_is_a_paste`, `split::pasting_in_the_editor_window_keeps_the_indent_and_undoes_at_once`): líneas y sangría tal cual, sin autocompletado ni sangrado automático, un solo Ctrl-Z.

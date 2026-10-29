@@ -2,7 +2,7 @@
 //! asignador global cuenta las reservas que hace este hilo mientras corre
 //! `Engine::process`, con retrasos (swing, humanize), retrigger, pitch,
 //! instrumentos (polifonía, ADSR, bucles), el EQ (suavizado y automatizado),
-//! el EQ dinámico con sidechain, efectos por corte (con sus colas), bucles de corte con fundido, nubes de granos en vivo, sintetizadores (mono con accent, slide y el sub de cada nota, polifónicos con unison y sub abierto, un subharm de 8 voces con sus seis capas, un sh101 con legato, curvas y notas en vivo), grupos con sus efectos y macros que se mueven en vivo, cambios de
+//! el EQ dinámico con sidechain (y la reducción que publica para su vista), efectos por corte (con sus colas), bucles de corte con fundido, nubes de granos en vivo, sintetizadores (mono con accent, slide y el sub de cada nota, polifónicos con unison y sub abierto, un subharm de 8 voces con sus seis capas, un sh101 con legato, curvas y notas en vivo), grupos con sus efectos y macros que se mueven en vivo, cambios de
 //! patrón al compás, un patrón que se suelta a la cola de basura y el paso
 //! de cada pista y el retardo de salida que se publican para la interfaz;
 //! y el callback de un dispositivo con el traspaso del motor de uno a otro.
@@ -316,12 +316,23 @@ fn the_audio_thread_never_allocates() {
         ])
         .unwrap();
     controller.set_track_pattern(3, Some(ducked)).unwrap();
+    controller.status();
     let n = counted(|| {
         for _ in 0..200 {
             engine.process(&mut out, 2);
         }
     });
-    assert_eq!(n, 0, "reservas con el EQ dinámico y el sidechain");
+    assert_eq!(
+        n, 0,
+        "reservas con el EQ dinámico, el sidechain y la reducción publicada"
+    );
+    // Y la reducción llegó a la vista del sidechain.
+    assert!(
+        controller.status().tracks[3]
+            .reduction
+            .iter()
+            .any(|&db| db > 0.0)
+    );
 
     // Modo gate, forma por corte (envolvente, pan, parte, bucle e ida y
     // vuelta) y choke entre dos pistas.

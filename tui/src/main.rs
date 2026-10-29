@@ -20,6 +20,7 @@ mod model;
 mod occupancy;
 mod palette;
 mod record;
+mod sidechain;
 mod tap;
 #[cfg(test)]
 mod tests;

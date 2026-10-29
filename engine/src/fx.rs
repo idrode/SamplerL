@@ -790,6 +790,17 @@ fn crush_levels(bits: f32) -> f32 {
 }
 
 impl FxState {
+    /// Reducción de ganancia que aplica ahora un efecto de dinámica, en dB
+    /// (0 o más): la del compresor, o la de la banda del EQ dinámico.
+    /// `None` en los demás.
+    pub(crate) fn reduction(&self) -> Option<f32> {
+        match self {
+            FxState::Comp { reduction, .. } => Some(*reduction),
+            FxState::Dyn(d) => Some(d.applied),
+            _ => None,
+        }
+    }
+
     /// Estado para `fx`. Si el estado anterior es del mismo tipo, conserva
     /// su memoria (así cambiar el corte de un filtro no hace clic).
     pub fn update(self, fx: Option<Fx>, sample_rate: u32) -> Self {

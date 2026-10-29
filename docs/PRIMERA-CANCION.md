@@ -927,6 +927,11 @@ baja (6 dB); `sidechain = "drums"`, que escucha la batería en vez del
 propio bajo. Más, en «Que el break deje sitio al bombo» de la
 [sección 6](GUIA.md#6-recetas-para-amen-breaks) y en la tabla de `pista:fx`.
 
+> **¿Baja de verdad?** F1 «Vista del sidechain» enseña, mientras suena,
+> quién dispara a quién (`bajo · eq dinámico 80 Hz ← drums`), cuántos dB
+> baja ahora y las curvas del disparo y de la reducción. Ver
+> [Vista del sidechain](GUIA.md#vista-del-sidechain).
+
 **Si no pasa:** el informe no dice nada de `bajo` y `drums`: con tus
 samples no chocan (o poco), y no hace falta recortar. (Con los samples de
 prueba del paso 1, el choque que sale es `drums × perc`: las dos pistas

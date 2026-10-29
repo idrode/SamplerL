@@ -705,6 +705,7 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Detectar el BPM del sample | Propone el tempo y los compases del sample de la pista; Enter pone bpm() en el script | — |
 | Notas de los cortes | Lista la nota de cada corte de la pista en cifrado americano (C#4), con sus cents si está desafinada | — |
 | Tonalidad del sample | Analiza la tonalidad del sample de la pista (las tres más probables, la raíz y la confianza): r la pone de raíz del instrumento, i inserta un instrumento con ella, k propone key() para la canción | Ctrl-K en el explorador |
+| Vista del sidechain | Enseña o quita, por cada EQ dinámico y compresor, quién lo dispara, cuánto reduce ahora y sus curvas (disparo y reducción) en tiempo real | — |
 | Metrónomo | Enciende o apaga el clic en cada pulso (no entra en lo exportado salvo que se pida) | — |
 | Reiniciar medidores | Pone a cero los medidores y quita los avisos de limitador y saturación | — |
 | Etiquetar el corte seleccionado | Abre «etiquetar N » para escribir la etiqueta (kick, snare...); se guarda en el proyecto | — |
@@ -1659,6 +1660,48 @@ sugerencia = "#005f00" # fondo de los huecos que se sugiere rellenar
 ```
 
 > **Usado en el tutorial:** [paso 12, Variación y estructura](PRIMERA-CANCION.md#paso-12-variación-y-estructura).
+
+### Vista del sidechain
+
+Para ver cuánto baja una pista cuando otra la empuja: F1 «Vista del
+sidechain» abre un panel (encima del sample y el tracker; el editor sigue
+a la vista y se puede escribir y tocar con ella abierta) con cada EQ
+dinámico y cada compresor de las pistas. La misma acción lo cierra. Con el
+editor en su ventana, va a la derecha de la forma de onda grande.
+
+```
+┌ sidechain ──────────────────────────────────────────────────────┐
+│kick · compresor ← sí misma −0.1 dB ░░░░░░░░░░░░░░░░░░░░░░░░░░░   │
+│  disparo                                    ▄▁▁▁▁▁▁▁             │
+│  reducción ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▄▄▃▃▂▂▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁│
+│pad · eq dinámico 1.0 kHz ← kick −8.5 dB ████████████████░░░░░░░   │
+│  disparo                                    ▄▁▁▁▁▁▁▁             │
+│  reducción ▁▁                               ████████████▇▇▆▆     │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+- **Quién dispara a quién**: `← kick` es la pista que escucha por
+  `sidechain`; `← sí misma`, un compresor o un EQ dinámico sin `sidechain`.
+- **Cuánto reduce ahora**, en dB, con una barra hasta el `range` del EQ
+  dinámico (24 dB en un compresor). En el color de los avisos mientras
+  reduce.
+- **Las curvas de los últimos segundos**, la más nueva a la derecha:
+  *disparo*, el nivel de la pista que dispara (su pico, tras su volumen),
+  y *reducción*, cuánto baja la banda (o la pista, en un compresor). Si una
+  bajada empieza tarde o tarda en volver, se ve aquí: toca `attack` y
+  `release`. Las curvas empiezan al abrir la vista.
+- **Sin espacio**, una línea por efecto con la curva de la reducción al
+  lado.
+
+El motor publica la reducción de cada efecto de dinámica con atómicos (la
+más alta desde la lectura anterior, como los medidores): mirar no cambia
+nada de lo que suena. Los efectos de los grupos (`grupo:fx`) no salen
+(todavía).
+
+**Si no sale nada**: «ninguna pista tiene un EQ dinámico ni un compresor»
+es eso; si sale pero no reduce, el disparo no pasa del `threshold` (bájalo)
+o la pista que dispara no suena en esa banda (el `freq` del EQ dinámico
+mira su banda en la pista que dispara).
 
 ## 3. Mini-notación
 
@@ -4046,6 +4089,8 @@ track("drums", amen)
 El bombo puede estar en mute y seguir mandando (un «bombo fantasma» que
 solo empuja). Una pista no puede escucharse a sí misma por sidechain (sin
 `sidechain` ya lo hace) ni en círculo (a escucha a b y b a a).
+
+Para ver cuánto baja y cuándo, F1 «Vista del sidechain» (sección 2).
 
 > **Usado en el tutorial:** [paso 11, Un bajo que no choque con el bombo](PRIMERA-CANCION.md#paso-11-un-bajo-que-no-choque-con-el-bombo).
 

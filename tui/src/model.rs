@@ -51,6 +51,8 @@ pub struct ViewModel {
     pub macro_panel: Option<usize>,
     /// Panel «Tonalidad del sample» abierto.
     pub key: Option<crate::key_panel::KeyView>,
+    /// Vista del sidechain abierta.
+    pub sidechain: Option<crate::sidechain::SidechainView>,
     /// El panel de dispositivos abierto en esta ventana.
     pub devices: Option<DevicesPopup>,
     /// Nombre del proyecto abierto, si lo hay.

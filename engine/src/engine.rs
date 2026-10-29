@@ -3004,6 +3004,13 @@ impl Engine {
             } else {
                 run_fx(&mut track.fx, buf, t, &self.side_buf, &live, 0..2 * n);
             }
+            // La reducción de sus efectos de dinámica, para la vista del
+            // sidechain (atómicos: ni reservas ni bloqueos).
+            for (slot, state) in track.fx.iter().enumerate() {
+                if let Some(db) = state.reduction() {
+                    self.status.add_reduction(t, slot, db);
+                }
+            }
             if heard[t] {
                 self.side_buf[t][..2 * n].copy_from_slice(buf);
                 live[t] = true;

@@ -2426,6 +2426,7 @@ mod sample_key;
 mod sections;
 mod sends;
 mod shapes;
+mod sidechain;
 mod slice_fx;
 mod split;
 mod step_fx;
