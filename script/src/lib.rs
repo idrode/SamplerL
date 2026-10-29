@@ -57,6 +57,9 @@ fn one_bar_is_singular() {
 }
 
 pub mod blocks;
+mod freeze;
+pub use freeze::FreezeRender;
+use freeze::apply_frozen;
 pub mod masking;
 pub mod patterns;
 pub mod project;
@@ -107,6 +110,7 @@ const GLOBAL_ONLY: &[&str] = &[
     "priority",
     "key",
     "transpose",
+    "frozen",
 ];
 
 /// Compases que se tiran los dados de `chance` antes de repetirse.
@@ -343,6 +347,20 @@ pub struct TrackDef {
     /// vuelta del ciclo (como `bars`); `None` donde no se sabe (un patrón
     /// generado con `euclid`, `rotate`...). Ver [`TrackDef::sounding_span`].
     pub spans: Vec<Vec<Option<TokenSpan>>>,
+    /// Congelada (`frozen()`): suena su WAV en vez de lo que dice el script.
+    pub frozen: Option<FrozenDef>,
+}
+
+/// Una pista congelada (`frozen(pista, wav, huella)`): toca el WAV de su
+/// salida tras sus efectos (y antes de su volumen), una vez por vuelta.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FrozenDef {
+    /// El WAV, como se escribió en `frozen()`.
+    pub wav: String,
+    /// Compases que dura (una vuelta).
+    pub bars: u64,
+    /// La pista ha cambiado desde que se congeló (la huella no coincide).
+    pub stale: bool,
 }
 
 /// Efectos de un corte (`cortes:fx(i, ...)`): su cadena, en orden, y los
@@ -1047,6 +1065,7 @@ impl ScriptHost {
             key: None,
             transpose: None,
             key_used: None,
+            frozen: Vec::new(),
         }));
         // La caché pasa al estado de Lua durante la evaluación y vuelve después.
         let cache = Rc::new(RefCell::new(std::mem::take(&mut self.samples)));
@@ -1076,6 +1095,7 @@ impl ScriptHost {
         let priority = std::mem::take(&mut state.borrow_mut().priority);
         let groups = std::mem::take(&mut state.borrow_mut().groups);
         let macros = std::mem::take(&mut state.borrow_mut().macros);
+        let frozen = std::mem::take(&mut state.borrow_mut().frozen);
         let (key, transpose) = {
             let builder = state.borrow();
             (
@@ -1149,7 +1169,7 @@ impl ScriptHost {
                 })
             };
             let mut warnings = base_warnings.clone();
-            let (tracks, sections, timeline) = match version.sections {
+            let (mut tracks, sections, timeline) = match version.sections {
                 None => (finish(version.base)?, Vec::new(), Vec::new()),
                 Some(built) => {
                     let sections = built
@@ -1200,6 +1220,25 @@ impl ScriptHost {
                     (sections[first].tracks.clone(), sections, timeline)
                 }
             };
+            // Las pistas congeladas tocan su WAV (con secciones, no hay).
+            if let Some(request) = frozen.first()
+                && !sections.is_empty()
+            {
+                return Err(ScriptError::new(format!(
+                    "{}frozen(\"{}\"): con secciones no se congela (cada sección suena distinta)",
+                    request.location, request.track
+                )));
+            }
+            for request in &frozen {
+                apply_frozen(
+                    &mut tracks,
+                    request,
+                    tempo,
+                    meter,
+                    self.sample_rate,
+                    &mut warnings,
+                )?;
+            }
             let all = || {
                 sections
                     .iter()
@@ -1834,11 +1873,13 @@ impl ScriptHost {
         )?;
 
         let cache = cache.clone();
+        let cache_for_frozen = cache.clone();
         let imports = imports.clone();
         let base_dir = self
             .sample_dir
             .clone()
             .unwrap_or_else(|| base_dir.to_path_buf());
+        let frozen_dir = base_dir.clone();
         let rate = self.sample_rate;
         let g = guard.clone();
         let labels = Rc::new(self.labels.clone());
@@ -1869,6 +1910,50 @@ impl ScriptHost {
                     edits: edits.clone(),
                 })
             })?,
+        )?;
+
+        let cache = cache_for_frozen;
+        let base = frozen_dir;
+        let st = state.clone();
+        let g = guard.clone();
+        globals.set(
+            "frozen",
+            lua.create_function(
+                move |lua, (track, wav, fingerprint): (String, String, Option<String>)| {
+                    g(lua, "frozen")?;
+                    let who = format!("frozen(\"{track}\", \"{wav}\")");
+                    let path = base.join(&wav);
+                    let sample =
+                        load_cached(&mut cache.borrow_mut(), &path, rate).map_err(|e| {
+                            fail(
+                                lua,
+                                format!(
+                                    "{who}: {}: {e} (descongélala o vuelve a congelarla)",
+                                    path.display()
+                                ),
+                            )
+                        })?;
+                    let mut builder = st.borrow_mut();
+                    if let Some(old) = builder.frozen.iter().find(|r| r.track == track) {
+                        return Err(fail(
+                            lua,
+                            format!(
+                                "{who}: ya está congelada en {}(una vez por pista)",
+                                old.location
+                            ),
+                        ));
+                    }
+                    builder.frozen.push(FreezeRequest {
+                        track,
+                        wav,
+                        path,
+                        sample,
+                        fingerprint,
+                        location: location(lua),
+                    });
+                    Ok(())
+                },
+            )?,
         )?;
 
         let g = guard.clone();
@@ -2514,6 +2599,13 @@ fn track_pattern(
             )))
         })
         .map(|p| p.with_gate(track.gate))
+        .map(|p| {
+            if track.frozen.is_some() {
+                p.with_raw()
+            } else {
+                p
+            }
+        })
         .map(|p| p.with_mute(track.mute).with_solo(track.solo))
         .and_then(|p| p.with_tag(track.tag))
         .map_err(|e| ScriptError::new(format!("pista \"{}\": {e}", track.name)))
@@ -2872,6 +2964,7 @@ fn track_source(lua: &Lua, name: &str, source: &AnyUserData) -> mlua::Result<Tra
         slice_fx: Vec::new(),
         tag: 0,
         spans: Vec::new(),
+        frozen: None,
     };
     if let Ok(source) = source.borrow::<SlicedHandle>() {
         let mut def = def(
@@ -3003,6 +3096,18 @@ struct Builder {
     /// Dónde se usó por primera vez la tonalidad por defecto (`scale()`
     /// sin tónica o un grado en `melody()`): `key()` tiene que ir antes.
     key_used: Option<String>,
+    /// Pistas congeladas (`frozen()`).
+    frozen: Vec<FreezeRequest>,
+}
+
+/// `frozen(pista, wav [, huella])`, por aplicar al acabar el script.
+struct FreezeRequest {
+    track: String,
+    wav: String,
+    path: PathBuf,
+    sample: Arc<Sample>,
+    fingerprint: Option<String>,
+    location: String,
 }
 
 impl Builder {

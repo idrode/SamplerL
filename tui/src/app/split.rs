@@ -161,6 +161,8 @@ fn opens_in_main(action: Action) -> bool {
             | Action::Macros
             | Action::SampleKey
             | Action::SidechainView
+            | Action::Freeze
+            | Action::Unfreeze
             | Action::Devices
             | Action::AnalyzeMasking
             | Action::FillGap

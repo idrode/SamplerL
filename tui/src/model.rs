@@ -261,6 +261,8 @@ impl SliceFxView {
 #[derive(Debug, Clone, Default)]
 pub struct TrackView {
     pub name: String,
+    /// Congelada (`frozen()`): `Some(true)` si ha cambiado desde entonces.
+    pub frozen: Option<bool>,
     /// Pista del motor asignada.
     pub slot: Option<usize>,
     pub sample_name: String,

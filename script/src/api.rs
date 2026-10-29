@@ -1144,6 +1144,41 @@ pub const FUNCTIONS: &[Function] = &[
         example: None,
     },
     Function {
+        name: "frozen",
+        receiver: Receiver::Global,
+        signature: "frozen(pista, wav [, huella])",
+        returns: None,
+        summary: "La pista suena desde un WAV ya renderizado (congelada), sin calcular sus efectos ni su instrumento.",
+        doc: "Lo escribe «Congelar la pista seleccionada» (paleta), que renderiza la \
+              salida de la pista tras sus efectos y antes de su volumen (una vuelta de la \
+              canción, ya con las colas de la anterior) a un WAV de 32 bits en coma \
+              flotante, y «Descongelar» lo quita: el resto del script no se toca, así \
+              que descongelar devuelve exactamente lo que había. Congelada, la pista toca \
+              ese WAV una vez por vuelta, sin fundidos, con su volumen, pan, envíos, \
+              mute, solo, curvas de mezcla y grupo de siempre; lo que la escucha por \
+              sidechain la oye igual. Lo de dentro (sus pasos, cortes, efectos, \
+              instrumento) no suena aunque se cambie: si la `huella` ya no coincide con \
+              la pista, se avisa (descongela y vuelve a congelar). Va fuera de \
+              `section()`, una vez por pista; no vale con secciones ni con choke. El WAV \
+              es relativo a la carpeta de samples, como `sample()`.",
+        params: &[
+            Param {
+                name: "pista",
+                description: "el nombre de la pista congelada",
+            },
+            Param {
+                name: "wav",
+                description: "el WAV con su salida (lo escribe «Congelar»: `congelado/pista.wav`)",
+            },
+            Param {
+                name: "huella",
+                description: "huella de la pista al congelarla (para avisar si cambia)",
+            },
+        ],
+        template: "frozen(\"${drums}\", \"${congelado/drums.wav}\")",
+        example: None,
+    },
+    Function {
         name: "key",
         receiver: Receiver::Global,
         signature: "key(tónica [, modo])",

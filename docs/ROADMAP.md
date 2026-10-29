@@ -689,7 +689,7 @@ versión nueva del protocolo si cambia.
    instrumentos la usan por defecto; la detección la propone.
 5. ✅ **Sidechain visual**: reducción de ganancia en tiempo real y su curva,
    y quién dispara a quién, publicadas con atómicos.
-6. **Congelar pista**: render de una pista a un WAV del proyecto que la
+6. ✅ **Congelar pista**: render de una pista a un WAV del proyecto que la
    sustituye; reversible y en un paso de deshacer.
 
 ## Mejoras sueltas

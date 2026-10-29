@@ -43,6 +43,8 @@ pub enum Action {
     SliceNotes,
     SampleKey,
     SidechainView,
+    Freeze,
+    Unfreeze,
     Preview,
     SliceEarlier,
     SliceLater,
@@ -413,6 +415,18 @@ pub const ACTIONS: &[ActionDef] = &[
         keys: "",
     },
     ActionDef {
+        action: Action::Freeze,
+        name: "Congelar la pista seleccionada",
+        description: "Renderiza la pista tras sus efectos a congelado/<pista>.wav y la cambia por ese WAV (frozen() al final del script): ahorra CPU; el resto del texto no se toca y Ctrl-Z la devuelve",
+        keys: "",
+    },
+    ActionDef {
+        action: Action::Unfreeze,
+        name: "Descongelar la pista seleccionada",
+        description: "Quita su frozen() del script: vuelve a sonar desde el script, como antes de congelarla (el WAV se queda)",
+        keys: "",
+    },
+    ActionDef {
         action: Action::Browser,
         name: "Explorador de samples",
         description: "Los WAV de la carpeta de muestras: filtra, ↑↓ preescucha (sin tocar las pistas), Enter inserta sample(\"...\")",
@@ -711,7 +725,7 @@ mod tests {
         assert_eq!(names(&filter(&all, "BAJ lin")), ["Bajar líneas"]);
         assert_eq!(filter(&all, "").len(), ACTIONS.len() + api::SNIPPETS.len());
         assert_eq!(names(&filter(&all, "snip gho")), ["Snippet: ghost"]);
-        assert!(filter(&all, "nada de nada").is_empty());
+        assert!(filter(&all, "xyzzy de nada").is_empty());
     }
 
     #[test]

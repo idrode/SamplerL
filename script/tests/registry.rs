@@ -25,6 +25,9 @@ fn samples() -> PathBuf {
         std::fs::create_dir_all(&dir).unwrap();
         let (audio, _) = synth::synth_break();
         offline::write_wav(dir.join("amen.wav"), &audio, 1, synth::RATE).unwrap();
+        // Lo que congela la plantilla de `frozen`.
+        std::fs::create_dir_all(dir.join("congelado")).unwrap();
+        offline::write_wav(dir.join("congelado/drums.wav"), &audio, 1, synth::RATE).unwrap();
         dir
     })
     .clone()
@@ -154,6 +157,11 @@ fn every_template_is_valid_code() {
         match f.receiver {
             Receiver::Global if f.name == "track" => source.push_str(&format!(
                 "{text}:steps(\"1 . . .  . . . .  . . . .  . . . .\")\n"
+            )),
+            // `frozen` congela una pista que existe, en un script sin
+            // secciones (la plantilla de `section` crea una).
+            Receiver::Global if f.name == "frozen" => eval(&format!(
+                "{PRELUDE}track(\"drums\", amen):steps(\"1 . . .  . . . .  . . . .  . . . .\")\n{text}\n"
             )),
             Receiver::Global => source.push_str(&format!("local _ = {text}\n")),
             Receiver::Bar => bar.push_str(&format!("c:{text}\n")),

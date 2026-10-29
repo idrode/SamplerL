@@ -854,6 +854,14 @@ instrumento: usa los efectos de la pista (:fx)`. En `melody` y en los
 instrumentos no hay llaves: usa `:fx()`. Si la
 melodía tapa la batería, baja su `:gain()` o sus envíos.
 
+> **¿Va justo de CPU?** Una pista terminada se puede congelar: F1
+> «Congelar la pista seleccionada» la renderiza con sus efectos a
+> `congelado/<pista>.wav` y añade al final del script una línea
+> `frozen(...)` que la cambia por ese WAV. Tu código no se toca y
+> «Descongelar» quita la línea. No vale con secciones (el paso 12): hazlo
+> antes de ese paso o descongela antes de añadirlas. Ver
+> [Congelar una pista](GUIA.md#congelar-una-pista).
+
 ## Paso 11. Un bajo que no choque con el bombo
 
 > **Referencia:** [priority(pistas)](GUIA.md#prioritypistas) · [Choques de frecuencia entre pistas](GUIA.md#choques-de-frecuencia-entre-pistas) · [Que el break deje sitio al bombo (EQ dinámico y sidechain)](GUIA.md#que-el-break-deje-sitio-al-bombo-eq-dinámico-y-sidechain) · [synth(tipo, [opciones])](GUIA.md#synthtipo-opciones) · [Un bajo ácido](GUIA.md#un-bajo-ácido).

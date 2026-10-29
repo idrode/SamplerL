@@ -25,6 +25,7 @@ mod cue;
 mod devices;
 #[cfg(test)]
 pub use devices::devices_command;
+mod freeze;
 mod key;
 mod macros;
 mod mouse;
@@ -3339,6 +3340,8 @@ impl App {
             Action::Macros => self.open_macros(),
             Action::SampleKey => self.open_sample_key(),
             Action::SidechainView => self.toggle_sidechain(),
+            Action::Freeze => self.freeze_selected(),
+            Action::Unfreeze => self.unfreeze_selected(),
             Action::Record => {
                 if self.recording.is_some() {
                     self.finish_recording();
@@ -4129,6 +4132,7 @@ impl App {
                         };
                         TrackView {
                             name: t.name.clone(),
+                            frozen: t.frozen.as_ref().map(|f| f.stale),
                             slot,
                             sample_name: t
                                 .path

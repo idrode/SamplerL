@@ -1427,6 +1427,108 @@ parte). El plan, en «Fase V» de [ROADMAP.md](ROADMAP.md).
   `fetch_max` por efecto de dinámica y trozo de hasta 256 frames; en la
   interfaz, 2 × 100 `f32` por efecto.
 
+### Parte 6: congelar pista
+
+- **Motor**: `Engine::set_tap(Some(pista))` (para render offline) hace que
+  la salida sea la de esa pista tras sus efectos y antes de su volumen,
+  pan, envíos y mute (la que se guarda para los sidechains, `side_buf`; la
+  pista se marca como escuchada), sin limitador; las demás suenan dentro.
+  `Pattern::with_raw()` hace que sus golpes suenen sin las rampas de 1,5 ms
+  de entrada y salida (`Voice::raw`; la de interrumpir, sí). `no_alloc.rs`
+  no cambia: la toma es una copia entre buffers fijos y solo se usa
+  offline. `offline::write_wav_float`: WAV de 32 bits en coma flotante,
+  que vuelve bit a bit al leerlo a la misma frecuencia.
+- **Script** (`script/src/freeze.rs`):
+  - `Song::render_tap(frecuencia, compases, pista)` renderiza esa toma.
+  - `Song::render_frozen(frecuencia, pista)` comprueba que se puede (sin
+    secciones ni `bpm_ramp`, que exista, que no esté ya congelada y que no
+    tenga `choke`), calcula la vuelta (el ciclo de la canción, `length_bars`,
+    y el de las curvas que suenan dentro de la pista —efectos, pitch,
+    formante, cortes, forma y sintetizador—: las rampas y los LFO en pasos
+    se repiten; un LFO en Hz o una macro, aviso), renderiza dos vueltas y
+    se queda con la segunda (con las colas de la primera), y da la huella.
+  - La huella (`fingerprint`): FNV-1a de lo que suena dentro de la pista (el
+    WAV y sus cortes, pasos de cada vuelta, efectos y sus curvas,
+    sidechains, formas, efectos de corte, instrumento, granos, pitch y
+    formante, gate y stretch) con el tempo y el compás.
+  - `frozen(pista, wav [, huella])` (en `GLOBAL_ONLY`) carga el WAV con la
+    caché de `sample()` (relativo a la carpeta de samples) y, al acabar el
+    script (`apply_frozen`), cambia la pista por una que toca el WAV en el
+    paso 0 de la primera de sus N vueltas (N = lo que dura el WAV a este
+    tempo), sin efectos, automatización, sidechains, instrumento, granos,
+    forma, choke ni MIDI, con `TrackDef::frozen` y el patrón `with_raw`; el
+    volumen, el pan, los envíos, el mute, el solo, las curvas de mezcla, el
+    grupo y el nombre son los de la original (`..original.clone()`). Si la
+    huella no coincide o el WAV no dura compases enteros, aviso y
+    `FrozenDef::stale`. Errores con la línea: pista que no existe, WAV que
+    no está, dos veces, en `section()`, con secciones, con choke.
+- **Interfaz** (`tui/src/app/freeze.rs`): «Congelar la pista seleccionada»
+  (con el texto cargado) renderiza, escribe `congelado/<pista>.wav` en la
+  carpeta de samples y añade al final del texto `frozen("pista",
+  "congelado/pista.wav", "huella") -- congelada: F1 «Descongelar»` (un paso
+  de deshacer, `replace_text`), y carga. «Descongelar la pista
+  seleccionada» quita las líneas que empiezan por `frozen("pista"` y carga:
+  el texto vuelve a ser exactamente el de antes. Desde la ventana del
+  editor, las dos van a la principal. El panel del motor marca `drums❄`
+  y «❄ congelada» (o «(ha cambiado)»).
+- **Tests**: `script/tests/freeze.rs`:
+  - la salida de la pista congelada es bit a bit la segunda vuelta de la
+    original, en cada vuelta;
+  - una pista que se repite (cortes, filtro, bitcrush, `every`, volumen y
+    pan, con otra pista al lado): la mezcla, bit a bit desde la segunda
+    vuelta;
+  - con todo (rampa, bitcrush, EQ dinámico con sidechain hacia ella y desde
+    ella, envío a la reverb) y un `acid` con LFO en compases: la mezcla se
+    separa de la original como mucho 1,5 veces lo que la original se separa
+    de sí misma entre su segunda y su tercera vuelta (medido: 0,0113 frente
+    a 0,0113 la batería; 1,75 frente a 1,75 el acid, por la fase libre de
+    su oscilador);
+  - el aviso de huella y la marca, lo que no se congela, los errores con la
+    línea, y el coste (ignorado).
+
+  `tui/src/tests/freeze.rs`: congelar escribe el WAV (float, estéreo) y
+  solo añade esa línea, la marca en 120×40, 90×28 y 70×24, descongelar
+  deja el texto idéntico y el WAV, Ctrl-Z congela y descongela de una vez,
+  con el texto sin cargar no hace nada, y con secciones lo dice.
+  `registry.rs` prueba la plantilla de `frozen`.
+
+#### Decisiones (congelar)
+
+- **Una línea en el script, no el proyecto**: el script es la fuente de la
+  verdad de lo que suena (editor y paneles coinciden), así que lo que
+  congela tiene que verse en él. Una sola línea al final deja intacto todo
+  lo que escribió el usuario (descongelar es borrarla, exactamente), es un
+  paso de deshacer y se lleva con el `.lua` sin depender del `.sampler`.
+- **Antes del volumen**: el WAV es lo que se calcula caro (voces,
+  instrumento, efectos); el volumen, el pan, los envíos y el mute siguen
+  vivos (se pueden mezclar con la pista congelada) y quien la escucha por
+  sidechain oye lo mismo que antes. Por eso no hay opción de meter los
+  envíos en el WAV: los buses suman todas las pistas y su coste no baja
+  por congelar una (y lo congelado se podría oír dos veces).
+- **La segunda vuelta**: con las colas de la anterior, que es como suena
+  la pista en bucle. La primera vez que suena tras arrancar lleva esas
+  colas aunque no haya vuelta anterior.
+- **Sin fundidos y fijado al compás**: el WAV dura exactamente una vuelta
+  (los compases duran siempre lo mismo sin rampa de tempo) y suena en el
+  paso 0 de cada una sin las rampas de la voz, así que muestra a muestra es
+  la toma. Con rampa de tempo o secciones cada vuelta es distinta: no se
+  puede.
+- **La huella avisa, no impide**: lo congelado sigue sonando aunque la
+  pista cambie (es lo que el usuario oyó al congelar); el aviso dice que
+  hay que congelar otra vez.
+- **Bit a bit, cuando se puede**: la toma repetida es bit a bit; la mezcla,
+  cuando la pista se repite igual cada vuelta. Un EQ dinámico o un
+  compresor no recalculan su reducción por menos de 0,005 dB (guardan algo
+  de toda su historia), la fase de un oscilador sigue libre, el redondeo de
+  la posición de una rampa cambia un bit que un bitcrush hace escalón y un
+  envío lleva a las vueltas siguientes la cola de lo que recibió en la
+  primera: ahí la tolerancia es lo que la propia pista cambia sola.
+- **Coste**: un `subharm` de 6 voces con distorsión y filtro, en release:
+  6,45 % de un núcleo vivo y 0,23 % congelado. Memoria: el WAV de una
+  vuelta en estéreo f32 (8 compases a 140 BPM, 13,7 s: 5,3 MB). Congelar
+  tarda dos vueltas de render offline (en release, unas 30 veces más
+  rápido que en tiempo real con 8 pistas) y bloquea la interfaz mientras.
+
 ## Mejoras sueltas
 
 - **Pegado multilínea**: ya lo hacían el pegado con bracketed paste (`App::paste`, `editing::burst_text` para terminales sin él) y la parte 1 de la fase L en la ventana del editor; verificado con sus tests (`pasting_keeps_the_lines_and_the_indent_and_undoes_at_once`, `pasting_with_the_completion_open_accepts_nothing`, `a_burst_of_keys_with_line_breaks_is_a_paste`, `split::pasting_in_the_editor_window_keeps_the_indent_and_undoes_at_once`): líneas y sangría tal cual, sin autocompletado ni sangrado automático, un solo Ctrl-Z.

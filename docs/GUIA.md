@@ -41,10 +41,14 @@ la sección 4 (con sus parámetros, rangos y un ejemplo cada una).
 - Etiquetar cortes (`cortes:name`, o desde la interfaz), moverlos a oído
   (`,` `.` en el modo tocar, o `cortes:move`), crearlos y quitarlos (`n` y
   Supr, o con el clic derecho en la onda), con zoom en la vista del sample
-  para afinar (`+` `-`, la rueda del ratón).
+  para afinar (`+` `-`, la rueda del ratón), y llevar cada inicio al cruce
+  por cero más cercano para que no haga clic (`slice(n, { zero_cross = 2 })`).
 - Saber qué nota toca cada corte de una melodía, en cifrado americano
   (`C#4`): la vista del sample la escribe en cada marca, «Notas de los
-  cortes» en la paleta las lista y `cortes:note(i)` la da en Lua.
+  cortes» en la paleta las lista y `cortes:note(i)` la da en Lua. Y la
+  tonalidad de un sample entero («Tonalidad del sample» en la paleta, o
+  Ctrl-K en el explorador), para ponerla de raíz del instrumento o de
+  tonalidad de la canción.
 - Dar forma a cada corte (`cortes:set`: ataque, cola, pan, la parte que
   suena, bucle sin clic en el salto o ida y vuelta) y ponerle sus propios efectos
   (`cortes:fx`: ensuciar solo la caja, bajar solo el bombo).
@@ -55,7 +59,8 @@ la sección 4 (con sus parámetros, rangos y un ejemplo cada una).
   (`_`) y acordes.
 - Longitud por pista (polirritmos), `every`, `chance`, `fill`, swing y
   humanize, generadores (`euclid`, `rotate`, `mutate`, `shuffle`,
-  `reverse_pattern`), escalas y `melody`.
+  `reverse_pattern`), escalas y `melody`, y la tonalidad de la canción
+  (`key`, con grados en `melody`) y transponerlo todo (`transpose`).
 - Modos gate y one-shot y grupos de choke (`pista:mode`, `pista:choke`).
 
 **Sonido**
@@ -86,7 +91,10 @@ la sección 4 (con sus parámetros, rangos y un ejemplo cada una).
 - Texturas con granos y congelar un instante (`pista:grains`,
   `pista:freeze`).
 - Ver dónde se pisan las pistas en frecuencia y que el EQ sugerido se
-  escriba solo («Choques de frecuencia», `priority`).
+  escriba solo («Choques de frecuencia», `priority`), y cuánto baja cada
+  EQ dinámico y compresor mientras suena («Vista del sidechain»).
+- Congelar una pista terminada para ahorrar CPU («Congelar la pista
+  seleccionada»; `frozen` en el script, reversible).
 
 **Estructura**
 - Secciones y línea de tiempo (`section`, `arrange`), saltar y repetir
@@ -727,6 +735,8 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Vista de ocupación | Enseña u oculta la rejilla de qué pista suena en cada paso (una fila por pista, Σ cuántas suenan y los pasos vacíos resaltados), de lo que toca el secuenciador; con el editor en su ventana, en la principal | — |
 | Rellenar un hueco desde la vista de ocupación | Cursor en la vista de ocupación: ←→ paso, ↑↓ pista, Tab el hueco siguiente, Enter pone en ese silencio un golpe de la pista (el anterior, cambiable) escrito en su token del código y carga, Esc sale; un paso de deshacer | — |
 | Sugerir rellenos de huecos | Hasta 4 huecos de la página que se ve en la vista de ocupación y qué golpe de qué pista los rellenaría (que alterne con las de al lado, sin choque de frecuencia con ellas si hay análisis, y con sitio); solo texto, no escribe nada | — |
+| Congelar la pista seleccionada | Renderiza la pista tras sus efectos a congelado/<pista>.wav y la cambia por ese WAV (frozen() al final del script): ahorra CPU; el resto del texto no se toca y Ctrl-Z la devuelve | — |
+| Descongelar la pista seleccionada | Quita su frozen() del script: vuelve a sonar desde el script, como antes de congelarla (el WAV se queda) | — |
 | Explorador de samples | Los WAV de la carpeta de muestras: filtra, ↑↓ preescucha (sin tocar las pistas), Enter inserta sample("...") | — |
 | Remuestrear la pista seleccionada | Abre «remuestrear pista »: graba su salida (render offline) como un WAV nuevo en la carpeta de samples | — |
 | Guardar la selección como bloque | Abre «bloque » para escribir nombre, etiquetas y `-- descripción`; va a la biblioteca global | — |
@@ -1703,6 +1713,55 @@ es eso; si sale pero no reduce, el disparo no pasa del `threshold` (bájalo)
 o la pista que dispara no suena en esa banda (el `freq` del EQ dinámico
 mira su banda en la pista que dispara).
 
+### Congelar una pista
+
+Una pista terminada que gasta mucha CPU (un sintetizador polifónico, una
+cadena de efectos larga, granos) se puede **congelar**: F1 «Congelar la
+pista seleccionada» la renderiza y la cambia por el WAV. (No es
+`pista:freeze()`, que congela un instante del sample en granos.) Medido: un
+`subharm` de 6 voces con distorsión y filtro pasa de un 6,45 % de un
+núcleo a un 0,23 %.
+
+- **Qué se graba**: la salida de la pista tras sus efectos y antes de su
+  volumen (lo mismo que oye quien la escucha por sidechain), una vuelta de
+  la canción entera (lo que tardan todas las pistas y las curvas de la
+  suya en repetirse), ya con las colas de la vuelta anterior. Va a
+  `congelado/<pista>.wav` en la carpeta de samples, en 32 bits en coma
+  flotante (sin perder nada).
+- **Qué cambia en el script**: solo se añade al final una línea
+  `frozen("drums", "congelado/drums.wav", "3f2a...") -- congelada: F1
+  «Descongelar»` y se carga (entra al compás). Tu código de la pista sigue
+  ahí, sin tocar.
+- **Qué sigue mandando**: su volumen, pan, envíos, mute, solo, curvas de
+  mezcla y grupo, que van después del WAV. Lo de dentro (pasos, cortes,
+  efectos, instrumento) ya no suena aunque lo cambies; si lo cambias, la
+  carga avisa «la pista drums ha cambiado desde que se congeló» (la
+  huella del final ya no coincide) y la marca `drums❄` del panel del motor
+  dice «(ha cambiado)».
+- **Descongelar**: F1 «Descongelar la pista seleccionada» quita la línea
+  `frozen(...)` y el texto queda exactamente como antes. El WAV se queda
+  en la carpeta. Ctrl-Z (y Ctrl-S) también la quita.
+- **Cómo suena**: si la pista se repite igual cada vuelta, la mezcla
+  congelada es la original muestra a muestra desde la segunda vuelta (en
+  la primera, lo congelado ya trae las colas de la vuelta anterior). Lo
+  que no se repite igual cambia como cambiaría solo de una vuelta a otra:
+  la fase libre de un oscilador, el eco de un envío que en la primera
+  vuelta recibió otra cosa, un EQ dinámico o un compresor (guardan algo de
+  su historia).
+
+**Lo que no se congela, y por qué**: con secciones (cada una suena
+distinta) o con `bpm_ramp` (cada vuelta dura distinto), y una pista con
+`choke` (sus golpes cortan otras pistas y eso no cabe en un WAV): lo dice
+el mensaje y no se toca nada. Con un `lfo` en Hz o una macro dentro, se
+congela con un aviso (en Hz no se repite con los compases; la macro queda
+con su valor de al cargar). Una pista con `:midi()` congelada no manda
+notas. Si el texto no es el cargado, primero Ctrl-S.
+
+**Errores típicos de `frozen()`** (si lo escribes o lo copias a mano):
+una pista que no existe («no hay ninguna pista»), un WAV que no está
+(«descongélala o vuelve a congelarla»), dos veces la misma pista, o dentro
+de `section()`.
+
 ## 3. Mini-notación
 
 Un patrón son **16 pasos** (semicorcheas de un compás de 4/4) separados por
@@ -2345,6 +2404,14 @@ Valor con el que empieza una macro (0 a 1). Lo toma al cargar el script por prim
 
 - `nombre`: nombre de la macro
 - `valor`: de 0 a 1
+
+### `frozen(pista, wav [, huella])`
+
+La pista suena desde un WAV ya renderizado (congelada), sin calcular sus efectos ni su instrumento. Lo escribe «Congelar la pista seleccionada» (paleta), que renderiza la salida de la pista tras sus efectos y antes de su volumen (una vuelta de la canción, ya con las colas de la anterior) a un WAV de 32 bits en coma flotante, y «Descongelar» lo quita: el resto del script no se toca, así que descongelar devuelve exactamente lo que había. Congelada, la pista toca ese WAV una vez por vuelta, sin fundidos, con su volumen, pan, envíos, mute, solo, curvas de mezcla y grupo de siempre; lo que la escucha por sidechain la oye igual. Lo de dentro (sus pasos, cortes, efectos, instrumento) no suena aunque se cambie: si la `huella` ya no coincide con la pista, se avisa (descongela y vuelve a congelar). Va fuera de `section()`, una vez por pista; no vale con secciones ni con choke. El WAV es relativo a la carpeta de samples, como `sample()`.
+
+- `pista`: el nombre de la pista congelada
+- `wav`: el WAV con su salida (lo escribe «Congelar»: `congelado/pista.wav`)
+- `huella`: huella de la pista al congelarla (para avisar si cambia)
 
 ### `key(tónica [, modo])`
 

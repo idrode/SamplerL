@@ -1302,7 +1302,13 @@ impl Widget for EnginePanel<'_> {
             let slice = track
                 .playing_slice
                 .map_or("--".into(), |s| format!("{:02}", s + 1));
-            let name = Span::from(format!("{marker}{:<10}", track.name));
+            // Congelada, con su copo detrás del nombre (se ve aunque no
+            // quepa el resto de la línea).
+            let label = match track.frozen {
+                Some(_) => format!("{}❄", track.name),
+                None => track.name.clone(),
+            };
+            let name = Span::from(format!("{marker}{label:<10}"));
             let name = if selected {
                 name.fg(accent()).bold()
             } else {
@@ -1313,11 +1319,13 @@ impl Widget for EnginePanel<'_> {
                 Span::from(meter(track.level, 8)).fg(meter_color()),
                 Span::raw(format!(
                     " ▶{slice}  {}  ciclo {}{}  pista {}",
-                    // Un sintetizador no tiene cortes: su tipo.
-                    track.synth.as_ref().map_or_else(
-                        || format!("{} cortes", track.slices.len()),
-                        |s| format!("synth {}", s.kind)
-                    ),
+                    // Congelada, eso; un sintetizador no tiene cortes: su tipo.
+                    match (track.frozen, &track.synth) {
+                        (Some(false), _) => "❄ congelada".to_string(),
+                        (Some(true), _) => "❄ congelada (ha cambiado)".to_string(),
+                        (None, Some(s)) => format!("synth {}", s.kind),
+                        (None, None) => format!("{} cortes", track.slices.len()),
+                    },
                     track.cycle,
                     // Longitud distinta del compás: polirritmia.
                     if track.length == engine::STEPS || track.length == 0 {

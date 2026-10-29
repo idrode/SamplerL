@@ -414,6 +414,9 @@ struct Voice {
     fx: Option<VoiceFx>,
     /// En bucle: el fundido del salto (ver [`Voice::new`]).
     seam: Option<Seam>,
+    /// Sin rampas de entrada ni de salida (una pista congelada); el
+    /// fundido de interrumpirla, sí.
+    raw: bool,
 }
 
 /// Fundido cruzado en el salto de un bucle de corte: `frames` frames del
@@ -503,7 +506,14 @@ impl Voice {
             shift,
             fx: None,
             seam,
+            raw: false,
         }
+    }
+
+    /// Sin rampas de entrada ni de salida (ver [`Pattern::with_raw`]).
+    fn raw(mut self) -> Self {
+        self.raw = true;
+        self
     }
 
     /// La voz pasa por los efectos de su corte.
@@ -565,7 +575,9 @@ impl Voice {
     /// con pitch o reverse.
     fn envelope(&self) -> f32 {
         let from_start = self.rendered as f32 / self.fade_in as f32;
-        let mut gain = if self.length == usize::MAX {
+        let mut gain = if self.raw {
+            1.0
+        } else if self.length == usize::MAX {
             // En bucle no hay final al que llegar.
             from_start.min(1.0)
         } else {
@@ -1116,6 +1128,9 @@ pub struct Engine {
     /// otra escucha por sidechain, en el trozo que se está mezclando. En el
     /// heap, como las pistas.
     side_buf: Box<[[f32; 2 * CHUNK]; MAX_TRACKS]>,
+    /// Pista cuya salida (tras sus efectos y antes de su volumen) sustituye
+    /// a la del master (ver [`Engine::set_tap`]).
+    tap: Option<usize>,
     /// Grupos: los que suenan, los que entran en el siguiente compás y los
     /// de un lote abierto; el estado de cada uno y lo que le llega de sus
     /// pistas en cada trozo (en el heap).
@@ -1228,6 +1243,7 @@ pub fn new_engine(sample_rate: u32) -> (Controller, Engine) {
             staged_ramp: None,
             staged_meter: None,
             send_buf: [[0.0; 2 * CHUNK]; BUSES],
+            tap: None,
             side_buf: vec![[0.0; 2 * CHUNK]; MAX_TRACKS]
                 .into_boxed_slice()
                 .try_into()
@@ -1861,6 +1877,15 @@ impl Engine {
         self.status.set_output_delay(frames);
     }
 
+    /// Para render offline (congelar una pista): la salida pasa a ser la de
+    /// la pista `track` del motor tras sus efectos y antes de su volumen,
+    /// pan, envíos y mute (lo que oye un sidechain), sin limitador; las
+    /// demás pistas siguen sonando dentro (para los sidechains) pero no
+    /// salen. `None` vuelve al master. No es para el motor en vivo.
+    pub fn set_tap(&mut self, track: Option<usize>) {
+        self.tap = track;
+    }
+
     /// Rellena `out` (entrelazado, `channels` canales) con el siguiente bloque.
     pub fn process(&mut self, out: &mut [f32], channels: usize) {
         while let Ok(cmd) = self.commands.pop() {
@@ -2402,6 +2427,9 @@ impl Engine {
         if pattern.gate {
             voice = voice.with_gate(gate);
         }
+        if pattern.raw {
+            voice = voice.raw();
+        }
         let midi = pattern.midi;
         self.status.set_hit(t, hit.start);
         self.tracks[t].lock = hit.lock;
@@ -2846,6 +2874,11 @@ impl Engine {
                 }
             }
         }
+        // La pista que se toma (para congelarla) guarda su salida como las
+        // que se escuchan.
+        if let Some(t) = self.tap.filter(|&t| t < MAX_TRACKS) {
+            heard[t] = true;
+        }
         // Los grupos se mezclan después de todas las pistas: las que
         // escuchan ya están.
         for group in self.groups.groups.iter().flatten() {
@@ -3138,6 +3171,15 @@ impl Engine {
             frame[1] = soft_limit(frame[1]);
         }
         self.status.add_master(peak, limited);
+        // Tomando una pista: su salida tras sus efectos, en vez del master.
+        if let Some(t) = self.tap.filter(|&t| t < MAX_TRACKS) {
+            let master = &mut self.master[..2 * n];
+            if live[t] {
+                master.copy_from_slice(&self.side_buf[t][..2 * n]);
+            } else {
+                master.fill(0.0);
+            }
+        }
     }
 
     /// Los grupos: cada uno despierto pasa lo que le han mandado sus pistas

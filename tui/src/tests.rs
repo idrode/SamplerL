@@ -2402,6 +2402,7 @@ mod config;
 mod devices;
 mod devices_panel;
 mod formant;
+mod freeze;
 mod grains;
 mod grains_live;
 mod grid;

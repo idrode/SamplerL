@@ -283,6 +283,9 @@ pub struct Pattern {
     /// Etiqueta de quien lo hizo (de 0 a [`crate::MAX_TAG`]): vuelve con
     /// el paso que suena ([`crate::Cursor`]).
     pub(crate) tag: u32,
+    /// Sus golpes suenan sin los fundidos de entrada y de salida (ver
+    /// [`Pattern::with_raw`]).
+    pub(crate) raw: bool,
 }
 
 impl Pattern {
@@ -357,6 +360,7 @@ impl Pattern {
             slice_fx: Vec::new(),
             step_fx,
             tag: 0,
+            raw: false,
         })
     }
 
@@ -452,6 +456,13 @@ impl Pattern {
     /// `Some(0.0)` los deja donde estaban, `Some(n)` los desplaza `n`
     /// semitonos (de ±[`crate::shift::MAX_FORMANT`]); `None`, se mueven con
     /// el pitch (como siempre). Ver [`crate::shift`].
+    /// Sus golpes suenan tal cual, sin los fundidos de 1,5 ms de entrada y
+    /// de salida (los de interrumpir uno sí): para tocar una pista
+    /// congelada, cuyo WAV ya lleva todo y se lee muestra a muestra.
+    pub fn with_raw(self) -> Self {
+        Pattern { raw: true, ..self }
+    }
+
     pub fn with_formant(self, formant: Option<f32>) -> Result<Self, SendError> {
         crate::shift::check_formant(formant)
             .map_err(|reason| SendError::InvalidStep { step: 0, reason })?;

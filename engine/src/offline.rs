@@ -53,3 +53,25 @@ pub fn write_wav(
     }
     writer.finalize()
 }
+
+/// Escribe un WAV de 32 bits en coma flotante: las muestras tal cual, sin
+/// recortar ni redondear (al leerlo con [`crate::Sample::load_wav`] a la
+/// misma frecuencia vuelven bit a bit). Para congelar pistas.
+pub fn write_wav_float(
+    path: impl AsRef<Path>,
+    samples: &[f32],
+    channels: u16,
+    sample_rate: u32,
+) -> Result<(), hound::Error> {
+    let spec = hound::WavSpec {
+        channels,
+        sample_rate,
+        bits_per_sample: 32,
+        sample_format: hound::SampleFormat::Float,
+    };
+    let mut writer = hound::WavWriter::create(path, spec)?;
+    for &s in samples {
+        writer.write_sample(s)?;
+    }
+    writer.finalize()
+}
