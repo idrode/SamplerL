@@ -1111,7 +1111,10 @@ paleta de 256.
 Con `--allow-midi` (`tui --edit canción.lua --allow-midi`), la interfaz
 abre dos puertos MIDI virtuales de ALSA. A **sampler entrada** conéctale un
 teclado, unos pads o un secuenciador con `aconnect` (`aconnect -l` lista
-los puertos; `aconnect "Mi teclado" "sampler"`) o desde su programa. Cada
+los puertos; `aconnect "Mi teclado" "sampler"`) o desde su programa. O,
+sin `aconnect`, elígelo en el panel de dispositivos (F1 «Dispositivos»,
+ver «Dispositivos: audio y MIDI» más abajo), o al arrancar con
+`--midi-in "Mi teclado"`. Cada
 nota dispara un corte de la pista seleccionada, igual que los pads del
 modo tocar (con su forma, su choke y su volumen), y la velocidad de la
 nota es el volumen del golpe. La nota 36 (el bombo de General MIDI) es el
@@ -1159,7 +1162,9 @@ es con lo que la nota empieza. Sin `mpe`, lo de un canal (bend, presión de
 canal, CC74) mueve todas sus notas, como en un teclado de siempre, y la
 presión por nota (aftertouch polifónico) solo la suya. `bend` tiene que
 coincidir con el del controlador (en el Seaboard, el de su app,
-ROLI Dashboard o Equator). Para conectar el Seaboard: `aconnect -l`, y
+ROLI Dashboard o Equator). Para conectar el Seaboard, elígelo en el panel
+de dispositivos (F1 «Dispositivos», *MIDI de entrada*): se guarda por su
+nombre y la próxima vez se conecta solo. O a mano: `aconnect -l`, y
 `aconnect 24:0 129:0` (sus números cambian al reiniciar: mira los de
 «Seaboard» y «sampler entrada»). Con un sintetizador mono (`acid`,
 `sh101`), la expresión es la de la nota que suena; para que cada dedo
@@ -1175,8 +1180,9 @@ sus `_`. El sample sigue sonando; para oír solo el synth, `:gain(0)`. Para toca
 Surge XT:
 
 1. Abre Surge XT (la versión independiente, o en tu DAW) y, en sus
-   opciones de audio y MIDI, elige como entrada **sampler salida**. O
-   conéctalos a mano: `aconnect -l` lista los puertos con sus números y
+   opciones de audio y MIDI, elige como entrada **sampler salida**. O,
+   al revés, elige su puerto en el panel de dispositivos (F1
+   «Dispositivos», *MIDI de salida*). O conéctalos a mano: `aconnect -l` lista los puertos con sus números y
    `aconnect 128:1 129:0` une el del sampler (cliente:puerto) con el de
    Surge.
 2. Pon en Surge el canal que use la pista (o que escuche todos).
@@ -1189,6 +1195,155 @@ Las notas salen en cuanto el motor las da, con su frame exacto; el retraso
 y el jitter son los del bloque de audio y del bucle de la interfaz (unos
 pocos ms). No lo he podido probar con dispositivos reales: la lógica está
 probada con un destino simulado.
+
+### Dispositivos: audio y MIDI
+
+Por dónde suena y por dónde entra y sale el MIDI se ve y se cambia en el
+**panel de dispositivos**: F1 «Dispositivos». Tiene tres listas, *Audio de
+salida*, *MIDI de entrada* y *MIDI de salida*, con el que está en uso
+marcado con `●` y el predeterminado del sistema señalado. Arriba dice por
+dónde suena ahora: el dispositivo, la frecuencia, los canales y la
+latencia. Abajo, el último aviso.
+
+| Tecla | Qué hace |
+| --- | --- |
+| ↑ ↓ (Inicio, Fin) | Mover el cursor por la lista |
+| ← → o Tab | Pasar a otra lista (el cursor va al que está en uso) |
+| Enter | Usar ese dispositivo (y guardarlo en `config.toml`) |
+| `r` | Volver a leer las listas (no se leen solas) |
+| Esc o `q` | Cerrar el panel |
+
+Al lado de *MIDI de entrada* hay un indicador, `○ nota`, que se enciende
+(`● nota`) un momento cada vez que llega una nota: así se comprueba que el
+teclado llega, sin tener que oírlo. Las listas no se leen en bucle: si
+enchufas algo, `r` (o F1 «Refrescar los dispositivos»).
+
+Para verlos sin abrir la interfaz, `tui --list-devices`: los de salida de
+audio con sus canales, frecuencias y su identificador de ALSA, y los
+puertos MIDI. Para preguntar a cada tarjeta qué admite, cpal la abre un
+momento.
+
+**Cambiar el audio.** Enter sobre otro dispositivo de *Audio de salida*:
+se abre el nuevo y, si se abre bien, el que sonaba baja a cero en 5 ms y
+el nuevo sube en otros 5 ms, sin clic. El cambio es al momento, no al
+final del compás: la canción se queda quieta esos milisegundos y sigue en
+el mismo paso, con todo lo que tenía (no se recarga nada). Si el nuevo no
+se puede abrir, sigue sonando el que estaba y lo dice. Todos los
+dispositivos se abren a la frecuencia con la que arrancó el motor (la del
+primero, normalmente 48000 Hz). Los samples ya están convertidos a ella,
+así que uno que no la admita se rechaza (con PipeWire no pasa: acepta
+cualquiera).
+
+**La latencia** que se ve es la que mide la propia salida: lo que tarda
+en oírse lo que se calcula. El resaltado del código en vivo y el cursor
+del tracker la siguen solos, también al cambiar de dispositivo. Si aun
+así ves el resaltado adelantado, ajústalo con `[resaltado] retardo_ms`.
+
+**MIDI.** Cada lista de MIDI empieza por su puerto virtual («sampler
+entrada», «sampler salida»), que es el de siempre: se conecta desde fuera
+con `aconnect`. Debajo están los puertos del sistema (un teclado USB, el
+Seaboard, Surge XT...). Enter sobre uno conecta el sampler directamente a
+ese puerto en lugar del virtual. Solo hay uno a la vez por lado, y el
+audio no se entera. Los puertos se nombran sin los números de ALSA del
+final (`Seaboard:Seaboard MIDI 1`, no `... 24:0`), que cambian de un
+arranque a otro.
+
+**Lo elegido se guarda** en `config.toml`, en `[dispositivos]`, y la
+próxima vez arranca con eso:
+
+```toml
+[dispositivos]
+audio = "Auriculares USB"
+midi_entrada = "Seaboard:Seaboard MIDI 1"
+midi_salida = "Surge XT:Surge XT MIDI In"
+terminal = "kitty --class sampler-dispositivos -e"
+```
+
+Solo se cambian esas líneas; el resto del archivo, comentarios incluidos,
+se queda como estaba. Si al arrancar lo guardado no está (los auriculares
+no están enchufados), suena por el predeterminado (o abre el puerto MIDI
+virtual) y lo avisa en la línea de estado. Para una vez, la línea de
+órdenes manda sobre el archivo sin cambiarlo:
+
+```sh
+tui --edit cancion.sampler --allow-audio --audio-device "Auriculares USB"
+tui --edit cancion.sampler --midi-in "Seaboard:Seaboard MIDI 1" --midi-out "Surge XT:Surge XT MIDI In"
+```
+
+`--audio-device` va con `--allow-audio`. `--midi-in` y `--midi-out` abren
+el MIDI aunque no pongas `--allow-midi`. Sin `--allow-audio`, el panel
+enseña solo la salida nula (no se lista ni se abre la tarjeta); sin MIDI,
+las listas de MIDI dicen cómo encenderlo.
+
+**En su propia ventana.** F1 «Abrir el panel de dispositivos en su
+ventana» lo abre en una terminal nueva con el comando de
+`[dispositivos] terminal` (si no lo hay, con el de `[editor] terminal`).
+Desde otra terminal o por SSH, `tui --window-devices cancion.sampler`
+conecta con la principal de ese script. Usa un socket aparte del del
+editor, con las mismas reglas: solo tu usuario, nada de red. Se puede
+tener el editor y el panel fuera a la vez. La ventana no abre nada por su
+cuenta: lo que eliges se lo pide a la principal, que es la que tiene los
+dispositivos. Ctrl-Q, `q` o Esc la cierran y la principal sigue. F1
+«Volver a meter el panel de dispositivos en la principal» la cierra y
+abre el panel encima de la principal. Si la terminal no se puede lanzar
+(no existe, o se cierra sin abrir el panel), lo dice y abre el panel en
+la principal. En Hyprland, una regla para que flote:
+
+```
+windowrulev2 = float, class:^(sampler-dispositivos)$
+```
+
+#### Si no suena nada
+
+1. ¿Abriste con `--allow-audio`? Sin él, el motor avanza sin abrir la
+   tarjeta (el panel dice «salida nula»).
+2. Mira la línea de arriba del panel: por dónde dice que suena. Si es la
+   salida nula, todos los dispositivos fallaron: elige uno.
+3. Con PipeWire (Gentoo, Asahi), elige `pipewire` o `default`: los dos
+   van al grafo de PipeWire, y allí decides a qué altavoz o auricular
+   (`wpctl status`, `wpctl set-default <id>`, o `pavucontrol`). Los
+   `hw:` y `plughw:` van directos a la tarjeta, sin PipeWire. Si PipeWire
+   ya la está usando, suelen dar «dispositivo ocupado».
+4. El volumen: `wpctl get-volume @DEFAULT_AUDIO_SINK@` (y que no esté en
+   mute). En el sampler, ninguna pista en solo y el panel del motor con
+   picos.
+5. `pw-top` enseña si el sampler está en el grafo y si tiene cortes
+   (*xruns*). El panel también cuenta los cortes de la salida.
+
+#### Si no llega el MIDI
+
+1. Abre el panel y toca: si `○ nota` no se enciende, no llega nada.
+2. ¿Está el puerto en *MIDI de entrada*? Si no, `r`. Si sigue sin salir,
+   el sistema no lo ve: `aconnect -l` (o `aseqdump -l`) lista lo que hay.
+3. Elígelo con Enter, o conéctalo al puerto virtual con
+   `aconnect "Mi teclado" "sampler"`.
+4. `aseqdump -p "Mi teclado"`, en otra terminal, enseña lo que manda:
+   si ahí no sale nada, el problema es del teclado o del cable.
+5. Si se enciende pero no suena: `[midi] canal` filtra un solo canal, la
+   pista seleccionada (Ctrl-O) es la que toca, y las notas por debajo de
+   `nota_base` no disparan nada.
+
+midir no avisa cuando se desenchufa un puerto. Al refrescar (`r`), si el
+que estaba en uso ya no está, vuelve al virtual y lo dice. Con la salida
+sí se nota: si un mensaje no se puede mandar, vuelve al virtual.
+
+#### Auriculares y Bluetooth
+
+- **Auriculares USB que se desenchufan**: el sampler lo nota y, sin
+  pararse, vuelve al dispositivo de antes (o, si no, al predeterminado) y
+  lo avisa. Lo guardado no cambia: la próxima vez que arranques con ellos
+  enchufados, sonará por ellos. Al volver a enchufarlos en marcha, `r` y
+  Enter.
+- **Auriculares en el jack** de la laptop: son la misma tarjeta. PipeWire
+  cambia de altavoces a auriculares él solo y el sampler sigue igual.
+- **Bluetooth**: suele tener 150-300 ms de latencia, y el panel la
+  enseña. El resaltado la sigue, pero tocar en vivo (pads, MIDI) se nota
+  tarde: para tocar, mejor con cable; el Bluetooth, para escuchar. Va
+  siempre por PipeWire (elige `pipewire` o `default` y el auricular en
+  `wpctl`). El códec, y con él la latencia, se elige en PipeWire
+  (`pavucontrol`, pestaña de configuración). Si PipeWire lleva el sonido
+  a otro sitio por su cuenta, el sampler lo dice («el sistema llevó ... a
+  otro dispositivo») y sigue sonando.
 
 ### Editor
 
@@ -3859,6 +4014,13 @@ arrange({ {"intro", 4}, {"drop", 8} })
   ajustes `--min-gap` y `--detector` son de la línea de comandos. Para
   probarlos, renderiza el WAV con `--pattern` y mira la lista de cortes.
 
+### No suena nada o no llega el MIDI
+
+Ver «Si no suena nada», «Si no llega el MIDI» y «Auriculares y
+Bluetooth» en «Dispositivos: audio y MIDI» ([sección 2](#2-atajos-de-teclado)):
+el panel de dispositivos (F1 «Dispositivos») dice por dónde suena, con qué
+latencia, y si llegan notas.
+
 ### Al pegar, todo queda en una línea
 
 La interfaz pide el pegado entre corchetes al terminal; tmux, kitty,
@@ -4703,12 +4865,15 @@ terminal: en kitty, foot, WezTerm o Ghostty, hasta que la sueltas; en
 tmux y la mayoría, mientras llegan las repeticiones de la tecla. Ver
 «Modo tocar (Esc)», [sección 2](#2-atajos-de-teclado).
 
-**Con un teclado MIDI.** Abre con `--allow-midi` y conecta el teclado al
-puerto «sampler entrada»:
+**Con un teclado MIDI.** Abre con `--allow-midi`, F1 «Dispositivos», →
+hasta *MIDI de entrada* y Enter sobre tu teclado. Al tocar, `○ nota` se
+enciende. Queda guardado: la próxima vez se conecta solo. Si no sale en
+la lista, `r` (después de enchufarlo). También se puede pedir al
+arrancar, o conectar a mano al puerto «sampler entrada»:
 
 ```sh
-tui --edit cancion.sampler --allow-audio --allow-midi
-aconnect -l                         # en otra terminal: lista los puertos
+tui --edit cancion.sampler --allow-audio --midi-in "Mi teclado"
+aconnect -l                         # o, en otra terminal: lista los puertos
 aconnect "Mi teclado" "sampler"     # con el nombre que salga en la lista
 ```
 
@@ -5178,7 +5343,8 @@ end)
 
 | Lo que pasa | Mira esto |
 | --- | --- |
-| No se oye nada, pero el tracker se mueve | ¿Abriste con `--allow-audio`? ¿El volumen del sistema está a cero (`wpctl get-volume @DEFAULT_AUDIO_SINK@`)? ¿Hay alguna pista en solo (`S` en el tracker)? F1 «Quitar mute y solo» |
+| No se oye nada, pero el tracker se mueve | ¿Abriste con `--allow-audio`? F1 «Dispositivos»: ¿por dónde dice que suena? ¿El volumen del sistema está a cero (`wpctl get-volume @DEFAULT_AUDIO_SINK@`)? ¿Hay alguna pista en solo (`S` en el tracker)? F1 «Quitar mute y solo». Más en «Si no suena nada», [sección 2](#2-atajos-de-teclado) |
+| El teclado MIDI no toca | F1 «Dispositivos»: ¿se enciende `● nota` al tocar? Si no, elige el teclado en *MIDI de entrada* (`r` si no sale). Ver «Si no llega el MIDI», [sección 2](#2-atajos-de-teclado) |
 | El tracker no se mueve | Ctrl-Espacio (o Ctrl-T) arranca. El secuenciador arranca solo con la primera carga buena: si el script tiene un error desde el principio, corrígelo y Ctrl-S |
 | Borde rojo en el editor | El error está al pie; Ctrl-G va a su línea. Sigue sonando lo anterior |
 | `el script no existe (buscado en ...)` al abrir | Estás en otra carpeta o el nombre tiene una errata. Para empezar un script nuevo, `--new` (paso 2) |

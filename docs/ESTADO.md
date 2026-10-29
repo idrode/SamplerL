@@ -1061,6 +1061,100 @@ Pedida por el usuario para ver los huecos entre pistas (breakcore, sonidos que s
 - **Coste**: nada en el hilo de audio (el motor no cambia: `no_alloc.rs` y `golden.rs` siguen igual). En el hilo de la interfaz, la rejilla se calcula en cada `App::view` solo con la vista abierta: con 8 pistas y una página de 64 pasos, unos 14 µs más por fotograma en release en el i7 de desarrollo (94 µs contra 79 µs de `view` sin ella) y unos 10 KB de memoria por fotograma (por celda, la celda y su vuelta y paso). Las sugerencias se calculan solo al pedirlas.
 - **Encima del sample y no en lugar del tracker**: el tracker y la vista dicen cosas distintas (los cortes y efectos de una vuelta contra qué pistas coinciden) y se miran juntos; la forma de onda es lo que menos falta hace mientras se buscan huecos. Cerrada por defecto, para que la pantalla de siempre no cambie.
 
+## Fase U: panel de dispositivos ✅
+
+Pedida por el usuario: ver y cambiar en caliente la salida de audio y los puertos MIDI de entrada y salida, con el panel en su propia ventana como el editor. Hechas las cuatro partes, una por commit. El uso, en «Dispositivos: audio y MIDI» (sección 2) de [docs/GUIA.md](GUIA.md).
+
+### Antes
+
+`engine::open_output` abría siempre el dispositivo predeterminado de cpal con su configuración por defecto y *movía* el `Engine` dentro del callback: no se podía recuperar para abrir otro. `NullOutput` hacía lo mismo en un hilo. El MIDI (`midi_io`) eran solo los puertos virtuales «sampler entrada» y «sampler salida», con `--allow-midi`, y se conectaba con `aconnect`.
+
+### Parte 1: lógica de dispositivos, sin interfaz
+
+- **La ranura del motor** (`engine/src/device.rs`): `EngineSlot` es un `AtomicPtr<Engine>`. El callback que suena lo toma (`swap` a nulo), llama a `Engine::process` y lo devuelve en cada bloque; si lo encuentra nulo, da silencio. El hilo de control solo lo toca sin ningún stream activo (al abrir el primero, para poner la frecuencia, y al soltar el motor si no se pudo abrir nada).
+- **El callback** (`Renderer::render`): lleva su `StreamShared` (todo atómicos: activo, parar, soltado, perdido, desviado, tropiezos, latencia y bloques servidos). No toca la ranura hasta que el control lo activa. Con `stop`, baja la ganancia a cero en `FADE_SECONDS` (5 ms), devuelve el motor y *después* marca `done` (en ese orden). Al activarse, sube desde cero en otros 5 ms. Cada bloque publica la latencia (lo que dice el backend más el bloque) en `Engine::set_output_delay`, así que el retardo del resaltado de la fase M (`Status::heard`) sigue al dispositivo nuevo sin hacer nada más. Sin reservas, mutex ni E/S: `no_alloc.rs` (`the_device_callback_and_its_handoff_never_allocate`) lo cuenta al sonar, con el nuevo en silencio esperando, con el viejo fundiendo y con el nuevo entrando.
+- **El cambio** (`AudioOutput::switch`, en el hilo de control y sin bloquear):
+  - se abre el nuevo, inactivo, a la frecuencia del motor (si no se abre, error y el viejo ni se entera);
+  - se le pide al viejo que pare;
+  - `AudioOutput::poll` (en cada `App::tick`) espera a que el viejo marque `done`, que lo dé por perdido o a que pasen `HANDOFF_TIMEOUT` (150 ms);
+  - entonces suelta el viejo (al soltarlo, su stream se para) y activa el nuevo.
+
+  Uno cada vez (otro cambio durante el traspaso es un error).
+- **Si se va** (`StreamFault::Lost`: el error de cpal `DeviceNotAvailable` o `StreamInvalidated`): `poll` cambia al anterior, si no al predeterminado y, si tampoco, a la salida nula (`NullBackend`, que siempre abre). No espera al fundido del que se fue, que ya no llama a su callback. `DeviceChanged` (el backend lo llevó a otro solo) se avisa y sigue; los demás errores se cuentan como tropiezos.
+- **Backends** (`AudioBackend`: `label`, `list`, `open`):
+  - `CpalBackend`, con el nombre de `description()` y el identificador de `id()`; las frecuencias son las habituales que caben en los rangos, más sus extremos (`listed_rates`); al abrir a una frecuencia, busca el rango que la admite, mejor con los canales y el formato por defecto;
+  - `NullBackend`, el hilo de siempre a ritmo real;
+  - `device::fake::FakeAudio`, para los tests: dispositivos que se enchufan y desenchufan, latencia por dispositivo y streams que suenan solo cuando el test los mueve (`pump`, y `pump_into` sin reservas). Su mutex es solo de los tests.
+
+  `open_output` y `NullOutput` siguen como estaban para `--script --allow-audio` y el reproductor de WAV.
+- **Lo demás** (`tui/src/devices.rs`):
+  - `Devices` junta la salida, el `MidiBackend` (`midi_io::Midir`, o el falso `devices::fake::FakeMidi`) y las listas, leídas a petición (`refresh`; nunca en bucle).
+  - Cada lado del MIDI es el puerto virtual o un puerto del sistema, uno a la vez. La entrada vieja se cierra antes de abrir la nueva (midir no deja dos virtuales con el mismo nombre); si la nueva falla, vuelve a abrir la que había.
+  - Los puertos se conocen por `port_key` (el nombre sin el ` 24:0` de ALSA) y los propios (cliente `sampler:`) no se listan.
+  - Lo que la aplicación tiene que aplicar sale como `Change`: un mensaje, la cola nueva de la entrada o el destino nuevo de las notas.
+  - `App::poll_devices` atiende la salida y, si la salida MIDI dejó de aceptar mensajes (`MidiSink::failed`, nuevo, con valor por defecto), vuelve al virtual.
+  - Las notas que llegan cuentan para el indicador de actividad (`Devices::note_received`, desde `App::poll_midi`; el reloj no cuenta).
+- **Tests**:
+  - `engine/tests/devices.rs`: listar y abrir por nombre y por identificador; uno guardado que no está; el cambio, con el audio comparado bit a bit con un render sin cambiar, desplazado por lo que avanzó el fundido, y el mismo compás; frecuencia rechazada; desenchufar en cadena hasta la salida nula y volver; un viejo muerto que se suelta por tiempo; la latencia medida y su efecto en `Status::heard`.
+  - `tui/src/tests/devices.rs`: con la App, cambiar sin perder el compás, desenchufar, MIDI de entrada por nombre con la nota que llega, un puerto roto, refrescar tras desenchufar, la salida que falla, el arranque con un puerto que no está, y sin permisos.
+
+### Parte 2: persistencia
+
+- **`[dispositivos]`** (`Config::devices`, un `devices::Choice`): `audio`, `midi_entrada` y `midi_salida`, por nombre (vacío o sin clave: el predeterminado o el virtual). La tabla de la guía sale de `DEVICES_KEYS`.
+- **Guardar** (`config::save_devices`, `with_devices`): se reescriben a mano solo esas líneas de la sección: se cambian, se quitan las que pasan a por defecto y se añaden las que faltan tras la última clave. Si no hay sección, se añade al final. Comentarios, el orden y las demás secciones quedan igual. Se escribe en un temporal y se cambia por el de verdad. `App::choose_device` guarda solo la clave de la lista elegida, y solo si cambió.
+- **Al arrancar** (`run_editor`): la configuración se lee antes de abrir el audio. `--audio-device`, `--midi-in` y `--midi-out` mandan sobre ella sin guardarse. `AudioOutput::open` prueba el pedido y, si no, el predeterminado con un aviso; `Devices::start_midi` hace lo mismo con el virtual. Los avisos van a la línea de estado junto a los de la configuración (`App::set_startup_warnings`). `--list-devices` lista con `CpalBackend` y midir y sale.
+- **Validación**: `--audio-device` va con `--allow-audio` y `--edit`; `--midi-in`/`--midi-out` van con `--edit` y encienden el MIDI.
+- **Tests**: `config.rs` (la sección, los avisos, guardar sin tocar lo demás, con escapes, en un archivo que no existía) y `tui/src/tests/devices.rs` (lo elegido se guarda, la vuelta automática no, volver al virtual quita la línea, el arranque con un guardado que no está).
+
+### Parte 3: el panel, aquí y en su ventana
+
+- **El panel** (`tui/src/devices_panel.rs`), el mismo en los dos sitios:
+  - `DevicesPanel` dibuja el estado de la salida, las tres listas (una debajo de otra; desde 110 columnas, una al lado de otra), la marca `●` del que está en uso, el predeterminado, los detalles, el cursor `▸` y, en *MIDI de entrada*, el indicador `○ nota`/`● nota` (`Blink`: encendido `BLINK`, 150 ms, desde que cambia la cuenta). Si no cabe, cada lista se desplaza para que se vea el cursor.
+  - `devices_panel::key` hace las teclas: ↑↓ Inicio Fin, ←→ y Tab (a la que está en uso de la otra lista), Enter, `r`, Esc/`q`.
+- **En la principal** (`tui/src/app/devices.rs`): la paleta tiene «Dispositivos», «Refrescar los dispositivos», «Abrir el panel de dispositivos en su ventana» y «Volver a meter el panel de dispositivos en la principal». El panel se abre encima, como «Macros» (`App::devices_panel`, `ViewModel::devices`, `devices_panel::popup_area`). Desde la ventana del editor, «Dispositivos» va a la principal (`opens_in_main`).
+- **En su ventana** (`tui --window-devices`, `tui/src/devices_window.rs`): un `DevicesWindow` con su bucle propio (`run_devices_window`), que solo dibuja el panel y la línea del enlace. Lo que elige lo pide a la principal y enseña la vista que ella le manda: nunca abre la tarjeta ni el MIDI.
+- **El protocolo** (`link.rs`, versión 4): un socket aparte del del editor (`devices_socket_path`: el del script con `-disp`), con las mismas reglas (carpeta 0700, socket 0600, `SO_PEERCRED`). `Server::bind_with` y `Client::with_hello` generalizan el servidor y el cliente: el mensaje para el cliente que se queda fuera y el saludo. Del panel a la principal, `FromDevices` (`hola`, `refrescar`, `elegir`); de la principal al panel, `ToDevices` (`hola` con el título, `vista` con las tres listas, `adios`, `devuelve`). La vista se manda solo cuando cambia.
+- **Lanzar** (`App::launch_devices_window`, `devices_command`): con `[dispositivos] terminal` o, si no, `[editor] terminal`, detrás `tui --window-devices <script>`. El panel se abre en la principal, con un mensaje claro, cuando no se puede lanzar:
+  - no hay terminal configurada (con el comando para abrirlo a mano: el socket queda escuchando);
+  - no se puede lanzar;
+  - la terminal se cierra sin que el panel llegue a conectarse.
+
+  Al conectarse, el panel de la principal se cierra. «Volver a meterlo» manda `devuelve`, suelta el socket y lo abre en la principal. Si la ventana se cierra, la principal sigue y se puede volver a abrir.
+- **Tests** (`tui/src/tests/devices_panel.rs`):
+  - el panel en varios tamaños (apilado, en columnas, bajo y desplazado, diminuto y vacío);
+  - desde la paleta, elegir audio y MIDI con el indicador encendido, refrescar y cerrar;
+  - la ventana por el socket de verdad, en el mismo proceso: listar, elegir, refrescar, en varios tamaños, volver a meterlo, cerrarla y reabrirla, y un panel de otra versión rechazado;
+  - el lanzador falso que apunta sus argumentos, la terminal que se cierra sola, la que no existe y la que falta.
+
+  `link.rs` prueba la ida y vuelta de los mensajes. `cargo test -p tui pantalla_dispositivos -- --ignored --nocapture` enseña el panel.
+
+### Parte 4: documentación
+
+Sección «Dispositivos: audio y MIDI» en la guía: el panel, `--list-devices`, el cambio, la latencia, el MIDI, lo que se guarda, la línea de órdenes y la ventana propia. Trae tres apartados: «Si no suena nada» (PipeWire, `pipewire`/`default` frente a `hw:`, `wpctl`, `pw-top`), «Si no llega el MIDI» (el indicador, `aconnect`, `aseqdump`) y «Auriculares y Bluetooth». Además: el MIDI de la sección 2 y el Seaboard citan el panel; el tutorial conecta el teclado desde el panel o con `--midi-in`; dos filas nuevas en «Si algo no suena»; un apartado en la sección 7. Las tablas de la paleta y la configuración, regeneradas.
+
+### Decisiones
+
+- **Al instante con fundido, no al compás**: abrir un dispositivo tarda lo que tarda el sistema (de milisegundos a más de un segundo con Bluetooth), así que no se puede hacer coincidir con un compás. Uno que desaparece no puede esperar. Y lo que importa musicalmente (dónde va la canción) no se pierde, porque el motor es el mismo objeto: la canción se queda quieta los milisegundos del traspaso (el que entra espera a que el que sale suelte el motor) y sigue en el mismo paso, sin saltar ni repetir. El reloj MIDI de salida y la posición en el tiempo real se retrasan ese hueco. Los 5 ms de cada fundido bastan para no oír el clic y no se notan como hueco.
+- **Primero se abre el nuevo**: si falla, el viejo sigue sin haberse tocado. Por eso «sigue con el anterior» es gratis en el cambio pedido. Si el que se va es el que suena, se prueba el anterior, el predeterminado y, por último, la salida nula, para que el programa no se cuelgue ni se quede sin reloj.
+- **La frecuencia del motor manda**: los samples se resamplean a ella al cargarlos (regla 6). Cambiarla obligaría a recargar y resamplear todo en caliente, con picos de memoria y de tiempo. Un dispositivo que no la admite se rechaza con un mensaje; con PipeWire (lo normal en Gentoo y Asahi) cualquier frecuencia vale.
+- **La latencia es la medida, no una declarada aparte**: cpal no da la latencia de un dispositivo sin abrirlo, y el tamaño de bloque declarado (`SupportedBufferSize`) es un rango, no lo que se usa. Lo que mide el callback (las marcas de tiempo de cpal más el bloque) es lo que se oye de verdad, y ya movía el resaltado. Se enseña en el panel y en el aviso del cambio.
+- **MIDI: un puerto por lado, o el virtual**: es lo más claro de enseñar y de guardar. Conectar a la vez el virtual y uno del sistema duplicaría las notas de un teclado conectado también por `aconnect`. El virtual sigue siendo el de siempre para quien ya usa `aconnect`.
+- **Por nombre sin los números de ALSA**: midir nombra los puertos `Cliente:Puerto C:P`, y `C:P` cambia al reiniciar o al enchufar en otro orden. Se busca primero el nombre exacto y luego sin números. Para el audio se guarda el nombre que se ve y se acepta también el identificador de cpal (`alsa:hw:CARD=...`).
+- **Solo se guarda lo que elige el usuario**: si unos auriculares se desenchufan y suena por los altavoces, lo guardado sigue siendo los auriculares, para que vuelvan a ser los buenos al arrancar con ellos. La línea de órdenes es para una vez y tampoco se guarda.
+- **`--midi-in`/`--midi-out` encienden el MIDI** (pedir un puerto es pedir el MIDI); `--audio-device` exige `--allow-audio`, la regla de siempre de no abrir la tarjeta sin pedirlo. Sin `--allow-audio`, el panel no lista ni abre la tarjeta (listar con ALSA ya abre cada PCM para preguntarle qué admite).
+- **Un socket aparte para el panel**: el editor y el panel pueden estar fuera a la vez, y el servidor de un editor solo atiende a uno. El protocolo sube a la versión 4 porque cambia (mensajes nuevos), aunque los del editor no cambian.
+- **Desaparición del MIDI**: midir no avisa cuando un puerto se va (en ALSA, la conexión se queda muerta sin error). La entrada se comprueba al refrescar y la salida cuando falla un envío, sin sondear en bucle.
+
+### Sin verificar con dispositivos reales
+
+Todo lo de arriba está probado con los backends falsos y nunca con la tarjeta ni con puertos de verdad (las reglas del proyecto lo prohíben desde Claude Code). Falta comprobar a mano:
+
+- **cpal con PipeWire** (Gentoo y Asahi): qué nombres salen en la lista (`pipewire`, `default`, los `hw:`), si al desenchufar unos auriculares USB llega `DeviceNotAvailable` o el stream se queda callado sin error (en ese caso el cambio automático no saltaría y habría que elegir otro), y si `DeviceChanged` llega al cambiar el sink por defecto en PipeWire.
+- **Bluetooth**: la latencia que mide el callback con un auricular de verdad y si el resaltado coincide con lo que se oye.
+- **El traspaso en una tarjeta de verdad**: que el fundido de 5 ms no se oiga y que cerrar el stream viejo no tarde (soltar un stream de ALSA espera a su hilo).
+- **midir**: conectar a un teclado o al Seaboard por nombre, el indicador de actividad, desenchufarlo y refrescar, y conectar la salida a Surge XT.
+- **La ventana de dispositivos** lanzada con una terminal de verdad (kitty, foot) y la regla de Hyprland.
+
 ## Mejoras sueltas
 
 - **Pegado multilínea**: ya lo hacían el pegado con bracketed paste (`App::paste`, `editing::burst_text` para terminales sin él) y la parte 1 de la fase L en la ventana del editor; verificado con sus tests (`pasting_keeps_the_lines_and_the_indent_and_undoes_at_once`, `pasting_with_the_completion_open_accepts_nothing`, `a_burst_of_keys_with_line_breaks_is_a_paste`, `split::pasting_in_the_editor_window_keeps_the_indent_and_undoes_at_once`): líneas y sangría tal cual, sin autocompletado ni sangrado automático, un solo Ctrl-Z.

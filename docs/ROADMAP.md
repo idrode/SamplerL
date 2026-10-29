@@ -632,6 +632,35 @@ protocolo del socket si cambia; registro único de la API; tests con
    rellenaría, con el criterio documentado (el análisis de choques, si
    lo hay).
 
+## Fase U: panel de dispositivos ✅
+
+Hechas las cuatro partes. Pedida por el usuario: la salida de audio y los
+puertos MIDI, vistos y cambiados en caliente, con el panel en su ventana
+como el editor. Detalle y decisiones en «Fase U» de
+[docs/ESTADO.md](ESTADO.md); el uso, en «Dispositivos: audio y MIDI» de
+[docs/GUIA.md](GUIA.md).
+
+Reglas de siempre: hilo de audio sin reservas, mutex ni E/S (`no_alloc.rs`
+ampliado); `golden.rs` idéntico; portable (x86_64 y ARM64); la feature
+`midi` sigue siendo opcional; versión nueva del protocolo del socket.
+
+1. ✅ **Lógica de dispositivos** (sin interfaz): listar audio de salida
+   (nombre, canales, frecuencias, predeterminado) y puertos MIDI; cambiar
+   en caliente (el audio, al instante con un fundido de 5 ms y sin perder
+   la canción ni el compás; el MIDI, sin tocar el audio); si un
+   dispositivo se va, el anterior, el predeterminado o la salida nula, con
+   aviso; refrescar a petición; la latencia medida mueve el resaltado.
+2. ✅ **Persistencia**: `[dispositivos]` en `config.toml` por nombre;
+   `--audio-device`, `--midi-in`, `--midi-out` y `--list-devices`.
+3. ✅ **Panel**: en la principal desde la paleta y en su ventana
+   (`tui --window-devices`, socket propio, protocolo 4), con el indicador
+   de actividad MIDI y vuelta a la principal si la terminal no se lanza.
+4. ✅ **Documentación**: la guía (también PipeWire, auriculares y
+   Bluetooth), el tutorial y las tablas de la paleta y la configuración.
+
+Queda por comprobar con dispositivos reales (ver «Sin verificar» en
+ESTADO): PipeWire, auriculares USB y Bluetooth, un controlador MIDI.
+
 ## Mejoras sueltas
 
 Arreglos pequeños fuera de las fases, con las reglas de siempre. Detalle
