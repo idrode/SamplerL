@@ -67,6 +67,7 @@ fn sample_view() -> DevicesView {
         ],
         activity: 3,
         notice: "audio: suena por «Auriculares USB»".into(),
+        knobs: String::new(),
     }
 }
 

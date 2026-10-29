@@ -127,6 +127,9 @@ pub struct DevicesView {
     pub activity: u64,
     /// El último aviso de los dispositivos.
     pub notice: String,
+    /// Los mandos MIDI (MIDI learn): cuántos hay asignados, el último CC
+    /// que llegó y si uno espera el suyo (lo pone la aplicación).
+    pub knobs: String,
 }
 
 impl DevicesView {
@@ -630,6 +633,7 @@ impl Devices {
             notes: [audio_note, midi_note.clone(), midi_note],
             activity: self.activity,
             notice: self.notice.clone(),
+            knobs: String::new(),
         }
     }
 }

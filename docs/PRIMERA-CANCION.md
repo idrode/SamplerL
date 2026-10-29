@@ -781,6 +781,11 @@ Cada nota suena en la pista seleccionada a su altura real (el C4 del
 teclado es la raíz `C4`), con la velocidad como volumen. Ver «MIDI» en la
 [sección 2](GUIA.md#2-atajos-de-teclado).
 
+> **¿Tu teclado tiene mandos?** F1 «MIDI learn», elige un parámetro
+> (`teclas · gain`, el corte de un filtro...) y gira un mando: queda
+> asignado y se guarda en el proyecto. F1 «Mandos MIDI» los lista. Ver
+> [MIDI learn](GUIA.md#midi-learn-un-mando-para-cada-parámetro).
+
 **Grabar lo tocado.** Para que lo que tocas quede escrito:
 
 1. En el editor, escribe al final una línea nueva con

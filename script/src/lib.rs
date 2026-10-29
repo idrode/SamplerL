@@ -58,6 +58,7 @@ fn one_bar_is_singular() {
 
 pub mod blocks;
 mod freeze;
+pub mod learn;
 pub use freeze::FreezeRender;
 use freeze::apply_frozen;
 pub mod masking;
@@ -649,6 +650,8 @@ pub struct ScriptHost {
     /// última carga y el que tiene en vivo. Recargar conserva el de vivo
     /// salvo que el script cambie el suyo.
     macro_values: HashMap<String, (f32, f32)>,
+    /// Mandos MIDI asignados (MIDI learn), por nombre de parámetro.
+    learned: Vec<learn::Learned>,
 }
 
 impl ScriptHost {
@@ -671,7 +674,55 @@ impl ScriptHost {
             stretched: Vec::new(),
             last_tag: 0,
             macro_values: HashMap::new(),
+            learned: Vec::new(),
         }
+    }
+
+    /// Los mandos MIDI asignados (del proyecto y la configuración). Van al
+    /// motor con la carga siguiente, o ya con [`ScriptHost::apply_learned`].
+    pub fn set_learned(&mut self, learned: Vec<learn::Learned>) {
+        self.learned = learned;
+    }
+
+    pub fn learned(&self) -> &[learn::Learned] {
+        &self.learned
+    }
+
+    /// Manda al motor la tabla de mandos de lo cargado (entra al compás,
+    /// como un lote). Devuelve los avisos de los que no encuentran su
+    /// parámetro.
+    pub fn apply_learned(&self, controller: &mut Controller) -> Result<Vec<String>, ScriptError> {
+        let Some(song) = &self.song else {
+            return Ok(Vec::new());
+        };
+        let (knobs, warnings) = learn::resolve(&self.learned, song, &self.slots);
+        let mut batch = Batch::new();
+        batch.set_knobs(knobs);
+        controller
+            .apply(batch)
+            .map_err(|e| ScriptError::new(format!("no se pudo enviar al motor: {e}")))?;
+        Ok(warnings)
+    }
+
+    /// El CC `cc` del canal `channel` (1-16) se ha movido a `value` (0 a
+    /// 127): mueve los mandos que lo escuchan, ya. Devuelve cuántos.
+    pub fn move_learned(
+        &self,
+        controller: &mut Controller,
+        channel: u8,
+        cc: u8,
+        value: u8,
+    ) -> Result<usize, ScriptError> {
+        let mut moved = 0;
+        for (i, l) in self.learned.iter().enumerate().take(engine::MAX_KNOBS) {
+            if l.listens(channel, cc) {
+                controller
+                    .move_knob(i, value.min(127) as f32 / 127.0)
+                    .map_err(|e| ScriptError::new(format!("no se pudo enviar al motor: {e}")))?;
+                moved += 1;
+            }
+        }
+        Ok(moved)
     }
 
     /// Ajustes manuales de cortes del proyecto: al cortar un sample con el
@@ -919,7 +970,17 @@ impl ScriptHost {
         if let Some(other) = &mut other {
             other.macros = song.macros.clone();
         }
-        let batch = song_batch(&song, &slots, self.song.as_ref())?;
+        let mut batch = song_batch(&song, &slots, self.song.as_ref())?;
+        // Los mandos MIDI, traducidos a esta canción, en el mismo lote.
+        if !self.learned.is_empty() {
+            let (knobs, warnings) = learn::resolve(&self.learned, &song, &slots);
+            batch.set_knobs(knobs);
+            for warning in warnings {
+                if !song.warnings.contains(&warning) {
+                    song.warnings.push(warning);
+                }
+            }
+        }
         controller
             .apply(batch)
             .map_err(|e| ScriptError::new(format!("no se pudo enviar al motor: {e}")))?;

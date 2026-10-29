@@ -27,6 +27,7 @@ mod devices;
 pub use devices::devices_command;
 mod freeze;
 mod key;
+mod learn;
 mod macros;
 mod mouse;
 mod vim;
@@ -276,6 +277,14 @@ pub struct App {
     key_panel: Option<key::KeyPanel>,
     /// Vista del sidechain abierta, con su historial.
     sidechain: Option<crate::sidechain::Sidechain>,
+    /// Mandos MIDI asignados (los del proyecto o, sin ellos, los de la
+    /// configuración), la lista para asignar uno, el que espera su CC, la
+    /// lista de mandos abierta y el último CC que llegó.
+    learned: Vec<script::learn::Learned>,
+    knob_picker: Option<learn::KnobPicker>,
+    learning: Option<learn::Learning>,
+    knob_list: Option<usize>,
+    last_cc: Option<(u8, u8, u8)>,
     /// Medidor del master (pico antes del limitador, con caída; puede
     /// pasar de 1).
     master_meter: f32,
@@ -447,6 +456,11 @@ impl App {
             macro_panel: None,
             key_panel: None,
             sidechain: None,
+            learned: Vec::new(),
+            knob_picker: None,
+            learning: None,
+            knob_list: None,
+            last_cc: None,
             master_meter: 0.0,
             limiting_until: None,
             clipping_until: None,
@@ -543,6 +557,8 @@ impl App {
         self.host.set_sample_dir(project.samples.clone());
         self.host.set_default_bpm(project.bpm);
         self.host.set_labels(project.labels.clone());
+        self.learned = project.learned.clone();
+        self.host.set_learned(self.learned.clone());
         self.host.set_positions(project.positions.clone());
         self.host.set_edits(project.edits.clone());
         self.reload_blocks();
@@ -585,6 +601,7 @@ impl App {
         self.keys = config.keys.clone();
         self.midi = config.midi;
         self.expression = crate::expression::Expression::new(&config.midi);
+        self.set_config_learned(config.learned.clone());
         self.highlighting = config.highlight.enabled;
         self.highlight_delay_ms = config.highlight.delay_ms;
         self.set_occupancy(config.occupancy.visible);
@@ -640,6 +657,7 @@ impl App {
             tracker_edit::COMMAND => self.run_step_fx_command(rest),
             occupancy::COMMAND => self.run_fill_command(rest),
             "bpm" => self.set_bpm_line(args.first().copied()),
+            "mando" => self.knob_command(&args),
             "grabar" | "record" => self.start_recording(args.first().copied()),
             "seccion" | "sección" | "section" => self.jump_to_section(rest),
             "linea" | "línea" | "line" => self.goto_line(rest),
@@ -767,6 +785,7 @@ impl App {
             labels: self.host.labels().to_vec(),
             positions: self.host.positions().to_vec(),
             edits: self.host.edits().to_vec(),
+            learned: self.learned.clone(),
         }
     }
 
@@ -1945,6 +1964,11 @@ impl App {
                     self.live_note_off(note);
                 }
             }
+            MidiEvent::Controller {
+                channel,
+                number,
+                value,
+            } if self.midi_knob(channel, number, value) => {}
             MidiEvent::Controller {
                 channel,
                 number,
@@ -3341,6 +3365,9 @@ impl App {
             Action::SampleKey => self.open_sample_key(),
             Action::SidechainView => self.toggle_sidechain(),
             Action::Freeze => self.freeze_selected(),
+            Action::MidiLearn => self.open_midi_learn(),
+            Action::MidiKnobs => self.open_knob_list(),
+            Action::ExportKnobs => self.export_knobs(),
             Action::Unfreeze => self.unfreeze_selected(),
             Action::Record => {
                 if self.recording.is_some() {
@@ -3780,6 +3807,15 @@ impl App {
         }
         if self.key_panel.is_some() {
             return self.handle_key_panel(input);
+        }
+        if self.knob_picker.is_some() {
+            return self.handle_knob_picker(input);
+        }
+        if self.learning.is_some() {
+            return self.handle_learning(input);
+        }
+        if self.knob_list.is_some() {
+            return self.handle_knob_list(input);
         }
         if self.devices_panel.is_some() {
             return self.handle_devices_panel(input);
@@ -4291,6 +4327,8 @@ impl App {
                 .collect(),
             macro_panel: self.macro_panel,
             key: self.key_view(),
+            knob_picker: self.knob_picker_view(),
+            knobs: self.knobs_view(),
             sidechain: self
                 .sidechain
                 .as_ref()

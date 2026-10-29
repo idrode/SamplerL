@@ -662,9 +662,9 @@ ampliado); `golden.rs` idéntico; portable (x86_64 y ARM64); la feature
 Queda por comprobar con dispositivos reales (ver «Sin verificar» en
 ESTADO): PipeWire, auriculares USB y Bluetooth, un controlador MIDI.
 
-## Fase V: afinación, mandos y congelar
+## Fase V: afinación, mandos y congelar ✅
 
-Pedida por el usuario: seis funciones, un commit por función (o por parte
+Hechas las seis. Pedida por el usuario: seis funciones, un commit por función (o por parte
 si es grande). Detalle y decisiones en «Fase V» de
 [docs/ESTADO.md](ESTADO.md); el uso, en [docs/GUIA.md](GUIA.md) y un
 recuadro en el tutorial donde encaja cada una.
@@ -678,7 +678,7 @@ versión nueva del protocolo si cambia.
 1. ✅ **Cortes en el cruce por cero**: `zero_cross` en `slice` y
    `slice_grid` (ms máximos de desplazamiento), que vale también para
    `add`, `move` y los ajustes del proyecto; apagada por defecto.
-2. **MIDI learn**: elegir un parámetro automatizable desde la paleta,
+2. ✅ **MIDI learn**: elegir un parámetro automatizable desde la paleta,
    mover un mando y queda asignado (rango y curva), en el proyecto y
    exportable a `config.toml`; lista para verlas, cambiarlas y borrarlas;
    el mando manda sobre `ramp`/`lfo` mientras se mueve.

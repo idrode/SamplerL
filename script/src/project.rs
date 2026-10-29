@@ -16,7 +16,9 @@
 //! corte en ms, que manda sobre el detector. `partir = amen.wav 8 412.5` añade un
 //! corte que empieza ahí y `unir = amen.wav 8 3` quita el corte 3 (el 2 se
 //! alarga); se aplican en orden, después de detectar y antes de los ajustes
-//! y las etiquetas, que van con la numeración que queda.
+//! y las etiquetas, que van con la numeración que queda. Cada `mando` es un
+//! mando MIDI asignado (MIDI learn; ver [`crate::learn`]):
+//! `mando = 1 21 drums lowpass.cutoff 200 8000 log`.
 
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
@@ -147,6 +149,8 @@ pub struct Project {
     pub positions: Vec<SlicePosition>,
     /// Cortes añadidos y quitados a mano, en orden.
     pub edits: Vec<SliceEdit>,
+    /// Mandos MIDI asignados (MIDI learn).
+    pub learned: Vec<crate::learn::Learned>,
 }
 
 /// Ajuste manual de un corte guardado en el proyecto: dónde empieza, en
@@ -263,6 +267,7 @@ impl Project {
         let mut labels: Vec<SliceLabel> = Vec::new();
         let mut positions: Vec<SlicePosition> = Vec::new();
         let mut edits: Vec<SliceEdit> = Vec::new();
+        let mut learned = Vec::new();
         // Línea de cada etiqueta y ajuste, para comprobar al final que su
         // corte existe (contando los que añade `partir`).
         let mut numbered: Vec<(usize, String, Cut, usize)> = Vec::new();
@@ -335,12 +340,15 @@ impl Project {
                 "partir" | "unir" => {
                     edits.push(SliceEdit::parse(value, key == "partir").map_err(|e| err(i + 1, e))?)
                 }
+                "mando" => {
+                    learned.push(crate::learn::Learned::parse(value).map_err(|e| err(i + 1, e))?)
+                }
                 other => {
                     return Err(err(
                         i + 1,
                         format!(
                             "clave desconocida «{other}» (admite: script, samples, bpm, etiqueta, \
-                             corte, partir, unir)"
+                             corte, partir, unir, mando)"
                         ),
                     ));
                 }
@@ -369,6 +377,7 @@ impl Project {
             labels,
             positions,
             edits,
+            learned,
         })
     }
 
@@ -408,6 +417,9 @@ impl Project {
                 "corte = {} {} {} {}\n",
                 p.sample, p.slices, p.slice, p.ms
             ));
+        }
+        for l in &self.learned {
+            text.push_str(&format!("mando = {}\n", l.to_line()));
         }
         std::fs::write(path, text)
     }

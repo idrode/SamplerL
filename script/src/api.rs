@@ -413,6 +413,24 @@ pub const NOTES: &[(&str, i32)] = &[
 ];
 
 /// Escala por nombre.
+/// El nombre en el registro (y en `:fx("...")`) de un efecto del motor.
+pub fn effect_name(fx: &engine::Fx) -> &'static str {
+    use engine::Fx;
+    match fx {
+        Fx::Filter {
+            kind: engine::FilterKind::LowPass,
+            ..
+        } => "lowpass",
+        Fx::Filter { .. } => "highpass",
+        Fx::Bitcrush { .. } => "bitcrush",
+        Fx::Compressor { .. } => "compressor",
+        Fx::Distortion { .. } => "distortion",
+        Fx::Gain { .. } => "gain",
+        Fx::Eq { .. } => "eq",
+        Fx::DynEq(_) => "dyneq",
+    }
+}
+
 pub fn scale(name: &str) -> Option<&'static ScaleDef> {
     SCALES.iter().find(|s| s.name == name)
 }

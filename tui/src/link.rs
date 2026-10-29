@@ -21,8 +21,9 @@ use crate::highlight::Highlight;
 /// 2 añade el traspaso del editor: `historial`, `devuelve` y `vuelvo`; la
 /// 3, lo que suena para resaltarlo en el código: `suena`; la 4, el panel de
 /// dispositivos en su ventana, en su propio socket: [`ToDevices`] y
-/// [`FromDevices`]).
-pub const VERSION: u32 = 4;
+/// [`FromDevices`]; la 5, la línea de los mandos MIDI en la vista del panel
+/// de dispositivos).
+pub const VERSION: u32 = 5;
 
 /// Lo que se deja pendiente de escribir antes de dar el otro extremo por
 /// perdido (no lee).
@@ -439,13 +440,15 @@ impl Message for ToDevices {
         match self {
             ToDevices::Welcome { version, title } => line("hola", &[&version.to_string(), title]),
             ToDevices::View(view) => {
-                // El estado, el aviso, la actividad, las tres notas y cada
+                // El estado, el aviso, la actividad, los mandos, las tres
+                // notas y cada
                 // lista: cuántas filas y, por fila, nombre, detalle y marcas
                 // (`a` en uso, `d` predeterminado).
                 let mut fields = vec![
                     view.status.clone(),
                     view.notice.clone(),
                     view.activity.to_string(),
+                    view.knobs.clone(),
                 ];
                 fields.extend(view.notes.iter().cloned());
                 for kind in Kind::ALL {
@@ -482,14 +485,15 @@ impl Message for ToDevices {
                     status: field(&f, 0, v)?.into(),
                     notice: field(&f, 1, v)?.into(),
                     activity: number(field(&f, 2, v)?, v)?,
+                    knobs: field(&f, 3, v)?.into(),
                     notes: [
-                        field(&f, 3, v)?.into(),
                         field(&f, 4, v)?.into(),
                         field(&f, 5, v)?.into(),
+                        field(&f, 6, v)?.into(),
                     ],
                     ..DevicesView::default()
                 };
-                let mut at = 6;
+                let mut at = 7;
                 for kind in Kind::ALL {
                     let count: usize = number(field(&f, at, v)?, v)?;
                     at += 1;
@@ -1022,9 +1026,10 @@ mod tests {
             notes: ["".into(), "MIDI apagado".into(), "otra".into()],
             activity: 42,
             notice: "audio: suena por «USB»".into(),
+            knobs: "2 mandos · último CC 21 (canal 1) = 64".into(),
         }));
         assert!(FromDevices::decode("elegir\tbluetooth\tx").is_err());
-        assert!(ToDevices::decode("vista\ta\tb\t1\t\t\t\t2\tsolo uno").is_err());
+        assert!(ToDevices::decode("vista\ta\tb\t1\t\t\t\t\t2\tsolo uno").is_err());
     }
 
     #[test]

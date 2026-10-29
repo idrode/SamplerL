@@ -208,6 +208,10 @@ impl DevicesPanel<'_> {
                 ("  ○ nota", dim())
             };
             title.push(Span::from(mark).fg(color));
+            // Los mandos MIDI (MIDI learn).
+            if !self.view.knobs.is_empty() {
+                title.push(Span::from(format!("  ⊙ {}", self.view.knobs)).fg(dim()));
+            }
         }
         Line::from(title).render(Rect { height: 1, ..area }, buf);
         let rows = Rect {

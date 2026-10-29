@@ -124,7 +124,7 @@ pub struct Buses {
 }
 
 /// Rango de cada parámetro con curva de los buses.
-fn bus_range(param: usize) -> (f32, f32) {
+pub fn param_range(param: usize) -> (f32, f32) {
     match param {
         DELAY_FEEDBACK => (0.0, MAX_FEEDBACK),
         _ => (0.0, 1.0),
@@ -156,7 +156,7 @@ impl Buses {
     pub fn validate(&self) -> Result<(), &'static str> {
         for (param, curve) in self.curves.iter().enumerate() {
             let Some(curve) = curve else { continue };
-            let (lo, hi) = bus_range(param);
+            let (lo, hi) = param_range(param);
             let (a, b) = curve.bounds();
             if ![a, b].iter().all(|v| (lo..=hi).contains(v)) {
                 return Err(if param == DELAY_FEEDBACK {

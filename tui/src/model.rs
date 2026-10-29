@@ -53,6 +53,9 @@ pub struct ViewModel {
     pub key: Option<crate::key_panel::KeyView>,
     /// Vista del sidechain abierta.
     pub sidechain: Option<crate::sidechain::SidechainView>,
+    /// MIDI learn: la lista de parámetros para asignar, y la de mandos.
+    pub knob_picker: Option<BlockPickerView>,
+    pub knobs: Option<KnobsView>,
     /// El panel de dispositivos abierto en esta ventana.
     pub devices: Option<DevicesPopup>,
     /// Nombre del proyecto abierto, si lo hay.
@@ -199,6 +202,14 @@ pub struct BlockPickerView {
     pub preview: Vec<String>,
     /// Confirmación pendiente (actualizar o borrar), o vacío.
     pub confirm: String,
+}
+
+/// La lista de mandos MIDI: por cada uno, el parámetro, el mando y el
+/// rango con su curva; el elegido.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct KnobsView {
+    pub rows: Vec<(String, String, String)>,
+    pub selected: usize,
 }
 
 /// Popup de autocompletado.
@@ -673,19 +684,7 @@ fn suffixes(step: &Step) -> String {
 
 /// El nombre más corto (nombre o alias del registro) del efecto de `fx`.
 pub fn short_name(fx: &Fx) -> &'static str {
-    let name = match fx {
-        Fx::Filter {
-            kind: engine::FilterKind::LowPass,
-            ..
-        } => "lowpass",
-        Fx::Filter { .. } => "highpass",
-        Fx::Bitcrush { .. } => "bitcrush",
-        Fx::Compressor { .. } => "compressor",
-        Fx::Distortion { .. } => "distortion",
-        Fx::Gain { .. } => "gain",
-        Fx::Eq { .. } => "eq",
-        Fx::DynEq(_) => "dyneq",
-    };
+    let name = script::api::effect_name(fx);
     script::api::effect(name).map_or(name, |e| {
         std::iter::once(e.name)
             .chain(e.aliases.iter().copied())

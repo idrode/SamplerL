@@ -1155,10 +1155,10 @@ Todo lo de arriba está probado con los backends falsos y nunca con la tarjeta n
 - **midir**: conectar a un teclado o al Seaboard por nombre, el indicador de actividad, desenchufarlo y refrescar, y conectar la salida a Surge XT.
 - **La ventana de dispositivos** lanzada con una terminal de verdad (kitty, foot) y la regla de Hyprland.
 
-## Fase V: afinación, mandos y congelar
+## Fase V: afinación, mandos y congelar ✅
 
 Pedida por el usuario: seis funciones, un commit por función (o por
-parte). El plan, en «Fase V» de [ROADMAP.md](ROADMAP.md).
+parte). Hechas las seis. El plan, en «Fase V» de [ROADMAP.md](ROADMAP.md).
 
 ### Parte 1: cortes en el cruce por cero
 
@@ -1217,6 +1217,107 @@ parte). El plan, en «Fase V» de [ROADMAP.md](ROADMAP.md).
   lento que el máximo no se mueven (mejor que irse lejos del golpe).
 - **Coste**: solo al cargar (hilo de control), como mucho `2·máx` lecturas
   por corte: 4800 con 50 ms a 48 kHz, nada al lado del detector.
+
+### Parte 2: MIDI learn
+
+- **Antes**: las macros (`Curve::Macro`, `Controller::set_macro`, `[midi]
+  macros` para mover una macro con un CC) y la entrada MIDI de la fase U.
+  No había forma de asignar un mando a un parámetro sin tocar el script.
+- **Motor** (`engine/src/knob.rs`): `Knobs` = hasta `MAX_KNOBS` = 16
+  `KnobMap { target, min, max, curve, latch }`; `KnobTarget::{Fx { pista,
+  ranura, parámetro }, Mix { pista, índice }, Bus { parámetro }, Synth {
+  pista, parámetro }}`; `KnobCurve::{Linear, Log, Square}`. La tabla va en
+  el lote (`Batch::set_knobs`, validada con `check_knobs`) y entra al
+  compás como las macros (`staged`/`pending`); `Controller::move_knob`
+  manda el valor ya. `KnobState::advance` (al empezar cada trozo de
+  `mix`) sigue el valor con un polo de 30 ms, sube el peso de 0 a 1 en
+  30 ms desde que se mueve y, sobre una curva (`latch` falso), lo baja en
+  0,5 s cuando lleva 1,5 s quieto; da `KnobLive` (destino, valor y peso de
+  los que mandan), que va en el `Clock` de las pistas, el `BusClock` y el
+  `SongClock` del sintetizador. En cada sitio, `KnobLive::apply` mezcla el
+  valor de la curva (o el fijo) con el del mando según el peso (en escala
+  logarítmica si el parámetro lo es) y el suavizado de siempre lo sigue:
+  `drive_block` (efectos de pista; no en los de corte ni de grupo),
+  `mix_target` (volumen, pan, envíos; y `sending` lo tiene en cuenta),
+  `Rack::drive` (buses) y `Synth::mix_into`. Un mando que manda hace que
+  la pista o los buses tomen el camino de las curvas (`moving`, `curved`):
+  sin mandos, el camino fijo de siempre, bit a bit.
+- **Script** (`script/src/learn.rs`): `Learned` (canal o cualquiera, CC,
+  pista o `bus`, parámetro por nombre —`lowpass.cutoff`, `lowpass#2.q`,
+  `gain`, `pan`, `send.reverb`, `synth.cutoff`, `reverb.size`—, mínimo,
+  máximo y curva) en texto `1 21 drums lowpass.cutoff 200 8000 log`
+  (`parse`, `to_line`). `learnable(song)`: lo que el registro dice
+  `Auto::Smooth` de los efectos de cada pista (no congelada), su volumen,
+  pan y envíos, los de su sintetizador y los de los buses, con su rango.
+  `resolve` los traduce a la tabla del motor con los nombres de lo cargado
+  (`latch` si el parámetro no tiene curva); lo que no encuentra, aviso.
+  `ScriptHost::{set_learned, apply_learned, move_learned}`; cada carga
+  manda la tabla en su mismo lote. Proyecto: `mando = ...`
+  (`Project::learned`). `api::effect_name` (el nombre del registro de un
+  efecto del motor; lo usa también `model::short_name`).
+- **Interfaz** (`tui/src/app/learn.rs`): «MIDI learn» (lista filtrable,
+  `BlockPickerPopup`), luego espera un CC (`App::learning`; Esc cancela);
+  el CC llega por `midi_knob` antes que las macros y la expresión. Un CC
+  solo mueve una cosa. «Mandos MIDI» (`KnobsPopup`): Supr, `c`, `l`, Enter
+  (orden `mando N mín máx curva`). «Exportar los mandos MIDI a la
+  configuración» (`config::save_learned`/`with_learned`: sustituye la
+  lista `mandos` de `[midi]`, aunque ocupe varias líneas, o la añade, sin
+  tocar lo demás). `[midi] mandos` se lee en `Config::learned` y es la
+  lista de un proyecto que no tiene la suya. Cada cambio va al motor
+  (`apply_learned`) y se guarda en el proyecto abierto.
+- **Panel de dispositivos**: `DevicesView::knobs`, la línea «2 mandos ·
+  último CC 21 (canal 1) = 64 · aprendiendo …» junto a `○ nota`; viaja por
+  el socket del panel, así que el protocolo sube a la **versión 5**.
+- **Tests**: `engine/src/knob.rs` (curvas, entrar y devolver, quedarse,
+  suavizado), `engine/tests/knobs.rs` (el volumen se mueve sin escalones y
+  se queda; sobre una curva manda y la devuelve sin escalones; la tabla
+  entra al compás y el valor ya; un filtro, el nivel de la reverb —igual
+  que sin envío— y el corte de un acid; una tabla que nadie mueve, bit a
+  bit; destinos que no existen), `no_alloc.rs` (cinco mandos, uno por
+  destino, moviéndose y soltándose, sin reservas),
+  `script/src/learn.rs` y `script/tests/learn.rs` (qué se ofrece, la
+  traducción con las pistas en otras ranuras y lo que no existe, que el
+  mando mueve el sonido tras cargar y sin moverlo es bit a bit, el
+  proyecto), `tui/src/config.rs` (la lista en `config.toml`) y
+  `tui/src/tests/learn.rs` (asignar desde la paleta en dos tamaños y que
+  suene, un CC una cosa, cancelar, la lista en dos tamaños, curva, rango,
+  otro mando y borrar, proyecto, configuración por defecto y exportar, el
+  panel de dispositivos). `link.rs` prueba la vista con la línea nueva.
+
+#### Decisiones (MIDI learn)
+
+- **La tabla al compás, el valor ya**: la tabla dice qué pista y qué
+  ranura mueve cada mando, y eso es de la canción que suena; tiene que
+  entrar con ella (si no, durante un compás un mando podría mover el
+  efecto equivocado de una recarga que espera). El valor no: un mando que
+  esperase al compás no serviría para tocar. Asignar un mando nuevo hace
+  que mande desde el compás siguiente.
+- **Suavizado doble**: 30 ms sobre el CC (sus 128 escalones en un corte de
+  20 Hz a 20 kHz son saltos de un 5,6 %) y después el de 5 ms de siempre.
+- **Cuándo devuelve el control**: un CC no dice si se suelta el mando
+  (los táctiles mandan otro mensaje, pero no todos), así que el criterio es
+  el tiempo: 1,5 s sin moverse. Solo sobre una curva: sobre un valor fijo
+  no hay nada a lo que volver, y que el parámetro volviera solo al del
+  script sorprendería (el mando se quedaría en un sitio y el sonido en
+  otro). Sin «pickup» (esperar a que el mando cruce el valor): la primera
+  vez el parámetro va a donde está el mando en 30 ms (sin clic, pero se
+  oye el cambio).
+- **Por nombre, no por índice**: en el proyecto y la configuración van
+  `drums lowpass.cutoff`; los índices del motor se calculan en cada carga.
+  Así sobreviven a reordenar pistas o efectos, y lo que ya no existe avisa
+  en vez de mover otra cosa.
+- **La configuración como plantilla**: un mismo controlador en varios
+  proyectos; el del proyecto manda entero (no se mezclan, para que la lista
+  que se ve sea la que suena).
+- **Qué no**: los parámetros por golpe o por grano (se leen al nacer: un
+  mando no se oiría mientras se mueve), los efectos de corte y de grupo
+  (otra cadena; se añadirían igual) y lo discreto.
+- **Coste**: sin mandos, nada (el estado avanza solo si hay alguno). Con
+  ellos, por trozo de audio un `advance` de 16 entradas y, en cada sitio,
+  una búsqueda lineal en 16 entradas cada 32 frames; una pista con un mando
+  que manda toma el camino de las curvas (como con un `ramp`). La tabla
+  son 16 × 20 bytes y va dentro de `Command` sin agrandarlo (ya ocupaba
+  2880 bytes).
 
 ### Parte 3a: tonalidad de un sample, el análisis
 

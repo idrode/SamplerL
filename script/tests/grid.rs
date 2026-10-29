@@ -159,6 +159,7 @@ fn the_project_saves_and_reads_edits_and_grid_keys() {
                 kind: EditKind::Join(3),
             },
         ],
+        learned: Vec::new(),
     };
     project.save(&path).unwrap();
     let text = std::fs::read_to_string(&path).unwrap();

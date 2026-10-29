@@ -211,6 +211,7 @@ fn slices_moved_by_hand_win_over_the_detector() {
             ms: 70.5,
         }],
         edits: Vec::new(),
+        learned: Vec::new(),
     };
     project.save(&path).unwrap();
     assert!(

@@ -188,10 +188,16 @@ impl App {
     pub(super) fn devices_popup(&self) -> Option<DevicesPopup> {
         let cursor = self.devices_panel?;
         Some(DevicesPopup {
-            view: self.devices.as_ref()?.view(),
+            view: self.with_knobs(self.devices.as_ref()?.view()),
             cursor,
             lit: self.devices_blink.lit(Instant::now()),
         })
+    }
+
+    /// La vista con la línea de los mandos MIDI.
+    fn with_knobs(&self, mut view: DevicesView) -> DevicesView {
+        view.knobs = self.knobs_line();
+        view
     }
 
     /// «Abrir el panel de dispositivos en su ventana»: escucha en el socket
@@ -398,6 +404,7 @@ impl App {
         let Some(view) = self.devices.as_ref().map(Devices::view) else {
             return;
         };
+        let view = self.with_knobs(view);
         let Some(link) = &mut self.devices_link else {
             return;
         };

@@ -538,6 +538,9 @@ pub struct Config {
     /// `[dispositivos] terminal`: la terminal del panel de dispositivos en
     /// su ventana (si no, la de `[editor] terminal`).
     pub devices_terminal: Option<Vec<String>>,
+    /// `[midi] mandos`: los mandos MIDI de un proyecto que no tiene los
+    /// suyos (MIDI learn; ver `script::learn`).
+    pub learned: Vec<script::learn::Learned>,
     /// Avisos (archivo que falta o roto, claves desconocidas, choques...).
     pub warnings: Vec<String>,
 }
@@ -623,6 +626,34 @@ impl Config {
                             ("bend", Some(n), _) if (1..=96).contains(&n) => {
                                 config.midi.bend = Some(n as u8)
                             }
+                            ("mandos", _, _) => {
+                                let lines = value.as_array().map(|list| {
+                                    list.iter()
+                                        .map(|v| {
+                                            v.as_str()
+                                                .ok_or_else(|| "cada mando es un texto".to_string())
+                                                .and_then(script::learn::Learned::parse)
+                                        })
+                                        .collect::<Vec<_>>()
+                                });
+                                match lines {
+                                    Some(lines) => {
+                                        for line in lines {
+                                            match line {
+                                                Ok(l) => config.learned.push(l),
+                                                Err(e) => config
+                                                    .warnings
+                                                    .push(format!("[midi] mandos: {e}")),
+                                            }
+                                        }
+                                    }
+                                    None => config.warnings.push(
+                                        "[midi] mandos: una lista de textos \
+                                         [\"1 21 drums lowpass.cutoff 200 8000 log\"]"
+                                            .into(),
+                                    ),
+                                }
+                            }
                             ("macros", _, _) => match midi_macros(value) {
                                 Some(list) => config.midi.macros = list,
                                 None => config.warnings.push(format!(
@@ -638,7 +669,7 @@ impl Config {
                                 ))
                             }
                             _ => config.warnings.push(format!(
-                                "[midi] «{key}» no existe (hay: nota_base, canal, reloj, mpe, bend, macros)"
+                                "[midi] «{key}» no existe (hay: nota_base, canal, reloj, mpe, bend, macros, mandos)"
                             )),
                         }
                     }
@@ -853,6 +884,86 @@ fn terminal_words(value: &toml::Value) -> Option<Vec<String>> {
     words.filter(|w| !w.is_empty())
 }
 
+/// Escribe `[midi] mandos` en `path` con `learned` sin tocar lo demás
+/// (comentarios incluidos): sustituye la lista que haya o la pone al final
+/// de `[midi]` (o añade la sección). En un temporal y luego en su sitio.
+pub fn save_learned(path: &Path, learned: &[script::learn::Learned]) -> std::io::Result<()> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(e),
+    };
+    let updated = with_learned(&text, learned);
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let tmp = path.with_extension("toml.tmp");
+    std::fs::write(&tmp, updated)?;
+    std::fs::rename(&tmp, path)
+}
+
+/// El texto de un `config.toml` con `[midi] mandos` puesto a `learned`.
+pub fn with_learned(text: &str, learned: &[script::learn::Learned]) -> String {
+    let header = |line: &str| {
+        let line = line.split('#').next().unwrap_or("").trim();
+        line.starts_with('[')
+            .then(|| line.trim_matches(['[', ']']).trim().to_string())
+    };
+    let mut entry = vec!["mandos = [".to_string()];
+    for l in learned {
+        entry.push(format!("  {},", toml_string(&l.to_line())));
+    }
+    entry.push("]".to_string());
+    let mut lines: Vec<String> = text.lines().map(String::from).collect();
+    let Some(start) = lines
+        .iter()
+        .position(|l| header(l).as_deref() == Some("midi"))
+    else {
+        let mut out = text.to_string();
+        if !out.is_empty() && !out.ends_with('\n') {
+            out.push('\n');
+        }
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str("[midi]\n");
+        for line in entry {
+            out.push_str(&line);
+            out.push('\n');
+        }
+        return out;
+    };
+    let end = lines[start + 1..]
+        .iter()
+        .position(|l| header(l).is_some())
+        .map_or(lines.len(), |i| start + 1 + i);
+    // La lista que haya (en una línea o en varias, hasta su `]`).
+    let old = (start + 1..end).find(|&i| {
+        lines[i]
+            .split_once('=')
+            .is_some_and(|(k, _)| k.trim().trim_matches('"') == "mandos")
+    });
+    match old {
+        Some(first) => {
+            let last = (first..end)
+                .find(|&i| lines[i].split('#').next().unwrap_or("").contains(']'))
+                .unwrap_or(first);
+            lines.splice(first..=last, entry);
+        }
+        None => {
+            // Detrás de la última clave de la sección.
+            let at = (start + 1..end)
+                .rev()
+                .find(|&i| !lines[i].trim().is_empty())
+                .map_or(start + 1, |i| i + 1);
+            lines.splice(at..at, entry);
+        }
+    }
+    let mut out = lines.join("\n");
+    out.push('\n');
+    out
+}
+
 /// Guarda lo elegido en `[dispositivos]` de `path` sin tocar lo demás
 /// (comentarios incluidos): cambia o quita las líneas de esas claves, o
 /// añade la sección al final. Se escribe entero en un temporal y se cambia
@@ -1061,6 +1172,34 @@ mod tests {
         // Nada elegido y sin sección: igual que estaba.
         assert_eq!(with_devices("[midi]\n", &Choice::default()), "[midi]\n");
         assert_eq!(with_devices("", &Choice::default()), "");
+    }
+
+    #[test]
+    fn the_knobs_replace_their_list_and_keep_the_rest() {
+        let knob = script::learn::Learned::parse("1 21 drums gain 0 1 lin").unwrap();
+        let text = "[midi]\nmandos = [\n  \"1 9 x pan -1 1 lin\",\n] # viejos\ncanal = 2\n[editor]\nraton = true\n";
+        let out = with_learned(text, std::slice::from_ref(&knob));
+        assert_eq!(
+            out,
+            "[midi]\nmandos = [\n  \"1 21 drums gain 0 1 lin\",\n]\ncanal = 2\n[editor]\nraton = true\n"
+        );
+        let config = Config::parse(&out, true, "c");
+        assert!(config.warnings.is_empty(), "{:?}", config.warnings);
+        assert_eq!(config.learned, std::slice::from_ref(&knob));
+        assert_eq!(config.midi.channel, Some(2));
+        // Sin sección, al final.
+        assert_eq!(
+            with_learned("[editor]\nraton = true\n", &[knob]),
+            "[editor]\nraton = true\n\n[midi]\nmandos = [\n  \"1 21 drums gain 0 1 lin\",\n]\n"
+        );
+        // Un mando mal escrito avisa y no cuenta.
+        let config = Config::parse("[midi]\nmandos = [\"1 21 drums\"]\n", true, "c");
+        assert!(
+            config.warnings[0].starts_with("[midi] mandos: «1 21 drums»"),
+            "{:?}",
+            config.warnings
+        );
+        assert!(config.learned.is_empty());
     }
 
     #[test]

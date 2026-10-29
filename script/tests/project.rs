@@ -32,6 +32,7 @@ fn project_round_trip_with_relative_paths() {
         labels: Vec::new(),
         positions: Vec::new(),
         edits: Vec::new(),
+        learned: Vec::new(),
     };
     let path = dir.join("proyectos").join("p.sampler");
     project.save(&path).unwrap();
@@ -60,6 +61,7 @@ fn project_round_trip_with_relative_paths() {
         labels: Vec::new(),
         positions: Vec::new(),
         edits: Vec::new(),
+        learned: Vec::new(),
     };
     let path = dir.join("min.sampler");
     minimal.save(&path).unwrap();
@@ -76,6 +78,7 @@ fn project_round_trip_with_relative_paths() {
             labels: Vec::new(),
             positions: Vec::new(),
             edits: Vec::new(),
+            learned: Vec::new(),
         }
     );
 }

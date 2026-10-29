@@ -163,6 +163,8 @@ fn opens_in_main(action: Action) -> bool {
             | Action::SidechainView
             | Action::Freeze
             | Action::Unfreeze
+            | Action::MidiLearn
+            | Action::MidiKnobs
             | Action::Devices
             | Action::AnalyzeMasking
             | Action::FillGap

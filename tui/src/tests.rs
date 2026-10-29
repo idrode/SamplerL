@@ -2411,6 +2411,7 @@ mod highlight;
 mod history;
 mod import;
 mod instrument;
+mod learn;
 mod length;
 mod main_window;
 mod masking;

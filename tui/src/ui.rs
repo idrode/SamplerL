@@ -532,6 +532,15 @@ fn draw_popups(frame: &mut Frame, view: &ViewModel, popup: Option<Rect>) {
     if let Some(picker) = &view.masking {
         frame.render_widget(BlockPickerPopup(picker), picker_area(frame.area(), picker));
     }
+    if let Some(picker) = &view.knob_picker {
+        frame.render_widget(BlockPickerPopup(picker), picker_area(frame.area(), picker));
+    }
+    if let Some(knobs) = &view.knobs {
+        frame.render_widget(
+            KnobsPopup(knobs),
+            knobs_area(frame.area(), knobs.rows.len()),
+        );
+    }
 }
 
 /// Sitio de las ranuras: centradas arriba, una fila por ranura.
@@ -555,6 +564,56 @@ pub fn macros_area(screen: Rect, count: usize) -> Rect {
         y: screen.y + (screen.height - height).min(2),
         width,
         height,
+    }
+}
+
+/// Sitio de la lista de mandos: centrada arriba, una fila por mando.
+pub fn knobs_area(screen: Rect, count: usize) -> Rect {
+    let width = screen.width.saturating_sub(4).min(96);
+    let height = (count as u16 + 2).min(screen.height);
+    Rect {
+        x: screen.x + (screen.width - width) / 2,
+        y: screen.y + (screen.height - height).min(2),
+        width,
+        height,
+    }
+}
+
+/// Los mandos MIDI: el parámetro, el mando y el rango; el elegido,
+/// marcado.
+pub struct KnobsPopup<'a>(pub &'a crate::model::KnobsView);
+
+impl Widget for KnobsPopup<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let view = self.0;
+        Clear.render(area, buf);
+        let block = Block::bordered()
+            .border_style(Style::new().fg(accent()))
+            .title(" mandos MIDI · Supr c l Enter · Esc ");
+        let width = view
+            .rows
+            .iter()
+            .map(|(t, _, _)| t.chars().count())
+            .max()
+            .unwrap_or(0);
+        let lines: Vec<Line> = view
+            .rows
+            .iter()
+            .enumerate()
+            .map(|(i, (target, source, range))| {
+                let mut name = Span::from(format!("{target:<width$}  "));
+                if i == view.selected {
+                    name = name.bold().fg(accent());
+                }
+                Line::from(vec![
+                    Span::from(format!(" {} ", i + 1)).fg(accent()).bold(),
+                    name,
+                    Span::from(format!("{source}  ")).fg(dim()),
+                    Span::raw(range.clone()),
+                ])
+            })
+            .collect();
+        Paragraph::new(lines).block(block).render(area, buf);
     }
 }
 
@@ -1354,6 +1413,10 @@ impl Widget for HelpLine<'_> {
             "RANURA: pulsa 1-9 · cualquier otra tecla cancela"
         } else if self.0.macro_panel.is_some() {
             "MACROS: ↑↓ elegir · ←→ ±0.05 · - + ±0.01 · 0-9 valor · Inicio 0 · Fin 1 · Esc cerrar"
+        } else if self.0.knob_picker.is_some() {
+            "MIDI LEARN: escribe para filtrar · ↑↓ elegir · Enter y mueve el mando · Esc cerrar"
+        } else if self.0.knobs.is_some() {
+            "MANDOS: ↑↓ elegir · Supr borrar · c curva · l otro mando · Enter rango · Esc cerrar"
         } else if self.0.key.is_some() {
             "TONALIDAD: ↑↓ elegir · r raíz del instrumento · i insertar instrumento · k proponer key() · Esc cerrar"
         } else if self.0.browser.is_some() {

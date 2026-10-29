@@ -286,6 +286,7 @@ fn projects_save_and_load_labels() {
         ],
         positions: Vec::new(),
         edits: Vec::new(),
+        learned: Vec::new(),
     };
     project.save(&path).unwrap();
     let text = std::fs::read_to_string(&path).unwrap();

@@ -70,7 +70,8 @@ la sección 4 (con sus parámetros, rangos y un ejemplo cada una).
 - Moverlos en el tiempo con `ramp()` y `lfo()`, o por paso con `~`.
 - Macros (`macro`): un control de 0 a 1 que mueve a la vez varios
   parámetros de varias pistas, en vivo desde la paleta («Macros») o con
-  un control MIDI.
+  un control MIDI; y MIDI learn: un mando de tu controlador para cada
+  parámetro («MIDI learn», sin tocar el script).
 - Delay y reverb como envíos (`bus`, `pista:send`).
 - Grupos de pistas (`group`): se suman y pasan juntas por sus efectos (un
   compresor que pega la batería), su volumen, su pan y sus envíos.
@@ -731,6 +732,9 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Grabar lo tocado | Abre «grabar 1»: graba N compases de lo que tocas (pads o MIDI) en la pista seleccionada, desde el compás siguiente, y lo escribe como steps("...") en el cursor; otra vez, para antes | — |
 | Tap tempo | Golpea el pulso con espacio (media de los últimos 8 golpes); Enter pone bpm(N) en el script | espacio (al golpear) |
 | Macros | Mueve en vivo las macros del script (`macro()`): ↑↓ elegir, ←→ y -+ mover, 0-9, Esc | — |
+| MIDI learn | Elige un parámetro que se mueve (efecto, volumen, pan, envío, sintetizador o bus) y mueve un mando: queda asignado, con su rango y su curva, y se guarda en el proyecto | — |
+| Mandos MIDI | Lista de los mandos asignados (parámetro, CC, canal, rango y curva): Supr borra, c cambia la curva, l asigna otro mando, Enter cambia el rango | — |
+| Exportar los mandos MIDI a la configuración | Escribe los mandos en [midi] mandos de config.toml: los usa un proyecto que no tiene los suyos | — |
 | Editar los efectos de un paso en el tracker | Cursor en el tracker: ↑↓ paso, ←→ pista, Enter escribe los efectos del paso (lp=800,q=4 crush=6) en su token del código y carga, Supr los quita, Esc sale; un paso de deshacer | — |
 | Vista de ocupación | Enseña u oculta la rejilla de qué pista suena en cada paso (una fila por pista, Σ cuántas suenan y los pasos vacíos resaltados), de lo que toca el secuenciador; con el editor en su ventana, en la principal | — |
 | Rellenar un hueco desde la vista de ocupación | Cursor en la vista de ocupación: ←→ paso, ↑↓ pista, Tab el hueco siguiente, Enter pone en ese silencio un golpe de la pista (el anterior, cambiable) escrito en su token del código y carga, Esc sale; un paso de deshacer | — |
@@ -1213,6 +1217,58 @@ macros = [21, 22]  # el CC 21 mueve la macro 1 y el 22 la 2
 Con `macros`, cada controlador (CC) de la lista mueve una macro del script
 (`macro()`), en el orden en que aparecen: de 0 a 127 es de 0 a 1. Un CC que
 mueve una macro no llega como expresión a las notas.
+
+#### MIDI learn: un mando para cada parámetro
+
+Para mover con un mando de tu controlador cualquier parámetro que se mueve
+de forma continua (los «continuo» de la tabla «Qué se puede automatizar»:
+el corte de un filtro, el `drive` de una distorsión, el volumen, el pan o
+un envío de una pista, un parámetro de un sintetizador o de los buses):
+
+1. F1 «MIDI learn»: la lista de lo que se puede asignar, por pista
+   (`drums · lowpass.cutoff`, `drums · gain`, `bass · synth.cutoff`,
+   `bus · reverb.size`...). Escribe para filtrar, ↑ ↓ y Enter.
+2. Mueve el mando: queda asignado (su CC y su canal), con el rango entero
+   del parámetro y curva logarítmica si es una frecuencia o un tiempo. Esc
+   cancela. Un CC mueve una sola cosa: si ya movía otra, la suelta.
+3. F1 «Mandos MIDI»: la lista (parámetro, CC, canal, rango y curva). Supr
+   borra, `c` cambia la curva (`lin`, `log`, `cuad`: más fino abajo), `l`
+   le asigna otro mando y Enter deja escrita la orden `mando 1 200 8000
+   log` para cambiar el mínimo, el máximo y la curva.
+
+**Cómo entra**: la asignación va al motor con la canción y entra al
+compás; lo que mueves, ya, suavizado (el CC llega en 128 escalones: se
+siguen en 30 ms y luego con el suavizado de siempre del parámetro), sin
+clics. Si el parámetro tiene una curva (`ramp`, `lfo`, `macro`), el mando
+manda mientras se mueve (entra en 30 ms) y, quieto 1,5 s, se la devuelve
+en medio segundo. Si es un valor fijo, se queda donde lo dejes (también al
+recargar). La primera vez que se mueve, el parámetro va de golpe (en esos
+30 ms) a donde está el mando.
+
+**Dónde se guarda**: en el proyecto, una línea por mando
+(`mando = 1 21 drums lowpass.cutoff 200 8000 log`; canal `*` es
+cualquiera; la pista `bus`, los buses); sin proyecto, con «guardar».
+Van por nombre, así que siguen valiendo si cambias el orden de las pistas
+o de los efectos (dos del mismo efecto: `lowpass#2.cutoff`). F1 «Exportar
+los mandos MIDI a la configuración» los escribe en `config.toml`, y un
+proyecto que no tiene los suyos usa esos:
+
+```toml
+[midi]
+mandos = [
+  "1 21 drums lowpass.cutoff 200 8000 log",
+  "* 74 bus reverb.size 0 1 lin",
+]
+```
+
+El panel de dispositivos dice cuántos hay, el último CC que llegó (para
+saber qué manda tu controlador) y si uno espera el suyo. Un CC asignado no
+mueve una macro (`[midi] macros`) ni llega como expresión a las notas.
+**Si no responde**: sin `--allow-midi` no llega nada; si la carga avisa
+«ese parámetro no está en el script», la pista o el efecto ya no se llaman
+así (bórralo de la lista y asígnalo otra vez). Los efectos de los grupos,
+los de un corte y los parámetros por golpe o por grano no se asignan (no
+se mueven dentro de un golpe).
 
 Con `reloj = true`, el reloj MIDI que llegue (24 pulsos por negra) pone el
 tempo: se calcula con los pulsos de las últimas cuatro negras (por mínimos
