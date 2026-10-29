@@ -25,6 +25,7 @@ mod cue;
 mod devices;
 #[cfg(test)]
 pub use devices::devices_command;
+mod key;
 mod macros;
 mod mouse;
 mod vim;
@@ -270,6 +271,8 @@ pub struct App {
     group_meters: [f32; engine::MAX_GROUPS],
     /// Panel de las macros abierto, con la elegida.
     macro_panel: Option<usize>,
+    /// Panel «Tonalidad del sample» abierto.
+    key_panel: Option<key::KeyPanel>,
     /// Medidor del master (pico antes del limitador, con caída; puede
     /// pasar de 1).
     master_meter: f32,
@@ -439,6 +442,7 @@ impl App {
             meters: [0.0; MAX_TRACKS],
             group_meters: [0.0; engine::MAX_GROUPS],
             macro_panel: None,
+            key_panel: None,
             master_meter: 0.0,
             limiting_until: None,
             clipping_until: None,
@@ -1129,6 +1133,20 @@ impl App {
                 self.browser_preview();
             }
             Key::Tab => self.browser_preview(),
+            Key::Char('k') if input.ctrl => {
+                if let Some(file) = matches.get(browser.selected).cloned() {
+                    self.browser_preview();
+                    if let Some(sample) = self
+                        .browser
+                        .as_ref()
+                        .and_then(|b| b.loaded.get(&file).cloned())
+                    {
+                        let _ = self.controller.stop_preview();
+                        self.browser = None;
+                        self.analyze_key(file, sample);
+                    }
+                }
+            }
             Key::Backspace => {
                 browser.query.pop();
                 browser.selected = 0;
@@ -3316,6 +3334,7 @@ impl App {
             Action::SuggestFills => self.suggest_fills(),
             Action::TapTempo => self.start_tap(Instant::now()),
             Action::Macros => self.open_macros(),
+            Action::SampleKey => self.open_sample_key(),
             Action::Record => {
                 if self.recording.is_some() {
                     self.finish_recording();
@@ -3732,6 +3751,9 @@ impl App {
         if self.macro_panel.is_some() {
             return self.handle_macros(input);
         }
+        if self.key_panel.is_some() {
+            return self.handle_key_panel(input);
+        }
         if self.devices_panel.is_some() {
             return self.handle_devices_panel(input);
         }
@@ -4002,6 +4024,7 @@ impl App {
     pub fn tick(&mut self) {
         self.poll_link();
         self.poll_devices();
+        self.poll_key_analysis();
         if self.last_external_check.elapsed() >= EXTERNAL_CHECK {
             self.last_external_check = Instant::now();
             self.check_external();
@@ -4235,6 +4258,7 @@ impl App {
                 .map(|m| (m.name.clone(), m.value))
                 .collect(),
             macro_panel: self.macro_panel,
+            key: self.key_view(),
             devices: self.devices_popup(),
             vim: self.vim.as_ref().map(vim::Vim::label),
             timeline,

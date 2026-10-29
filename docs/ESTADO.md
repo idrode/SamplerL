@@ -1260,6 +1260,46 @@ parte). El plan, en «Fase V» de [ROADMAP.md](ROADMAP.md).
   release); hasta 60 s, unas 350. Siempre en el hilo de control, al
   pedirlo.
 
+### Parte 3b: tonalidad de un sample, el panel
+
+- **Panel** (`tui/src/key_panel.rs`, sin estado de la aplicación):
+  `KeyView` (sample, `KeyState::{Analyzing, Nothing, Done}` con las tres
+  candidatas y su correlación, la confianza, el aviso y la raíz, la
+  elegida y la tonalidad de la canción), `KeyPopup` (barras como las de las
+  macros, el aviso en el color de los avisos, las tres acciones y las
+  teclas) y `popup_area`, del alto de lo que enseña.
+- **En la App** (`tui/src/app/key.rs`): «Tonalidad del sample» (paleta,
+  `Action::SampleKey`; desde la ventana del editor, en la principal) toma el
+  sample de la pista seleccionada (un sintetizador no tiene); Ctrl-K en el
+  explorador, el elegido (lo lee como la preescucha). `analyze_key` lanza
+  `engine::detect_key` en un hilo y `poll_key_analysis` (en `tick`) lo
+  recoge por un canal: la interfaz no se para. ↑↓ eligen la candidata;
+  `r` cambia o añade `root` en el `instrument()` de ese sample
+  (`key_panel::with_instrument_root`: directo o por una variable `local`;
+  la raíz es la tónica elegida en la octava donde más suena la mejor);
+  `i` inserta `sample("x"):instrument({ root = "A3" })` en el cursor; `k`
+  escribe `key("A", "minor")` (`with_key_line`: sustituye la línea `key()`
+  o va detrás de `bpm()`). Cada una, un paso de deshacer (`replace_text`,
+  ahora `pub(super)`), y ninguna carga: se aplica con Ctrl-S.
+- **Tests**: `key_panel.rs` (la raíz cambiada, añadida, sin tabla, con
+  tabla vacía, en varias líneas, por una variable, otro sample, `sroot`; la
+  línea `key()`) y `tui/src/tests/sample_key.rs` (desde la paleta, en
+  120×40, 80×24 y 60×18, A menor con la raíz A3 y las acciones; un break,
+  confianza baja; `r` no carga hasta Ctrl-S, carga la raíz nueva y Ctrl-Z
+  lo deshace de una vez; `i`; `k` propone sin aplicar, Ctrl-S la aplica y
+  otra vez sustituye la línea; Ctrl-K en el explorador).
+
+#### Decisiones (panel)
+
+- **Un hilo y un canal**, no `rayon` ni un trabajador fijo: es una
+  petición suelta del usuario; si cierra el panel antes de acabar, el
+  resultado se tira.
+- **Proponer, nunca aplicar**: `k` escribe `key()` en el editor y nada
+  más; la tonalidad cambia cuando el usuario carga, como cualquier otro
+  cambio del script (y entra al compás).
+- **Letras y no un menú**: tres acciones fijas caben en una línea de
+  ayuda y no hace falta elegir y confirmar.
+
 ### Parte 4: tonalidad global (`key`, `transpose`)
 
 - **Lua** (`script/src/lib.rs`): `key(tónica [, modo])` (el modo, cualquier

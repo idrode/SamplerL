@@ -159,6 +159,7 @@ fn opens_in_main(action: Action) -> bool {
         Action::Browser
             | Action::TapTempo
             | Action::Macros
+            | Action::SampleKey
             | Action::Devices
             | Action::AnalyzeMasking
             | Action::FillGap
@@ -812,7 +813,7 @@ impl App {
 
     /// Pone otro texto en el editor; se deshace de una vez, como cualquier
     /// acción compuesta. El cursor se queda en su línea.
-    fn replace_text(&mut self, text: &str) {
+    pub(super) fn replace_text(&mut self, text: &str) {
         let cursor = self.editor.cursor();
         let (row, col) = (cursor.0, cursor.1);
         self.grouped(|e| {

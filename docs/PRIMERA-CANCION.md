@@ -744,6 +744,11 @@ track("teclas", teclas):steps(menor:melody("1 . 3 .  5 . 3 .  4 . . .  5 . 7 .",
 `^` son semitonos sobre la raíz. Las escalas que hay, en `scale`
 ([sección 4](GUIA.md#4-api-de-lua)).
 
+> **¿En qué tonalidad está tu sample?** F1 «Tonalidad del sample» (o
+> Ctrl-K en el explorador) la analiza; `r` la pone de raíz del
+> instrumento y `k` propone `key()` para la canción. Ver
+> [Saber la tonalidad de un sample](GUIA.md#saber-la-tonalidad-de-un-sample).
+
 > **La tonalidad de la canción.** Con `key("C", "minor")` al principio,
 > `melody("1 . 3 .  5 . 3 .")` entiende grados, `scale()` toma su escala y
 > los pads del modo tocar tocan los grados de do menor en vez de

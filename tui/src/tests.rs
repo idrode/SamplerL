@@ -1141,7 +1141,10 @@ fn completion_items(app: &App) -> Vec<String> {
 fn completion_filters_by_prefix_while_typing() {
     let (mut app, _engine) = open_at_end("complete_filter");
     type_text(&mut app, "t");
-    assert_eq!(completion_items(&app), ["track", "transpose", "then", "true"]);
+    assert_eq!(
+        completion_items(&app),
+        ["track", "transpose", "then", "true"]
+    );
     type_text(&mut app, "r");
     assert_eq!(completion_items(&app), ["track", "transpose", "true"]);
     type_text(&mut app, "a");
@@ -2419,6 +2422,7 @@ mod notes;
 mod occupancy;
 mod record;
 mod resample;
+mod sample_key;
 mod sections;
 mod sends;
 mod shapes;

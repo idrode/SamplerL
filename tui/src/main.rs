@@ -11,6 +11,7 @@ mod editing;
 mod expression;
 mod highlight;
 mod history;
+mod key_panel;
 mod link;
 mod midi;
 #[cfg(feature = "midi")]

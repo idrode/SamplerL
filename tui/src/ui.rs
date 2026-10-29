@@ -481,6 +481,12 @@ fn draw_popups(frame: &mut Frame, view: &ViewModel, popup: Option<Rect>) {
     if let Some(browser) = &view.browser {
         frame.render_widget(BrowserPopup(browser), palette_area(frame.area()));
     }
+    if let Some(key) = &view.key {
+        frame.render_widget(
+            crate::key_panel::KeyPopup(key),
+            crate::key_panel::popup_area(frame.area(), key),
+        );
+    }
     if let Some(popup) = &view.devices {
         frame.render_widget(
             crate::devices_panel::DevicesPanel {
@@ -1315,8 +1321,10 @@ impl Widget for HelpLine<'_> {
             "RANURA: pulsa 1-9 · cualquier otra tecla cancela"
         } else if self.0.macro_panel.is_some() {
             "MACROS: ↑↓ elegir · ←→ ±0.05 · - + ±0.01 · 0-9 valor · Inicio 0 · Fin 1 · Esc cerrar"
+        } else if self.0.key.is_some() {
+            "TONALIDAD: ↑↓ elegir · r raíz del instrumento · i insertar instrumento · k proponer key() · Esc cerrar"
         } else if self.0.browser.is_some() {
-            "SAMPLES: escribe para filtrar · ↑↓ elegir y preescuchar · Tab preescuchar · Enter insertar · Esc cerrar"
+            "SAMPLES: escribe para filtrar · ↑↓ elegir y preescuchar · Tab preescuchar · Enter insertar · Ctrl-K tonalidad · Esc cerrar"
         } else if self.0.block_picker.is_some() {
             "BLOQUES: escribe para filtrar (nombre, #etiqueta, descripción) · ↑↓ elegir · \
              Enter · Esc cerrar"

@@ -682,7 +682,7 @@ versión nueva del protocolo si cambia.
    mover un mando y queda asignado (rango y curva), en el proyecto y
    exportable a `config.toml`; lista para verlas, cambiarlas y borrarlas;
    el mando manda sobre `ramp`/`lfo` mientras se mueve.
-3. **Tonalidad de un sample**: cromagrama y perfiles mayor/menor fuera
+3. ✅ **Tonalidad de un sample**: cromagrama y perfiles mayor/menor fuera
    del hilo de audio; un panel con las tres más probables y la confianza,
    desde la paleta y el explorador; usarla como raíz del instrumento.
 4. ✅ **Tonalidad global**: `key()` y `transpose()`; `scale()`, `melody()` e

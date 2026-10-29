@@ -41,6 +41,7 @@ pub enum Action {
     Metronome,
     DetectBpm,
     SliceNotes,
+    SampleKey,
     Preview,
     SliceEarlier,
     SliceLater,
@@ -271,6 +272,12 @@ pub const ACTIONS: &[ActionDef] = &[
         name: "Notas de los cortes",
         description: "Lista la nota de cada corte de la pista en cifrado americano (C#4), con sus cents si está desafinada",
         keys: "",
+    },
+    ActionDef {
+        action: Action::SampleKey,
+        name: "Tonalidad del sample",
+        description: "Analiza la tonalidad del sample de la pista (las tres más probables, la raíz y la confianza): r la pone de raíz del instrumento, i inserta un instrumento con ella, k propone key() para la canción",
+        keys: "Ctrl-K en el explorador",
     },
     ActionDef {
         action: Action::Metronome,

@@ -49,6 +49,8 @@ pub struct ViewModel {
     pub macros: Vec<(String, f32)>,
     /// Panel de las macros abierto, con la elegida.
     pub macro_panel: Option<usize>,
+    /// Panel «Tonalidad del sample» abierto.
+    pub key: Option<crate::key_panel::KeyView>,
     /// El panel de dispositivos abierto en esta ventana.
     pub devices: Option<DevicesPopup>,
     /// Nombre del proyecto abierto, si lo hay.

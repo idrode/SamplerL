@@ -163,7 +163,8 @@ Para elegir un WAV sin salir de la interfaz, «Explorador de samples»
 (paleta) lista los de la carpeta de muestras y sus subcarpetas: escribe
 para filtrar por nombre, ↑ ↓ eligen y preescuchan cada uno en la voz
 aparte (sin tocar las pistas), Tab lo vuelve a sonar, Enter escribe
-`sample("ruta")` en el cursor y Esc cierra.
+`sample("ruta")` en el cursor, Ctrl-K analiza su tonalidad (abajo) y Esc
+cierra.
 
 Para tocar el break **a otro tempo sin cambiar su tono**, estíralo:
 `sample("amen.wav"):stretch(140):slice(8)` lo pasa de 140 al tempo de la
@@ -172,6 +173,46 @@ nueva y la vista del sample lo dice (`140→170 BPM`); los ajustes de cortes
 siguen en ms del sample original. Ver `sample:stretch` en la sección 4.
 
 > **Usado en el tutorial:** [paso 3, Cargar un break y trocearlo](PRIMERA-CANCION.md#paso-3-cargar-un-break-y-trocearlo).
+
+### Saber la tonalidad de un sample
+
+«Tonalidad del sample» (paleta) analiza el sample de la pista
+seleccionada, y Ctrl-K en el explorador, el que tengas elegido. El
+análisis va aparte (el audio no se entera) y tarda poco; mientras, el panel
+dice «analizando…». Enseña:
+
+- **Las tres tonalidades más probables** («A menor», «C mayor»...), cada
+  una con una barra de cuánto encaja (de 0 a 1). ↑ ↓ eligen una.
+- **La raíz propuesta**: la tónica en la octava donde más suena (`A3`).
+- **La confianza** (de 0 a 1) y, por debajo de 0,5, el aviso «confianza
+  baja»: material percusivo (un break), ruido o una sola nota (con una
+  nota no se sabe si es mayor o menor: las dos salen casi empatadas).
+- **La tonalidad de la canción**, si el script tiene `key()`.
+
+Y tres acciones, que solo escriben en el editor (nada se carga hasta
+Ctrl-S, y Ctrl-Z lo deshace de una vez):
+
+- `r`: **usar como raíz del instrumento**: pone `root = "A3"` en el
+  `instrument()` de ese sample (en `sample("x.wav"):instrument(...)` o en
+  `local s = sample("x.wav")` y `s:instrument(...)`), cambiando la raíz que
+  hubiera o añadiéndola.
+- `i`: **insertar** `sample("x.wav"):instrument({ root = "A3" })` en el
+  cursor.
+- `k`: **proponer como tonalidad de la canción**: escribe
+  `key("A", "minor")` (sustituye la línea `key()` que haya, o va detrás de
+  `bpm()`). Nunca se aplica sola: la ves en el código y la cargas tú.
+
+Cómo lo calcula: un cromagrama (cuánto suena cada nota de C a B, con los
+picos del espectro de C2 a C8) comparado con los perfiles de tonalidad
+mayor y menor de Krumhansl, en las 24 tonalidades. Va bien con material
+tonal (acordes, una melodía, un pad); con un break o un golpe, el aviso.
+
+**Si sale mal**: un loop con mucho bajo en la quinta puede dar la
+tonalidad de la quinta (E menor en vez de A menor): mira la segunda y
+la tercera, y elige con ↑ ↓ antes de `r`, `i` o `k`. Si dice «no encuentro
+el instrument()», el script crea el instrumento de otra forma (una
+función, una tabla): usa `i` y cópialo donde toque. «nada que analizar»
+es silencio o un sample de menos de una décima de segundo.
 
 ### Usar un sample propio
 
@@ -663,6 +704,7 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Quitar mute y solo | Quita todos los mute y solo en vivo (los del script siguen) | — |
 | Detectar el BPM del sample | Propone el tempo y los compases del sample de la pista; Enter pone bpm() en el script | — |
 | Notas de los cortes | Lista la nota de cada corte de la pista en cifrado americano (C#4), con sus cents si está desafinada | — |
+| Tonalidad del sample | Analiza la tonalidad del sample de la pista (las tres más probables, la raíz y la confianza): r la pone de raíz del instrumento, i inserta un instrumento con ella, k propone key() para la canción | Ctrl-K en el explorador |
 | Metrónomo | Enciende o apaga el clic en cada pulso (no entra en lo exportado salvo que se pida) | — |
 | Reiniciar medidores | Pone a cero los medidores y quita los avisos de limitador y saturación | — |
 | Etiquetar el corte seleccionado | Abre «etiquetar N » para escribir la etiqueta (kick, snare...); se guarda en el proyecto | — |
