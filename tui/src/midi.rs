@@ -106,6 +106,10 @@ pub fn parse(bytes: &[u8]) -> Option<MidiEvent> {
 /// (`midi_io`) o, en los tests, una lista.
 pub trait MidiSink {
     fn send(&mut self, bytes: &[u8]);
+    /// El otro lado dejó de aceptar mensajes (el puerto se fue).
+    fn failed(&self) -> bool {
+        false
+    }
 }
 
 /// Un destino que guarda lo que recibe (para probar sin dispositivos).

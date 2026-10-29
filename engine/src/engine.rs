@@ -1848,6 +1848,11 @@ impl Engine {
         self.rack.params = params;
     }
 
+    /// La frecuencia del motor.
+    pub fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
     /// Frames que tarda en oírse el final del bloque que se acaba de
     /// calcular (la latencia de la salida más el bloque): para que la
     /// interfaz siga lo que se oye ([`crate::Status::heard`]). Solo un

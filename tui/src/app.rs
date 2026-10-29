@@ -22,6 +22,7 @@ use crate::model::{
 use crate::palette::{self, Action, Item};
 
 mod cue;
+mod devices;
 mod macros;
 mod mouse;
 mod vim;
@@ -359,6 +360,9 @@ pub struct App {
     midi_in: Option<rtrb::Consumer<crate::midi::TimedEvent>>,
     /// Destino de las notas que salen de las pistas con `:midi()`.
     midi_out: Option<Box<dyn crate::midi::MidiSink>>,
+    /// La salida de audio y los puertos MIDI, para elegirlos en caliente
+    /// (solo en la ventana principal de verdad; en los tests, falsos).
+    devices: Option<crate::devices::Devices>,
     /// Con el editor en su propia ventana: de qué lado está esta (ver
     /// `split`). Sin él, una sola ventana como siempre.
     link: Option<split::Link>,
@@ -470,6 +474,7 @@ impl App {
             clock: crate::midi::ClockTempo::default(),
             midi_in: None,
             midi_out: None,
+            devices: None,
             link: None,
             loaded_text: None,
             cursors: Default::default(),
@@ -1789,14 +1794,15 @@ impl App {
         self.message = format!("«{text}»: {current} de {total} (F6 siguiente, F7 anterior)");
     }
 
-    /// La cola por la que llegan los mensajes del puerto MIDI de entrada.
-    #[cfg_attr(not(feature = "midi"), allow(dead_code))]
+    /// La cola por la que llegan los mensajes del puerto MIDI de entrada
+    /// (en la aplicación la ponen los dispositivos).
+    #[cfg(test)]
     pub fn set_midi_input(&mut self, input: rtrb::Consumer<crate::midi::TimedEvent>) {
         self.midi_in = Some(input);
     }
 
     /// Adónde mandar las notas MIDI de las pistas.
-    #[cfg_attr(not(feature = "midi"), allow(dead_code))]
+    #[cfg(test)]
     pub fn set_midi_output(&mut self, sink: Box<dyn crate::midi::MidiSink>) {
         self.midi_out = Some(sink);
     }
@@ -1815,6 +1821,11 @@ impl App {
     /// Atiende los mensajes MIDI que han llegado.
     pub fn poll_midi(&mut self) {
         while let Some(event) = self.midi_in.as_mut().and_then(|q| q.pop().ok()) {
+            if let (crate::midi::MidiEvent::NoteOn { .. }, Some(devices)) =
+                (event.event, &mut self.devices)
+            {
+                devices.note_received();
+            }
             self.midi_event(event);
         }
         self.flush_expression();
@@ -3922,6 +3933,7 @@ impl App {
     /// Lee el estado del motor, actualiza medidores y recoge la basura.
     pub fn tick(&mut self) {
         self.poll_link();
+        self.poll_devices();
         if self.last_external_check.elapsed() >= EXTERNAL_CHECK {
             self.last_external_check = Instant::now();
             self.check_external();

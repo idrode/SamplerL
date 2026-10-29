@@ -4,6 +4,7 @@ pub mod arrangement;
 pub mod automation;
 pub mod bpm;
 pub mod bus;
+pub mod device;
 mod engine;
 mod fx;
 pub mod grain;
@@ -33,6 +34,9 @@ pub use automation::{
 };
 pub use bpm::{BpmGuess, detect_bpm};
 pub use bus::{Buses, DelayParams, Division, ReverbParams};
+pub use device::{
+    AudioBackend, AudioDeviceInfo, AudioEvent, AudioOutput, CpalBackend, NULL_NAME, OutputInfo,
+};
 pub use engine::{
     Batch, Controller, Engine, MAX_ATTACK_MS, MAX_BEND, MAX_CHOKE, MAX_CROSSFADE_MS,
     MAX_RELEASE_MS, MAX_START_BAR, MAX_TRACKS, MidiNote, PlayMode, SHAPE_ATTACK, SHAPE_CROSSFADE,

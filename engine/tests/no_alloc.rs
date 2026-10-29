@@ -4,7 +4,8 @@
 //! instrumentos (polifonía, ADSR, bucles), el EQ (suavizado y automatizado),
 //! el EQ dinámico con sidechain, efectos por corte (con sus colas), bucles de corte con fundido, nubes de granos en vivo, sintetizadores (mono con accent, slide y el sub de cada nota, polifónicos con unison y sub abierto, un subharm de 8 voces con sus seis capas, un sh101 con legato, curvas y notas en vivo), grupos con sus efectos y macros que se mueven en vivo, cambios de
 //! patrón al compás, un patrón que se suelta a la cola de basura y el paso
-//! de cada pista y el retardo de salida que se publican para la interfaz.
+//! de cada pista y el retardo de salida que se publican para la interfaz;
+//! y el callback de un dispositivo con el traspaso del motor de uno a otro.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -1490,6 +1491,55 @@ fn the_audio_thread_never_allocates() {
     });
     assert_eq!(n, 0, "reservas al arrancar en un compás");
     controller.collect_garbage();
+}
+
+/// El callback de un dispositivo (`device::Renderer`): tomar el motor de su
+/// ranura, los fundidos de salida y de entrada de un cambio de dispositivo
+/// y el silencio mientras espera, sin reservas.
+#[test]
+fn the_device_callback_and_its_handoff_never_allocate() {
+    use engine::AudioOutput;
+    use engine::device::fake::FakeAudio;
+
+    let mut mono = vec![0.0f32; 6000];
+    mono[..800].fill(0.5);
+    let sample = Arc::new(Sample::from_interleaved(&mono, 1, RATE, RATE).unwrap());
+    let slices = Slices::detect(&sample, 2);
+    let steps = [Some(Step::new(0)); STEPS];
+    let pattern = Pattern::from_bars(sample, &slices, &[steps]).unwrap();
+    let (mut controller, engine) = new_engine(RATE);
+    controller.set_pattern(pattern).unwrap();
+    controller.start().unwrap();
+
+    let fake = FakeAudio::default();
+    fake.add("a", 2, &[RATE], true);
+    fake.add("b", 2, &[RATE], false);
+    let (mut output, _) = AudioOutput::open(fake.backend(), engine, None).unwrap();
+    let mut out = vec![0.0f32; 512 * 2];
+    let n = counted(|| {
+        for _ in 0..50 {
+            assert!(fake.pump_into("a", &mut out));
+        }
+    });
+    assert_eq!(n, 0, "reservas al sonar");
+    output.switch(Some("b")).unwrap();
+    let n = counted(|| {
+        // El nuevo espera en silencio y el viejo baja a cero.
+        assert!(fake.pump_into("b", &mut out));
+        assert!(fake.pump_into("a", &mut out));
+        assert!(fake.pump_into("a", &mut out));
+    });
+    assert_eq!(n, 0, "reservas en el fundido de salida");
+    assert_eq!(output.poll().len(), 1);
+    let mut heard = false;
+    let n = counted(|| {
+        for _ in 0..50 {
+            assert!(fake.pump_into("b", &mut out));
+            heard |= out.iter().any(|&s| s != 0.0);
+        }
+    });
+    assert_eq!(n, 0, "reservas en el fundido de entrada");
+    assert!(heard, "suena por el nuevo");
 }
 
 #[test]

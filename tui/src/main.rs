@@ -3,6 +3,7 @@ mod browser;
 mod clipboard;
 mod complete;
 mod config;
+mod devices;
 mod diagnose;
 mod editing;
 mod expression;
@@ -607,18 +608,19 @@ fn run_editor(
     split: bool,
 ) -> Result<(), BoxError> {
     let (controller, engine) = engine::new_engine(RENDER_RATE);
-    // Hay que mantener viva la salida mientras dure la interfaz.
-    let (_audio, _null, sample_rate);
-    if allow_audio {
-        let output = engine::open_output(engine)?;
-        sample_rate = output.sample_rate;
-        _audio = Some(output);
-        _null = None;
+    // La salida vive en los dispositivos de la aplicación (se puede cambiar
+    // en caliente); sin --allow-audio, la nula.
+    let mut warnings = Vec::new();
+    let audio = if allow_audio {
+        let backend = Box::new(engine::CpalBackend::default());
+        let (output, warning) =
+            engine::AudioOutput::open(backend, engine, None).map_err(|e| format!("audio: {e}"))?;
+        warnings.extend(warning);
+        output
     } else {
-        _null = Some(engine::open_null_output(engine, RENDER_RATE));
-        sample_rate = RENDER_RATE;
-        _audio = None;
-    }
+        engine::AudioOutput::open_null(engine, RENDER_RATE)
+    };
+    let sample_rate = audio.sample_rate();
     let is_project = path
         .extension()
         .is_some_and(|e| e == script::project::EXTENSION);
@@ -654,20 +656,18 @@ fn run_editor(
     }
     // MIDI solo si se pide: abre puertos del sistema.
     #[cfg(feature = "midi")]
-    let _midi_in = if allow_midi {
-        let (tx, rx) = rtrb::RingBuffer::new(midi_io::QUEUE);
-        app.set_midi_input(rx);
-        app.set_midi_output(Box::new(
-            midi_io::open_output().map_err(|e| format!("MIDI: {e}"))?,
-        ));
-        Some(midi_io::open_input(tx).map_err(|e| format!("MIDI: {e}"))?)
+    let midi: Option<Box<dyn devices::MidiBackend>> =
+        allow_midi.then(|| Box::new(midi_io::Midir) as Box<dyn devices::MidiBackend>);
+    #[cfg(not(feature = "midi"))]
+    let midi: Option<Box<dyn devices::MidiBackend>> = if allow_midi {
+        return Err("--allow-midi: compilado sin la feature midi".into());
     } else {
         None
     };
-    #[cfg(not(feature = "midi"))]
-    if allow_midi {
-        return Err("--allow-midi: compilado sin la feature midi".into());
-    }
+    let mut devices = devices::Devices::new(Some(audio), allow_audio, midi);
+    let mut changes = devices.start_midi(None, None);
+    changes.extend(warnings.into_iter().map(devices::Change::Message));
+    app.set_devices(devices, changes);
     // Con MIDI se mira la cola más a menudo (menos retraso en las notas).
     let poll = if allow_midi {
         Duration::from_millis(2)
