@@ -161,6 +161,7 @@ fn opens_in_main(action: Action) -> bool {
             | Action::Macros
             | Action::AnalyzeMasking
             | Action::FillGap
+            | Action::SuggestFills
             | Action::Record
             | Action::JumpSection
             | Action::Resample

@@ -96,6 +96,8 @@ pub struct ViewModel {
     pub occupancy: Option<crate::occupancy::Grid>,
     /// Cursor de la vista de ocupación para rellenar: (pista, paso).
     pub occupancy_cursor: Option<(usize, usize)>,
+    /// Sugerencias de relleno pedidas desde la paleta (de esta carga).
+    pub fill_suggestions: Vec<crate::occupancy::Suggestion>,
 }
 
 /// Tabla de choques de frecuencia del último análisis.

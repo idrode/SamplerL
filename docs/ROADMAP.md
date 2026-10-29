@@ -599,9 +599,9 @@ en «Fase S» de [docs/ESTADO.md](ESTADO.md).
    barra de estado y en la línea de tiempo; «Borrar el cue» en la paleta.
 4. ✅ **`--from <compás>`** en el render offline.
 
-## Fase T: vista de ocupación por paso
+## Fase T: vista de ocupación por paso ✅
 
-Pedida por el usuario, para ver los huecos entre pistas (breakcore,
+Hechas las cuatro partes. Pedida por el usuario, para ver los huecos entre pistas (breakcore,
 sonidos que se alternan). Detalle y decisiones en «Fase T» de
 [docs/ESTADO.md](ESTADO.md).
 
@@ -627,7 +627,7 @@ protocolo del socket si cambia; registro único de la API; tests con
    como en el tracker editable (un paso de deshacer, solo ese token). Lo
    generado, los instrumentos y un texto sin cargar no se editan, y la
    línea de estado dice por qué.
-4. **Sugerencias de relleno** (solo texto, a petición desde la paleta,
+4. ✅ **Sugerencias de relleno** (solo texto, a petición desde la paleta,
    nunca automático): hasta 4 huecos y qué corte de qué pista los
    rellenaría, con el criterio documentado (el análisis de choques, si
    lo hay).

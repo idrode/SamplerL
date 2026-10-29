@@ -19,7 +19,7 @@ use script::TokenSpan;
 use super::tracker_edit::with_step_fx;
 use super::{App, Flow, Input, Key};
 use crate::model::ViewModel;
-use crate::occupancy::{self, Cell, Grid, Source};
+use crate::occupancy::{self, Cell, Grid, Source, Suggestion};
 
 /// Estado de la vista de ocupación.
 #[derive(Debug, Default)]
@@ -30,6 +30,9 @@ pub struct Occupancy {
     pub cursor: Option<OccupancyCursor>,
     /// El paso que se rellena en la línea de órdenes.
     pending: Option<PendingFill>,
+    /// Las últimas sugerencias de relleno, con las cargas que se llevaban
+    /// al pedirlas (otra carga las deja sin valor).
+    suggestions: Option<(u64, Vec<Suggestion>)>,
 }
 
 /// El cursor de la vista: fila (pista, en el orden del script) y columna
@@ -83,9 +86,68 @@ impl App {
 }
 
 impl App {
-    /// Enseña o esconde la vista de ocupación.
+    /// Enseña o esconde la vista de ocupación (al esconderla, se olvidan
+    /// el cursor y las sugerencias).
     pub fn set_occupancy(&mut self, visible: bool) {
         self.occupancy.visible = visible;
+        if !visible {
+            self.occupancy.cursor = None;
+            self.occupancy.pending = None;
+            self.occupancy.suggestions = None;
+        }
+    }
+
+    /// Las sugerencias de relleno que siguen valiendo (de esta carga).
+    pub(super) fn fill_suggestions(&self) -> Vec<Suggestion> {
+        match &self.occupancy.suggestions {
+            Some((loads, list)) if *loads == self.loads && self.occupancy.visible => list.clone(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// «Sugerir rellenos de huecos»: hasta 4 huecos de la página que se
+    /// ve y qué golpe de qué pista los rellenaría (ver
+    /// [`occupancy::suggest`]). Solo texto: no escribe nada.
+    pub(super) fn suggest_fills(&mut self) {
+        self.set_occupancy(true);
+        let Some(grid) = self.current_grid() else {
+            self.message = "sugerir rellenos: no hay nada cargado".into();
+            return;
+        };
+        // Con un análisis de choques de lo que suena, la puntuación más
+        // alta de cada pareja en cualquier banda.
+        let report = self
+            .last_masking
+            .as_ref()
+            .filter(|(_, loads)| *loads == self.loads)
+            .map(|(report, _)| report);
+        let clash = |a: &str, b: &str| {
+            let report = report?;
+            (0..engine::masking::BANDS)
+                .filter_map(|band| report.score(a, b, band))
+                .max_by(f32::total_cmp)
+                .or(Some(0.0))
+        };
+        let hit = |row: usize, col: usize| {
+            let (_, track, lap, step) =
+                self.fill_target(&grid, OccupancyCursor { row, col }).ok()?;
+            Some(self.proposed_hit(&track, lap, step))
+        };
+        let list = occupancy::suggest(&grid, hit, clash);
+        self.message = match list.len() {
+            0 if grid.gaps().is_empty() => "sugerir rellenos: no hay huecos en esta página".into(),
+            0 => "sugerir rellenos: ningún hueco de esta página se puede rellenar desde la vista (generados, instrumentos o texto sin cargar)".into(),
+            n => format!(
+                "{n} {} en la vista de ocupación ({}); «Rellenar un hueco» los escribe",
+                if n == 1 { "sugerencia" } else { "sugerencias" },
+                if report.is_some() {
+                    "con el análisis de choques"
+                } else {
+                    "sin análisis de choques: F1 «Choques de frecuencia» lo hace"
+                }
+            ),
+        };
+        self.occupancy.suggestions = Some((self.loads, list));
     }
 
     /// «Vista de ocupación» en la paleta: la enseña o la esconde.

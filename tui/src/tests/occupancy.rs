@@ -487,3 +487,118 @@ fn a_fill_in_the_main_window_reaches_the_editor_window_as_one_undo() {
     editor.handle(ctrl('z'));
     assert_eq!(editor.text_for_test(), SONG);
 }
+
+#[test]
+fn suggestions_are_text_on_request_and_say_why() {
+    use crate::palette::Action;
+    let song = r#"bpm(120)
+local amen = sample("break.wav"):slice(2)
+track("drums", amen):steps("1 . . .  2 . . .  1 . . .  2 . . .")
+track("hats", amen):steps(". . 1 .  . . 1 .  . . 1 .  . . 1 .")
+track("gen", amen):steps(euclid(2, 16, "2"))
+"#;
+    let (_, mut app, _engine) = opened("occupancy_suggest", song);
+    // Nunca solas.
+    assert!(app.view().fill_suggestions.is_empty());
+    app.run_action(Action::SuggestFills);
+    let view = app.view();
+    assert!(view.message.contains("4 sugerencias"), "{}", view.message);
+    assert!(
+        view.message.contains("sin análisis de choques"),
+        "{}",
+        view.message
+    );
+    let list = &view.fill_suggestions;
+    assert_eq!(list.len(), 4, "{list:?}");
+    // Solo en huecos, en pistas que se pueden rellenar (gen es euclid: no),
+    // con el golpe de antes de esa pista.
+    let grid = view.occupancy.clone().unwrap();
+    for s in list {
+        assert_eq!(grid.counts[s.col], 0, "{s:?}");
+        assert_ne!(grid.rows[s.row].name, "gen", "{s:?}");
+        assert!(s.why.contains("alterna con"), "{s:?}");
+    }
+    // Solo texto: el código no cambia.
+    assert_eq!(app.text_for_test(), song);
+    // Se ven en el panel, con su color en el hueco.
+    let buffer = draw_widget(ui::OccupancyPanel(&view), 100, 12);
+    let screen = text(&buffer);
+    let first = &list[0];
+    let name = &grid.rows[first.row].name;
+    let line = format!("→ compás 0 paso {}: {name} «{}»", first.col + 1, first.hit);
+    assert!(screen.contains(&line), "{line}\n{screen}");
+    let (x, y) = find(&buffer, "Σ").unwrap();
+    assert_eq!(
+        buffer[(x + 6 + first.col as u16 * 2, y)].bg,
+        theme::get().suggestion
+    );
+    // Rellenarlo a mano con lo sugerido da ese golpe; otra carga las borra.
+    app.run_action(Action::FillGap);
+    let cursor = app.view().occupancy_cursor.unwrap();
+    for _ in 0..(first.row + 3 - cursor.0) % 3 {
+        app.handle(special(Key::Down));
+    }
+    for _ in 0..(first.col + 16 - cursor.1) % 16 {
+        app.handle(special(Key::Right));
+    }
+    app.handle(special(Key::Enter));
+    assert_eq!(
+        app.view().prompt.as_deref(),
+        Some(format!("rellenar {}", first.hit).as_str())
+    );
+    app.handle(special(Key::Enter));
+    assert!(app.view().error.is_none());
+    assert!(app.view().fill_suggestions.is_empty());
+}
+
+#[test]
+fn with_a_masking_analysis_suggestions_avoid_the_clashing_track() {
+    use crate::palette::Action;
+    // Dos pistas con el mismo seno grave (chocan) y una con uno agudo.
+    let path = fixture("occupancy_suggest_masking", None);
+    super::masking::write_sines(path.parent().unwrap());
+    let song = r#"bpm(120)
+track("a", sample("sine100.wav"):slice_grid(1)):steps("1 . . .  1 . . .  1 . . .  1 . . .")
+track("b", sample("sine100.wav"):slice_grid(1)):steps(". . . .  . . . .  . . . .  . 1 . .")
+track("c", sample("sine5000.wav"):slice_grid(1)):steps(". . . .  . . . .  . . 1 .  . . 1 .")
+"#;
+    std::fs::write(&path, song).unwrap();
+    let (controller, _engine) = engine::new_engine(RATE);
+    let mut app = App::open(&path, controller, RATE).unwrap();
+    assert!(app.view().error.is_none(), "{:?}", app.view().error);
+    app.run_action(Action::AnalyzeMasking);
+    app.handle(esc());
+    app.run_action(Action::SuggestFills);
+    let view = app.view();
+    assert!(
+        view.message.contains("con el análisis de choques"),
+        "{}",
+        view.message
+    );
+    // Junto a «a», gana «c» (otro rango de frecuencias) aunque «b» tenga
+    // más sitio en la página.
+    let s = view
+        .fill_suggestions
+        .iter()
+        .find(|s| s.col == 1)
+        .expect("el paso 1");
+    assert_eq!(
+        view.occupancy.as_ref().unwrap().rows[s.row].name,
+        "c",
+        "{s:?}"
+    );
+    assert!(s.why.contains("choque con a"), "{s:?}");
+}
+
+#[test]
+#[ignore]
+fn pantalla_ocupacion() {
+    use crate::palette::Action;
+    let (_, mut app, mut engine) = open("occupancy_screen", Some(SONG));
+    offline::render(&mut engine, 2 * STEP + 100, 2);
+    app.tick();
+    app.run_action(Action::SuggestFills);
+    app.run_action(Action::FillGap);
+    println!("{}", text(&draw(&mut app, 140, 50)));
+}
+

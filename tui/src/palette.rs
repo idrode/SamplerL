@@ -57,6 +57,7 @@ pub enum Action {
     EditTracker,
     Occupancy,
     FillGap,
+    SuggestFills,
     TapTempo,
     Macros,
     Record,
@@ -385,6 +386,12 @@ pub const ACTIONS: &[ActionDef] = &[
         action: Action::FillGap,
         name: "Rellenar un hueco desde la vista de ocupación",
         description: "Cursor en la vista de ocupación: ←→ paso, ↑↓ pista, Tab el hueco siguiente, Enter pone en ese silencio un golpe de la pista (el anterior, cambiable) escrito en su token del código y carga, Esc sale; un paso de deshacer",
+        keys: "",
+    },
+    ActionDef {
+        action: Action::SuggestFills,
+        name: "Sugerir rellenos de huecos",
+        description: "Hasta 4 huecos de la página que se ve en la vista de ocupación y qué golpe de qué pista los rellenaría (que alterne con las de al lado, sin choque de frecuencia con ellas si hay análisis, y con sitio); solo texto, no escribe nada",
         keys: "",
     },
     ActionDef {

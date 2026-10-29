@@ -4,7 +4,7 @@ Sampler + secuenciador para remixes con amen breaks, controlado por código en v
 
 Guía de uso (inicio rápido, atajos, mini-notación, API de Lua, recetas y problemas): [docs/GUIA.md](docs/GUIA.md). Sus bloques de Lua y las recetas de `scripts/ejemplos/` se comprueban en `script/tests/guide.rs`. La sección de la API se genera desde el registro `script/src/api.rs`: al cambiar la API, actualiza el registro y ejecuta `cargo run -p script --example guia`.
 
-Hoja de ruta (fases A-S después de los pasos 1-7, con sus reglas comunes; la F se hizo antes que la E y la J, EQ y choques de frecuencia entre pistas, después de la K; la S antes que la Q y la R, y la R con la Q a medias, esperando al Seaboard): [docs/ROADMAP.md](docs/ROADMAP.md). Estado detallado y decisiones de cada fase: [docs/ESTADO.md](docs/ESTADO.md). Resumen abajo, en «Estado (resumen)».
+Hoja de ruta (fases A-T después de los pasos 1-7, con sus reglas comunes; la F se hizo antes que la E y la J, EQ y choques de frecuencia entre pistas, después de la K; la S antes que la Q y la R, y la R con la Q a medias, esperando al Seaboard): [docs/ROADMAP.md](docs/ROADMAP.md). Estado detallado y decisiones de cada fase: [docs/ESTADO.md](docs/ESTADO.md). Resumen abajo, en «Estado (resumen)».
 
 ## Idea central
 
@@ -100,12 +100,13 @@ El detalle de lo hecho (dónde está cada cosa en el código, cómo funciona, su
 - **Fase S hecha** (transporte con atajos y cue): Ctrl-Espacio marcha/paro (editor, modo tocar y ventana del editor), Shift-Ctrl-Espacio o F9 fija el cue (el compás que suena, el del cursor del tracker parado, o la entrada con secciones) y la paleta lo borra; `Controller::start_at` arranca en un compás como si la canción hubiera llegado (vueltas, curvas, rampa de tempo, sección); `--from N` en el render. Para Shift-Ctrl-Espacio hace falta el protocolo de kitty o las teclas extendidas de tmux (ver la guía).
 - **Fase Q a medias** (MPE y expresión por nota): bend, presión y CC74 por nota (`tui/src/expression.rs`, `[midi] mpe` y `bend`), `Controller::note_mod` y `synth_note_on_expr` en el motor (suavizado, sin reservas, solo en notas MIDI en vivo) y `pista:mpe{ bend = "pitch", pressure = "cutoff" }` en Lua. Falta comprobarlo con la salida de `aseqdump -p 24:0` del Seaboard y decidir el synth polifónico (la receta usa `subharm{ voices = 6 }`).
 - **Fase R hecha** (editor con ratón y modo vim, fase 1): clic, arrastrar y rueda en el editor (`[editor] raton`), y `[editor] modo = "vim"` con Normal e Insert (`h j k l w b e 0 $ gg G`, `i a o O A I`, `x dd yy p P`, `u` Ctrl-R, `/ n N`, `:w`); Esc sigue llevando al modo tocar y `jk` sale de Insert (`salir_insert`).
+- **Fase T hecha** (vista de ocupación por paso): una fila por pista y una columna por paso de una página de hasta 4 compases, leída de lo que toca el secuenciador (`TrackDef::bars` y el cursor de la fase M; sin cambiar el motor ni el protocolo), con `Σ` y los huecos resaltados (`tui/src/occupancy.rs`, F1 «Vista de ocupación», `[ocupacion]` y los colores `hueco` y `sugerencia`); rellenar un hueco con un cursor que escribe en el `.` de ese paso (un paso de deshacer) y sugerencias de relleno que usan el análisis de choques si lo hay.
 - **Comprobaciones que no hay que romper**:
   - `engine/tests/no_alloc.rs`: cero reservas en `Engine::process`; todo lo nuevo del motor entra ahí.
   - `script/tests/golden.rs`: huellas del audio (solo en x86_64); sin usar nada nuevo, idénticas bit a bit.
   - `script/tests/guide.rs`: la guía coincide con el registro (`cargo run -p script --example guia`) y sus bloques de Lua y las recetas de `scripts/ejemplos/` se ejecutan; el script del tutorial (bloques `lua entero`, `añade` y `cambia`) se reconstruye paso a paso y cada estado se carga. Las tablas de la paleta y de la configuración se reescriben con `ACTUALIZAR_GUIA=1 cargo test -p tui the_guide_lists_the_palette` (y `the_guide_lists_the_config`).
   - `script/tests/registry.rs`: cada función, efecto, parámetro y snippet del registro existe y funciona en Lua.
-- **Ver la interfaz sin terminal**: `cargo test -p tui pantalla -- --ignored --nocapture` (y `pantalla_autocompletado`, `pantalla_paleta`, `pantalla_bloques`, `pantalla_choques`, `pantalla_ventanas`, `pantalla_acid`).
+- **Ver la interfaz sin terminal**: `cargo test -p tui pantalla -- --ignored --nocapture` (y `pantalla_autocompletado`, `pantalla_paleta`, `pantalla_bloques`, `pantalla_choques`, `pantalla_ventanas`, `pantalla_acid`, `pantalla_ocupacion`).
 - **Audio de prueba**: `scripts/render-demo.sh` genera un break sintético y lo renderiza a `renders/` sin tocar la tarjeta (ver `docs/ESTADO.md`).
 - **Pendiente conocido**: cpal avisa de un underrun al arrancar el stream (una vez, ~200 ms).
 

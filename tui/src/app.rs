@@ -3241,6 +3241,7 @@ impl App {
             Action::EditTracker => self.open_tracker_edit(),
             Action::Occupancy => self.toggle_occupancy(),
             Action::FillGap => self.open_occupancy_cursor(),
+            Action::SuggestFills => self.suggest_fills(),
             Action::TapTempo => self.start_tap(Instant::now()),
             Action::Macros => self.open_macros(),
             Action::Record => {
@@ -4423,6 +4424,7 @@ impl App {
             editor_outside: false,
             occupancy: None,
             occupancy_cursor: self.occupancy.cursor.map(|c| (c.row, c.col)),
+            fill_suggestions: self.fill_suggestions(),
         };
         view.occupancy = self.occupancy_grid(&view);
         self.link_view(&mut view);

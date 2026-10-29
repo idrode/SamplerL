@@ -221,11 +221,11 @@ const TRACKER_MIN: u16 = 7;
 /// ella, el sample y el tracker: la que pida, dejando al sample `squeezed`
 /// y al tracker lo mínimo para ver unas filas (el tracker se desplaza).
 fn occupancy_height(view: &ViewModel, height: u16, squeezed: u16) -> u16 {
-    let Some(grid) = &view.occupancy else {
+    if view.occupancy.is_none() {
         return 0;
-    };
+    }
     let room = height.saturating_sub(squeezed + TRACKER_MIN);
-    let wanted = OccupancyPanel::height(grid);
+    let wanted = OccupancyPanel::height(view);
     match wanted.min(room) {
         h if h >= OCCUPANCY_MIN.min(wanted) => h,
         // Sin sitio ni para lo mínimo: lo mínimo (y lo demás, apretado).
@@ -1879,9 +1879,11 @@ const OCCUPANCY_NAME: usize = 8;
 
 impl OccupancyPanel<'_> {
     /// Alto que pide para verse entera: una fila por pista, la de los
-    /// compases, la del resumen y los bordes.
-    pub fn height(grid: &crate::occupancy::Grid) -> u16 {
-        grid.rows.len() as u16 + 4
+    /// compases, la del resumen, una por sugerencia y los bordes.
+    pub fn height(view: &ViewModel) -> u16 {
+        view.occupancy.as_ref().map_or(0, |grid| {
+            (grid.rows.len() + view.fill_suggestions.len()) as u16 + 4
+        })
     }
 }
 
@@ -1923,8 +1925,19 @@ impl Widget for OccupancyPanel<'_> {
         let cursor = view.occupancy_cursor;
         let focus = cursor.map(|(_, c)| c).or(grid.current).unwrap_or(0);
         let first = window_start(focus, shown, steps, 4);
-        let track_rows = (inner.height as usize).saturating_sub(2);
         let tracks = grid.rows.len();
+        // Las pistas primero; las sugerencias, en lo que sobre debajo.
+        let track_rows = (inner.height as usize).saturating_sub(2);
+        let notes = view
+            .fill_suggestions
+            .len()
+            .min(track_rows.saturating_sub(tracks));
+        let track_rows = track_rows - notes;
+        let marked = |r: usize, c: usize| {
+            view.fill_suggestions
+                .iter()
+                .any(|s| s.bar == grid.bar && s.col == c && (r == usize::MAX || s.row == r))
+        };
         let focus_track = cursor.map(|(r, _)| r).or(view.selected).unwrap_or(0);
         let first_track = window_start(focus_track, track_rows, tracks, 1);
 
@@ -2016,6 +2029,9 @@ impl Widget for OccupancyPanel<'_> {
                 if grid.current == Some(c) {
                     style = style.bg(playing);
                 }
+                if marked(r, c) {
+                    style = style.bg(theme.suggestion);
+                }
                 if cursor == Some((r, c)) {
                     // El cursor para rellenar: invertido, encima de lo demás.
                     style = style.add_modifier(Modifier::REVERSED).bold();
@@ -2033,7 +2049,9 @@ impl Widget for OccupancyPanel<'_> {
             } else {
                 count.to_string()
             };
-            let style = if count == 0 {
+            let style = if count == 0 && marked(usize::MAX, c) {
+                Style::new().fg(Color::Black).bg(theme.suggestion).bold()
+            } else if count == 0 {
                 Style::new().fg(Color::Black).bg(theme.gap).bold()
             } else if grid.current == Some(c) {
                 Style::new().bg(playing)
@@ -2041,6 +2059,35 @@ impl Widget for OccupancyPanel<'_> {
                 Style::new().fg(dim())
             };
             put(buf, column_x(c), y, &text, style);
+        }
+        // Las sugerencias de relleno, una por línea.
+        for (i, s) in view.fill_suggestions.iter().take(notes).enumerate() {
+            let name = grid.rows.get(s.row).map_or("", |r| r.name.as_str());
+            let step = s.bar * grid.bar_steps as u64 + s.col as u64;
+            let line = Line::from(vec![
+                Span::from("→ ").fg(theme.suggestion).bold(),
+                Span::from(format!(
+                    "compás {} paso {}: {name} «{}»",
+                    step / grid.bar_steps.max(1) as u64,
+                    step % grid.bar_steps.max(1) as u64 + 1,
+                    s.hit
+                ))
+                .bold(),
+                Span::from(if s.why.is_empty() {
+                    String::new()
+                } else {
+                    format!(" · {}", s.why)
+                })
+                .fg(dim()),
+            ]);
+            line.render(
+                Rect {
+                    y: y + 1 + i as u16,
+                    height: 1,
+                    ..inner
+                },
+                buf,
+            );
         }
     }
 }

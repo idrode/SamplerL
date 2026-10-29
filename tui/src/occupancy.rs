@@ -238,6 +238,125 @@ pub fn grid(src: &Source) -> Grid {
     }
 }
 
+/// Sugerencias como mucho de una vez.
+pub const MAX_SUGGESTIONS: usize = 4;
+
+/// Una sugerencia de relleno: qué golpe de qué pista iría en un hueco.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Suggestion {
+    /// Fila (pista) y columna de la página, y el compás en que empieza la
+    /// página (para marcarla solo en la suya).
+    pub row: usize,
+    pub col: usize,
+    pub bar: u64,
+    /// El golpe, como se escribiría (`x`, `2@0.5`...).
+    pub hit: String,
+    /// Puntuación: cuanto menos, mejor (ver [`suggest`]).
+    pub score: f32,
+    /// Por qué, en una frase.
+    pub why: String,
+}
+
+/// Lo que cuesta que la pista que rellena suene también en un paso vecino:
+/// se busca que los sonidos se alternen.
+const REPEAT_COST: f32 = 0.5;
+/// Lo que cuesta una pista que llena toda la página (por la fracción de
+/// pasos en que suena): mejor la que tiene sitio.
+const DENSITY_COST: f32 = 0.25;
+
+/// Hasta [`MAX_SUGGESTIONS`] huecos de la página y qué golpe los
+/// rellenaría. Para cada hueco (un paso donde no se oye nada), cada pista
+/// que se oye y que se puede rellenar ahí (`hit` da su golpe; `None` si no
+/// se puede) se puntúa con la suma de: el choque de frecuencia más fuerte
+/// con las pistas que suenan en el paso de antes y el de después (`clash`:
+/// la puntuación de 0 a 1 del análisis de choques de la pareja; `None` sin
+/// análisis, y no cuenta), [`REPEAT_COST`] si ella misma suena en un paso
+/// vecino y [`DENSITY_COST`] por la fracción de la página en que suena. En
+/// cada hueco, la mejor; de los huecos, los de menos puntuación (y, a
+/// igualdad, los primeros), en el orden de la página.
+pub fn suggest(
+    grid: &Grid,
+    hit: impl Fn(usize, usize) -> Option<String>,
+    clash: impl Fn(&str, &str) -> Option<f32>,
+) -> Vec<Suggestion> {
+    let steps = grid.steps();
+    if steps == 0 {
+        return Vec::new();
+    }
+    let sounding = |col: usize| -> Vec<usize> {
+        (0..grid.rows.len())
+            .filter(|&r| grid.rows[r].audible && grid.rows[r].cells[col].sounds())
+            .collect()
+    };
+    let mut best: Vec<Suggestion> = grid
+        .gaps()
+        .into_iter()
+        .filter_map(|col| {
+            let before = sounding((col + steps - 1) % steps);
+            let after = sounding((col + 1) % steps);
+            let neighbours: Vec<usize> = before.iter().chain(&after).copied().collect();
+            grid.rows
+                .iter()
+                .enumerate()
+                .filter(|(_, row)| row.audible)
+                .filter_map(|(r, row)| {
+                    let token = hit(r, col)?;
+                    let worst = neighbours
+                        .iter()
+                        .filter(|&&n| n != r)
+                        .filter_map(|&n| clash(&row.name, &grid.rows[n].name).map(|s| (s, n)))
+                        .max_by(|a, b| a.0.total_cmp(&b.0));
+                    let repeats = neighbours.contains(&r);
+                    let density =
+                        row.cells.iter().filter(|c| c.sounds()).count() as f32 / steps as f32;
+                    let score = worst.map_or(0.0, |(s, _)| s)
+                        + if repeats { REPEAT_COST } else { 0.0 }
+                        + DENSITY_COST * density;
+                    let mut why = Vec::new();
+                    let others: Vec<&str> = neighbours
+                        .iter()
+                        .filter(|&&n| n != r)
+                        .map(|&n| grid.rows[n].name.as_str())
+                        .fold(Vec::new(), |mut acc, n| {
+                            if !acc.contains(&n) {
+                                acc.push(n);
+                            }
+                            acc
+                        });
+                    if !others.is_empty() {
+                        why.push(format!("alterna con {}", others.join(" y ")));
+                    }
+                    if repeats {
+                        why.push("repite su sonido al lado".into());
+                    }
+                    match worst {
+                        Some((s, n)) => {
+                            why.push(format!("choque con {} {s:.2}", grid.rows[n].name))
+                        }
+                        None if !others.is_empty() => why.push("sin choque medido".into()),
+                        None => {}
+                    }
+                    if neighbours.is_empty() {
+                        why.push("entre silencios".into());
+                    }
+                    Some(Suggestion {
+                        row: r,
+                        col,
+                        bar: grid.bar,
+                        hit: token,
+                        score,
+                        why: why.join(", "),
+                    })
+                })
+                .min_by(|a, b| a.score.total_cmp(&b.score))
+        })
+        .collect();
+    best.sort_by(|a, b| a.score.total_cmp(&b.score).then(a.col.cmp(&b.col)));
+    best.truncate(MAX_SUGGESTIONS);
+    best.sort_by_key(|s| s.col);
+    best
+}
+
 /// La celda del paso `index` del ciclo aplanado de una pista, con su
 /// vuelta y su paso.
 fn cell(def: &TrackDef, index: usize) -> (Cell, (usize, usize)) {
@@ -281,6 +400,91 @@ fn lcm(a: usize, b: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn row(name: &str, cells: &str) -> Row {
+        let cells: Vec<Cell> = cells
+            .chars()
+            .map(|c| match c {
+                'x' => Cell::Hit {
+                    level: 3,
+                    retrig: 1,
+                },
+                _ => Cell::Silence,
+            })
+            .collect();
+        Row {
+            name: name.into(),
+            color: 0,
+            audible: true,
+            at: (0..cells.len()).map(|k| (0, k)).collect(),
+            cells,
+        }
+    }
+
+    fn page(rows: Vec<Row>) -> Grid {
+        let steps = rows[0].cells.len();
+        let counts = (0..steps)
+            .map(|c| rows.iter().filter(|r| r.cells[c].sounds()).count())
+            .collect();
+        Grid {
+            bar: 0,
+            bar_steps: steps,
+            rows,
+            counts,
+            current: None,
+        }
+    }
+
+    #[test]
+    fn suggestions_alternate_sounds_and_avoid_clashes() {
+        // kick en 0 y 4, snare en 2 y 6, hats en 2: huecos en 1, 3, 5 y 7.
+        let grid = page(vec![
+            row("kick", "x...x..."),
+            row("snare", "..x...x."),
+            row("hats", "..x....."),
+        ]);
+        let any = |_: usize, _: usize| Some("1".to_string());
+        // Sin análisis: en cada hueco, la que no suena al lado y tiene más
+        // sitio (hats en 1, 3 y 5; en 7, al lado de snare y kick, hats).
+        let got = suggest(&grid, any, |_, _| None);
+        assert_eq!(got.len(), 4);
+        assert!(got.iter().all(|s| s.row == 2), "{got:?}");
+        assert_eq!(got.iter().map(|s| s.col).collect::<Vec<_>>(), [1, 3, 5, 7]);
+        assert!(
+            got[0].why.contains("alterna con kick y snare"),
+            "{}",
+            got[0].why
+        );
+        assert!(got[0].why.contains("sin choque medido"), "{}", got[0].why);
+        // Con un choque fuerte entre hats y kick, en los huecos junto a kick
+        // gana snare aunque suene más.
+        let clash = |a: &str, b: &str| {
+            let pair = [a, b];
+            Some(if pair.contains(&"hats") && pair.contains(&"kick") {
+                0.9
+            } else {
+                0.1
+            })
+        };
+        let got = suggest(&grid, any, clash);
+        let at = |col: usize| got.iter().find(|s| s.col == col).map(|s| s.row);
+        assert_eq!(at(1), Some(1), "{got:?}");
+        assert!(
+            got.iter()
+                .find(|s| s.col == 1)
+                .unwrap()
+                .why
+                .contains("choque con")
+        );
+        // Donde no se puede rellenar, nada; nunca más de 4.
+        let none = suggest(&grid, |_, _| None, |_, _| None);
+        assert!(none.is_empty());
+        let wide = page(vec![
+            row("kick", "x.x.x.x.x.x.x.x."),
+            row("hats", "................"),
+        ]);
+        assert_eq!(suggest(&wide, any, |_, _| None).len(), MAX_SUGGESTIONS);
+    }
 
     #[test]
     fn glyphs_show_level_retrig_and_silences() {

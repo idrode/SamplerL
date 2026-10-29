@@ -662,6 +662,7 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Editar los efectos de un paso en el tracker | Cursor en el tracker: ↑↓ paso, ←→ pista, Enter escribe los efectos del paso (lp=800,q=4 crush=6) en su token del código y carga, Supr los quita, Esc sale; un paso de deshacer | — |
 | Vista de ocupación | Enseña u oculta la rejilla de qué pista suena en cada paso (una fila por pista, Σ cuántas suenan y los pasos vacíos resaltados), de lo que toca el secuenciador; con el editor en su ventana, en la principal | — |
 | Rellenar un hueco desde la vista de ocupación | Cursor en la vista de ocupación: ←→ paso, ↑↓ pista, Tab el hueco siguiente, Enter pone en ese silencio un golpe de la pista (el anterior, cambiable) escrito en su token del código y carga, Esc sale; un paso de deshacer | — |
+| Sugerir rellenos de huecos | Hasta 4 huecos de la página que se ve en la vista de ocupación y qué golpe de qué pista los rellenaría (que alterne con las de al lado, sin choque de frecuencia con ellas si hay análisis, y con sitio); solo texto, no escribe nada | — |
 | Explorador de samples | Los WAV de la carpeta de muestras: filtra, ↑↓ preescucha (sin tocar las pistas), Enter inserta sample("...") | — |
 | Remuestrear la pista seleccionada | Abre «remuestrear pista »: graba su salida (render offline) como un WAV nuevo en la carpeta de samples | — |
 | Guardar la selección como bloque | Abre «bloque » para escribir nombre, etiquetas y `-- descripción`; va a la biblioteca global | — |
@@ -1380,6 +1381,28 @@ notas: se escriben en el código), un corte que la pista no tiene y un
 texto distinto del cargado (carga antes con Ctrl-L). Con `every`, se
 escribe en la cadena de la vuelta que se ve (la de `c:steps("...")` si la
 escribe), y cambia en todas las vueltas que la usan.
+
+**Sugerencias de relleno**: F1 «Sugerir rellenos de huecos» propone
+hasta 4 huecos de la página que se ve y qué golpe de qué pista iría en
+cada uno, en líneas debajo de `Σ` (`→ compás 0 paso 14: drums «2» ·
+alterna con kick, sin choque medido`), con el hueco y la celda sobre el
+color de las sugerencias. Es solo texto: no escribe nada ni se calcula
+solo; para escribir una, «Rellenar un hueco» con el cursor en ese paso
+(propone el mismo golpe). Otra carga las borra. El criterio, para cada
+hueco y cada pista que se pueda rellenar ahí (cuanto menos, mejor):
+
+- el choque de frecuencia más fuerte con las pistas que suenan en el paso
+  de antes y el de después, si se ha hecho el análisis de choques de lo
+  que suena (F1 «Choques de frecuencia»): así no se pone un golpe en el
+  mismo rango de frecuencias que el de al lado;
+- medio punto si la pista ya suena en un paso vecino (que los sonidos se
+  alternen);
+- un poco por lo llena que esté la pista en la página (mejor la que tiene
+  sitio).
+
+En cada hueco gana la pista de menos puntuación, con el golpe anterior de
+esa pista; se enseñan los 4 huecos con menos (a igualdad, los primeros),
+en orden.
 
 Con una sola ventana se pone en la columna derecha, entre el motor y el
 sample (el sample se aprieta y el tracker se desplaza si hace falta); con
