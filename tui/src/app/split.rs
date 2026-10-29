@@ -160,6 +160,7 @@ fn opens_in_main(action: Action) -> bool {
             | Action::TapTempo
             | Action::Macros
             | Action::AnalyzeMasking
+            | Action::FillGap
             | Action::Record
             | Action::JumpSection
             | Action::Resample

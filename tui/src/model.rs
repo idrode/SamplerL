@@ -94,6 +94,8 @@ pub struct ViewModel {
     pub editor_outside: bool,
     /// Vista de ocupación por paso, si se ve.
     pub occupancy: Option<crate::occupancy::Grid>,
+    /// Cursor de la vista de ocupación para rellenar: (pista, paso).
+    pub occupancy_cursor: Option<(usize, usize)>,
 }
 
 /// Tabla de choques de frecuencia del último análisis.

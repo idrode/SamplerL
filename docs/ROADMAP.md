@@ -622,7 +622,7 @@ protocolo del socket si cambia; registro único de la API; tests con
 2. ✅ **Dónde se ve**: panel propio, y en la ventana principal con el editor
    en la suya; desplazamiento o compresión si no cabe; en la paleta (F1)
    para mostrarla y ocultarla, y colores en `config.toml`.
-3. **Rellenar desde la vista**: un cursor sobre un hueco y una acción que
+3. ✅ **Rellenar desde la vista**: un cursor sobre un hueco y una acción que
    pone ahí un golpe de otra pista (a elegir), escrito en el texto Lua
    como en el tracker editable (un paso de deshacer, solo ese token). Lo
    generado, los instrumentos y un texto sin cargar no se editan, y la

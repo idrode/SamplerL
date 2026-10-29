@@ -52,6 +52,7 @@ impl App {
             .unwrap_or(0)
             .min(self.track_rows(track).saturating_sub(1));
         self.tracker_edit = Some(TrackerCursor { track, row });
+        self.occupancy.cursor = None;
         self.message = HELP.into();
     }
 

@@ -3,7 +3,7 @@
 //! motor movido offline.
 
 use super::*;
-use crate::occupancy::Grid;
+use crate::occupancy::{Cell, Grid};
 use crate::theme;
 
 const SONG: &str = r#"bpm(120)
@@ -251,4 +251,239 @@ fn with_the_editor_outside_the_main_window_shows_it_full_width() {
         assert!(screen.contains("tracker"), "{screen}");
         assert!(screen.contains("┌ sample"), "{screen}");
     }
+}
+
+/// La canción de un texto, cargada aparte (como la cargaría otra vez el
+/// editor).
+fn song_of(path: &Path, text: &str) -> script::Song {
+    let mut host = script::ScriptHost::new(RATE);
+    host.set_seed(Some(1));
+    host.eval(text, "song.lua", path.parent().unwrap()).unwrap()
+}
+
+/// Con el cursor abierto, Enter y en la línea de órdenes `hit` en vez de
+/// lo propuesto.
+fn fill(app: &mut App, hit: &str) {
+    app.handle(special(Key::Enter));
+    let prompt = app.view().prompt.clone().expect("la línea de órdenes");
+    assert!(prompt.starts_with("rellenar "), "{prompt}");
+    for _ in 0..prompt.chars().count() - "rellenar ".len() {
+        app.handle(special(Key::Backspace));
+    }
+    type_text(app, hit);
+    app.handle(special(Key::Enter));
+}
+
+#[test]
+fn filling_a_gap_writes_only_that_token_and_reloads_the_same() {
+    use crate::palette::Action;
+    let (path, mut app, _engine) = open("occupancy_fill", Some(SONG));
+    app.run_action(Action::FillGap);
+    // Abre la vista con el cursor en el primer hueco de la seleccionada.
+    let view = app.view();
+    assert!(view.occupancy.is_some());
+    assert_eq!(view.occupancy_cursor, Some((0, 1)));
+    assert!(
+        view.message.contains("drums · paso 2 de la página · hueco"),
+        "{}",
+        view.message
+    );
+    // Propone el golpe de antes, tal como está escrito.
+    app.handle(special(Key::Enter));
+    assert_eq!(app.view().prompt.as_deref(), Some("rellenar 1"));
+    app.handle(esc());
+    app.run_action(Action::FillGap);
+    fill(&mut app, "2@0.5");
+    let expected = SONG.replace("steps(\"1 . 2 .  1 . 2 .", "steps(\"1 2@0.5 2 .  1 . 2 .");
+    // Solo cambian los caracteres de ese token.
+    assert_eq!(app.text_for_test(), expected);
+    assert!(app.view().error.is_none(), "{:?}", app.view().error);
+    assert!(
+        app.view().message.contains("entra en el compás siguiente"),
+        "{}",
+        app.view().message
+    );
+    // Cargado: la rejilla lo enseña y el hueco ya no está.
+    let grid = grid(&app);
+    assert_eq!(
+        grid.rows[0].cells[1],
+        Cell::Hit {
+            level: 1,
+            retrig: 1
+        }
+    );
+    assert_eq!(grid.counts[1], 1);
+    // Ida y vuelta: releer el texto y cargarlo da lo mismo, también en el
+    // audio, que escribirlo a mano.
+    let again = song_of(&path, &app.text_for_test());
+    let by_hand = song_of(&path, &expected);
+    assert_eq!(app.tracks()[0].bars, again.tracks[0].bars);
+    assert_eq!(again.tracks[0].bars, by_hand.tracks[0].bars);
+    assert_eq!(
+        again.render(RATE, 1).unwrap(),
+        by_hand.render(RATE, 1).unwrap()
+    );
+
+    // Otra pista: ↓ a kick y Tab al hueco siguiente (el paso 3).
+    app.handle(special(Key::Down));
+    app.handle(special(Key::Tab));
+    assert_eq!(app.view().occupancy_cursor, Some((1, 3)));
+    assert_eq!(app.view().selected, Some(1));
+    app.handle(special(Key::Enter));
+    assert_eq!(app.view().prompt.as_deref(), Some("rellenar x"));
+    app.handle(special(Key::Enter));
+    let both = expected.replace("steps(\"x . . .  x", "steps(\"x . . x  x");
+    assert_eq!(app.text_for_test(), both);
+    // Cada relleno se deshace de una vez.
+    app.handle(esc());
+    app.handle(ctrl('z'));
+    assert_eq!(app.text_for_test(), expected);
+    app.handle(ctrl('z'));
+    assert_eq!(app.text_for_test(), SONG);
+    assert_eq!(app.view().occupancy_cursor, None);
+}
+
+#[test]
+fn the_cursor_shows_inverted_and_scrolls_with_it() {
+    use crate::palette::Action;
+    let (_, mut app, _engine) = open("occupancy_cursor", Some(SONG));
+    app.run_action(Action::FillGap);
+    for _ in 0..12 {
+        app.handle(special(Key::Right));
+    }
+    let view = app.view();
+    assert_eq!(view.occupancy_cursor, Some((0, 13)));
+    let buffer = draw_widget(ui::OccupancyPanel(&view), 60, 6);
+    let (x, y) = find(&buffer, "drums").unwrap();
+    let at = (x + 6 + 13 * 2, y);
+    assert!(
+        buffer[at].modifier.contains(Modifier::REVERSED),
+        "{}",
+        text(&buffer)
+    );
+    // Estrecho: se ve la columna del cursor.
+    let buffer = draw_widget(ui::OccupancyPanel(&view), 16, 6);
+    let screen = text(&buffer);
+    assert!(screen.contains("drums █·█·····"), "{screen}");
+    let (x, y) = find(&buffer, "drums").unwrap();
+    assert!(
+        buffer[(x + 6 + 5, y)].modifier.contains(Modifier::REVERSED),
+        "{screen}"
+    );
+    // ←→ dan la vuelta.
+    for _ in 0..3 {
+        app.handle(special(Key::Right));
+    }
+    assert_eq!(app.view().occupancy_cursor, Some((0, 0)));
+}
+
+#[test]
+fn what_cannot_be_filled_says_why_and_leaves_the_text_alone() {
+    use crate::palette::Action;
+    let song = r#"bpm(120)
+local amen = sample("break.wav"):slice(2)
+track("drums", amen):steps(euclid(5, 16, "2"))
+track("hats", amen):steps("1 _ 2 .  1 . 2 .  1 . 2 .  1 . 2 .")
+track("ghost", amen):steps("1 . . .  . . . .  . . . .  . . . ."):chance(1, "mute")
+local i = sample("break.wav"):instrument()
+track("bass", i):steps("1 . . .  . . . .  . . . .  . . . .")
+track("perc", amen):steps("1 . . .  . . . .  . . . .  . . . .")
+"#;
+    let (_, mut app, _engine) = open("occupancy_refused", Some(song));
+    assert!(app.view().error.is_none(), "{:?}", app.view().error);
+    let message = |app: &App| app.view().message;
+    app.run_action(Action::FillGap);
+    // Un paso generado: no está escrito tal cual.
+    app.handle(special(Key::Enter));
+    assert!(app.view().prompt.is_none());
+    assert!(
+        message(&app).contains("no está escrito tal cual"),
+        "{}",
+        message(&app)
+    );
+    // Un golpe que ya suena.
+    let first_hit = grid(&app).rows[0]
+        .cells
+        .iter()
+        .position(|c| c.sounds())
+        .unwrap();
+    for _ in 0..(first_hit + 16 - app.view().occupancy_cursor.unwrap().1) % 16 {
+        app.handle(special(Key::Right));
+    }
+    assert!(message(&app).contains("ya suena"), "{}", message(&app));
+    // hats: la nota alargada.
+    app.handle(special(Key::Down));
+    for _ in 0..(17 - app.view().occupancy_cursor.unwrap().1) % 16 {
+        app.handle(special(Key::Right));
+    }
+    assert!(
+        message(&app).contains("sigue la nota de antes (_)"),
+        "{}",
+        message(&app)
+    );
+    // ghost: el golpe que chance quita.
+    app.handle(special(Key::Down));
+    app.handle(special(Key::Left));
+    assert!(
+        message(&app).contains("chance o every"),
+        "{}",
+        message(&app)
+    );
+    // Un instrumento.
+    app.handle(special(Key::Down));
+    app.handle(special(Key::Right));
+    app.handle(special(Key::Enter));
+    assert!(
+        message(&app).contains("un instrumento"),
+        "{}",
+        message(&app)
+    );
+    // Una errata en el golpe: no toca el texto.
+    app.handle(special(Key::Down));
+    fill(&mut app, "9");
+    assert!(message(&app).starts_with("rellenar:"), "{}", message(&app));
+    assert_eq!(app.text_for_test(), song);
+    // Con el texto cambiado sin cargar, tampoco.
+    app.handle(esc());
+    app.editor.move_cursor(ratatui_textarea::CursorMove::Bottom);
+    type_text(&mut app, "-- nota");
+    app.run_action(Action::FillGap);
+    for _ in 0..4 {
+        app.handle(special(Key::Down));
+    }
+    app.handle(special(Key::Enter));
+    assert!(
+        message(&app).contains("no es el que suena"),
+        "{}",
+        message(&app)
+    );
+    // Solo está lo escrito a mano: ningún token cambiado.
+    assert_eq!(app.text_for_test().replace("-- nota", ""), song);
+}
+
+#[test]
+fn a_fill_in_the_main_window_reaches_the_editor_window_as_one_undo() {
+    use super::split::{editor_window, main_window, pump, pump_until};
+    use crate::palette::Action;
+    let path = fixture("occupancy_fill_split", Some(SONG));
+    let (mut main, _engine) = main_window(&path, None);
+    let (mut editor, _idle) = editor_window(&path);
+    pump(&mut main, &mut editor);
+    pump_until(&mut main, &mut editor, |m, _| m.view().tracks.len() == 2);
+    // Desde la ventana del editor, el cursor se abre en la principal.
+    editor.run_action(Action::FillGap);
+    assert!(
+        editor.view().message.contains("ventana principal"),
+        "{}",
+        editor.view().message
+    );
+    pump_until(&mut main, &mut editor, |m, _| {
+        m.view().occupancy_cursor.is_some()
+    });
+    fill(&mut main, "2");
+    let expected = SONG.replace("steps(\"1 . 2 .  1 . 2 .", "steps(\"1 2 2 .  1 . 2 .");
+    assert_eq!(main.text_for_test(), expected);
+    pump_until(&mut main, &mut editor, |_, e| e.text_for_test() == expected);
+    editor.handle(ctrl('z'));
+    assert_eq!(editor.text_for_test(), SONG);
 }

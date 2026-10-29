@@ -608,6 +608,7 @@ impl App {
             "muestras" | "samples" => self.set_samples(args.first().copied()),
             "etiquetar" | "label" => self.label_slice(&args),
             tracker_edit::COMMAND => self.run_step_fx_command(rest),
+            occupancy::COMMAND => self.run_fill_command(rest),
             "bpm" => self.set_bpm_line(args.first().copied()),
             "grabar" | "record" => self.start_recording(args.first().copied()),
             "seccion" | "sección" | "section" => self.jump_to_section(rest),
@@ -3239,6 +3240,7 @@ impl App {
             Action::Browser => self.open_browser(),
             Action::EditTracker => self.open_tracker_edit(),
             Action::Occupancy => self.toggle_occupancy(),
+            Action::FillGap => self.open_occupancy_cursor(),
             Action::TapTempo => self.start_tap(Instant::now()),
             Action::Macros => self.open_macros(),
             Action::Record => {
@@ -3685,6 +3687,23 @@ impl App {
             )
         {
             return self.handle_tracker_edit(input);
+        }
+        // Lo mismo con el cursor de la vista de ocupación.
+        if self.occupancy.cursor.is_some()
+            && !matches!(
+                bound,
+                Some(Bound::Action(
+                    Action::Undo
+                        | Action::Redo
+                        | Action::Load
+                        | Action::SaveAndLoad
+                        | Action::Transport
+                        | Action::Cue
+                        | Action::Quit
+                ))
+            )
+        {
+            return self.handle_occupancy_cursor(input);
         }
         // El modo vim: en Normal, las letras son órdenes.
         if self.mode == Mode::Edit
@@ -4403,6 +4422,7 @@ impl App {
             link: None,
             editor_outside: false,
             occupancy: None,
+            occupancy_cursor: self.occupancy.cursor.map(|c| (c.row, c.col)),
         };
         view.occupancy = self.occupancy_grid(&view);
         self.link_view(&mut view);

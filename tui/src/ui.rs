@@ -1870,7 +1870,8 @@ fn render_tracker(view: &ViewModel, inner: Rect, buf: &mut Buffer, column: usize
 /// que no se oye), la columna del paso que se oye sobre el color del paso
 /// que suena, y arriba los compases y los tiempos. Si no caben los pasos a
 /// dos celdas, a una; si ni así, se desplaza siguiendo el cursor o el paso
-/// que se oye. Si no caben las pistas, las de alrededor de la elegida.
+/// que se oye. Si no caben las pistas, las de alrededor del cursor o de la
+/// elegida. El cursor para rellenar, invertido.
 pub struct OccupancyPanel<'a>(pub &'a ViewModel);
 
 /// Ancho máximo del nombre de una pista en la vista de ocupación.
@@ -1919,11 +1920,12 @@ impl Widget for OccupancyPanel<'_> {
         } else {
             (1, steps.min(room))
         };
-        let focus = grid.current.unwrap_or(0);
+        let cursor = view.occupancy_cursor;
+        let focus = cursor.map(|(_, c)| c).or(grid.current).unwrap_or(0);
         let first = window_start(focus, shown, steps, 4);
         let track_rows = (inner.height as usize).saturating_sub(2);
         let tracks = grid.rows.len();
-        let focus_track = view.selected.unwrap_or(0);
+        let focus_track = cursor.map(|(r, _)| r).or(view.selected).unwrap_or(0);
         let first_track = window_start(focus_track, track_rows, tracks, 1);
 
         let bars = steps.div_ceil(grid.bar_steps.max(1)) as u64;
@@ -2013,6 +2015,10 @@ impl Widget for OccupancyPanel<'_> {
                 let mut style = Style::new().fg(fg);
                 if grid.current == Some(c) {
                     style = style.bg(playing);
+                }
+                if cursor == Some((r, c)) {
+                    // El cursor para rellenar: invertido, encima de lo demás.
+                    style = style.add_modifier(Modifier::REVERSED).bold();
                 }
                 put(buf, column_x(c), y, &cell.glyph().to_string(), style);
             }

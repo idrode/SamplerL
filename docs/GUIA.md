@@ -661,6 +661,7 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Macros | Mueve en vivo las macros del script (`macro()`): ↑↓ elegir, ←→ y -+ mover, 0-9, Esc | — |
 | Editar los efectos de un paso en el tracker | Cursor en el tracker: ↑↓ paso, ←→ pista, Enter escribe los efectos del paso (lp=800,q=4 crush=6) en su token del código y carga, Supr los quita, Esc sale; un paso de deshacer | — |
 | Vista de ocupación | Enseña u oculta la rejilla de qué pista suena en cada paso (una fila por pista, Σ cuántas suenan y los pasos vacíos resaltados), de lo que toca el secuenciador; con el editor en su ventana, en la principal | — |
+| Rellenar un hueco desde la vista de ocupación | Cursor en la vista de ocupación: ←→ paso, ↑↓ pista, Tab el hueco siguiente, Enter pone en ese silencio un golpe de la pista (el anterior, cambiable) escrito en su token del código y carga, Esc sale; un paso de deshacer | — |
 | Explorador de samples | Los WAV de la carpeta de muestras: filtra, ↑↓ preescucha (sin tocar las pistas), Enter inserta sample("...") | — |
 | Remuestrear la pista seleccionada | Abre «remuestrear pista »: graba su salida (render offline) como un WAV nuevo en la carpeta de samples | — |
 | Guardar la selección como bloque | Abre «bloque » para escribir nombre, etiquetas y `-- descripción`; va a la biblioteca global | — |
@@ -1357,6 +1358,28 @@ huecos.
   Si no cabe a dos celdas por paso, va a una; si ni así, se desplaza
   siguiendo el paso que se oye, y el título dice qué pasos se ven. Si no
   caben todas las pistas, las de alrededor de la seleccionada.
+
+**Rellenar un hueco**: F1 «Rellenar un hueco desde la vista de
+ocupación» abre la vista con un cursor (invertido) en el primer hueco de
+la pista seleccionada. ←→ cambia de paso, ↑↓ de pista (la pista que se
+elige es la que va a sonar en el hueco), Tab salta al hueco siguiente y
+Esc sale. Sobre un silencio, Enter abre la línea de órdenes con
+`rellenar` y el golpe anterior de esa pista tal como está escrito (sin sus
+efectos de paso); se cambia por el que se quiera (`2`, `1@0.5`, `kick'`,
+`3r2{lp=800}`...) y Enter lo escribe en el `.` de ese paso del código,
+sin tocar nada más del texto, y carga (entra al compás siguiente). Ctrl-Z
+lo deshace de una vez. Con el editor en su ventana, el cursor está en la
+principal y el cambio llega al editor como un paso de deshacer.
+
+No se rellena, y la línea de estado dice por qué: un paso que ya suena
+(para cambiarlo, el tracker), uno que sigue una nota alargada (`_`) o
+con un golpe que `chance` o `every` quitan en esta vuelta (`×`), un paso
+que no está escrito tal cual (`euclid`, `rotate`, una cadena hecha a
+trozos), las pistas de instrumento, sintetizador o granos (sus pasos son
+notas: se escriben en el código), un corte que la pista no tiene y un
+texto distinto del cargado (carga antes con Ctrl-L). Con `every`, se
+escribe en la cadena de la vuelta que se ve (la de `c:steps("...")` si la
+escribe), y cambia en todas las vueltas que la usan.
 
 Con una sola ventana se pone en la columna derecha, entre el motor y el
 sample (el sample se aprieta y el tracker se desplaza si hace falta); con

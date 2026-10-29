@@ -56,6 +56,7 @@ pub enum Action {
     Browser,
     EditTracker,
     Occupancy,
+    FillGap,
     TapTempo,
     Macros,
     Record,
@@ -378,6 +379,12 @@ pub const ACTIONS: &[ActionDef] = &[
         action: Action::Occupancy,
         name: "Vista de ocupación",
         description: "Enseña u oculta la rejilla de qué pista suena en cada paso (una fila por pista, Σ cuántas suenan y los pasos vacíos resaltados), de lo que toca el secuenciador; con el editor en su ventana, en la principal",
+        keys: "",
+    },
+    ActionDef {
+        action: Action::FillGap,
+        name: "Rellenar un hueco desde la vista de ocupación",
+        description: "Cursor en la vista de ocupación: ←→ paso, ↑↓ pista, Tab el hueco siguiente, Enter pone en ese silencio un golpe de la pista (el anterior, cambiable) escrito en su token del código y carga, Esc sale; un paso de deshacer",
         keys: "",
     },
     ActionDef {
