@@ -66,10 +66,16 @@ fn instrument_options_complete_and_explain_themselves() {
 /// Un seno de 220 Hz (A3) y una canción con él como instrumento, raíz A3,
 /// bucle sostenido y 50 ms de release; el patrón no toca nada.
 fn open_tone(test: &str) -> (App, Engine) {
-    let song = "bpm(120)\n\
+    open_tone_with(test, "")
+}
+
+/// Como [`open_tone`], con `prelude` al principio del script.
+fn open_tone_with(test: &str, prelude: &str) -> (App, Engine) {
+    let song = prelude.to_string()
+        + "bpm(120)\n\
                 local tono = sample(\"tone.wav\"):instrument({ root = \"A3\", loop = { 100, 900 }, adsr = { 2, 0, 1, 50 } })\n\
                 track(\"lead\", tono):steps(\". . . .  . . . .  . . . .  . . . .\")\n";
-    let path = fixture(test, Some(song));
+    let path = fixture(test, Some(&song));
     let mono: Vec<f32> = (0..RATE as usize)
         .map(|i| 0.4 * (std::f32::consts::TAU * 220.0 * i as f32 / RATE as f32).sin())
         .collect();
@@ -136,6 +142,33 @@ fn pads_play_notes_while_the_key_repeats() {
             .iter()
             .all(|&s| s == 0.0)
     );
+}
+
+/// Con `key()`, los pads tocan los grados de la tonalidad desde su tónica
+/// más cercana a la raíz (y `transpose()` la mueve).
+#[test]
+fn with_a_key_the_pads_play_its_degrees() {
+    // Do mayor y la raíz A3: el pad 1 es C4 (3 semitonos por encima).
+    let (mut app, mut engine) = open_tone_with("instrument_pads_key", "key(\"C\")\n");
+    app.handle(esc());
+    let t0 = Instant::now();
+    for (pad, note) in [(0, "C4"), (2, "E4"), (4, "G4"), (7, "C5")] {
+        app.press_pad_at(pad, t0);
+        assert_eq!(app.view().message, format!("♪ lead: {note}"));
+        app.release_expired_pads(t0 + Duration::from_secs(5));
+    }
+    app.press_pad_at(2, t0);
+    let note = left(&offline::render(&mut engine, 9600, 2));
+    let f = frequency(&note[1000..]);
+    let expected = 220.0 * 2f64.powf(7.0 / 12.0);
+    assert!((f / expected - 1.0).abs() < 0.002, "{f}");
+
+    // transpose(2): re mayor, y el pad 1 es D4.
+    let (mut app, _engine) =
+        open_tone_with("instrument_pads_transpose", "key(\"C\")\ntranspose(2)\n");
+    app.handle(esc());
+    app.press_pad_at(0, t0);
+    assert_eq!(app.view().message, "♪ lead: D4");
 }
 
 /// Si la terminal avisa al soltar las teclas, la nota dura hasta ese aviso

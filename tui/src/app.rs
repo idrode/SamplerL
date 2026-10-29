@@ -1980,8 +1980,26 @@ impl App {
         if granular {
             self.live_grain_on(key, index as i32, 1.0, now);
         } else {
-            self.live_note_on(key, index as f32, 1.0, now);
+            let semitones = self.pad_semitones(index);
+            self.live_note_on(key, semitones, 1.0, now);
         }
+    }
+
+    /// Semitonos sobre la raíz del pad `index` de un instrumento: sin
+    /// `key()`, cromáticos (el pad 1 es la raíz); con ella, los grados de
+    /// la tonalidad (movida por `transpose()`) desde su tónica más cercana a
+    /// la raíz.
+    fn pad_semitones(&self, index: usize) -> f32 {
+        let (Some(song), Some(instrument)) = (self.host.song(), self.selected_instrument()) else {
+            return index as f32;
+        };
+        let Some(key) = song.key else {
+            return index as f32;
+        };
+        key.transposed(song.transpose)
+            .degrees()
+            .degree(instrument.root, index as i64 + 1)
+            .map_or(index as f32, |s| s as f32)
     }
 
     /// Se soltó una tecla (solo llega si la terminal lo dice): el pad suelta

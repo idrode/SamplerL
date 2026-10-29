@@ -699,7 +699,7 @@ Todas las opciones (`keep`, `formant`, `crossfade`) están en
 
 ## Paso 9. Líneas melódicas
 
-> **Referencia:** [pista:melody(notas)](GUIA.md#pistamelodynotas) · [scale(nombre [, tónica])](GUIA.md#scalenombre--tónica) · [escala:melody(grados [, golpe])](GUIA.md#escalamelodygrados--golpe) · [Modo tocar (Esc)](GUIA.md#modo-tocar-esc) · [MIDI](GUIA.md#midi) · [Dispositivos: audio y MIDI](GUIA.md#dispositivos-audio-y-midi).
+> **Referencia:** [pista:melody(notas)](GUIA.md#pistamelodynotas) · [scale([nombre [, tónica]])](GUIA.md#scalenombre--tónica) · [escala:melody(grados [, golpe])](GUIA.md#escalamelodygrados--golpe) · [Modo tocar (Esc)](GUIA.md#modo-tocar-esc) · [MIDI](GUIA.md#midi) · [Dispositivos: audio y MIDI](GUIA.md#dispositivos-audio-y-midi).
 
 **Una melodía.** `melody` escribe notas por su nombre: `c d e f g a b`,
 con `#` o `b` (`eb` es mi bemol), y la octava detrás si hace falta
@@ -743,6 +743,13 @@ track("teclas", teclas):steps(menor:melody("1 . 3 .  5 . 3 .  4 . . .  5 . 7 .",
 `menor:melody(...)` devuelve `"1^0 . 1^3 ..."`: en un instrumento, cada
 `^` son semitonos sobre la raíz. Las escalas que hay, en `scale`
 ([sección 4](GUIA.md#4-api-de-lua)).
+
+> **La tonalidad de la canción.** Con `key("C", "minor")` al principio,
+> `melody("1 . 3 .  5 . 3 .")` entiende grados, `scale()` toma su escala y
+> los pads del modo tocar tocan los grados de do menor en vez de
+> semitonos. `transpose(2)` sube todas las notas de los instrumentos (no
+> la batería). Ver [key(tónica [, modo])](GUIA.md#keytónica--modo) y
+> [transpose(n)](GUIA.md#transposen).
 
 **Tocar en vivo.** Esc (modo tocar) y Ctrl-O hasta que la pista
 seleccionada sea `teclas`. Cada tecla es una nota: `1` la raíz (C4) y

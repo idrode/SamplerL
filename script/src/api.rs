@@ -315,7 +315,7 @@ pub const FILL_EFFECTS: &[FillEffect] = &[
 
 /// Escala para `scale(nombre, tónica)`: intervalos en semitonos desde la
 /// tónica.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ScaleDef {
     pub name: &'static str,
     pub intervals: &'static [i32],
@@ -1144,22 +1144,86 @@ pub const FUNCTIONS: &[Function] = &[
         example: None,
     },
     Function {
+        name: "key",
+        receiver: Receiver::Global,
+        signature: "key(tónica [, modo])",
+        returns: None,
+        summary: "La tonalidad de la canción: la usan scale(), los grados de melody() y los pads de los instrumentos.",
+        doc: "Con ella, `scale()` sin nombre o sin tónica toma las suyas, `melody()` \
+              entiende grados (`\"1 3 5 8\"`) y los pads del modo tocar de un \
+              instrumento o un sintetizador tocan los grados de la escala (1-0: del grado \
+              1 al 10) en vez de semitonos. Sin `key()`, todo suena como siempre. Va \
+              una vez, fuera de `section()` y antes de lo que la use (`scale()`, \
+              `melody()` con grados). El modo es cualquier escala de `scale()`. \
+              «Tonalidad del sample» (paleta y explorador) la propone a partir de un \
+              sample, sin aplicarla sola.",
+        params: &[
+            Param {
+                name: "tónica",
+                description: "de `C` a `B` con `#` o `b` (`A`, `F#`, `Bb`)",
+            },
+            Param {
+                name: "modo",
+                description: "una escala de `scale()` (por defecto \"major\": \"minor\", \"dorian\"...)",
+            },
+        ],
+        template: "key(\"${A}\", \"${minor}\")",
+        example: Some(
+            "key(\"A\", \"minor\")\n\
+             local piano = sample(\"amen.wav\"):instrument({ root = \"C4\" })\n\
+             -- Grados de la menor de la: 1 es A3 (la tónica más cerca de C4).\n\
+             track(\"lead\", piano):melody(\"1 . 3 .  5 . 3 .  1+3+5 _ _ _  -2 . 1 .\")\n\
+             -- La pentatónica sobre la tónica de la canción, en un corte.\n\
+             local penta = scale(\"minor_pentatonic\")\n",
+        ),
+    },
+    Function {
+        name: "transpose",
+        receiver: Receiver::Global,
+        signature: "transpose(n)",
+        returns: None,
+        summary: "Sube (o baja) n semitonos todas las notas de la canción, de golpe.",
+        doc: "Mueve todas las notas de los instrumentos y los sintetizadores (las de \
+              `melody()`, las de `steps()` con `^`, los acordes, las de `every`), las de \
+              `melody()` en una pista de cortes, los pads de los instrumentos y la salida \
+              MIDI de esas notas. No mueve los `^` de `steps()` en una pista de cortes \
+              (la batería, o lo que da `escala:melody`): son semitonos exactos sobre el \
+              corte. Como todo cambio del script, entra entero al empezar el compás. \
+              Una nota que quedaría a más de ±36 semitonos de la raíz da error con la \
+              pista. Va una vez, fuera de `section()`; en cualquier sitio del script.",
+        params: &[Param {
+            name: "n",
+            description: "semitonos enteros, de -24 a 24 (0: nada)",
+        }],
+        template: "transpose(${2})",
+        example: Some(
+            "key(\"A\", \"minor\")\n\
+             transpose(2) -- todo en B menor\n\
+             local piano = sample(\"amen.wav\"):instrument({ root = \"C4\" })\n\
+             track(\"lead\", piano):melody(\"a3 . c4 .  e4 . c4 .  1 . 3 .  5 . 8 .\")\n",
+        ),
+    },
+    Function {
         name: "scale",
         receiver: Receiver::Global,
-        signature: "scale(nombre [, tónica])",
+        signature: "scale([nombre [, tónica]])",
         returns: Some(Receiver::Scale),
         summary: "Una escala, para tocar melodías con un corte: sus grados se convierten en pitch.",
         doc: "El pitch se cuenta desde el tono original del corte, que hace de do \
               (C): con tónica `\"D\"` todo sube 2 semitonos. Las escalas están en la \
-              tabla de abajo; las tónicas, de `C` a `B` con `#` o `b` (`F#`, `Bb`).",
+              tabla de abajo; las tónicas, de `C` a `B` con `#` o `b` (`F#`, `Bb`). \
+              Con `key()`, lo que no se diga es de la tonalidad de la canción: \
+              `scale()` es su escala con su tónica y `scale(\"dorian\")`, la dórica \
+              sobre su tónica (`key()` tiene que ir antes). `transpose()` no la mueve: \
+              sus grados son semitonos exactos sobre el corte.",
         params: &[
             Param {
                 name: "nombre",
-                description: "la escala (ver la tabla)",
+                description: "la escala (ver la tabla); sin ella, la de `key()`",
             },
             Param {
                 name: "tónica",
-                description: "nota de partida (por defecto \"C\", el tono del corte)",
+                description: "nota de partida (por defecto la de `key()` o, sin ella, \"C\", el tono del corte)",
             },
         ],
         template: "scale(\"${minor}\", \"${C}\")",
@@ -1751,10 +1815,13 @@ pub const FUNCTIONS: &[Function] = &[
               Cada nota admite los sufijos de los pasos salvo `^` (`e@0.5`, `gr2`). \
               En una pista con instrumento la raíz es su `root`; en una de cortes, la \
               nota C4 es el corte 1 tal cual (como en `scale`), y los acordes no valen \
-              (no hay polifonía).",
+              (no hay polifonía). Con `key()`, también grados de la tonalidad: \
+              `melody(\"1 3 5 8\")` (el 1 es la tónica más cercana a la raíz; negativos, \
+              por debajo; acordes con `+`: `1+3+5`), mezclables con notas. \
+              `transpose()` mueve todas las notas de `melody()`.",
         params: &[Param {
             name: "notas",
-            description: "notas, acordes (`c+e+g`), `.` o `_`: tantas como pasos tiene la pista",
+            description: "notas, acordes (`c+e+g`), grados con `key()` (`1 3 5`), `.` o `_`: tantas como pasos tiene la pista",
         }],
         template: "melody(\"${c . e .  g . e .  c . e .  g . c4 .}\")",
         example: Some(

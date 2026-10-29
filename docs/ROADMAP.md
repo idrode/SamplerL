@@ -685,7 +685,7 @@ versión nueva del protocolo si cambia.
 3. **Tonalidad de un sample**: cromagrama y perfiles mayor/menor fuera
    del hilo de audio; un panel con las tres más probables y la confianza,
    desde la paleta y el explorador; usarla como raíz del instrumento.
-4. **Tonalidad global**: `key()` y `transpose()`; `scale()`, `melody()` e
+4. ✅ **Tonalidad global**: `key()` y `transpose()`; `scale()`, `melody()` e
    instrumentos la usan por defecto; la detección la propone.
 5. **Sidechain visual**: reducción de ganancia en tiempo real y su curva,
    y quién dispara a quién, publicadas con atómicos.

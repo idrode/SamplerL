@@ -197,6 +197,42 @@ pub fn melody(intervals: &[i32], root: i32, degrees: &str, hit: &str) -> Result<
     Ok(format(&steps))
 }
 
+/// La tonalidad con la que `melody` entiende grados (`1 3 5`): la tónica
+/// (semitonos sobre do, de 0 a 11) y los intervalos de su escala.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Key {
+    pub tonic: i32,
+    pub intervals: &'static [i32],
+}
+
+impl Key {
+    /// Semitonos sobre `root` (nota MIDI) del grado `degree`: el grado 1
+    /// es la tónica más cercana a la raíz (de 6 semitonos por debajo a 5
+    /// por encima); los demás, desde ella como en `scale`.
+    pub fn degree(&self, root: i32, degree: i64) -> Result<i32, String> {
+        let mut tonic = (self.tonic - root).rem_euclid(12);
+        if tonic > 5 {
+            tonic -= 12;
+        }
+        scale_pitch(self.intervals, tonic, degree)
+    }
+}
+
+/// Un grado al principio de `text` (`1`, `-2`, `12`): el número y lo que
+/// sigue. Sin dígitos, `None`.
+fn read_degree(text: &str) -> Option<(i64, &str)> {
+    let sign = usize::from(text.starts_with('-'));
+    let digits = text[sign..]
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .count();
+    if digits == 0 {
+        return None;
+    }
+    let degree = text[..sign + digits].parse().ok()?;
+    Some((degree, &text[sign + digits..]))
+}
+
 /// Lee una nota al principio de `text`: letra de `a` a `g` (mayúscula o
 /// minúscula), `#` o `b` opcional y octava opcional (`-1` a `9`; C4 = 60
 /// es el do central). Devuelve la clase (semitonos sobre do, con la
@@ -259,14 +295,14 @@ pub fn note_name(midi: i32) -> String {
 /// octava van justo por encima de la anterior (`g+b+d` es sol mayor). `.`
 /// y `_` pasan tal cual, y cada nota admite los sufijos de los pasos menos
 /// `^` (el tono lo da la nota).
-pub fn notes(text: &str, root: i32) -> Result<String, String> {
+pub fn notes(text: &str, root: i32, key: Option<Key>) -> Result<String, String> {
     let who = "melody";
     let tokens = tokens(text, who)?;
     let steps: Vec<String> = tokens
         .iter()
         .enumerate()
         .map(|(i, token)| {
-            note_step(token, Some(root))
+            note_step(token, Some(root), key)
                 .map_err(|message| format!("{who}: paso {} (\"{token}\"): {message}", i + 1))
         })
         .collect::<Result<_, String>>()?;
@@ -282,7 +318,7 @@ pub const BRACES_IN_MELODY: &str = "los efectos entre llaves ({lp=800}) solo val
      una pista de cortes, no en melody() ni en un instrumento: usa los efectos de la pista (:fx); \
      en melody() solo va el sub de la nota de un sintetizador ({sub=0.5})";
 
-pub fn note_step(token: &str, root: Option<i32>) -> Result<String, String> {
+pub fn note_step(token: &str, root: Option<i32>, key: Option<Key>) -> Result<String, String> {
     if token == "." || token == engine::notation::HOLD {
         return Ok(token.to_string());
     }
@@ -291,8 +327,30 @@ pub fn note_step(token: &str, root: Option<i32>) -> Result<String, String> {
     let mut rest = token;
     let mut pitches: Vec<i32> = Vec::new();
     loop {
+        // Un grado de la tonalidad (`1`, `-2`, `5`): con key().
+        if let Some((degree, after)) = read_degree(rest) {
+            let key = key.ok_or_else(|| {
+                format!(
+                    "el grado {degree} necesita la tonalidad de la canción: pon key(\"A\", \"minor\") \
+                     al principio, o escribe notas (c, e, g#...)"
+                )
+            })?;
+            pitches.push(base + key.degree(base, degree)?);
+            match after.strip_prefix('+') {
+                Some(next) => {
+                    rest = next;
+                    continue;
+                }
+                None => {
+                    rest = after;
+                    break;
+                }
+            }
+        }
         let (class, octave, after) = read_note(rest).ok_or_else(|| {
-            "debe ser una nota (c, e, g#, bb3...), un acorde (c+e+g), \".\" o \"_\"".to_string()
+            "debe ser una nota (c, e, g#, bb3...), un grado con key() (1, 3, 5), un acorde \
+             (c+e+g, 1+3+5), \".\" o \"_\""
+                .to_string()
         })?;
         let midi = match (octave, pitches.last()) {
             (Some(octave), _) => 12 * (octave + 1) + class,
@@ -487,6 +545,31 @@ mod tests {
     }
 
     #[test]
+    fn melody_degrees_follow_the_key() {
+        let minor = Key {
+            tonic: 9,
+            intervals: crate::api::scale("minor").unwrap().intervals,
+        };
+        // A menor con la raíz C4: la tónica más cercana es A3 (−3).
+        assert_eq!(
+            notes("1 3 5 8  -1 2+4 . _", 60, Some(minor)).unwrap(),
+            "1^-3 1^0 1^4 1^9  1^-5 1^-1^2 . _"
+        );
+        // Con la raíz A3, el grado 1 es la raíz.
+        assert_eq!(notes("1 5@0.5", 57, Some(minor)).unwrap(), "1^0 1^7@0.5");
+        // Grados y notas en el mismo patrón.
+        assert_eq!(notes("1 e", 60, Some(minor)).unwrap(), "1^-3 1^4");
+        // Sin key(), un grado dice qué falta.
+        let err = notes("1 3", 60, None).unwrap_err();
+        assert!(err.contains("necesita la tonalidad de la canción"), "{err}");
+        assert!(
+            notes("0", 60, Some(minor))
+                .unwrap_err()
+                .contains("el grado 0 no existe")
+        );
+    }
+
+    #[test]
     fn scale_degrees_become_semitones() {
         let minor = crate::api::scale("minor").unwrap().intervals;
         let major = crate::api::scale("major").unwrap().intervals;
@@ -572,20 +655,23 @@ mod tests {
     fn notes_become_steps_relative_to_the_root() {
         // Raíz C3: sin octava, la de la raíz.
         assert_eq!(
-            notes("c e g e  . _ c4 b2  . . . .  . . . .", 48).unwrap(),
+            notes("c e g e  . _ c4 b2  . . . .  . . . .", 48, None).unwrap(),
             "1^0 1^4 1^7 1^4  . _ 1^12 1^-1  . . . .  . . . ."
         );
         // Raíz A2 (45): "c" es C2, por debajo.
-        assert_eq!(notes("c a", 45).unwrap(), "1^-9 1^0");
+        assert_eq!(notes("c a", 45, None).unwrap(), "1^-9 1^0");
         // Acordes: las notas sin octava, por encima de la anterior.
         assert_eq!(
-            notes("c+e+g g+b+d a3+c", 48).unwrap(),
+            notes("c+e+g g+b+d a3+c", 48, None).unwrap(),
             "1^0^4^7 1^7^11^14 1^9^12"
         );
         // Sufijos (menos ^) tal cual.
-        assert_eq!(notes("c@0.5r2 e'~800", 60).unwrap(), "1^0@0.5r2 1^4'~800");
+        assert_eq!(
+            notes("c@0.5r2 e'~800", 60, None).unwrap(),
+            "1^0@0.5r2 1^4'~800"
+        );
         // El accent y el slide de los sintetizadores, también.
-        assert_eq!(notes("c! eb/ g!/", 60).unwrap(), "1^0! 1^3/ 1^7!/");
+        assert_eq!(notes("c! eb/ g!/", 60, None).unwrap(), "1^0! 1^3/ 1^7!/");
         for (bad, why) in [
             ("h", "debe ser una nota"),
             ("c^7", "sin ^"),
@@ -593,7 +679,7 @@ mod tests {
             ("c7", "48 semitonos"),
             ("c?", "inesperado"),
         ] {
-            let err = notes(bad, 48).unwrap_err();
+            let err = notes(bad, 48, None).unwrap_err();
             assert!(err.contains(why) && err.contains("paso 1"), "{bad}: {err}");
         }
     }

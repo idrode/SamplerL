@@ -105,6 +105,8 @@ const GLOBAL_ONLY: &[&str] = &[
     "arrange",
     "variant",
     "priority",
+    "key",
+    "transpose",
 ];
 
 /// Compases que se tiran los dados de `chance` antes de repetirse.
@@ -159,6 +161,51 @@ pub struct Song {
     /// Macros (`macro()`), en el orden en que aparecen (el índice es el de
     /// la macro en el motor), con el valor con el que suenan.
     pub macros: Vec<MacroDef>,
+    /// Tonalidad de la canción (`key()`); sin ella, todo como siempre.
+    pub key: Option<SongKey>,
+    /// Semitonos de `transpose()` (0 sin él).
+    pub transpose: i32,
+}
+
+/// La tonalidad de la canción (`key("A", "minor")`): la usan `scale()`
+/// sin tónica, los grados de `melody()` y los pads de los instrumentos.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SongKey {
+    /// Tónica, en semitonos sobre do (de 0 a 11).
+    pub tonic: i32,
+    /// El modo: una escala de `scale()`.
+    pub scale: &'static api::ScaleDef,
+}
+
+impl SongKey {
+    /// Nombre de la tónica (`"A"`, `"F#"`).
+    pub fn tonic_name(&self) -> &'static str {
+        const NAMES: [&str; 12] = [
+            "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+        ];
+        NAMES[self.tonic.rem_euclid(12) as usize]
+    }
+
+    /// Como se escribe en `key()`: `key("A", "minor")`.
+    pub fn call(&self) -> String {
+        format!("key(\"{}\", \"{}\")", self.tonic_name(), self.scale.name)
+    }
+
+    /// Para los grados de `melody()` y los pads.
+    pub fn degrees(&self) -> patterns::Key {
+        patterns::Key {
+            tonic: self.tonic,
+            intervals: self.scale.intervals,
+        }
+    }
+
+    /// La misma, subida `semitones` (con `transpose()`).
+    pub fn transposed(&self, semitones: i32) -> SongKey {
+        SongKey {
+            tonic: (self.tonic + semitones).rem_euclid(12),
+            ..*self
+        }
+    }
 }
 
 /// Un grupo (`group(nombre, pistas)`): sus pistas se suman y pasan juntas
@@ -997,6 +1044,9 @@ impl ScriptHost {
             priority: Vec::new(),
             groups: Vec::new(),
             macros: Vec::new(),
+            key: None,
+            transpose: None,
+            key_used: None,
         }));
         // La caché pasa al estado de Lua durante la evaluación y vuelve después.
         let cache = Rc::new(RefCell::new(std::mem::take(&mut self.samples)));
@@ -1026,6 +1076,13 @@ impl ScriptHost {
         let priority = std::mem::take(&mut state.borrow_mut().priority);
         let groups = std::mem::take(&mut state.borrow_mut().groups);
         let macros = std::mem::take(&mut state.borrow_mut().macros);
+        let (key, transpose) = {
+            let builder = state.borrow();
+            (
+                builder.key.as_ref().map(|(k, _)| *k),
+                builder.transpose.as_ref().map_or(0, |(t, _)| *t),
+            )
+        };
         let (bpm, metronome, buses, tempo_ramp, meter, tracks, expanding, arrange) = {
             let mut builder = state.borrow_mut();
             (
@@ -1062,7 +1119,12 @@ impl ScriptHost {
         // versión (A y B) con el azar desde la misma semilla: lo que no
         // cambia entre ellas sale igual.
         let tempo = bpm.unwrap_or(engine::DEFAULT_BPM);
-        let timing = Timing { bpm: tempo, seed };
+        let timing = Timing {
+            bpm: tempo,
+            seed,
+            key: key.map(|k| k.degrees()),
+            transpose,
+        };
         let mut used = Vec::new();
         let tags = Cell::new(self.last_tag);
         let base_warnings = warnings.borrow().clone();
@@ -1177,6 +1239,8 @@ impl ScriptHost {
                 priority: priority.clone(),
                 groups: groups.clone(),
                 macros: macros.clone(),
+                key,
+                transpose,
             });
         }
         self.stretched = used;
@@ -1432,6 +1496,88 @@ impl ScriptHost {
                     Ok(())
                 },
             )?,
+        )?;
+
+        let st = state.clone();
+        let g = guard.clone();
+        globals.set(
+            "key",
+            lua.create_function(move |lua, (tonic, mode): (String, Option<String>)| {
+                g(lua, "key")?;
+                let mode = mode.unwrap_or_else(|| "major".into());
+                let who = format!("key(\"{tonic}\", \"{mode}\")");
+                let root = api::note(&tonic).ok_or_else(|| {
+                    fail(
+                        lua,
+                        format!("{who}: tónica no válida (de C a B, con # o b: F#, Bb)"),
+                    )
+                })?;
+                let scale = api::scale(&mode).ok_or_else(|| {
+                    let names: Vec<&str> = api::SCALES.iter().map(|s| s.name).collect();
+                    fail(
+                        lua,
+                        format!(
+                            "{who}: el modo es una escala de scale() ({})",
+                            names.join(", ")
+                        ),
+                    )
+                })?;
+                let mut builder = st.borrow_mut();
+                if let Some((_, at)) = &builder.key {
+                    return Err(fail(
+                        lua,
+                        format!("{who}: la tonalidad ya está en {at}(una por canción)"),
+                    ));
+                }
+                if let Some(at) = &builder.key_used {
+                    return Err(fail(
+                        lua,
+                        format!(
+                            "{who}: va antes de scale() y de melody(), y en {at}ya se usó la \
+                             tonalidad por defecto; súbelo al principio"
+                        ),
+                    ));
+                }
+                builder.key = Some((
+                    SongKey {
+                        tonic: root.rem_euclid(12),
+                        scale: api::scale(scale.name).expect("existe"),
+                    },
+                    location(lua),
+                ));
+                Ok(())
+            })?,
+        )?;
+
+        let st = state.clone();
+        let g = guard.clone();
+        globals.set(
+            "transpose",
+            lua.create_function(move |lua, semitones: Value| {
+                g(lua, "transpose")?;
+                let n = match semitones {
+                    Value::Integer(n) if (-24..=24).contains(&n) => n as i32,
+                    Value::Number(n) if n.fract() == 0.0 && (-24.0..=24.0).contains(&n) => n as i32,
+                    other => {
+                        return Err(fail(
+                            lua,
+                            format!(
+                                "transpose({}): semitonos enteros de -24 a 24",
+                                value_text(&other)
+                            ),
+                        ));
+                    }
+                };
+                let mut builder = st.borrow_mut();
+                if let Some((_, at)) = &builder.transpose {
+                    return Err(fail(
+                        lua,
+                        format!("transpose({n}): ya está en {at}(uno por canción)"),
+                    ));
+                }
+                builder.transpose = Some((n, location(lua)));
+                Ok(())
+            })?,
         )?;
 
         let st = state.clone();
@@ -1987,9 +2133,29 @@ impl ScriptHost {
             })?,
         )?;
 
+        let st = state.clone();
         globals.set(
             "scale",
-            lua.create_function(|lua, (name, tonic): (String, Option<String>)| {
+            lua.create_function(move |lua, (name, tonic): (Option<String>, Option<String>)| {
+                // Sin nombre o sin tónica, los de `key()`.
+                let key = st.borrow().key.as_ref().map(|(k, _)| *k);
+                if name.is_none() || tonic.is_none() {
+                    let mut builder = st.borrow_mut();
+                    if builder.key_used.is_none() {
+                        builder.key_used = Some(location(lua));
+                    }
+                }
+                let name = match (name, key) {
+                    (Some(name), _) => name,
+                    (None, Some(key)) => key.scale.name.to_string(),
+                    (None, None) => {
+                        return Err(fail(
+                            lua,
+                            "scale(): sin nombre usa la tonalidad de la canción; pon antes \
+                             key(\"A\", \"minor\") o di la escala: scale(\"minor\")",
+                        ));
+                    }
+                };
                 let scale = api::scale(&name).ok_or_else(|| {
                     let names: Vec<&str> = api::SCALES.iter().map(|s| s.name).collect();
                     fail(
@@ -1997,7 +2163,9 @@ impl ScriptHost {
                         format!("scale(\"{name}\"): no existe ({})", names.join(", ")),
                     )
                 })?;
-                let tonic = tonic.unwrap_or_else(|| "C".into());
+                let tonic = tonic.unwrap_or_else(|| {
+                    key.map_or("C", |k| k.tonic_name()).to_string()
+                });
                 let root = api::note(&tonic).ok_or_else(|| {
                     fail(
                         lua,
@@ -2727,6 +2895,7 @@ fn track_source(lua: &Lua, name: &str, source: &AnyUserData) -> mlua::Result<Tra
             steps_set: false,
             written: Vec::new(),
             steps_at: String::new(),
+            melodic: Rc::default(),
         });
     }
     if let Ok(source) = source.borrow::<InstrumentHandle>() {
@@ -2751,6 +2920,7 @@ fn track_source(lua: &Lua, name: &str, source: &AnyUserData) -> mlua::Result<Tra
             steps_set: false,
             written: Vec::new(),
             steps_at: String::new(),
+            melodic: Rc::default(),
         });
     }
     if let Ok(source) = source.borrow::<SynthHandle>() {
@@ -2781,6 +2951,7 @@ fn track_source(lua: &Lua, name: &str, source: &AnyUserData) -> mlua::Result<Tra
             steps_set: false,
             written: Vec::new(),
             steps_at: String::new(),
+            melodic: Rc::default(),
         });
     }
     Err(fail(
@@ -2825,6 +2996,13 @@ struct Builder {
     /// Grupos (`group()`) y macros (`macro()`, `macro_init()`).
     groups: Vec<GroupDef>,
     macros: Vec<MacroDef>,
+    /// `key()` y dónde se llamó.
+    key: Option<(SongKey, String)>,
+    /// `transpose()` y dónde se llamó.
+    transpose: Option<(i32, String)>,
+    /// Dónde se usó por primera vez la tonalidad por defecto (`scale()`
+    /// sin tónica o un grado en `melody()`): `key()` tiene que ir antes.
+    key_used: Option<String>,
 }
 
 impl Builder {
@@ -2904,6 +3082,9 @@ struct TrackBuild {
     /// errores que solo se ven al acabar el script (los efectos de un paso
     /// que no caben con los de su corte, si el corte los recibe después).
     steps_at: String,
+    /// Tiene notas de `melody()` (en una pista de cortes): `transpose()`
+    /// las mueve, como las de un instrumento.
+    melodic: Rc<Cell<bool>>,
 }
 
 #[derive(Clone)]
@@ -2980,6 +3161,10 @@ enum Chance {
 struct Timing {
     bpm: f64,
     seed: u64,
+    /// La tonalidad (para los grados de `c:melody()` en `every`) y los
+    /// semitonos de `transpose()`.
+    key: Option<patterns::Key>,
+    transpose: i32,
 }
 
 fn expand(track: TrackBuild, rng: &mut Rng, timing: Timing) -> Result<TrackDef, ScriptError> {
@@ -2993,6 +3178,7 @@ fn expand(track: TrackBuild, rng: &mut Rng, timing: Timing) -> Result<TrackDef, 
         steps_set: _,
         written,
         steps_at,
+        melodic,
     } = track;
     def.labels = labels.borrow().clone();
     def.shapes = shapes.borrow().clone();
@@ -3040,6 +3226,8 @@ fn expand(track: TrackBuild, rng: &mut Rng, timing: Timing) -> Result<TrackDef, 
                         count: def.origin.cut(),
                         track: def.name.clone(),
                         root: def.instrument.map_or(60, |i| i.root),
+                        key: timing.key,
+                        melodic: melodic.clone(),
                         plays: Plays::of(&def),
                         written: Rc::new(RefCell::new(lap_spans.clone())),
                     };
@@ -3095,6 +3283,28 @@ fn expand(track: TrackBuild, rng: &mut Rng, timing: Timing) -> Result<TrackDef, 
              por ejemplo :fx(\"lowpass\", {{ cutoff = 3000 }})",
             def.name
         )));
+    }
+    // `transpose()`: las notas de un instrumento o un sintetizador, y las
+    // de `melody()` en una pista de cortes.
+    if timing.transpose != 0 && (def.instrument.is_some() || melodic.get()) {
+        let t = timing.transpose as f32;
+        for step in bars.iter_mut().chain([&mut def.steps]).flatten().flatten() {
+            step.semitones += t;
+            let highest = step
+                .chord
+                .iter()
+                .flatten()
+                .fold(0.0f32, |m, c| m.max(c.abs()));
+            if step.semitones.abs() + highest > engine::MAX_SEMITONES {
+                return Err(ScriptError::new(format!(
+                    "pista \"{}\": transpose({}): una nota queda a {} semitonos de la raíz (máximo ±{})",
+                    def.name,
+                    timing.transpose,
+                    step.semitones + highest.copysign(step.semitones),
+                    engine::MAX_SEMITONES
+                )));
+            }
+        }
     }
     def.bars = bars;
     def.spans = spans;
@@ -5756,8 +5966,17 @@ impl UserData for TrackHandle {
         // instrumento (en una pista de cortes, C4 es el corte 1 tal cual).
         methods.add_method("melody", |lua, this, text: String| {
             let root = this.with_track(|t| t.def.instrument.map_or(60, |i| i.root));
-            let steps = patterns::notes(&text, root).map_err(|e| fail(lua, e))?;
+            let key = this.state.borrow().key.as_ref().map(|(k, _)| k.degrees());
+            let steps = patterns::notes(&text, root, key).map_err(|e| fail(lua, e))?;
+            // Un grado ha usado la tonalidad: `key()` ya no puede cambiar.
+            if key.is_some() && patterns::notes(&text, root, None).is_err() {
+                let mut builder = this.state.borrow_mut();
+                if builder.key_used.is_none() {
+                    builder.key_used = Some(location(lua));
+                }
+            }
             this.set_steps(lua, &steps, &text)?;
+            this.with_track(|t| t.melodic.set(true));
             Ok(this.clone())
         });
 
@@ -6164,6 +6383,10 @@ struct BarHandle {
     /// Raíz de `melody` (la del instrumento, o C4) y qué toca la pista
     /// (acordes, accent y slide).
     root: i32,
+    /// La tonalidad para los grados de `melody`, y si se usó (`transpose`
+    /// mueve entonces la pista).
+    key: Option<patterns::Key>,
+    melodic: Rc<Cell<bool>>,
     plays: Plays,
     /// Dónde está escrito cada paso de esta vuelta: el de la pista hasta
     /// que un `:steps()` lo sustituye.
@@ -6186,6 +6409,8 @@ impl BarHandle {
             count: self.count,
             track: self.track.clone(),
             root: self.root,
+            key: self.key,
+            melodic: self.melodic.clone(),
             plays: self.plays,
             written: self.written.clone(),
         }
@@ -6220,8 +6445,9 @@ impl UserData for BarHandle {
         });
         // Sustituye los pasos por notas (como `pista:melody`).
         methods.add_method("melody", |lua, this, text: String| {
-            let steps = patterns::notes(&text, this.root).map_err(|e| fail(lua, e))?;
+            let steps = patterns::notes(&text, this.root, this.key).map_err(|e| fail(lua, e))?;
             this.set_steps(lua, &steps, &text)?;
+            this.melodic.set(true);
             Ok(this.handle())
         });
         // Invierte el sentido de cada golpe del compás.

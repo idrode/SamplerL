@@ -1141,17 +1141,19 @@ fn completion_items(app: &App) -> Vec<String> {
 fn completion_filters_by_prefix_while_typing() {
     let (mut app, _engine) = open_at_end("complete_filter");
     type_text(&mut app, "t");
-    assert_eq!(completion_items(&app), ["track", "then", "true"]);
+    assert_eq!(completion_items(&app), ["track", "transpose", "then", "true"]);
     type_text(&mut app, "r");
-    assert_eq!(completion_items(&app), ["track", "true"]);
+    assert_eq!(completion_items(&app), ["track", "transpose", "true"]);
     type_text(&mut app, "a");
+    assert_eq!(completion_items(&app), ["track", "transpose"]);
+    type_text(&mut app, "c");
     assert_eq!(completion_items(&app), ["track"]);
 
     // El popup sale junto al cursor, con la firma y la descripción.
     let buffer = draw(&mut app, 120, 40);
     let screen = text(&buffer);
     let (x, y) = find(&buffer, "completar").unwrap();
-    let (_, cursor_row) = find(&buffer, "5 tra").unwrap();
+    let (_, cursor_row) = find(&buffer, "5 trac").unwrap();
     assert_eq!(y, cursor_row + 1, "{screen}");
     assert!(x < 20, "{screen}");
     assert!(
@@ -1167,7 +1169,8 @@ fn completion_filters_by_prefix_while_typing() {
 
     // Borrar vuelve a ampliar la lista; sin coincidencias se cierra.
     app.handle(special(Key::Backspace));
-    assert_eq!(completion_items(&app), ["track", "true"]);
+    app.handle(special(Key::Backspace));
+    assert_eq!(completion_items(&app), ["track", "transpose", "true"]);
     type_text(&mut app, "x");
     assert!(app.view().completion.is_none());
 }
@@ -1230,16 +1233,18 @@ fn arrows_move_the_selection() {
     type_text(&mut app, "t");
     let selected = |app: &App| app.view().completion.unwrap().selected;
     app.handle(special(Key::Down));
-    assert_eq!(selected(&app), 1);
+    app.handle(special(Key::Down));
+    assert_eq!(selected(&app), 2);
     assert!(text_of(&mut app).contains("palabra clave de Lua"));
     app.handle(special(Key::Up));
     app.handle(special(Key::Up));
-    assert_eq!(selected(&app), 2, "da la vuelta");
+    app.handle(special(Key::Up));
+    assert_eq!(selected(&app), 3, "da la vuelta");
     // Las flechas no mueven el cursor del editor mientras tanto.
     assert_eq!(current_line(&app), "t");
     // Escribir después cambia la lista: Enter vuelve a ser salto de línea.
     type_text(&mut app, "r");
-    assert_eq!(completion_items(&app), ["track", "true"]);
+    assert_eq!(completion_items(&app), ["track", "transpose", "true"]);
     app.handle(special(Key::Enter));
     assert_eq!(current_line(&app), "");
     assert_eq!(app.editor.lines()[app.editor.cursor().0 - 1], "tr");
@@ -2464,7 +2469,7 @@ fn pasting_keeps_the_lines_and_the_indent_and_undoes_at_once() {
 fn pasting_with_the_completion_open_accepts_nothing() {
     let (mut app, _engine) = open_at_end("paste_completion");
     type_text(&mut app, "tr");
-    assert_eq!(completion_items(&app), ["track", "true"]);
+    assert_eq!(completion_items(&app), ["track", "transpose", "true"]);
     // Tras moverse, Enter aceptaría la opción marcada.
     app.handle(special(Key::Down));
     app.paste("ue\rbpm(90)\n");

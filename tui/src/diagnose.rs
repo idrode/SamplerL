@@ -281,7 +281,14 @@ fn check_melody(content: &str, length: Option<usize>) -> Option<(Range<usize>, S
     let mut steps = Vec::new();
     for (i, cols) in tokens(content).into_iter().enumerate() {
         let text: String = content.chars().skip(cols.start).take(cols.len()).collect();
-        match script::patterns::note_step(&text, None) {
+        // Los grados (`1 3 5`) dependen de key(), que aquí no se sabe: se
+        // leen en do mayor (los rangos tampoco se miran) y, si falta
+        // key(), lo dice la carga con la línea.
+        let key = script::patterns::Key {
+            tonic: 0,
+            intervals: script::api::SCALES[0].intervals,
+        };
+        match script::patterns::note_step(&text, None, Some(key)) {
             Ok(notation) => steps.push(Token {
                 cols,
                 text,
@@ -771,7 +778,8 @@ mod tests {
         assert_eq!(underlined(line, &d[0]), "h");
         assert_eq!(
             d[0].message,
-            "melody: paso 6 (\"h\"): debe ser una nota (c, e, g#, bb3...), un acorde (c+e+g), \".\" o \"_\""
+            "melody: paso 6 (\"h\"): debe ser una nota (c, e, g#, bb3...), un grado con key() \
+             (1, 3, 5), un acorde (c+e+g, 1+3+5), \".\" o \"_\""
         );
         // Acorde de más, ^ (el tono lo da la nota), sufijo roto y rango.
         for (bad, why) in [

@@ -1218,6 +1218,118 @@ parte). El plan, en «Fase V» de [ROADMAP.md](ROADMAP.md).
 - **Coste**: solo al cargar (hilo de control), como mucho `2·máx` lecturas
   por corte: 4800 con 50 ms a 48 kHz, nada al lado del detector.
 
+### Parte 3a: tonalidad de un sample, el análisis
+
+- **Antes**: `cortes:note(i)` (YIN) da la nota de un corte con un tono
+  claro; de tonalidad no había nada.
+- **Motor** (`engine/src/key.rs`, puro, sin motor ni Lua): `detect_key(sample)`
+  mezcla a mono los primeros 60 s, saca FFT de 16384 puntos (2,9 Hz por bin
+  a 48 kHz, por debajo del semitono más estrecho que se mira, 3,9 Hz en C2)
+  con Hann y salto de media ventana, y de cada ventana suma la amplitud de
+  los **picos** del espectro (máximos locales, afinados con una parábola en
+  dB) a la nota MIDI más cercana, de C2 a C8. Las ventanas 60 dB por debajo
+  de la más fuerte no cuentan (silencio, colas) y en cada una, tampoco los
+  picos 60 dB por debajo del suyo. El cromagrama (12 clases, suma 1) se
+  correlaciona (Pearson) con los perfiles de Krumhansl y Kessler girados a
+  las 24 tonalidades. `KeyAnalysis { candidates: [KeyGuess; 3], confidence,
+  root, chroma }`: las tres mejores, la confianza (la correlación de la
+  mejor, rebajada hasta la mitad si la siguiente que no es su relativa se
+  le acerca a menos de 0,1), la raíz propuesta (la tónica en la octava donde
+  más suena) y el cromagrama. `low_confidence()` por debajo de
+  `LOW_CONFIDENCE` = 0,5. `KeyGuess::{tonic_name, mode, label}` («A menor»).
+- **Tests** (`engine/tests/key.rs`): cadencias I-IV-V-I y i-iv-V-i con
+  armónicos y bajo en las 24 tonalidades (la buena, sin aviso y la raíz en
+  su clase), una escala de do mayor de senos (C mayor, raíz C4), una nota
+  sola (A3: la raíz exacta, y la entre las tres), ruido blanco y golpes de
+  ruido (poca confianza), silencio y un sample de 100 frames (nada).
+  Medido: cadencia de A menor 0,91, de C mayor 0,95; A3 sola 0,70 (A mayor
+  y A menor casi empatan: con una nota no se sabe el modo).
+
+#### Decisiones (análisis)
+
+- **Picos y no el espectro entero**: la ventana de Hann reparte un tono
+  entre bins vecinos que, en graves, caen en la nota de al lado; contar solo
+  los máximos locales deja un pico por parcial. Los armónicos cuentan (el 3.º
+  suma a la quinta), como en el oído; los perfiles ya lo absorben.
+- **Krumhansl y Kessler**: simples, conocidos y sin entrenar nada; en
+  material tonal funcionan bien. Con poco material (una nota, un acorde)
+  el modo es ambiguo y se ve en la confianza y en las tres candidatas.
+- **La confianza no castiga a la relativa**: C mayor y A menor comparten
+  las notas; que estén cerca no dice que el material sea dudoso.
+- **Coste**: un sample de 10 s son unas 60 FFT de 16384 puntos (unos ms en
+  release); hasta 60 s, unas 350. Siempre en el hilo de control, al
+  pedirlo.
+
+### Parte 4: tonalidad global (`key`, `transpose`)
+
+- **Lua** (`script/src/lib.rs`): `key(tónica [, modo])` (el modo, cualquier
+  escala de `scale()`; por defecto `"major"`) y `transpose(n)` (enteros de
+  -24 a 24), una vez cada uno y fuera de `section()` y `every` (en
+  `GLOBAL_ONLY`). `Song::key: Option<SongKey { tonic, scale }>` y
+  `Song::transpose`. `SongKey::{tonic_name, call, degrees, transposed}`.
+- **`scale([nombre [, tónica]])`**: lo que falta lo pone `key()`; sin
+  nombre y sin `key()`, error. `key()` tiene que ir antes que cualquier
+  `scale()` sin tónica o sin nombre y que un grado de `melody()`
+  (`Builder::key_used` guarda dónde se usó la tonalidad por defecto y
+  `key()` después de eso es un error con las dos líneas).
+- **Grados en `melody()`** (`patterns::Key`, `note_step(token, raíz,
+  tonalidad)`): con `key()`, un paso que empieza por número (`1`, `-2`,
+  `5@0.5`, `1+3+5`) es un grado: el 1 es la tónica más cercana a la raíz (de
+  6 por debajo a 5 por encima: con la raíz C4 y A menor, A3), los demás como
+  en `scale`. Se mezclan con notas. Sin `key()`, el error dice qué falta.
+  Vale en `pista:melody` y en `c:melody` de `every` (`Timing::key`). El
+  diagnóstico en vivo los lee en do mayor (no sabe la tonalidad; si falta
+  `key()`, lo dice la carga).
+- **`transpose(n)`** se aplica al acabar el script (`expand`, en cualquier
+  sitio del script): suma `n` al `semitones` de cada paso (los acordes van
+  sobre él) de las pistas con instrumento o sintetizador, y de las de cortes
+  que han usado `melody()` (`TrackBuild::melodic`, también desde `every`).
+  Una nota que se sale de ±36 da error con la pista. Al ir en los pasos, el
+  tracker, la salida MIDI, la grabación y el resaltado lo ven sin más.
+- **Pads** (`App::pad_semitones`): con `key()`, los pads de un instrumento
+  o un sintetizador tocan los grados 1 a 18 de la tonalidad (movida por
+  `transpose()`) desde su tónica más cercana a la raíz; sin ella, semitonos
+  como siempre. El MIDI de entrada no cambia (cada tecla es su nota).
+- **Registro y editor**: `key` y `transpose` en `FUNCTIONS`; `scale` y
+  `melody` con su doc nueva; el autocompletado ofrece las tónicas y los
+  modos dentro de `key("...")`.
+- **Tests**: `script/tests/key.rs` (la tonalidad en el modelo; `scale()`
+  con lo que falta de `key()` da lo mismo que escrito a mano y
+  `transpose()` no la mueve; grados de `melody()`, también en `every`,
+  suenan bit a bit como sus notas; `transpose(2)` suena bit a bit como
+  escribirlo dos semitonos arriba en instrumentos —melody, steps con `^`,
+  acordes— y en `melody()` de cortes, sin mover los `^` de la batería, y
+  `transpose(0)` como nada; recargar con `transpose(12)` entra al compás
+  siguiente y lo de antes queda igual; 11 errores con la línea),
+  `patterns.rs` (grados) y `tui/src/tests/instrument.rs` (los pads con
+  `key()` y con `transpose()`). `golden.rs` sin tocar: sin `key()` ni
+  `transpose()` no cambia nada.
+
+#### Decisiones (tonalidad global)
+
+- **`key("A", "minor")`**: se lee como se dice («la menor») y el modo es
+  el nombre de `scale()`, así que vale cualquier escala (`"dorian"`,
+  `"minor_pentatonic"`). Tónica y modo con los mismos nombres y errores que
+  `scale()`.
+- **Qué mueve `transpose()`**: todo lo que es una nota (instrumentos y
+  sintetizadores, sin importar cómo se escribieron, y `melody()` en
+  cortes) y no los `^` de `steps()` en una pista de cortes, que son
+  semitonos exactos sobre un corte (la caja `^-3` de un break no tiene que
+  subir con la canción). `scale()` tampoco: sus grados acaban en `^` de
+  `steps()` y, si los moviera, `escala:melody` en un instrumento subiría
+  dos veces. Para una línea de cortes que se transponga, `melody()` con
+  grados.
+- **`transpose` al final y `key` antes**: `transpose()` solo suma a los
+  pasos ya hechos, así que puede ir en cualquier sitio. `key()` cambia lo
+  que devuelven `scale()` y los grados en el momento de llamarlos (Lua no se
+  puede reevaluar hacia atrás): antes de ellos, o error.
+- **Por lote al compás**: son parte del script, así que entran como todo lo
+  demás, enteros al empezar el compás (test). No hay un `transpose` en vivo
+  aparte: sería un segundo sitio donde vive la altura de las notas.
+- **Grado 1 = la tónica más cercana a la raíz**: el instrumento suena tal
+  cual en su raíz y lo natural es que el grado 1 quede cerca de ella (más
+  calidad y menos cambio de duración), arriba o abajo.
+
 ## Mejoras sueltas
 
 - **Pegado multilínea**: ya lo hacían el pegado con bracketed paste (`App::paste`, `editing::burst_text` para terminales sin él) y la parte 1 de la fase L en la ventana del editor; verificado con sus tests (`pasting_keeps_the_lines_and_the_indent_and_undoes_at_once`, `pasting_with_the_completion_open_accepts_nothing`, `a_burst_of_keys_with_line_breaks_is_a_paste`, `split::pasting_in_the_editor_window_keeps_the_indent_and_undoes_at_once`): líneas y sangría tal cual, sin autocompletado ni sangrado automático, un solo Ctrl-Z.

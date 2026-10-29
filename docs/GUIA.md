@@ -2261,14 +2261,43 @@ Valor con el que empieza una macro (0 a 1). Lo toma al cargar el script por prim
 - `nombre`: nombre de la macro
 - `valor`: de 0 a 1
 
-### `scale(nombre [, tónica])`
+### `key(tónica [, modo])`
+
+La tonalidad de la canción: la usan scale(), los grados de melody() y los pads de los instrumentos. Con ella, `scale()` sin nombre o sin tónica toma las suyas, `melody()` entiende grados (`"1 3 5 8"`) y los pads del modo tocar de un instrumento o un sintetizador tocan los grados de la escala (1-0: del grado 1 al 10) en vez de semitonos. Sin `key()`, todo suena como siempre. Va una vez, fuera de `section()` y antes de lo que la use (`scale()`, `melody()` con grados). El modo es cualquier escala de `scale()`. «Tonalidad del sample» (paleta y explorador) la propone a partir de un sample, sin aplicarla sola.
+
+- `tónica`: de `C` a `B` con `#` o `b` (`A`, `F#`, `Bb`)
+- `modo`: una escala de `scale()` (por defecto "major": "minor", "dorian"...)
+
+```lua
+key("A", "minor")
+local piano = sample("amen.wav"):instrument({ root = "C4" })
+-- Grados de la menor de la: 1 es A3 (la tónica más cerca de C4).
+track("lead", piano):melody("1 . 3 .  5 . 3 .  1+3+5 _ _ _  -2 . 1 .")
+-- La pentatónica sobre la tónica de la canción, en un corte.
+local penta = scale("minor_pentatonic")
+```
+
+### `transpose(n)`
+
+Sube (o baja) n semitonos todas las notas de la canción, de golpe. Mueve todas las notas de los instrumentos y los sintetizadores (las de `melody()`, las de `steps()` con `^`, los acordes, las de `every`), las de `melody()` en una pista de cortes, los pads de los instrumentos y la salida MIDI de esas notas. No mueve los `^` de `steps()` en una pista de cortes (la batería, o lo que da `escala:melody`): son semitonos exactos sobre el corte. Como todo cambio del script, entra entero al empezar el compás. Una nota que quedaría a más de ±36 semitonos de la raíz da error con la pista. Va una vez, fuera de `section()`; en cualquier sitio del script.
+
+- `n`: semitonos enteros, de -24 a 24 (0: nada)
+
+```lua
+key("A", "minor")
+transpose(2) -- todo en B menor
+local piano = sample("amen.wav"):instrument({ root = "C4" })
+track("lead", piano):melody("a3 . c4 .  e4 . c4 .  1 . 3 .  5 . 8 .")
+```
+
+### `scale([nombre [, tónica]])`
 
 Devuelve: escala.
 
-Una escala, para tocar melodías con un corte: sus grados se convierten en pitch. El pitch se cuenta desde el tono original del corte, que hace de do (C): con tónica `"D"` todo sube 2 semitonos. Las escalas están en la tabla de abajo; las tónicas, de `C` a `B` con `#` o `b` (`F#`, `Bb`).
+Una escala, para tocar melodías con un corte: sus grados se convierten en pitch. El pitch se cuenta desde el tono original del corte, que hace de do (C): con tónica `"D"` todo sube 2 semitonos. Las escalas están en la tabla de abajo; las tónicas, de `C` a `B` con `#` o `b` (`F#`, `Bb`). Con `key()`, lo que no se diga es de la tonalidad de la canción: `scale()` es su escala con su tónica y `scale("dorian")`, la dórica sobre su tónica (`key()` tiene que ir antes). `transpose()` no la mueve: sus grados son semitonos exactos sobre el corte.
 
-- `nombre`: la escala (ver la tabla)
-- `tónica`: nota de partida (por defecto "C", el tono del corte)
+- `nombre`: la escala (ver la tabla); sin ella, la de `key()`
+- `tónica`: nota de partida (por defecto la de `key()` o, sin ella, "C", el tono del corte)
 
 | Escala | Qué es | Semitonos |
 | --- | --- | --- |
@@ -2704,9 +2733,9 @@ track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
 
 Devuelve: pista.
 
-Patrón de notas por su nombre ("c e g e"), cromático respecto a la raíz del instrumento. Como `steps`, con notas en vez de cortes: `c`, `e`, `f#`, `bb3`... (la octava es opcional; sin ella, la de la raíz; C4 es el do central), acordes con `+` (`c+e+g`: las notas sin octava van justo por encima de la anterior), `.` silencio y `_` para alargar la nota de antes un paso. Cada nota admite los sufijos de los pasos salvo `^` (`e@0.5`, `gr2`). En una pista con instrumento la raíz es su `root`; en una de cortes, la nota C4 es el corte 1 tal cual (como en `scale`), y los acordes no valen (no hay polifonía).
+Patrón de notas por su nombre ("c e g e"), cromático respecto a la raíz del instrumento. Como `steps`, con notas en vez de cortes: `c`, `e`, `f#`, `bb3`... (la octava es opcional; sin ella, la de la raíz; C4 es el do central), acordes con `+` (`c+e+g`: las notas sin octava van justo por encima de la anterior), `.` silencio y `_` para alargar la nota de antes un paso. Cada nota admite los sufijos de los pasos salvo `^` (`e@0.5`, `gr2`). En una pista con instrumento la raíz es su `root`; en una de cortes, la nota C4 es el corte 1 tal cual (como en `scale`), y los acordes no valen (no hay polifonía). Con `key()`, también grados de la tonalidad: `melody("1 3 5 8")` (el 1 es la tónica más cercana a la raíz; negativos, por debajo; acordes con `+`: `1+3+5`), mezclables con notas. `transpose()` mueve todas las notas de `melody()`.
 
-- `notas`: notas, acordes (`c+e+g`), `.` o `_`: tantas como pasos tiene la pista
+- `notas`: notas, acordes (`c+e+g`), grados con `key()` (`1 3 5`), `.` o `_`: tantas como pasos tiene la pista
 
 ```lua
 local piano = sample("amen.wav"):instrument({ root = "C3", adsr = { 5, 0, 1, 200 } })

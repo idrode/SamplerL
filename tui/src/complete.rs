@@ -381,6 +381,26 @@ fn string_context(
                     insert: n.to_string(),
                 })
                 .collect(),
+            ("key", 0) => api::NOTES
+                .iter()
+                .map(|(n, _)| Candidate {
+                    label: n.to_string(),
+                    kind: "tónica".into(),
+                    signature: format!("key(\"{n}\", modo)"),
+                    description: "tónica de la canción".into(),
+                    insert: n.to_string(),
+                })
+                .collect(),
+            ("key", 1) => api::SCALES
+                .iter()
+                .map(|s| Candidate {
+                    label: s.name.into(),
+                    kind: "modo".into(),
+                    signature: format!("key(tónica, \"{}\")", s.name),
+                    description: s.summary.into(),
+                    insert: s.name.into(),
+                })
+                .collect(),
             ("chance", 1) => api::CHANCE_EFFECTS
                 .iter()
                 .map(|e| Candidate {
@@ -1138,7 +1158,7 @@ mod tests {
         assert!(l.contains(&"ghost".into()), "snippets: {l:?}");
         let c = at(&format!("{SONG}tr|")).unwrap();
         assert_eq!(c.prefix, "tr");
-        assert_eq!(labels(&c), ["track", "true"]);
+        assert_eq!(labels(&c), ["track", "transpose", "true"]);
         // En mitad de una expresión no hay snippets.
         let c = at("local x = gh|").unwrap();
         assert!(labels(&c).is_empty());
