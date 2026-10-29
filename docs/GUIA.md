@@ -1093,6 +1093,12 @@ paleta de 256.
 | --- | --- | --- |
 | `visible` | enseñar la vista de ocupación al arrancar (`true`/`false`; la paleta la enseña y la oculta en vivo); sus colores, `hueco` y `sugerencia` en `[colores]` | `false` |
 
+| En `[dispositivos]` | Para | Por defecto |
+| --- | --- | --- |
+| `audio` | dispositivo de salida de audio, por su nombre (el de `tui --list-devices` o el panel de dispositivos); se guarda solo al elegirlo en el panel; `--audio-device` manda sobre él | el predeterminado |
+| `midi_entrada` | puerto MIDI de entrada, por su nombre sin los números de ALSA del final (`"Seaboard:Seaboard MIDI 1"`); `--midi-in` manda sobre él | el puerto virtual |
+| `midi_salida` | puerto MIDI de salida, igual; `--midi-out` manda sobre él | el puerto virtual |
+
 <!-- config:fin -->
 
 ### MIDI

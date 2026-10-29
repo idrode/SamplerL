@@ -174,7 +174,7 @@ impl Choice {
         }
     }
 
-    fn set(&mut self, kind: Kind, value: Option<String>) {
+    pub fn set(&mut self, kind: Kind, value: Option<String>) {
         match kind {
             Kind::Audio => self.audio = value,
             Kind::MidiIn => self.midi_in = value,

@@ -143,6 +143,26 @@ const OCCUPANCY_KEYS: &[(&str, &str, &str)] = &[(
     "`false`",
 )];
 
+/// Claves de `[dispositivos]` (para la guía).
+#[cfg(test)]
+const DEVICES_KEYS: &[(&str, &str, &str)] = &[
+    (
+        "audio",
+        "dispositivo de salida de audio, por su nombre (el de `tui --list-devices` o el panel de dispositivos); se guarda solo al elegirlo en el panel; `--audio-device` manda sobre él",
+        "el predeterminado",
+    ),
+    (
+        "midi_entrada",
+        "puerto MIDI de entrada, por su nombre sin los números de ALSA del final (`\"Seaboard:Seaboard MIDI 1\"`); `--midi-in` manda sobre él",
+        "el puerto virtual",
+    ),
+    (
+        "midi_salida",
+        "puerto MIDI de salida, igual; `--midi-out` manda sobre él",
+        "el puerto virtual",
+    ),
+];
+
 /// Retardo a mano más largo del resaltado, en ms.
 const MAX_HIGHLIGHT_DELAY_MS: f64 = 1000.0;
 
@@ -508,6 +528,8 @@ pub struct Config {
     pub highlight: HighlightConfig,
     /// `[ocupacion]`: si se ve al arrancar.
     pub occupancy: OccupancyConfig,
+    /// `[dispositivos]`: los elegidos la última vez.
+    pub devices: crate::devices::Choice,
     /// Avisos (archivo que falta o roto, claves desconocidas, choques...).
     pub warnings: Vec<String>,
 }
@@ -676,8 +698,24 @@ impl Config {
                         }
                     }
                 }
+                "dispositivos" => {
+                    for (key, value) in inner {
+                        let kind = crate::devices::Kind::from_key(key);
+                        match (kind, value.as_str()) {
+                            (Some(kind), Some(name)) => config
+                                .devices
+                                .set(kind, (!name.is_empty()).then(|| name.to_string())),
+                            (Some(_), None) => config.warnings.push(format!(
+                                "[dispositivos] {key}: el nombre entre comillas"
+                            )),
+                            (None, _) => config.warnings.push(format!(
+                                "[dispositivos] «{key}» no existe (hay: audio, midi_entrada, midi_salida)"
+                            )),
+                        }
+                    }
+                }
                 other => config.warnings.push(format!(
-                    "{name}: sección [{other}] desconocida (hay: teclas, colores, midi, editor, resaltado, ocupacion)"
+                    "{name}: sección [{other}] desconocida (hay: teclas, colores, midi, editor, resaltado, ocupacion, dispositivos)"
                 )),
             }
         }
@@ -791,6 +829,129 @@ fn guide_markdown() -> String {
     for (name, what, default) in OCCUPANCY_KEYS {
         out.push_str(&format!("| `{name}` | {what} | {default} |\n"));
     }
+    out.push_str("\n| En `[dispositivos]` | Para | Por defecto |\n| --- | --- | --- |\n");
+    for (name, what, default) in DEVICES_KEYS {
+        out.push_str(&format!("| `{name}` | {what} | {default} |\n"));
+    }
+    out
+}
+
+/// Guarda lo elegido en `[dispositivos]` de `path` sin tocar lo demás
+/// (comentarios incluidos): cambia o quita las líneas de esas claves, o
+/// añade la sección al final. Se escribe entero en un temporal y se cambia
+/// por el de verdad.
+pub fn save_devices(path: &Path, choice: &crate::devices::Choice) -> std::io::Result<()> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(e),
+    };
+    let updated = with_devices(&text, choice);
+    if updated == text {
+        return Ok(());
+    }
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let tmp = path.with_extension("toml.tmp");
+    std::fs::write(&tmp, updated)?;
+    std::fs::rename(&tmp, path)
+}
+
+/// El texto de un `config.toml` con `[dispositivos]` puesto a `choice`.
+pub fn with_devices(text: &str, choice: &crate::devices::Choice) -> String {
+    use crate::devices::Kind;
+    let header = |line: &str| {
+        let line = line.trim();
+        let line = line.split('#').next().unwrap_or("").trim();
+        line.starts_with('[')
+            .then(|| line.trim_matches(['[', ']']).trim().to_string())
+    };
+    let key_of = |line: &str| {
+        let (key, _) = line.split_once('=')?;
+        let key = key.trim().trim_matches('"');
+        Kind::from_key(key)
+    };
+    let entry = |kind: Kind, value: &str| format!("{} = {}", kind.key(), toml_string(value));
+    let mut lines: Vec<String> = text.lines().map(String::from).collect();
+    let section = lines
+        .iter()
+        .position(|l| header(l).as_deref() == Some("dispositivos"));
+    let Some(start) = section else {
+        let wanted: Vec<String> = Kind::ALL
+            .into_iter()
+            .filter_map(|k| choice.get(k).map(|v| entry(k, v)))
+            .collect();
+        if wanted.is_empty() {
+            return text.to_string();
+        }
+        let mut out = text.to_string();
+        if !out.is_empty() && !out.ends_with('\n') {
+            out.push('\n');
+        }
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str("[dispositivos]\n");
+        for line in wanted {
+            out.push_str(&line);
+            out.push('\n');
+        }
+        return out;
+    };
+    let end = lines[start + 1..]
+        .iter()
+        .position(|l| header(l).is_some())
+        .map_or(lines.len(), |i| start + 1 + i);
+    let mut seen = Vec::new();
+    let mut body: Vec<String> = Vec::new();
+    for line in &lines[start + 1..end] {
+        match key_of(line) {
+            Some(kind) if !seen.contains(&kind) => {
+                seen.push(kind);
+                if let Some(value) = choice.get(kind) {
+                    body.push(entry(kind, value));
+                }
+            }
+            // Una clave repetida (TOML no la deja): fuera.
+            Some(_) => {}
+            None => body.push(line.clone()),
+        }
+    }
+    // Las que faltan, tras la última clave (antes de las líneas en blanco
+    // del final de la sección).
+    let tail = body
+        .iter()
+        .rev()
+        .take_while(|l| l.trim().is_empty())
+        .count();
+    let at = body.len() - tail;
+    let missing: Vec<String> = Kind::ALL
+        .into_iter()
+        .filter(|k| !seen.contains(k))
+        .filter_map(|k| choice.get(k).map(|v| entry(k, v)))
+        .collect();
+    body.splice(at..at, missing);
+    lines.splice(start + 1..end, body);
+    let mut out = lines.join("\n");
+    if text.ends_with('\n') || text.is_empty() {
+        out.push('\n');
+    }
+    out
+}
+
+/// Una cadena de TOML con sus escapes.
+fn toml_string(value: &str) -> String {
+    let mut out = String::from('"');
+    for c in value.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            c if c.is_control() => out.push_str(&format!("\\u{:04X}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
     out
 }
 
@@ -823,6 +984,84 @@ mod tests {
             "docs/GUIA.md no coincide con tui/src/config.rs: \
              ACTUALIZAR_GUIA=1 cargo test -p tui the_guide_lists_the_config"
         );
+    }
+
+    #[test]
+    fn the_devices_section_names_them() {
+        let config = Config::parse(
+            "[dispositivos]\naudio = \"Auriculares USB\"\nmidi_entrada = \"Seaboard:Seaboard MIDI 1\"\n\
+             midi_salida = \"\"\n",
+            true,
+            "c",
+        );
+        assert!(config.warnings.is_empty(), "{:?}", config.warnings);
+        assert_eq!(config.devices.audio.as_deref(), Some("Auriculares USB"));
+        assert_eq!(
+            config.devices.midi_in.as_deref(),
+            Some("Seaboard:Seaboard MIDI 1")
+        );
+        // Vacío: el puerto virtual.
+        assert_eq!(config.devices.midi_out, None);
+        let config = Config::parse("[dispositivos]\naudio = 2\nmidi = \"x\"\n", true, "c");
+        assert_eq!(config.warnings.len(), 2, "{:?}", config.warnings);
+        assert_eq!(config.devices, crate::devices::Choice::default());
+    }
+
+    #[test]
+    fn saving_the_devices_keeps_everything_else() {
+        use crate::devices::Choice;
+        let choice = Choice {
+            audio: Some("Auriculares \"USB\"".into()),
+            midi_in: Some("Seaboard:Seaboard MIDI 1".into()),
+            midi_out: None,
+        };
+        // Sin sección: se añade al final.
+        let text = "# mis teclas\n[teclas]\nguardar = \"alt-s\" # así\n";
+        let saved = with_devices(text, &choice);
+        assert_eq!(
+            saved,
+            "# mis teclas\n[teclas]\nguardar = \"alt-s\" # así\n\n[dispositivos]\n\
+             audio = \"Auriculares \\\"USB\\\"\"\nmidi_entrada = \"Seaboard:Seaboard MIDI 1\"\n"
+        );
+        let config = Config::parse(&saved, true, "c");
+        assert!(config.warnings.is_empty(), "{:?}", config.warnings);
+        assert_eq!(config.devices, choice);
+        // Otra vez lo mismo: no cambia nada.
+        assert_eq!(with_devices(&saved, &choice), saved);
+
+        // Con sección: cambia sus líneas, quita las que pasan a por
+        // defecto, añade las que faltan y deja comentarios y lo de después.
+        let text = "[dispositivos] # elegidos en el panel\n# el bueno:\naudio = \"viejo\"\n\
+                    midi_salida = \"Surge\"\n\n[midi]\ncanal = 2\n";
+        let saved = with_devices(text, &choice);
+        assert_eq!(
+            saved,
+            "[dispositivos] # elegidos en el panel\n# el bueno:\naudio = \"Auriculares \\\"USB\\\"\"\n\
+             midi_entrada = \"Seaboard:Seaboard MIDI 1\"\n\n[midi]\ncanal = 2\n"
+        );
+        assert_eq!(Config::parse(&saved, true, "c").devices, choice);
+        assert_eq!(Config::parse(&saved, true, "c").midi.channel, Some(2));
+        // Nada elegido y sin sección: igual que estaba.
+        assert_eq!(with_devices("[midi]\n", &Choice::default()), "[midi]\n");
+        assert_eq!(with_devices("", &Choice::default()), "");
+    }
+
+    #[test]
+    fn save_devices_writes_the_file() {
+        let dir = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../target/tmp"))
+            .join("config_save_devices");
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("sampler/config.toml");
+        let choice = crate::devices::Choice {
+            midi_out: Some("Surge XT:Surge XT MIDI In".into()),
+            ..Default::default()
+        };
+        // Sin archivo (ni carpeta): se crea.
+        save_devices(&path, &choice).unwrap();
+        let config = Config::load(&path, true);
+        assert!(config.warnings.is_empty(), "{:?}", config.warnings);
+        assert_eq!(config.devices, choice);
+        assert!(!path.with_extension("toml.tmp").exists());
     }
 
     #[test]

@@ -298,3 +298,78 @@ fn without_permission_nothing_is_listed_or_opened() {
     assert!(message(devices.choose(Kind::Audio, "Altavoces")).contains("--allow-audio"));
     assert!(message(devices.choose(Kind::MidiIn, VIRTUAL_IN)).contains("--allow-midi"));
 }
+
+#[test]
+fn what_the_user_chooses_is_saved_but_a_fallback_is_not() {
+    let (mut app, audio, _midi) = with_devices("devices_saved");
+    let dir = fixture("devices_saved_config", None);
+    let path = dir.parent().unwrap().join("config.toml");
+    std::fs::write(&path, "# mío\n[midi]\ncanal = 3\n").unwrap();
+    app.set_devices_config(Some(path.clone()));
+    let saved = || crate::config::Config::load(&path, false);
+
+    app.choose_device(Kind::Audio, "Auriculares USB");
+    finish_switch(&mut app, &audio, "Altavoces");
+    app.choose_device(Kind::MidiIn, "Seaboard:Seaboard MIDI 1");
+    let config = saved();
+    assert_eq!(config.devices.audio.as_deref(), Some("Auriculares USB"));
+    assert_eq!(
+        config.devices.midi_in.as_deref(),
+        Some("Seaboard:Seaboard MIDI 1")
+    );
+    assert_eq!(config.midi.channel, Some(3), "lo demás sigue");
+    assert!(
+        std::fs::read_to_string(&path)
+            .unwrap()
+            .starts_with("# mío\n")
+    );
+
+    // Se desenchufan los auriculares: suena por los altavoces, pero lo
+    // guardado sigue siendo los auriculares (al volver a arrancar con
+    // ellos enchufados, vuelven).
+    audio.unplug("Auriculares USB");
+    app.tick();
+    assert_eq!(
+        app.device_choice().unwrap().audio.as_deref(),
+        Some("Altavoces")
+    );
+    assert_eq!(saved().devices.audio.as_deref(), Some("Auriculares USB"));
+
+    // Volver al puerto virtual quita la línea.
+    app.choose_device(Kind::MidiIn, VIRTUAL_IN);
+    assert_eq!(saved().devices.midi_in, None);
+    assert!(
+        !std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("midi_entrada")
+    );
+}
+
+#[test]
+fn a_saved_device_that_is_gone_at_start_warns_and_uses_the_default() {
+    let path = fixture("devices_start", Some(SONG));
+    let (controller, engine) = new_engine(RATE);
+    let fake = fake_audio();
+    // Lo guardado: unos auriculares Bluetooth que hoy no están.
+    let (output, warning) = AudioOutput::open(fake.backend(), engine, Some("WH-1000XM4")).unwrap();
+    let mut app = App::open(&path, controller, RATE).unwrap();
+    let mut devices = Devices::new(Some(output), true, Some(fake_midi().backend()));
+    let changes = devices.start_midi(Some("Launchpad"), None);
+    app.set_devices(devices, changes);
+    app.set_startup_warnings(&[
+        "algo del config".to_string(),
+        warning.unwrap(),
+        "MIDI de entrada: no está «Launchpad»; abre el puerto virtual".to_string(),
+    ]);
+    let message = app.view().message;
+    assert!(
+        message.starts_with("⚠ algo del config · ⚠ audio: no se pudo abrir «WH-1000XM4»"),
+        "{message}"
+    );
+    assert!(message.contains("suena por el predeterminado"), "{message}");
+    assert!(message.ends_with("abre el puerto virtual"), "{message}");
+    assert_eq!(
+        app.device_choice().unwrap().audio.as_deref(),
+        Some("Altavoces")
+    );
+}

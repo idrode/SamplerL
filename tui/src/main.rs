@@ -33,6 +33,8 @@ uso: tui --edit <canción.lua | proyecto.sampler> [--allow-audio] [--allow-midi]
      tui --edit <canción.lua> --new [...]         (un script nuevo, con la plantilla)
      tui --edit <canción.lua | proyecto.sampler> --split [...]  (el editor en otra ventana)
      tui --window-editor <canción.lua | proyecto.sampler>    (editor de una --split en marcha)
+     tui --edit <canción.lua> [--allow-audio --audio-device NOMBRE] [--midi-in PUERTO] [--midi-out PUERTO]
+     tui --list-devices                           (dispositivos de audio y puertos MIDI, y sale)
      tui <archivo.wav> --render <salida.wav>
      tui <archivo.wav> --detect-bpm               (propone bpm() y compases)
      tui --script <canción.lua> --render <salida.wav> [--bars M] [--from N] [--metronome] [--track pista]
@@ -58,6 +60,13 @@ uso: tui --edit <canción.lua | proyecto.sampler> [--allow-audio] [--allow-midi]
   --analyze-masking  renderiza offline cada pista en solo (un ciclo entero de la
                canción, hasta 256 compases) y dice en qué bandas chocan
   --allow-midi abre los puertos MIDI virtuales «sampler entrada» y «sampler salida» (ALSA)
+  --audio-device  con --edit y --allow-audio: suena por ese dispositivo (su nombre, el de
+               --list-devices); manda sobre [dispositivos] audio de config.toml
+  --midi-in, --midi-out  con --edit: conecta la entrada o la salida MIDI a ese puerto (su
+               nombre, con o sin los números de ALSA del final); abren el MIDI sin
+               --allow-midi y mandan sobre [dispositivos] de config.toml
+  --list-devices  lista los dispositivos de salida de audio (abre la tarjeta para
+               preguntarle qué admite) y los puertos MIDI, y sale
   --new      con --edit: si el script no existe, empieza uno con la plantilla (se
                crea al guardar); sin --new, una ruta que no existe es un error
   --split    con --edit: el motor y las vistas aquí y el editor en una terminal nueva
@@ -117,6 +126,10 @@ fn run() -> Result<(), BoxError> {
     let mut split = false;
     let mut new = false;
     let mut window_editor = None;
+    let mut audio_device = None;
+    let mut midi_in = None;
+    let mut midi_out = None;
+    let mut list_devices = false;
     while let Some(arg) = args.next() {
         let mut value = || {
             args.next()
@@ -126,6 +139,10 @@ fn run() -> Result<(), BoxError> {
             "--render" => render_to = Some(value()?),
             "--allow-audio" => allow_audio = true,
             "--allow-midi" => allow_midi = true,
+            "--audio-device" => audio_device = Some(value()?),
+            "--midi-in" => midi_in = Some(value()?),
+            "--midi-out" => midi_out = Some(value()?),
+            "--list-devices" => list_devices = true,
             "--metronome" => metronome = true,
             "--detect-bpm" => detect = true,
             "--analyze-masking" => masking = true,
@@ -180,8 +197,28 @@ fn run() -> Result<(), BoxError> {
             _ => return Err(USAGE.into()),
         }
     }
+    let device_flags = audio_device.is_some() || midi_in.is_some() || midi_out.is_some();
+    if list_devices {
+        if std::env::args().count() != 2 {
+            return Err(format!("--list-devices va solo\n{USAGE}").into());
+        }
+        print!("{}", list_all_devices());
+        return Ok(());
+    }
+    if device_flags && edit.is_none() {
+        return Err(
+            format!("--audio-device, --midi-in y --midi-out van con --edit\n{USAGE}").into(),
+        );
+    }
+    if audio_device.is_some() && !allow_audio {
+        return Err(format!(
+            "--audio-device va con --allow-audio (sin él no se abre la tarjeta)\n{USAGE}"
+        )
+        .into());
+    }
     if let Some(target) = window_editor {
         if edit.is_some()
+            || device_flags
             || split
             || new
             || allow_audio
@@ -210,7 +247,15 @@ fn run() -> Result<(), BoxError> {
             return Err(format!("--edit no se combina con otras opciones\n{USAGE}").into());
         }
         check_edit_target(std::path::Path::new(&edit), new)?;
-        return run_editor(std::path::Path::new(&edit), allow_audio, allow_midi, split);
+        let devices = DeviceArgs {
+            allow_audio,
+            // Pedir un puerto MIDI es pedir el MIDI.
+            allow_midi: allow_midi || midi_in.is_some() || midi_out.is_some(),
+            audio: audio_device,
+            midi_in,
+            midi_out,
+        };
+        return run_editor(std::path::Path::new(&edit), devices, split);
     }
     if let Some(script) = script {
         if path.is_some() || pattern.is_some() || slices.is_some() || min_gap_ms.is_some() {
@@ -601,20 +646,90 @@ fn check_edit_target(path: &std::path::Path, new: bool) -> Result<(), String> {
     Ok(())
 }
 
-fn run_editor(
-    path: &std::path::Path,
+/// Los dispositivos que se piden por la línea de órdenes (mandan sobre
+/// `[dispositivos]` de `config.toml`).
+struct DeviceArgs {
     allow_audio: bool,
     allow_midi: bool,
-    split: bool,
-) -> Result<(), BoxError> {
+    audio: Option<String>,
+    midi_in: Option<String>,
+    midi_out: Option<String>,
+}
+
+/// `--list-devices`: los de audio (con sus canales y frecuencias) y los
+/// puertos MIDI, como texto.
+fn list_all_devices() -> String {
+    use engine::AudioBackend;
+    let mut out = String::from("Audio de salida:\n");
+    match engine::CpalBackend::default().list() {
+        Ok(list) if list.is_empty() => out.push_str("  (ninguno)\n"),
+        Ok(list) => {
+            for d in list {
+                let rates: Vec<String> = d.sample_rates.iter().map(u32::to_string).collect();
+                out.push_str(&format!(
+                    "  {}{}\n      {} canales · {} Hz · {}\n",
+                    d.name,
+                    if d.default { "  (predeterminado)" } else { "" },
+                    d.channels,
+                    rates.join(", "),
+                    d.id
+                ));
+            }
+        }
+        Err(e) => out.push_str(&format!("  no se pudo listar: {e}\n")),
+    }
+    #[cfg(feature = "midi")]
+    {
+        use devices::MidiBackend;
+        let mut midi = midi_io::Midir;
+        for (title, list) in [
+            ("MIDI de entrada", midi.inputs()),
+            ("MIDI de salida", midi.outputs()),
+        ] {
+            out.push_str(&format!("{title}:\n"));
+            match list {
+                Ok(list) => {
+                    let list: Vec<_> = list.iter().filter(|p| !p.starts_with("sampler:")).collect();
+                    if list.is_empty() {
+                        out.push_str("  (ninguno)\n");
+                    }
+                    for port in list {
+                        out.push_str(&format!("  {}\n", devices::port_key(port)));
+                    }
+                }
+                Err(e) => out.push_str(&format!("  no se pudo listar: {e}\n")),
+            }
+        }
+    }
+    #[cfg(not(feature = "midi"))]
+    out.push_str("MIDI: compilado sin la feature midi\n");
+    out
+}
+
+fn run_editor(path: &std::path::Path, args: DeviceArgs, split: bool) -> Result<(), BoxError> {
+    let DeviceArgs {
+        allow_audio,
+        allow_midi,
+        ..
+    } = args;
+    // Teclas, colores y los dispositivos de la última vez (si falta o está
+    // roto: por defecto y un aviso).
+    let config_path = config::dir().map(|dir| dir.join("config.toml"));
+    let config = match &config_path {
+        Some(path) => config::Config::load(path, theme::truecolor()),
+        None => config::Config::default(),
+    };
+    let audio_device = args.audio.or(config.devices.audio.clone());
+    let midi_in = args.midi_in.or(config.devices.midi_in.clone());
+    let midi_out = args.midi_out.or(config.devices.midi_out.clone());
     let (controller, engine) = engine::new_engine(RENDER_RATE);
     // La salida vive en los dispositivos de la aplicación (se puede cambiar
     // en caliente); sin --allow-audio, la nula.
-    let mut warnings = Vec::new();
+    let mut warnings = config.warnings.clone();
     let audio = if allow_audio {
         let backend = Box::new(engine::CpalBackend::default());
-        let (output, warning) =
-            engine::AudioOutput::open(backend, engine, None).map_err(|e| format!("audio: {e}"))?;
+        let (output, warning) = engine::AudioOutput::open(backend, engine, audio_device.as_deref())
+            .map_err(|e| format!("audio: {e}"))?;
         warnings.extend(warning);
         output
     } else {
@@ -630,12 +745,6 @@ fn run_editor(
         app::App::open(path, controller, sample_rate)?
     };
     app.set_global_blocks(script::blocks::global_dir());
-    // Teclas y colores del usuario (si falta o está roto: por defecto y un
-    // aviso).
-    let config = match config::dir() {
-        Some(dir) => config::Config::load(&dir.join("config.toml"), theme::truecolor()),
-        None => config::Config::default(),
-    };
     theme::set(config.theme);
     app.set_config(&config);
     // Las ranuras 1-9, de una sesión a otra.
@@ -665,9 +774,19 @@ fn run_editor(
         None
     };
     let mut devices = devices::Devices::new(Some(audio), allow_audio, midi);
-    let mut changes = devices.start_midi(None, None);
-    changes.extend(warnings.into_iter().map(devices::Change::Message));
+    let changes = devices.start_midi(midi_in.as_deref(), midi_out.as_deref());
+    // Los avisos de los dispositivos (uno guardado que ya no está...),
+    // junto a los de la configuración.
+    for change in &changes {
+        if let devices::Change::Message(text) = change {
+            warnings.push(text.clone());
+        }
+    }
     app.set_devices(devices, changes);
+    app.set_devices_config(config_path);
+    if !warnings.is_empty() {
+        app.set_startup_warnings(&warnings);
+    }
     // Con MIDI se mira la cola más a menudo (menos retraso en las notas).
     let poll = if allow_midi {
         Duration::from_millis(2)

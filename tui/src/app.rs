@@ -363,6 +363,8 @@ pub struct App {
     /// La salida de audio y los puertos MIDI, para elegirlos en caliente
     /// (solo en la ventana principal de verdad; en los tests, falsos).
     devices: Option<crate::devices::Devices>,
+    /// Dónde se guarda lo elegido (`[dispositivos]` de `config.toml`).
+    devices_config: Option<PathBuf>,
     /// Con el editor en su propia ventana: de qué lado está esta (ver
     /// `split`). Sin él, una sola ventana como siempre.
     link: Option<split::Link>,
@@ -475,6 +477,7 @@ impl App {
             midi_in: None,
             midi_out: None,
             devices: None,
+            devices_config: None,
             link: None,
             loaded_text: None,
             cursors: Default::default(),
