@@ -1809,6 +1809,171 @@ fn render_tracker(view: &ViewModel, inner: Rect, buf: &mut Buffer, column: usize
     }
 }
 
+/// Vista de ocupación por paso (ver [`crate::occupancy`]): una fila por
+/// pista y una columna por paso de la página, con el sombreado de la
+/// intensidad de cada golpe (`░▒▓█` por su `@`), la cifra de su retrigger,
+/// `─` donde sigue una nota alargada, `×` un golpe del patrón que en esta
+/// vuelta no suena (`chance`, `every`) y `·` el silencio; debajo, `Σ`
+/// cuántas pistas se oyen en cada paso, con los pasos vacíos sobre el
+/// color de los huecos. Cada pista en su color del resaltado (apagada, la
+/// que no se oye), la columna del paso que se oye sobre el color del paso
+/// que suena, y arriba los compases y los tiempos. Si no caben los pasos a
+/// dos celdas, a una; si ni así, se desplaza siguiendo el cursor o el paso
+/// que se oye. Si no caben las pistas, las de alrededor de la elegida.
+pub struct OccupancyPanel<'a>(pub &'a ViewModel);
+
+/// Ancho máximo del nombre de una pista en la vista de ocupación.
+const OCCUPANCY_NAME: usize = 8;
+
+impl OccupancyPanel<'_> {
+    /// Alto que pide para verse entera: una fila por pista, la de los
+    /// compases, la del resumen y los bordes.
+    pub fn height(grid: &crate::occupancy::Grid) -> u16 {
+        grid.rows.len() as u16 + 4
+    }
+}
+
+/// Primera de `shown` columnas (o filas) de `total` para que se vea
+/// `focus`, en múltiplos de `align` si se puede.
+fn window_start(focus: usize, shown: usize, total: usize, align: usize) -> usize {
+    if shown >= total {
+        return 0;
+    }
+    let first = focus.saturating_sub(shown / 2);
+    let first = first - first % align.max(1);
+    first.min(total - shown)
+}
+
+impl Widget for OccupancyPanel<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        use crate::occupancy::Cell;
+        let view = self.0;
+        let Some(grid) = &view.occupancy else {
+            return;
+        };
+        let theme = theme::get();
+        let inner = Block::bordered().inner(area);
+        let steps = grid.steps();
+        let label = grid
+            .rows
+            .iter()
+            .map(|r| r.name.chars().count())
+            .max()
+            .unwrap_or(1)
+            .clamp(3, OCCUPANCY_NAME)
+            + 1;
+        let room = (inner.width as usize).saturating_sub(label);
+        let (width, shown) = if steps * 2 <= room {
+            (2, steps)
+        } else {
+            (1, steps.min(room))
+        };
+        let focus = grid.current.unwrap_or(0);
+        let first = window_start(focus, shown, steps, 4);
+        let track_rows = (inner.height as usize).saturating_sub(2);
+        let tracks = grid.rows.len();
+        let focus_track = view.selected.unwrap_or(0);
+        let first_track = window_start(focus_track, track_rows, tracks, 1);
+
+        let bars = steps.div_ceil(grid.bar_steps.max(1)) as u64;
+        let mut title = if bars > 1 {
+            format!(" ocupación · compases {}–{}", grid.bar, grid.bar + bars - 1)
+        } else {
+            format!(" ocupación · compás {}", grid.bar)
+        };
+        let gaps = grid.gaps().len();
+        title.push_str(&match gaps {
+            0 => " · sin huecos".to_string(),
+            1 => " · 1 hueco".to_string(),
+            n => format!(" · {n} huecos"),
+        });
+        if shown < steps {
+            title.push_str(&format!(" · pasos {}–{} de {steps}", first + 1, first + shown));
+        }
+        if track_rows < tracks {
+            title.push_str(&format!(
+                " · pistas {}–{} de {tracks}",
+                first_track + 1,
+                (first_track + track_rows).min(tracks)
+            ));
+        }
+        title.push(' ');
+        Block::bordered().title(title).render(area, buf);
+        if inner.height < 2 || inner.width as usize <= label {
+            return;
+        }
+        let playing = playing_color();
+        let column_x = |c: usize| inner.x + (label + (c - first) * width) as u16;
+        let row_y = |r: usize| inner.y + r as u16;
+        let put = |buf: &mut Buffer, x: u16, y: u16, text: &str, style: Style| {
+            if x < inner.right() && y < inner.bottom() {
+                buf.set_stringn(x, y, text, (inner.right() - x) as usize, style);
+            }
+        };
+        // Los compases y los tiempos (el paso que se oye, `▼`).
+        for c in first..first + shown {
+            let at = c % grid.bar_steps.max(1);
+            let (text, style) = if grid.current == Some(c) {
+                ("▼".to_string(), Style::new().fg(playing).bold())
+            } else if at == 0 {
+                let bar = grid.bar + (c / grid.bar_steps.max(1)) as u64;
+                let text = bar.to_string();
+                let keep = text.len().saturating_sub(width);
+                (text[keep..].to_string(), Style::new().fg(accent()))
+            } else if at % 4 == 0 {
+                (":".to_string(), Style::new().fg(dim()))
+            } else {
+                (String::new(), Style::new())
+            };
+            put(buf, column_x(c), row_y(0), &text, style);
+        }
+        // Una fila por pista.
+        for (r, row) in grid.rows.iter().enumerate().skip(first_track).take(track_rows) {
+            let y = row_y(1 + r - first_track);
+            let color = theme.highlight[row.color % theme.highlight.len()];
+            let soft = theme.highlight_dim[row.color % theme.highlight_dim.len()];
+            let name: String = row.name.chars().take(label - 1).collect();
+            let name_style = if !row.audible {
+                Style::new().fg(dim())
+            } else if view.selected == Some(r) {
+                Style::new().fg(accent()).bold()
+            } else {
+                Style::new().bold()
+            };
+            put(buf, inner.x, y, &name, name_style);
+            for c in first..first + shown {
+                let cell = row.cells[c];
+                let fg = match cell {
+                    _ if !row.audible => dim(),
+                    Cell::Hit { .. } => color,
+                    Cell::Held => soft,
+                    Cell::Dropped | Cell::Silence => dim(),
+                };
+                let mut style = Style::new().fg(fg);
+                if grid.current == Some(c) {
+                    style = style.bg(playing);
+                }
+                put(buf, column_x(c), y, &cell.glyph().to_string(), style);
+            }
+        }
+        // El resumen: cuántas pistas se oyen; los huecos, en su color.
+        let y = row_y(inner.height as usize - 1);
+        put(buf, inner.x, y, "Σ", Style::new().bold());
+        for c in first..first + shown {
+            let count = grid.counts[c];
+            let text = if count > 9 { "+".to_string() } else { count.to_string() };
+            let style = if count == 0 {
+                Style::new().fg(Color::Black).bg(theme.gap).bold()
+            } else if grid.current == Some(c) {
+                Style::new().bg(playing)
+            } else {
+                Style::new().fg(dim())
+            };
+            put(buf, column_x(c), y, &text, style);
+        }
+    }
+}
+
 /// Ancho de cada tira del mezclador.
 const STRIP: u16 = 9;
 

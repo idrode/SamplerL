@@ -599,6 +599,39 @@ en «Fase S» de [docs/ESTADO.md](ESTADO.md).
    barra de estado y en la línea de tiempo; «Borrar el cue» en la paleta.
 4. ✅ **`--from <compás>`** en el render offline.
 
+## Fase T: vista de ocupación por paso
+
+Pedida por el usuario, para ver los huecos entre pistas (breakcore,
+sonidos que se alternan). Detalle y decisiones en «Fase T» de
+[docs/ESTADO.md](ESTADO.md).
+
+Reglas de siempre: hilo de audio sin reservas, mutex ni E/S (si se publica
+algo del motor, con atómicos y `no_alloc.rs` ampliado); `golden.rs`
+idéntico; cambios por lotes atómicos al compás; error con la línea y sigue
+sonando lo anterior; portable (x86_64 y ARM64); versión nueva del
+protocolo del socket si cambia; registro único de la API; tests con
+`TestBackend` en varios tamaños y de ida y vuelta.
+
+1. ✅ **Rejilla de ocupación** (solo lectura): una fila por pista, una
+   columna por paso, golpe o silencio; debajo, cuántas pistas suenan en
+   cada paso y los pasos vacíos resaltados. Con `:length(n)` distintos,
+   varias vueltas y patrones generados (lo que sonará, del secuenciador y
+   no del texto); el paso actual con la sincronía del resaltado de la
+   fase M; retrigger, `chance`/`every` y silencios por probabilidad con
+   su marca; intensidad por volumen (`@`).
+2. **Dónde se ve**: panel propio, y en la ventana principal con el editor
+   en la suya; desplazamiento o compresión si no cabe; en la paleta (F1)
+   para mostrarla y ocultarla, y colores en `config.toml`.
+3. **Rellenar desde la vista**: un cursor sobre un hueco y una acción que
+   pone ahí un golpe de otra pista (a elegir), escrito en el texto Lua
+   como en el tracker editable (un paso de deshacer, solo ese token). Lo
+   generado, los instrumentos y un texto sin cargar no se editan, y la
+   línea de estado dice por qué.
+4. **Sugerencias de relleno** (solo texto, a petición desde la paleta,
+   nunca automático): hasta 4 huecos y qué corte de qué pista los
+   rellenaría, con el criterio documentado (el análisis de choques, si
+   lo hay).
+
 ## Mejoras sueltas
 
 Arreglos pequeños fuera de las fases, con las reglas de siempre. Detalle

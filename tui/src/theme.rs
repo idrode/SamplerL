@@ -37,6 +37,10 @@ pub struct Theme {
     pub highlight_dim: [Color; HIGHLIGHT_COLORS],
     /// Cómo se marca lo que suena (`[resaltado] estilo`).
     pub highlight_mode: HighlightMode,
+    /// Vista de ocupación: fondo de los pasos donde no suena nada y de los
+    /// huecos que se sugiere rellenar.
+    pub gap: Color,
+    pub suggestion: Color,
 }
 
 /// Cómo se marca en el código lo que suena.
@@ -93,6 +97,8 @@ impl Default for Theme {
             highlight: HIGHLIGHT,
             highlight_dim: HIGHLIGHT.map(|c| dimmed(c, false)),
             highlight_mode: HighlightMode::Background,
+            gap: Color::Indexed(88),
+            suggestion: Color::Indexed(28),
         }
     }
 }

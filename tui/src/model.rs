@@ -92,6 +92,8 @@ pub struct ViewModel {
     /// Esta es la ventana principal con el editor en la suya: las vistas
     /// ocupan toda la ventana.
     pub editor_outside: bool,
+    /// Vista de ocupación por paso, si se ve.
+    pub occupancy: Option<crate::occupancy::Grid>,
 }
 
 /// Tabla de choques de frecuencia del último análisis.

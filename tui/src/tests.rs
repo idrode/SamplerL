@@ -2409,6 +2409,7 @@ mod mouse;
 mod mpe;
 mod navigation;
 mod notes;
+mod occupancy;
 mod record;
 mod resample;
 mod sections;

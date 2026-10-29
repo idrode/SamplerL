@@ -32,6 +32,7 @@ mod split;
 #[cfg(test)]
 pub use split::editor_command;
 mod tracker_edit;
+mod occupancy;
 
 /// Plantilla para un script nuevo.
 const TEMPLATE: &str = r#"bpm(170)
@@ -375,6 +376,8 @@ pub struct App {
     /// que se le suma al retardo de la salida (`retardo_ms`).
     highlighting: bool,
     highlight_delay_ms: f64,
+    /// Vista de ocupación por paso (ver `occupancy`).
+    occupancy: occupancy::Occupancy,
 }
 
 impl App {
@@ -472,6 +475,7 @@ impl App {
             cursors: Default::default(),
             highlighting: true,
             highlight_delay_ms: 0.0,
+            occupancy: Default::default(),
         };
         app.reload_blocks();
         Ok(app)
@@ -4396,7 +4400,9 @@ impl App {
             },
             link: None,
             editor_outside: false,
+            occupancy: None,
         };
+        view.occupancy = self.occupancy_grid(&view);
         self.link_view(&mut view);
         view
     }
@@ -4476,7 +4482,7 @@ fn slice_notes_key(track: &script::TrackDef) -> SliceNotesKey {
 
 /// Semicorchea del último paso contada desde el inicio de la sección que
 /// suena (sin línea de tiempo, desde el arranque): la que leen sus pistas.
-fn section_global(status: engine::Status) -> u64 {
+pub(crate) fn section_global(status: engine::Status) -> u64 {
     let Some(place) = status.section else {
         return status.global;
     };

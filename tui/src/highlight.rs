@@ -71,6 +71,11 @@ impl Cursors {
             .filter(|c| step - (c.global as i64) < STALE)
             .copied()
     }
+
+    /// El último cursor visto de la pista `slot`, sea de cuando sea.
+    pub fn last(&self, slot: usize) -> Option<Cursor> {
+        self.seen.get(slot)?.back().copied()
+    }
 }
 
 /// Los tokens que suenan en la semicorchea que se oye (`heard`), en el orden

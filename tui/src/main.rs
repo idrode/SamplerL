@@ -13,6 +13,7 @@ mod midi;
 #[cfg(feature = "midi")]
 mod midi_io;
 mod model;
+mod occupancy;
 mod palette;
 mod record;
 mod tap;
