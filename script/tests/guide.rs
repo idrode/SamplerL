@@ -1,4 +1,4 @@
-//! Cada bloque ```lua de docs/GUIA.md y cada receta de scripts/ejemplos/
+//! Cada bloque ```lua de docs/GUIA.md y docs/PRIMERA-CANCION.md y cada receta de scripts/ejemplos/
 //! se carga sin errores contra el break sintético (como `amen.wav`), la
 //! canción del tutorial crece paso a paso tal como se cuenta, y la sección
 //! de la API coincide con el registro (`script::api`).
@@ -13,6 +13,14 @@ use script::ScriptHost;
 
 const RATE: u32 = 48_000;
 const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
+
+/// La guía de referencia y el tutorial (otro archivo).
+const GUIDE: &str = "GUIA.md";
+const TUTORIAL: &str = "PRIMERA-CANCION.md";
+
+fn doc(name: &str) -> String {
+    std::fs::read_to_string(format!("{ROOT}/docs/{name}")).unwrap()
+}
 
 /// Carpeta con el break sintético como `amen.wav` y, para el tutorial,
 /// otro break a 120 BPM (`perc.wav`) y dos notas sintéticas: un do central
@@ -105,12 +113,14 @@ fn check(source: &str, name: &str, dir: &Path) {
 #[test]
 fn every_lua_block_in_the_guide_runs() {
     let dir = samples("blocks");
-    let guide = std::fs::read_to_string(format!("{ROOT}/docs/GUIA.md")).unwrap();
-    let blocks = lua_blocks(&guide);
-    assert!(blocks.len() >= 20, "solo {} bloques", blocks.len());
-    for (line, source) in &blocks {
-        check(source, &format!("GUIA.md:{line}"), &dir);
+    let mut total = 0;
+    for file in [GUIDE, TUTORIAL] {
+        for (line, source) in &lua_blocks(&doc(file)) {
+            check(source, &format!("{file}:{line}"), &dir);
+            total += 1;
+        }
     }
+    assert!(total >= 20, "solo {total} bloques");
 }
 
 /// Sustituye en `song` el párrafo (hasta la línea en blanco) que empieza
@@ -148,19 +158,11 @@ fn replace_paragraph(song: &str, block: &str, name: &str) -> String {
 #[test]
 fn the_tutorial_song_grows_step_by_step() {
     let dir = samples("tutorial");
-    let guide = std::fs::read_to_string(format!("{ROOT}/docs/GUIA.md")).unwrap();
-    let start = guide
-        .find("\n## 8. Tu primera canción")
-        .expect("falta la sección del tutorial")
-        + 1;
-    let end = guide[start..]
-        .find("\n## ")
-        .map_or(guide.len(), |e| start + e);
-    let offset = guide[..start].lines().count();
+    let tutorial = doc(TUTORIAL);
     let mut song = String::new();
     let (mut changes, mut wholes) = (0, 0);
-    for (line, tag, block) in tagged_blocks(&guide[start..end]) {
-        let name = format!("GUIA.md:{} (tutorial)", line + offset);
+    for (line, tag, block) in tagged_blocks(&tutorial) {
+        let name = format!("{TUTORIAL}:{line}");
         match tag.as_str() {
             "entero" if song.is_empty() => song = block,
             "entero" => {
@@ -193,8 +195,11 @@ fn the_tutorial_song_grows_step_by_step() {
 #[test]
 fn every_example_runs_and_matches_the_guide() {
     let dir = samples("examples");
-    let guide = std::fs::read_to_string(format!("{ROOT}/docs/GUIA.md")).unwrap();
-    let blocks: Vec<String> = lua_blocks(&guide).into_iter().map(|(_, b)| b).collect();
+    let blocks: Vec<String> = [GUIDE, TUTORIAL]
+        .into_iter()
+        .flat_map(|file| lua_blocks(&doc(file)))
+        .map(|(_, b)| b)
+        .collect();
     let mut examples: Vec<PathBuf> = std::fs::read_dir(format!("{ROOT}/scripts/ejemplos"))
         .unwrap()
         .map(|e| e.unwrap().path())
@@ -224,4 +229,152 @@ fn the_api_section_of_the_guide_comes_from_the_registry() {
         "docs/GUIA.md no coincide con script/src/api.rs: \
          ejecuta `cargo run -p script --example guia`"
     );
+}
+
+/// Ancla de GitHub de un título: minúsculas, sin signos (se quedan letras,
+/// cifras, `_` y `-`) y los espacios como guiones.
+fn slug(heading: &str) -> String {
+    heading
+        .trim()
+        .to_lowercase()
+        .chars()
+        .filter(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | ' '))
+        .map(|c| if c == ' ' { '-' } else { c })
+        .collect()
+}
+
+/// Las anclas de un Markdown (los títulos fuera de los bloques de código;
+/// los repetidos llevan `-1`, `-2`...).
+fn anchors(markdown: &str) -> Vec<String> {
+    let mut seen: std::collections::HashMap<String, usize> = Default::default();
+    let mut fenced = false;
+    let mut out = Vec::new();
+    for line in markdown.lines() {
+        if line.trim_start().starts_with("```") {
+            fenced = !fenced;
+        }
+        let Some(title) = line.strip_prefix('#').filter(|_| !fenced) else {
+            continue;
+        };
+        let Some(title) = title.trim_start_matches('#').strip_prefix(' ') else {
+            continue;
+        };
+        let base = slug(title);
+        let n = seen.entry(base.clone()).or_default();
+        out.push(if *n == 0 { base } else { format!("{base}-{n}") });
+        *n += 1;
+    }
+    out
+}
+
+/// Los destinos de los enlaces `](destino)` fuera de los bloques de código
+/// y del código en línea, con su línea.
+fn links(markdown: &str) -> Vec<(usize, String)> {
+    let mut out = Vec::new();
+    let mut fenced = false;
+    for (i, line) in markdown.lines().enumerate() {
+        if line.trim_start().starts_with("```") {
+            fenced = !fenced;
+            continue;
+        }
+        if fenced {
+            continue;
+        }
+        // Sin lo que va entre comillas invertidas.
+        let text: String = line
+            .split('`')
+            .enumerate()
+            .filter(|(k, _)| k % 2 == 0)
+            .map(|(_, t)| t)
+            .collect::<Vec<_>>()
+            .join(" ");
+        let mut rest = text.as_str();
+        while let Some(at) = rest.find("](") {
+            rest = &rest[at + 2..];
+            if let Some(end) = rest.find(')') {
+                out.push((i + 1, rest[..end].to_string()));
+                rest = &rest[end..];
+            }
+        }
+    }
+    out
+}
+
+/// Todo enlace interno de la guía y del tutorial, dentro de cada archivo y
+/// entre los dos, apunta a un archivo y a un ancla que existen.
+#[test]
+fn every_internal_link_points_to_an_existing_anchor() {
+    let files = [GUIDE, TUTORIAL];
+    let docs: Vec<(&str, String)> = files.iter().map(|f| (*f, doc(f))).collect();
+    let mut checked = 0;
+    let mut across = (0, 0);
+    for (file, text) in &docs {
+        for (line, target) in links(text) {
+            if target.contains("://") {
+                continue;
+            }
+            let (path, anchor) = match target.split_once('#') {
+                Some((path, anchor)) => (path, Some(anchor)),
+                None => (target.as_str(), None),
+            };
+            let other = if path.is_empty() { *file } else { path };
+            let Some((_, destination)) = docs.iter().find(|(f, _)| *f == other) else {
+                // Otro archivo de docs/ (ESTADO.md...): tiene que existir.
+                assert!(
+                    Path::new(&format!("{ROOT}/docs/{path}")).exists(),
+                    "{file}:{line}: el enlace {target} apunta a un archivo que no existe"
+                );
+                continue;
+            };
+            if let Some(anchor) = anchor {
+                assert!(
+                    anchors(destination).iter().any(|a| a == anchor),
+                    "{file}:{line}: el enlace {target} apunta a un ancla que no existe en {other}"
+                );
+            }
+            checked += 1;
+            if other != *file {
+                if *file == TUTORIAL {
+                    across.0 += 1;
+                } else {
+                    across.1 += 1;
+                }
+            }
+        }
+    }
+    assert!(checked >= 100, "solo {checked} enlaces comprobados");
+    assert!(
+        across.0 >= 13 && across.1 >= 13,
+        "faltan enlaces entre los dos archivos: {across:?}"
+    );
+}
+
+/// Cada paso del tutorial tiene su línea de referencia a la guía, y cada
+/// paso al que enlaza la guía la enlaza de vuelta (algún enlace de la guía
+/// apunta a cada paso).
+#[test]
+fn every_tutorial_step_links_to_the_guide_and_back() {
+    let tutorial = doc(TUTORIAL);
+    let guide = doc(GUIDE);
+    let steps: Vec<String> = anchors(&tutorial)
+        .into_iter()
+        .filter(|a| a.starts_with("paso-"))
+        .collect();
+    assert_eq!(steps.len(), 13);
+    let from_guide: Vec<String> = links(&guide)
+        .into_iter()
+        .filter_map(|(_, t)| t.strip_prefix("PRIMERA-CANCION.md#").map(String::from))
+        .collect();
+    for step in &steps {
+        assert!(from_guide.contains(step), "la guía no enlaza con {step}");
+        let heading = tutorial
+            .lines()
+            .position(|l| l.starts_with("## Paso ") && step.starts_with(&slug(&l[3..9])))
+            .unwrap();
+        let next = tutorial.lines().skip(heading + 1).find(|l| !l.is_empty());
+        assert!(
+            next.is_some_and(|l| l.starts_with("> **Referencia:** ") && l.contains("(GUIA.md#")),
+            "{step}: falta su línea de referencia a la guía"
+        );
+    }
 }

@@ -724,18 +724,14 @@ mod tests {
         );
     }
 
-    /// Cada `F1 «acción»` del tutorial (sección 8 de la guía) es una
+    /// Cada `F1 «acción»` del tutorial (`docs/PRIMERA-CANCION.md`) es una
     /// acción de la paleta, escrita tal cual.
     #[test]
     fn the_tutorial_names_real_actions() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../docs/GUIA.md");
-        let guide = std::fs::read_to_string(path).unwrap();
-        let start = guide.find("\n## 8. Tu primera canción").unwrap();
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../docs/PRIMERA-CANCION.md");
+        let tutorial = std::fs::read_to_string(path).unwrap();
         // Con los saltos de línea como espacios: una cita puede partirse.
-        let tutorial = guide[start..]
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
+        let tutorial = tutorial.split_whitespace().collect::<Vec<_>>().join(" ");
         let mut cited = 0;
         for (i, _) in tutorial.match_indices("F1 «") {
             let rest = &tutorial[i + "F1 «".len()..];

@@ -3,7 +3,8 @@
 Fases de trabajo después de los pasos 1-7 de `CLAUDE.md`: qué falta y en
 qué orden. Se hacen en orden, una fase cada vez. Lo hecho, con su detalle
 y las decisiones de diseño de cada fase, está en
-[docs/ESTADO.md](ESTADO.md); el uso, en [docs/GUIA.md](GUIA.md).
+[docs/ESTADO.md](ESTADO.md); el uso, en [docs/GUIA.md](GUIA.md) (referencia) y
+[docs/PRIMERA-CANCION.md](PRIMERA-CANCION.md) (tutorial).
 
 ## Reglas comunes
 
@@ -682,7 +683,8 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
    línea, párrafos, páginas y selección con Shift), verificado, y
    Ctrl-Inicio/Ctrl-Fin al principio y al final del texto; ir a la
    línea N con Alt-G; buscar con Ctrl-F y F6/F7 siguiente y anterior.
-8. ✅ **Tutorial «Tu primera canción»** (sección 8 de la guía): una
+8. ✅ **Tutorial «Tu primera canción»** ([docs/PRIMERA-CANCION.md](PRIMERA-CANCION.md),
+   archivo aparte de la guía desde la separación de la documentación): una
    canción entera en trece pasos, para quien nunca ha usado el programa;
    un test sigue los pasos y carga cada estado del script.
 9. ✅ **Arreglos tras el tutorial**: la guía ya no dice que `slice(1)` es

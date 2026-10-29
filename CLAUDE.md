@@ -2,7 +2,7 @@
 
 Sampler + secuenciador para remixes con amen breaks, controlado por código en vivo. Proyecto en Rust. El desarrollo se hace en una laptop x86_64 con Gentoo.
 
-Guía de uso (inicio rápido, atajos, mini-notación, API de Lua, recetas y problemas): [docs/GUIA.md](docs/GUIA.md). Sus bloques de Lua y las recetas de `scripts/ejemplos/` se comprueban en `script/tests/guide.rs`. La sección de la API se genera desde el registro `script/src/api.rs`: al cambiar la API, actualiza el registro y ejecuta `cargo run -p script --example guia`.
+Guía de uso (inicio rápido, atajos, mini-notación, API de Lua, recetas y problemas): [docs/GUIA.md](docs/GUIA.md); el tutorial «Tu primera canción», aparte en [docs/PRIMERA-CANCION.md](docs/PRIMERA-CANCION.md). Sus bloques de Lua y las recetas de `scripts/ejemplos/` se comprueban en `script/tests/guide.rs`. La sección de la API se genera desde el registro `script/src/api.rs`: al cambiar la API, actualiza el registro y ejecuta `cargo run -p script --example guia`.
 
 Hoja de ruta (fases A-U después de los pasos 1-7, con sus reglas comunes; la F se hizo antes que la E y la J, EQ y choques de frecuencia entre pistas, después de la K; la S antes que la Q y la R, y la R con la Q a medias, esperando al Seaboard): [docs/ROADMAP.md](docs/ROADMAP.md). Estado detallado y decisiones de cada fase: [docs/ESTADO.md](docs/ESTADO.md). Resumen abajo, en «Estado (resumen)».
 
@@ -105,7 +105,7 @@ El detalle de lo hecho (dónde está cada cosa en el código, cómo funciona, su
 - **Comprobaciones que no hay que romper**:
   - `engine/tests/no_alloc.rs`: cero reservas en `Engine::process`; todo lo nuevo del motor entra ahí.
   - `script/tests/golden.rs`: huellas del audio (solo en x86_64); sin usar nada nuevo, idénticas bit a bit.
-  - `script/tests/guide.rs`: la guía coincide con el registro (`cargo run -p script --example guia`) y sus bloques de Lua y las recetas de `scripts/ejemplos/` se ejecutan; el script del tutorial (bloques `lua entero`, `añade` y `cambia`) se reconstruye paso a paso y cada estado se carga. Las tablas de la paleta y de la configuración se reescriben con `ACTUALIZAR_GUIA=1 cargo test -p tui the_guide_lists_the_palette` (y `the_guide_lists_the_config`).
+  - `script/tests/guide.rs`: la guía coincide con el registro (`cargo run -p script --example guia`) y sus bloques de Lua y las recetas de `scripts/ejemplos/` (los de la guía y los del tutorial) se ejecutan; todo enlace interno entre los dos archivos y dentro de cada uno apunta a un ancla que existe; el script del tutorial (bloques `lua entero`, `añade` y `cambia`) se reconstruye paso a paso y cada estado se carga. Las tablas de la paleta y de la configuración se reescriben con `ACTUALIZAR_GUIA=1 cargo test -p tui the_guide_lists_the_palette` (y `the_guide_lists_the_config`).
   - `script/tests/registry.rs`: cada función, efecto, parámetro y snippet del registro existe y funciona en Lua.
 - **Ver la interfaz sin terminal**: `cargo test -p tui pantalla -- --ignored --nocapture` (y `pantalla_autocompletado`, `pantalla_paleta`, `pantalla_bloques`, `pantalla_choques`, `pantalla_ventanas`, `pantalla_acid`, `pantalla_ocupacion`, `pantalla_dispositivos`).
 - **Audio de prueba**: `scripts/render-demo.sh` genera un break sintético y lo renderiza a `renders/` sin tocar la tarjeta (ver `docs/ESTADO.md`).
