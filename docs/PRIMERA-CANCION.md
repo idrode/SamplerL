@@ -301,8 +301,9 @@ elijas. Ver «Saber el tempo del break» en la [sección 1](GUIA.md#1-inicio-rá
 
 **Oír cada corte.** Pulsa Esc: entras en el **modo tocar** (la línea de
 ayuda cambia). Las teclas `1` a `8` tocan los cortes 1 a 8 de la pista
-seleccionada, al instante. ← y → recorren los cortes y los preescuchan;
-espacio vuelve a sonar el seleccionado. Apunta cuál es el bombo y cuál la
+seleccionada, al instante. ← y → recorren los cortes (sin sonar) y
+espacio hace sonar el seleccionado; con ratón, un clic sobre un corte en
+la onda también. Apunta cuál es el bombo y cuál la
 caja. Esc vuelve al editor. Todas las teclas están en «Modo tocar (Esc)»
 ([sección 2](GUIA.md#2-atajos-de-teclado)).
 
@@ -324,7 +325,8 @@ nombres llevan letras sin tilde, números y `_`.
 **Ajustar un corte.** Si un corte empieza tarde (se come el ataque del
 golpe) o pronto (suena un trozo del anterior), en el modo tocar
 selecciónalo con ← → y muévelo: `,` lo adelanta 5 ms y `.` lo retrasa;
-`<` y `>`, de 1 en 1 ms. Cada vez lo preescucha. La vista marca los
+`<` y `>`, de 1 en 1 ms. Moverlo no suena: para oírlo, espacio o su
+tecla. La vista marca los
 cortes ajustados con `*`. Los ajustes se guardan en el **proyecto**:
 pulsa F2, escribe `guardar` y Enter. Se crea `cancion.sampler` junto al
 script (el script, la carpeta de samples, el tempo y tus ajustes). La

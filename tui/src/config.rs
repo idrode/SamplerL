@@ -413,7 +413,7 @@ impl Keymap {
             .collect();
         if playing {
             format!(
-                "TOCAR: 1-0 q-i cortes · ←→ preescucha · m mute · s solo · {}",
+                "TOCAR: 1-0 q-i cortes · ←→ elegir · espacio oír · m mute · s solo · {}",
                 parts.join(" · ")
             )
         } else {

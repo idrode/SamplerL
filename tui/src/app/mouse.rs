@@ -10,8 +10,9 @@
 //! editor), pulsar cerca de la marca de un corte la agarra y arrastrarla
 //! cambia dónde empieza (y dónde acaba el anterior): mientras se arrastra
 //! solo cambia la vista; al soltar, se pone como con `,`/`.`
-//! ([`App::place_slice`]: al proyecto, recarga y preescucha). Pulsar en
-//! otro sitio de la onda selecciona el corte que hay ahí. El clic derecho
+//! ([`App::place_slice`]: al proyecto y recarga, sin sonar). Pulsar en
+//! otro sitio de la onda selecciona el corte que hay ahí y lo preescucha,
+//! como agarrar una marca y soltarla sin moverla. El clic derecho
 //! pone un corte nuevo donde se pulsa, o quita el de la marca pulsada; la
 //! rueda acerca y aleja la vista alrededor del ratón (ver `zoom.rs`) y la
 //! rueda horizontal (o Shift y la rueda) la desplaza.
@@ -227,8 +228,9 @@ impl App {
                     .get(self.selected)
                     .is_some_and(|t| t.name == drag.track);
                 if !same || drag.at == drag.start {
+                    // Un clic sobre la marca, sin arrastrar: suena.
                     if same {
-                        self.select_slice_message(drag.index);
+                        self.preview_selected();
                     }
                     return;
                 }
@@ -303,7 +305,7 @@ impl App {
                 .count()
                 .saturating_sub(1);
             self.selected_slice = index;
-            self.select_slice_message(index);
+            self.preview_selected();
             return;
         }
         if track.origin.indices.get(index).copied().flatten().is_none() {
@@ -342,7 +344,7 @@ impl App {
     }
 
     /// El mensaje de corte seleccionado (con su etiqueta, si la tiene).
-    fn select_slice_message(&mut self, index: usize) {
+    pub(super) fn select_slice_message(&mut self, index: usize) {
         let Some(track) = self.tracks().get(self.selected) else {
             return;
         };

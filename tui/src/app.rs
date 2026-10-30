@@ -868,7 +868,7 @@ impl App {
 
     /// Mueve el inicio del corte seleccionado `delta_ms` (o, con `None`,
     /// le quita el ajuste): se guarda en el proyecto como posición
-    /// absoluta, manda sobre el detector, se recarga y se preescucha. No
+    /// absoluta, manda sobre el detector y se recarga (sin sonar). No
     /// pasa de sus vecinos: se queda en el límite, sin moverlos.
     pub fn adjust_slice(&mut self, delta_ms: Option<f64>) {
         let Some(track) = self.tracks().get(self.selected) else {
@@ -978,8 +978,9 @@ impl App {
             self.message = "el script tiene errores: arréglalos antes de ajustar cortes".into();
             return;
         }
+        // Moverlo no suena: se oye con su tecla, un clic en la onda o
+        // espacio.
         let saved = self.save_project_file();
-        self.preview_selected();
         // Con `zero_cross`, dónde quedó de verdad.
         let snapped = self
             .tracks()
@@ -3484,7 +3485,7 @@ impl App {
         self.release_pads();
         self.message = match self.mode {
             Mode::Play => {
-                "modo tocar: 1-0 y q-i disparan cortes (en un instrumento, notas desde la raíz) · ←→ recorren y preescuchan · espacio preescucha · m mute · s solo · [ ] sección · l repetir sección · v variante A/B · Esc vuelve al editor"
+                "modo tocar: 1-0 y q-i disparan cortes (en un instrumento, notas desde la raíz) · ←→ eligen corte (sin sonar) · espacio o clic en la onda lo preescucha · m mute · s solo · [ ] sección · l repetir sección · v variante A/B · Esc vuelve al editor"
             }
             Mode::Edit => "modo editor",
         }
@@ -3765,10 +3766,10 @@ impl App {
     }
 
     /// Recorre los cortes (←/→ en el modo tocar): selecciona el siguiente o
-    /// el anterior y lo preescucha.
+    /// el anterior, sin sonar (se oye con espacio, su tecla o un clic).
     pub fn browse_slice(&mut self, forward: bool) {
         self.select_slice(forward);
-        self.preview_selected();
+        self.select_slice_message(self.selected_slice);
     }
 
     /// Abre la línea de órdenes para etiquetar el corte seleccionado.

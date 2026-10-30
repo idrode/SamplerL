@@ -731,3 +731,6 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
     proyecto se aplican todos a la vez (antes, uno a uno en el orden en
     que se tocaron, y uno que dependía de un vecino ya movido volvía a su
     sitio); mover uno con `,` `.` o el ratón se para en el vecino.
+12. ✅ **Mover un corte no suena**: `,` `.` `<` `>`, arrastrar una marca
+    y ← → ya no preescuchan; suena la tecla del corte, espacio y un clic
+    sin arrastrar sobre el corte en la onda.

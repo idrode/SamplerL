@@ -1429,9 +1429,9 @@ impl Widget for HelpLine<'_> {
         } else if !self.0.key_help.is_empty() {
             self.0.key_help.as_str()
         } else if self.0.playing_mode && self.0.editor_outside {
-            "TOCAR: 1-0 q-i cortes · ←→ preescucha · m mute · s solo · Ctrl-O pista · Ctrl-Espacio marcha/paro · F1 paleta"
+            "TOCAR: 1-0 q-i cortes · ←→ elegir · espacio oír · m mute · s solo · Ctrl-O pista · Ctrl-Espacio marcha/paro · F1 paleta"
         } else if self.0.playing_mode {
-            "TOCAR: 1-0 q-i cortes · ←→ preescucha · m mute · s solo · Ctrl-O pista · Ctrl-Espacio marcha/paro · F1 paleta · Esc editor"
+            "TOCAR: 1-0 q-i cortes · ←→ elegir · espacio oír · m mute · s solo · Ctrl-O pista · Ctrl-Espacio marcha/paro · F1 paleta · Esc editor"
         } else {
             "Ctrl-S guardar y cargar · Ctrl-L cargar · Ctrl-Espacio marcha/paro · \
              Ctrl-G ir al error · Ctrl-O pista · Esc tocar · F1 paleta · F2 órdenes · \

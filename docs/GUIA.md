@@ -849,8 +849,8 @@ editor como un solo paso de deshacer.
 | --- | --- |
 | 1 2 3 4 5 6 7 8 9 0 | cortes 1 a 10 |
 | q w e r t y u i | cortes 11 a 18 |
-| ← → | recorre los cortes de la pista y preescucha cada uno |
-| espacio | preescucha otra vez el corte seleccionado |
+| ← → | recorre los cortes de la pista (sin sonar) |
+| espacio | preescucha el corte seleccionado |
 | , . | adelanta o retrasa el inicio del corte seleccionado 5 ms |
 | < > | lo mismo, de 1 en 1 ms |
 | n | parte el corte seleccionado en su mitad (un corte nuevo) |
@@ -901,15 +901,16 @@ otra no la corta. El azar sale de `seed`, así que tocar lo mismo suena igual
 volumen. «Grabar lo tocado» las apunta como `agudo _ _` (el corte y lo que
 duró). Una pista sin granos sigue tocando el corte tal cual.
 
-La **preescucha** (← →, espacio, o «Preescuchar el corte seleccionado» en
-la paleta) toca el corte en una voz aparte: no corta lo que suena en las
+La **preescucha** (espacio, un clic sobre el corte en la onda, o
+«Preescuchar el corte seleccionado» en la paleta) toca el corte en una voz aparte: no corta lo que suena en las
 pistas, no pasa por su volumen, efectos ni mute, suena también con el
 secuenciador parado y no toca el script. Sirve para buscar el corte que
 quieres (y etiquetarlo o ajustarlo, ver más abajo).
 
 El **ajuste manual de cortes** (`,` `.` `<` `>`, o «Adelantar/Retrasar el
-corte 5 ms» en la paleta) mueve el inicio del corte seleccionado y lo
-preescucha. Se guarda en el proyecto como posición absoluta (`corte =
+corte 5 ms» en la paleta) mueve el inicio del corte seleccionado, sin
+sonar: mientras afinas no se dispara nada; para oírlo, su tecla, espacio o
+un clic en la onda. Se guarda en el proyecto como posición absoluta (`corte =
 amen.wav 8 3 412.5`) y manda sobre el detector: si el detector se equivoca
 o corta tarde un golpe, se corrige a oído. El corte anterior acaba donde
 empieza el ajustado. Mover uno solo cambia ese: los demás conservan su
@@ -922,9 +923,10 @@ Lua, `cortes:move(i, ms)`.
 **Con el ratón**, en la vista del sample: pulsa sobre la marca de un corte
 (o justo a su lado) y arrástrala; el corte anterior se alarga o se acorta
 con ella. Al soltar se guarda como el ajuste de las teclas (en el
-proyecto, con preescucha). Va de columna en columna; para afinar, `<` y
-`>`, o el zoom. Un clic en otro sitio de la onda selecciona el corte que
-hay ahí. El **clic derecho** en la onda pone un corte nuevo justo ahí, y
+proyecto, sin sonar). Va de columna en columna; para afinar, `<` y
+`>`, o el zoom. Un clic sin arrastrar (sobre la marca o en otro sitio
+de la onda) selecciona el corte que hay ahí y lo preescucha. Sin ratón
+en la terminal, lo mismo con ← → y espacio. El **clic derecho** en la onda pone un corte nuevo justo ahí, y
 sobre una marca, quita ese corte. Sirve en los dos modos y en la ventana
 principal con el editor fuera.
 

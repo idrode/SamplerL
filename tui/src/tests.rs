@@ -2287,17 +2287,23 @@ fn detecting_the_bpm_of_a_one_shot_says_so() {
 // --- Preescucha ---
 
 #[test]
-fn arrows_in_play_mode_browse_and_preview_slices() {
+fn arrows_in_play_mode_browse_and_space_previews_slices() {
     let (_, mut app, mut engine) = open("preview", Some(SONG));
     // Parado, para oír solo la preescucha.
     app.handle(ctrl('t'));
     offline::render(&mut engine, 2000, 2);
     let text_before = app.text_for_test();
     app.handle(esc());
+    // → selecciona sin sonar.
     app.handle(special(Key::Right));
     let view = app.view();
     assert_eq!(view.selected_slice, Some(1));
-    assert_eq!(view.message, "preescucha drums: corte 2");
+    assert_eq!(view.message, "drums: corte 2 seleccionado");
+    let audio = offline::render(&mut engine, 1000, 2);
+    assert!(audio.iter().all(|&s| s == 0.0), "elegir un corte no suena");
+    // Espacio lo preescucha.
+    app.handle(key(' '));
+    assert_eq!(app.view().message, "preescucha drums: corte 2");
     let audio = offline::render(&mut engine, 1000, 2);
     assert!(
         audio.iter().any(|s| (s.abs() - 0.25).abs() < 1e-6),
@@ -2311,17 +2317,46 @@ fn arrows_in_play_mode_browse_and_preview_slices() {
         status.tracks.iter().all(|t| t.peak == 0.0),
         "no suena por ninguna pista"
     );
-    // ← da la vuelta; espacio repite.
+    // ← da la vuelta.
     app.handle(special(Key::Left));
     app.handle(special(Key::Left));
     assert_eq!(app.view().selected_slice, Some(1));
-    app.handle(key(' '));
-    assert_eq!(app.view().message, "preescucha drums: corte 2");
     palette(&mut app, "preescuchar");
     assert_eq!(app.view().message, "preescucha drums: corte 2");
 }
 
 // --- Ajuste manual de cortes ---
+
+#[test]
+fn moving_a_slice_is_silent_and_its_key_plays_it() {
+    let path = fixture("nudge_silent", Some(SONG));
+    let project = path.parent().unwrap().join("p.sampler");
+    std::fs::write(&project, "script = song.lua\n").unwrap();
+    let (controller, mut engine) = new_engine(RATE);
+    let mut app = App::open_project(&project, controller, RATE).unwrap();
+    // Parado: lo único que puede sonar es lo que se toca.
+    app.handle(esc());
+    app.handle(ctrl('t'));
+    offline::render(&mut engine, 2000, 2);
+    let heard =
+        |engine: &mut Engine| offline::render(engine, 4000, 2).iter().any(|&s| s != 0.0);
+    assert!(!heard(&mut engine));
+    // Elegir y mover el corte 2 con todas las teclas: no suena.
+    app.handle(special(Key::Right));
+    for c in ['.', '>', ',', '<', '.'] {
+        app.handle(key(c));
+        assert!(!heard(&mut engine), "«{c}» no suena");
+    }
+    assert_eq!(app.view().tracks[0].slices[1].start, 3240);
+    palette(&mut app, "quitar el ajuste");
+    assert!(!heard(&mut engine), "quitar el ajuste no suena");
+    // Su tecla, sí.
+    app.handle(key('2'));
+    assert!(heard(&mut engine), "la tecla del corte suena");
+    // Y espacio, la preescucha.
+    app.handle(key(' '));
+    assert!(heard(&mut engine), "espacio preescucha");
+}
 
 /// break.wav en una rejilla de 4: cortes cada 1500 frames (31,25 ms).
 const GRID4: &str = r#"bpm(120)
@@ -2438,9 +2473,6 @@ fn slices_are_nudged_with_keys_and_saved_in_the_project() {
     // La vista del sample lo marca con * y da su posición.
     let screen = text(&draw(&mut app, 160, 40));
     assert!(screen.contains("corte 2* 68.5 ms"), "{screen}");
-    // Se preescucha al moverlo.
-    let audio = offline::render(&mut engine, 200, 2);
-    assert!(!audio.is_empty());
 
     // «,» lo adelanta; no puede pasar de su vecino (1 ms tras el corte 1).
     // (El motor avanza entre teclas, como en tiempo real: cada ajuste es

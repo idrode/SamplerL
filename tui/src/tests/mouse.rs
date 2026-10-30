@@ -224,14 +224,19 @@ fn a_dragged_mark_stops_at_its_neighbours() {
 }
 
 #[test]
-fn a_click_on_the_wave_selects_the_slice_there() {
-    let (project, mut app, _engine) = open_project("mouse_slice_select");
-    // En el modo tocar también.
+fn a_click_on_the_wave_selects_and_plays_the_slice_there() {
+    let (project, mut app, mut engine) = open_project("mouse_slice_select");
+    // En el modo tocar también; parado, para oír solo el clic.
     app.handle(esc());
+    app.handle(ctrl('t'));
+    offline::render(&mut engine, 2000, 2);
+    let heard =
+        |engine: &mut Engine| offline::render(engine, 2000, 2).iter().any(|&s| s != 0.0);
     draw(&mut app, 160, 40);
     let area = app.sample_area.unwrap();
     let y = area.y + 1;
-    // Lejos de las marcas, en el corte 2: lo selecciona sin moverlo.
+    // Lejos de las marcas, en el corte 2: lo selecciona sin moverlo y
+    // suena.
     let x = mark_column(&app, 4500);
     app.mouse(MouseAction::Down, x, y);
     app.mouse(MouseAction::Drag, x + 3, y);
@@ -239,25 +244,38 @@ fn a_click_on_the_wave_selects_the_slice_there() {
     let view = app.view();
     assert_eq!(view.selected_slice, Some(1));
     assert_eq!(view.tracks[0].slices[1].start, 3000);
-    assert_eq!(view.message, "drums: corte 2 seleccionado");
+    assert_eq!(view.message, "preescucha drums: corte 2");
+    assert!(heard(&mut engine), "el clic suena");
+    assert!(!heard(&mut engine));
     // En el corte 1.
     app.mouse(MouseAction::Down, mark_column(&app, 1500), y);
     app.mouse(MouseAction::Up, mark_column(&app, 1500), y);
     assert_eq!(app.view().selected_slice, Some(0));
-    // Agarrar y soltar sin moverse tampoco cambia nada.
+    assert!(heard(&mut engine));
+    // Agarrar y soltar sin moverse es un clic sobre ese corte: suena y no
+    // cambia nada.
     let x = mark_column(&app, 3000);
     app.mouse(MouseAction::Down, x, y);
+    assert!(!heard(&mut engine), "agarrar todavía no suena");
     app.mouse(MouseAction::Up, x, y);
     assert_eq!(app.view().selected_slice, Some(1));
+    assert!(heard(&mut engine));
     assert!(
         !std::fs::read_to_string(&project)
             .unwrap()
             .contains("corte =")
     );
+    // Arrastrar la marca la mueve sin sonar.
+    app.mouse(MouseAction::Down, x, y);
+    app.mouse(MouseAction::Drag, x + 4, y);
+    app.mouse(MouseAction::Up, x + 4, y);
+    assert!(app.view().tracks[0].slices[1].start > 3000);
+    assert!(!heard(&mut engine), "mover un corte no suena");
     // Con la paleta abierta, nada.
     app.open_palette();
     app.mouse(MouseAction::Down, mark_column(&app, 1500), y);
     assert_eq!(app.view().selected_slice, Some(1));
+    assert!(!heard(&mut engine));
 }
 
 #[test]
