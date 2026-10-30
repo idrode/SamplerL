@@ -601,4 +601,3 @@ fn pantalla_ocupacion() {
     app.run_action(Action::FillGap);
     println!("{}", text(&draw(&mut app, 140, 50)));
 }
-

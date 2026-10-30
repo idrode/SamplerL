@@ -576,8 +576,11 @@ aplica, y al cargar se avisa: `⚠ la etiqueta «kick» de amen.wav es de
 slice(8) y este script usa slice(6): no se aplica`), corte y nombre. Así `steps("kick . snare .")` funciona sin
 `:name()` en el script; si el script nombra el mismo corte, manda el
 script. Cada `corte` es un ajuste manual (ver el modo tocar): el corte 3 de
-`slice(8)` empieza en 412,5 ms, diga lo que diga el detector; si no cabe
-entre sus vecinos, la carga lo avisa y no lo aplica. `partir` añade un
+`slice(8)` empieza en 412,5 ms, diga lo que diga el detector. Los
+ajustes se leen tal cual y todos a la vez: cada uno se compara con sus
+vecinos ya ajustados, así que da igual en qué orden se hicieran. Si uno
+no cabe (un proyecto editado a mano), la carga lo avisa y no lo aplica
+(de dos que chocan, el de la derecha); los demás se quedan como están. `partir` añade un
 corte que empieza en esos ms y `unir` quita la marca de un corte (el
 anterior se alarga); se aplican en orden, justo después de detectar, y los
 `corte` y las `etiqueta` van con la numeración que queda. Para un sample
@@ -909,7 +912,9 @@ corte 5 ms» en la paleta) mueve el inicio del corte seleccionado y lo
 preescucha. Se guarda en el proyecto como posición absoluta (`corte =
 amen.wav 8 3 412.5`) y manda sobre el detector: si el detector se equivoca
 o corta tarde un golpe, se corrige a oído. El corte anterior acaba donde
-empieza el ajustado, y no puede acercarse a menos de 1 ms de sus vecinos.
+empieza el ajustado. Mover uno solo cambia ese: los demás conservan su
+ajuste. No pasa de sus vecinos: si llega a ellos, se queda a 1,2 ms
+(el mensaje dice «tope: el corte N»), sin empujarlos.
 La vista del sample marca los cortes ajustados con `*` y da la posición
 del seleccionado; «Quitar el ajuste del corte» lo devuelve al detector. En
 Lua, `cortes:move(i, ms)`.

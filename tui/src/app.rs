@@ -869,7 +869,7 @@ impl App {
     /// Mueve el inicio del corte seleccionado `delta_ms` (o, con `None`,
     /// le quita el ajuste): se guarda en el proyecto como posición
     /// absoluta, manda sobre el detector, se recarga y se preescucha. No
-    /// puede pasar de sus vecinos.
+    /// pasa de sus vecinos: se queda en el límite, sin moverlos.
     pub fn adjust_slice(&mut self, delta_ms: Option<f64>) {
         let Some(track) = self.tracks().get(self.selected) else {
             self.message = "no hay pistas".into();
@@ -934,8 +934,30 @@ impl App {
             .iter()
             .find(|p| p.sample == origin.sample && p.slices == origin.cut() && p.slice == slice)
             .map(|p| p.ms);
+        // Sin pasar de sus vecinos tal como están (con sus ajustes): se
+        // queda en el límite, y los demás no se tocan.
+        let neighbour = |i: usize| track.slices.get(i).map(|r| self.frame_ms(r.start));
+        let low = index.checked_sub(1).and_then(neighbour).map_or(0.0, |ms| {
+            ((ms + mouse::DRAG_GAP_MS) * 10.0 - 1e-6).ceil() / 10.0
+        });
+        let high = (self.frame_ms(track.slices.get(index).map_or(0, |r| r.end))
+            - mouse::DRAG_GAP_MS)
+            * 10.0;
+        let high = ((high + 1e-6).floor() / 10.0).max(low);
         // Con la resolución de un frame, redondeado a 0,1 ms.
-        let target = ms.map(|ms| (ms.max(0.0) * 10.0).round() / 10.0);
+        let wanted = ms.map(|ms| (ms.max(0.0) * 10.0).round() / 10.0);
+        let target = wanted.map(|ms| ms.clamp(low, high));
+        let limit = match (wanted, target) {
+            (Some(w), Some(t)) if t > w => format!(" (tope: el corte {})", index),
+            (Some(w), Some(t)) if t < w => {
+                if index + 1 < track.slices.len() {
+                    format!(" (tope: el corte {})", index + 2)
+                } else {
+                    " (tope: el final del sample)".to_string()
+                }
+            }
+            _ => String::new(),
+        };
         self.host
             .set_position(&origin.sample, origin.cut(), slice, target);
         self.load();
@@ -971,7 +993,7 @@ impl App {
         };
         self.message = match target {
             Some(ms) => format!(
-                "corte {} de {name}: empieza en {ms} ms{zero}{saved}",
+                "corte {} de {name}: empieza en {ms} ms{limit}{zero}{saved}",
                 index + 1
             ),
             None => format!(

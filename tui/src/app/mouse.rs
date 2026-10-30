@@ -46,7 +46,7 @@ const GRAB_COLUMNS: f64 = 1.0;
 /// Lo que se deja como mínimo entre un corte y sus vecinos al arrastrar,
 /// en ms: algo más que el margen de 1 ms del script, para que el
 /// redondeo a 0,1 ms no lo pise.
-const DRAG_GAP_MS: f64 = 1.2;
+pub(super) const DRAG_GAP_MS: f64 = 1.2;
 
 /// La marca de un corte que se arrastra (en frames del sample que suena,
 /// estirado si la pista tiene stretch).

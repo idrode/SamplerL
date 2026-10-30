@@ -727,3 +727,7 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
     alcance»); `macro(nombre, desde, hasta)` es un valor de 0 a 1 que
     siguen los parámetros en lugar de un número, y se mueve en vivo desde
     la paleta («Macros») o con un CC (`[midi] macros`).
+11. ✅ **Cada ajuste de corte conserva su posición**: los ajustes del
+    proyecto se aplican todos a la vez (antes, uno a uno en el orden en
+    que se tocaron, y uno que dependía de un vecino ya movido volvía a su
+    sitio); mover uno con `,` `.` o el ratón se para en el vecino.

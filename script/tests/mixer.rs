@@ -233,3 +233,63 @@ fn slices_moved_by_hand_win_over_the_detector() {
         assert!(e.contains(expected), "{line}: {e}");
     }
 }
+
+#[test]
+fn slice_adjustments_do_not_depend_on_their_order() {
+    // break8: cortes cada 62,5 ms. El 3 pasa de 125 a 135 ms y el 2 a
+    // 130: el 2 solo cabe con el 3 ya movido. Guardados en cualquier orden (el
+    // último tocado va al final), todos se aplican igual.
+    let dir = fixture("move_order");
+    let steps = "track(\"d\", amen):steps(\"1 2 3 4  . . . .  . . . .  . . . .\")";
+    let cut = Cut::detect(8);
+    let mut first = None;
+    for order in [[3, 1, 2], [2, 3, 1], [1, 2, 3]] {
+        let mut host = ScriptHost::new(RATE);
+        for slice in order {
+            let ms = match slice {
+                1 => 5.0,
+                2 => 130.0,
+                _ => 135.0,
+            };
+            host.set_position("break8.wav", cut, slice, Some(ms));
+        }
+        let song = host
+            .eval(
+                &format!("bpm(120)\nlocal amen = sample(\"break8.wav\"):slice(8)\n{steps}"),
+                "song.lua",
+                &dir,
+            )
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert!(song.warnings.is_empty(), "{order:?}: {:?}", song.warnings);
+        let track = &song.tracks[0];
+        assert_eq!(track.slices.get(0), Some(240..6240), "{order:?}");
+        assert_eq!(track.slices.get(1), Some(6240..6480), "{order:?}");
+        assert_eq!(track.slices.get(2), Some(6480..9000), "{order:?}");
+        assert_eq!(track.adjusted[..4], [true, true, true, false]);
+        match &first {
+            None => first = Some(track.slices.clone()),
+            Some(slices) => assert_eq!(&track.slices, slices),
+        }
+    }
+
+    // Dos ajustes que chocan entre sí (un proyecto editado a mano): el de
+    // la derecha no se aplica; el otro, sí.
+    let mut host = ScriptHost::new(RATE);
+    host.set_position("break8.wav", cut, 3, Some(90.0));
+    host.set_position("break8.wav", cut, 2, Some(100.0));
+    let song = host
+        .eval(
+            &format!("bpm(120)\nlocal amen = sample(\"break8.wav\"):slice(8)\n{steps}"),
+            "song.lua",
+            &dir,
+        )
+        .unwrap();
+    assert_eq!(song.tracks[0].slices.get(1), Some(4800..6000));
+    assert_eq!(song.tracks[0].adjusted[..3], [false, true, false]);
+    assert_eq!(song.warnings.len(), 1, "{:?}", song.warnings);
+    assert_eq!(
+        song.warnings[0],
+        "el ajuste del corte 3 de break8.wav (90 ms) se sale de sus vecinos \
+         (101.0 a 186.5 ms): no se aplica"
+    );
+}

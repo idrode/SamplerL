@@ -209,6 +209,61 @@ impl Slices {
         Ok(Slices(ranges))
     }
 
+    /// Los mismos cortes con varios inicios movidos a la vez (`(índice,
+    /// inicio)`, los ajustes manuales de un proyecto): cada uno se compara
+    /// con sus vecinos ya ajustados, no con los del detector, así que el
+    /// orden en que se hicieron no importa. Si dos quedan a `min_gap` o
+    /// menos (o fuera del sample), el ajuste de más a la derecha de la
+    /// pareja vuelve a su sitio, y se repite hasta que todo cabe; devuelve
+    /// los cortes y los índices de los ajustes que no se aplicaron.
+    pub fn with_starts(&self, moves: &[(usize, usize)], min_gap: usize) -> (Slices, Vec<usize>) {
+        let n = self.0.len();
+        let Some(end) = self.0.last().map(|r| r.end) else {
+            return (self.clone(), moves.iter().map(|&(i, _)| i).collect());
+        };
+        let original: Vec<usize> = self.0.iter().map(|r| r.start).collect();
+        let mut starts = original.clone();
+        let mut moved = vec![false; n];
+        let mut rejected = Vec::new();
+        for &(i, start) in moves {
+            if i < n {
+                starts[i] = start;
+                moved[i] = true;
+            } else {
+                rejected.push(i);
+            }
+        }
+        // Cada vuelta deshace un ajuste: como mucho `n` vueltas, y sin
+        // ninguno vuelven los del detector, que caben.
+        loop {
+            // El primer choque con algún ajuste metido: el de más a la
+            // derecha de la pareja o, si no está ajustado, el otro (dos del
+            // detector que ya no cabían se quedan como estaban).
+            let last = n - 1;
+            let past_end =
+                (starts[last] > end.saturating_sub(min_gap) && moved[last]).then_some(last);
+            let clash = past_end.or_else(|| {
+                (1..n)
+                    .filter(|&i| starts[i] < starts[i - 1] + min_gap)
+                    .find_map(|i| [i, i - 1].into_iter().find(|&j| moved[j]))
+            });
+            let Some(j) = clash else { break };
+            starts[j] = original[j];
+            moved[j] = false;
+            rejected.push(j);
+        }
+        let mut ranges = self.0.clone();
+        for i in 0..n {
+            ranges[i].start = starts[i];
+            if i > 0 {
+                ranges[i - 1].end = starts[i];
+            }
+        }
+        rejected.sort_unstable();
+        rejected.dedup();
+        (Slices(ranges), rejected)
+    }
+
     /// Los mismos cortes con cada inicio llevado al cruce por cero más
     /// cercano (ver [`nearest_zero_crossing`]) a no más de `max` frames, sin
     /// acercarse a menos de `min_gap` de sus vecinos ni del final de su

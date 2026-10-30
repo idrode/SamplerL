@@ -2323,6 +2323,88 @@ fn arrows_in_play_mode_browse_and_preview_slices() {
 
 // --- Ajuste manual de cortes ---
 
+/// break.wav en una rejilla de 4: cortes cada 1500 frames (31,25 ms).
+const GRID4: &str = r#"bpm(120)
+local amen = sample("break.wav"):slice_grid(4)
+track("drums", amen):steps("1 2 3 4  . . . .  . . . .  . . . .")
+"#;
+
+/// Selecciona el corte `slice` (desde 1) de la pista seleccionada.
+fn select_slice_number(app: &mut App, slice: usize) {
+    while app.view().selected_slice != Some(slice - 1) {
+        app.select_slice(true);
+    }
+}
+
+#[test]
+fn each_adjusted_slice_keeps_its_place() {
+    let path = fixture("nudge_order", Some(GRID4));
+    let project = path.parent().unwrap().join("p.sampler");
+    std::fs::write(&project, "script = song.lua\n").unwrap();
+    let (controller, mut engine) = new_engine(RATE);
+    let mut app = App::open_project(&project, controller, RATE).unwrap();
+    app.handle(esc());
+    let starts = |app: &App| -> Vec<usize> {
+        app.view().tracks[0]
+            .slices
+            .iter()
+            .map(|r| r.start)
+            .collect()
+    };
+    assert_eq!(starts(&app), [0, 1500, 3000, 4500]);
+    let mut nudge = |app: &mut App, slice: usize, key_char: char, times: usize| {
+        select_slice_number(app, slice);
+        for _ in 0..times {
+            app.handle(key(key_char));
+            offline::render(&mut engine, 100, 2);
+        }
+    };
+    // El 3 a la derecha (62,5 → 72,5 ms), el 1 (0 → 5 ms) y el 2 más allá
+    // de donde estaba el 3 al principio (31,25 → 66,3 ms): solo cabe con
+    // el 3 ya movido.
+    nudge(&mut app, 3, '.', 2);
+    assert_eq!(starts(&app), [0, 1500, 3480, 4500]);
+    nudge(&mut app, 1, '.', 1);
+    assert_eq!(starts(&app), [240, 1500, 3480, 4500]);
+    nudge(&mut app, 2, '.', 7);
+    assert_eq!(starts(&app), [240, 3182, 3480, 4500]);
+    // Otro cambio, en el 3 (el que se ajustó primero): los demás siguen.
+    nudge(&mut app, 3, '>', 1);
+    assert_eq!(starts(&app), [240, 3182, 3528, 4500]);
+    // El 2 hacia el 3: se queda a 1,2 ms de él, y el 3 no se mueve.
+    nudge(&mut app, 2, '.', 3);
+    assert_eq!(starts(&app), [240, 3470, 3528, 4500]);
+    assert!(
+        app.view().message.contains("(tope: el corte 3)"),
+        "{}",
+        app.view().message
+    );
+    // El 3 hacia el 2: lo mismo por la izquierda.
+    nudge(&mut app, 3, ',', 1);
+    assert_eq!(starts(&app), [240, 3470, 3528, 4500]);
+    assert!(
+        app.view().message.contains("(tope: el corte 2)"),
+        "{}",
+        app.view().message
+    );
+    assert_eq!(app.view().tracks[0].adjusted, [true, true, true, false]);
+    let saved = std::fs::read_to_string(&project).unwrap();
+    for line in [
+        "corte = break.wav rejilla4 1 5\n",
+        "corte = break.wav rejilla4 2 72.3\n",
+        "corte = break.wav rejilla4 3 73.5\n",
+    ] {
+        assert!(saved.contains(line), "{line}: {saved}");
+    }
+
+    // Reabierto, cada uno donde estaba.
+    let (controller, _engine) = new_engine(RATE);
+    let app = App::open_project(&project, controller, RATE).unwrap();
+    assert_eq!(starts(&app), [240, 3470, 3528, 4500]);
+    assert_eq!(app.view().tracks[0].adjusted, [true, true, true, false]);
+    assert!(app.view().message.is_empty() || !app.view().message.contains("no se aplica"));
+}
+
 #[test]
 fn slices_are_nudged_with_keys_and_saved_in_the_project() {
     let path = fixture("nudge", Some(SONG));
@@ -2368,12 +2450,12 @@ fn slices_are_nudged_with_keys_and_saved_in_the_project() {
         offline::render(&mut engine, 100, 2);
     }
     let view = app.view();
-    // De 5 en 5 ms llega a 3,5 ms; otros 5 se saldrían (el tope es 1 ms
-    // tras el corte 1): se queda donde estaba.
-    assert_eq!(view.tracks[0].slices[1].start, 168);
+    // De 5 en 5 ms llega a 3,5 ms; otros 5 se saldrían: se queda en el
+    // tope, 1,2 ms tras el corte 1.
+    assert_eq!(view.tracks[0].slices[1].start, 58);
     assert!(
         view.message
-            .starts_with("no se mueve: el ajuste del corte 2"),
+            .starts_with("corte 2 de drums: empieza en 1.2 ms (tope: el corte 1)"),
         "{}",
         view.message
     );
@@ -2381,7 +2463,7 @@ fn slices_are_nudged_with_keys_and_saved_in_the_project() {
     // Reabierto, sigue igual; «Quitar el ajuste» lo devuelve al detector.
     let (controller, _engine) = new_engine(RATE);
     let mut app = App::open_project(&project, controller, RATE).unwrap();
-    assert_eq!(app.view().tracks[0].slices[1].start, 168);
+    assert_eq!(app.view().tracks[0].slices[1].start, 58);
     assert_eq!(app.view().tracks[0].adjusted, vec![false, true]);
     app.select_slice(true);
     palette(&mut app, "quitar el ajuste");

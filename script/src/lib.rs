@@ -795,8 +795,9 @@ impl ScriptHost {
     }
 
     /// Pone (o quita, con `None`) el ajuste de un corte en los del proyecto.
-    /// Que quepa entre sus vecinos se comprueba al cargar (si no, se avisa
-    /// y no se aplica).
+    /// Que quepa entre sus vecinos (ya ajustados: todos se aplican a la
+    /// vez, el orden no cuenta) se comprueba al cargar (si no, se avisa y
+    /// no se aplica).
     pub fn set_position(&mut self, sample: &str, count: Cut, slice: usize, ms: Option<f64>) {
         self.positions
             .retain(|p| !(p.sample == sample && p.slices == count && p.slice == slice));
@@ -4688,28 +4689,41 @@ fn cut_sample(
         }
     }
     // Ajustes manuales del proyecto: mandan sobre el detector.
+    // Todos a la vez: cada uno se compara con sus vecinos ya ajustados (el
+    // orden en que se hicieron no cuenta).
     let mut adjusted = vec![false; slices.len()];
-    for p in this.positions.iter() {
-        if p.sample != this.name || p.slices != cut {
+    let ours: Vec<&SlicePosition> = this
+        .positions
+        .iter()
+        .filter(|p| p.sample == this.name && p.slices == cut && p.slice <= slices.len())
+        .collect();
+    let moves: Vec<(usize, usize)> = ours
+        .iter()
+        .map(|p| (p.slice - 1, ms_to_frame(p.ms, &this.sample)))
+        .collect();
+    let (moved, rejected) = slices.with_starts(&moves, gap);
+    slices = moved;
+    for p in &ours {
+        let i = p.slice - 1;
+        if !rejected.contains(&i) {
+            adjusted[i] = true;
             continue;
         }
-        let frame = ms_to_frame(p.ms, &this.sample);
-        match slices.with_start(p.slice - 1, frame, gap) {
-            Ok(moved) => {
-                slices = moved;
-                adjusted[p.slice - 1] = true;
-            }
-            Err(_) if p.slice > slices.len() => {}
-            Err(bounds) => warn(format!(
-                "el ajuste del corte {} de {} ({} ms) se sale de sus vecinos \
-                 ({:.1} a {:.1} ms): no se aplica",
-                p.slice,
-                this.name,
-                p.ms,
-                frame_to_ms(bounds.start, &this.sample),
-                frame_to_ms(bounds.end, &this.sample),
-            )),
-        }
+        // Lo que tendría de sitio con los demás ajustes puestos.
+        let low = i
+            .checked_sub(1)
+            .and_then(|j| slices.get(j))
+            .map_or(0, |r| r.start + gap);
+        let high = slices.get(i).map_or(0, |r| r.end.saturating_sub(gap));
+        warn(format!(
+            "el ajuste del corte {} de {} ({} ms) se sale de sus vecinos \
+             ({:.1} a {:.1} ms): no se aplica",
+            p.slice,
+            this.name,
+            p.ms,
+            frame_to_ms(low, &this.sample),
+            frame_to_ms(high, &this.sample),
+        ));
     }
     // Con `zero_cross`, todos los inicios (detectados, en rejilla, partidos
     // o ajustados en el proyecto) van al cruce por cero más cercano.
