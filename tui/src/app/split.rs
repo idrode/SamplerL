@@ -1083,6 +1083,7 @@ impl App {
                         bpm: s.bpm,
                         bar: s.bar,
                         step: s.step,
+                        ..Default::default()
                     };
                     view.cue = (!s.cue.is_empty()).then(|| s.cue.clone());
                 }

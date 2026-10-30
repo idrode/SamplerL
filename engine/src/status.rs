@@ -47,6 +47,8 @@ pub struct Status {
     /// con el secuenciador parado. Para seguir lo que se oye, no lo que se
     /// calcula.
     pub heard: Option<f64>,
+    /// La pausa del pánico: no nace ninguna voz hasta reanudar.
+    pub hushed: bool,
 }
 
 /// Paso que disparó una pista: de qué patrón ([`crate::Pattern::with_tag`]),
@@ -135,6 +137,7 @@ pub(crate) struct SharedStatus {
     section_bar: AtomicU64,
     section_looping: AtomicBool,
     section_lost: AtomicBool,
+    hushed: AtomicBool,
 }
 
 impl SharedStatus {
@@ -162,6 +165,7 @@ impl SharedStatus {
             section_bar: AtomicU64::new(0),
             section_looping: AtomicBool::new(false),
             section_lost: AtomicBool::new(false),
+            hushed: AtomicBool::new(false),
         }
     }
 
@@ -270,6 +274,11 @@ impl SharedStatus {
         })
     }
 
+    /// La pausa del pánico, puesta o quitada.
+    pub fn set_hushed(&self, on: bool) {
+        self.hushed.store(on, Relaxed);
+    }
+
     /// La sección que sonaba ya no está en el arreglo nuevo.
     pub fn set_lost(&self, lost: bool) {
         if lost {
@@ -345,6 +354,7 @@ impl SharedStatus {
             }),
             section_lost: self.section_lost.swap(false, Relaxed),
             heard: self.position().map(|p| p - delay),
+            hushed: self.hushed.load(Relaxed),
         }
     }
 }

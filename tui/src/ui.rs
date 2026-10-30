@@ -1278,6 +1278,13 @@ fn transport_line(view: &ViewModel) -> Line<'static> {
                 .bg(accent()),
             None => Span::raw(""),
         },
+        if t.hushed {
+            Span::from("   PÁNICO: pausa ")
+                .fg(Color::Black)
+                .bg(error_color())
+        } else {
+            Span::raw("")
+        },
     ])
 }
 

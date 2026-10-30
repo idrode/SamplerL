@@ -240,6 +240,8 @@ pub struct TransportView {
     pub bar: u64,
     /// Último paso disparado.
     pub step: Option<usize>,
+    /// La pausa del pánico: no suena nada nuevo.
+    pub hushed: bool,
 }
 
 /// El panel de dispositivos encima de la ventana principal.

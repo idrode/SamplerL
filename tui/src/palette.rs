@@ -63,6 +63,8 @@ pub enum Action {
     Browser,
     EditTracker,
     Occupancy,
+    Panic,
+    PanicPause,
     FillGap,
     SuggestFills,
     TapTempo,
@@ -415,6 +417,18 @@ pub const ACTIONS: &[ActionDef] = &[
         action: Action::EditTracker,
         name: "Editar los efectos de un paso en el tracker",
         description: "Cursor en el tracker: ↑↓ paso, ←→ pista, Enter escribe los efectos del paso (lp=800,q=4 crush=6) en su token del código y carga, Supr los quita, Esc sale; un paso de deshacer",
+        keys: "",
+    },
+    ActionDef {
+        action: Action::Panic,
+        name: "Pánico: silenciar todo lo que suena",
+        description: "Corta al instante todas las voces (cortes, pads, notas, sintetizadores, granos, preescucha y las colas de los efectos de corte) sin parar el secuenciador: lo siguiente entra como siempre. Funciona con cualquier cosa abierta",
+        keys: "",
+    },
+    ActionDef {
+        action: Action::PanicPause,
+        name: "Pánico en pausa (otra vez: reanudar)",
+        description: "Como el pánico, y además no deja sonar nada nuevo (pasos, pads, notas, preescucha) hasta reanudar; el secuenciador y el compás siguen contando y el metrónomo suena",
         keys: "",
     },
     ActionDef {

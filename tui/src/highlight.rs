@@ -131,6 +131,7 @@ mod tests {
             section: None,
             section_lost: false,
             heard: None,
+            hushed: false,
         };
         for &(slot, cursor) in cursors {
             status.tracks[slot].cursor = Some(cursor);

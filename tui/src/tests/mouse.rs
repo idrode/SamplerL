@@ -230,8 +230,7 @@ fn a_click_on_the_wave_selects_and_plays_the_slice_there() {
     app.handle(esc());
     app.handle(ctrl('t'));
     offline::render(&mut engine, 2000, 2);
-    let heard =
-        |engine: &mut Engine| offline::render(engine, 2000, 2).iter().any(|&s| s != 0.0);
+    let heard = |engine: &mut Engine| offline::render(engine, 2000, 2).iter().any(|&s| s != 0.0);
     draw(&mut app, 160, 40);
     let area = app.sample_area.unwrap();
     let y = area.y + 1;

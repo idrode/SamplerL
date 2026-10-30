@@ -985,6 +985,8 @@ impl NoteEvent {
 struct Voice {
     active: bool,
     born: u64,
+    /// Orden de llegada entre todas las pistas (ver [`Synth::stamp`]).
+    stamp: u64,
     key: Option<u8>,
     /// Altura que suena y a la que va (nota MIDI), y su frecuencia en
     /// ciclos por muestra.
@@ -1068,6 +1070,7 @@ impl Default for Voice {
         Voice {
             active: false,
             born: 0,
+            stamp: 0,
             key: None,
             pitch: 60.0,
             target: 60.0,
@@ -1861,6 +1864,10 @@ pub struct Synth {
     voices: [Voice; POOL],
     /// Notas tocadas (el orden de llegada; también siembra las fases).
     born: u64,
+    /// Orden de llegada de la próxima voz entre todas las pistas: lo pone
+    /// el motor antes de cada nota para robar la más antigua al llegar al
+    /// límite de voces. No cambia el sonido.
+    pub stamp: u64,
     sample_rate: f32,
     /// Valor (suavizado) de cada parámetro al final del último bloque.
     values: [f32; PARAM_COUNT],
@@ -1923,6 +1930,7 @@ impl Synth {
         Synth {
             voices: [Voice::default(); POOL],
             born: 0,
+            stamp: 0,
             sample_rate: sample_rate as f32,
             values: PARAMS.map(|p| p.default),
             primed: false,
@@ -1940,6 +1948,32 @@ impl Synth {
     /// Voces que cuentan (suenan y no están robadas).
     pub fn voices(&self) -> usize {
         self.voices.iter().filter(|v| v.is_voice()).count()
+    }
+
+    /// La voz que cuenta más antigua: su [`Synth::stamp`].
+    pub fn oldest(&self) -> Option<u64> {
+        self.voices
+            .iter()
+            .filter(|v| v.is_voice())
+            .map(|v| v.stamp)
+            .min()
+    }
+
+    /// Roba la voz que cuenta más antigua (fundido de robar).
+    pub fn steal_oldest(&mut self) {
+        let fade = self.fade();
+        if let Some(v) = (0..POOL)
+            .filter(|&v| self.voices[v].is_voice())
+            .min_by_key(|&v| self.voices[v].stamp)
+        {
+            self.voices[v].kill(fade);
+        }
+    }
+
+    /// Una nota con `patch` ocupa una voz más (no la de un monofónico
+    /// que ya suena, que se reutiliza).
+    pub fn needs_voice(&self, patch: &Patch) -> bool {
+        !(patch.mono || patch.analog.is_some()) || self.voices() == 0
     }
 
     fn fade(&self) -> u32 {
@@ -1997,6 +2031,7 @@ impl Synth {
         let voice = &mut self.voices[slot];
         voice.start(patch, born, sr);
         voice.play(&ev, born, from, sr);
+        voice.stamp = self.stamp;
         born
     }
 
@@ -2062,6 +2097,7 @@ impl Synth {
         let voice = &mut self.voices[slot];
         voice.start(patch, born, sr);
         voice.play(&ev, born, from, sr);
+        voice.stamp = self.stamp;
         born
     }
 

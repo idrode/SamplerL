@@ -600,6 +600,8 @@ cortado en rejilla (`slice_grid(16)`), el número de cortes se escribe
 | Ctrl-L o F5 | Cargar el texto del editor sin guardar |
 | Ctrl-Espacio, Ctrl-T o F8 | Marcha / paro del secuenciador (también en el modo tocar; arranca en el cue si hay uno) |
 | Shift-Ctrl-Espacio o F9 | Fijar el cue: el siguiente arranque empieza ahí (ver «Arrancar desde un compás: el cue») |
+| F12 | Pánico: silencia al instante todo lo que suena; el secuenciador sigue (ver «Botón de pánico») |
+| Shift-F12 | Pánico en pausa: además no suena nada nuevo hasta volver a pulsarla |
 | Ctrl-G | Ir a la línea del error |
 | Alt-G | Ir a una línea (escribe el número y Enter) |
 | Ctrl-F | Buscar en el script (escribe el texto y Enter) |
@@ -663,6 +665,42 @@ reinicia el servidor de tmux con `tmux kill-server`.) Si aun así no llega,
 F9 hace lo mismo, y en `[teclas]` se le puede dar otra (`cue = "alt-c"`).
 
 > **Usado en el tutorial:** [paso 13, Guardar, versiones y exportar](PRIMERA-CANCION.md#paso-13-guardar-versiones-y-exportar).
+
+### Botón de pánico
+
+Cuando algo se desmadra (una nota que no se suelta, un bucle de corte que
+no para, demasiadas voces), **F12** corta al instante, con el fundido
+mínimo de 1,5 ms para no hacer clic, todo lo que suena: la voz de cada
+pista, los pads, las notas de los instrumentos, los sintetizadores, las
+nubes de granos, la preescucha y las colas de los efectos de corte
+(`cortes:fx`); y apaga sus notas MIDI de salida. El secuenciador y el
+compás no se tocan: lo siguiente (el próximo paso, una tecla) entra como
+siempre.
+
+**Shift-F12** es la **pausa**: silencia igual y además no deja nacer
+ninguna voz (ni los pasos del secuenciador, ni pads, notas, granos o
+preescucha) hasta que la vuelvas a pulsar. Mientras, la canción sigue
+contando compases (al reanudar suena donde iría), el metrónomo sigue
+sonando y la barra de estado dice `PÁNICO: pausa`. F12 en plena pausa
+silencia y la deja puesta.
+
+Las dos funcionan con cualquier cosa abierta (paleta, explorador,
+cursores del tracker o de la vista de ocupación), en el editor, en el
+modo tocar y desde la ventana del editor con `--split` (van a la
+principal). Los envíos (delay y reverb) acaban su cola: son efectos de la
+pista, no de la voz. Se cambian en `[teclas]` (`panico`, `pausa_panico`)
+y están en la paleta. F12 la usan algunas terminales desplegables (Guake,
+Yakuake) para mostrarse; si es tu caso, dale otra (`panico = "alt-p"`).
+
+**Límite de voces.** Aparte del límite de cada pista (`voices` de un
+instrumento o un sintetizador), hay uno entre todas las pistas para que
+no se sature la máquina: 64 notas de instrumento y voces de sintetizador
+a la vez, cambiable en `[voces] limite` (de 1 a 256). Al llegar, una
+nota nueva roba la más antigua de cualquier pista (que hace el fundido
+mínimo y suelta su nota MIDI), aunque la suya tenga sitio. Un
+sintetizador monofónico que ya suena no ocupa otra. La voz de cada pista
+de cortes (una por pista) y los granos (hasta 32 por pista) no cuentan.
+El render offline (`--render`, `exportar`) usa siempre 64.
 
 ### Ayuda contextual
 
@@ -739,6 +777,8 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Mandos MIDI | Lista de los mandos asignados (parámetro, CC, canal, rango y curva): Supr borra, c cambia la curva, l asigna otro mando, Enter cambia el rango | — |
 | Exportar los mandos MIDI a la configuración | Escribe los mandos en [midi] mandos de config.toml: los usa un proyecto que no tiene los suyos | — |
 | Editar los efectos de un paso en el tracker | Cursor en el tracker: ↑↓ paso, ←→ pista, Enter escribe los efectos del paso (lp=800,q=4 crush=6) en su token del código y carga, Supr los quita, Esc sale; un paso de deshacer | — |
+| Pánico: silenciar todo lo que suena | Corta al instante todas las voces (cortes, pads, notas, sintetizadores, granos, preescucha y las colas de los efectos de corte) sin parar el secuenciador: lo siguiente entra como siempre. Funciona con cualquier cosa abierta | — |
+| Pánico en pausa (otra vez: reanudar) | Como el pánico, y además no deja sonar nada nuevo (pasos, pads, notas, preescucha) hasta reanudar; el secuenciador y el compás siguen contando y el metrónomo suena | — |
 | Vista de ocupación | Enseña u oculta la rejilla de qué pista suena en cada paso (una fila por pista, Σ cuántas suenan y los pasos vacíos resaltados), de lo que toca el secuenciador; con el editor en su ventana, en la principal | — |
 | Rellenar un hueco desde la vista de ocupación | Cursor en la vista de ocupación: ←→ paso, ↑↓ pista, Tab el hueco siguiente, Enter pone en ese silencio un golpe de la pista (el anterior, cambiable) escrito en su token del código y carga, Esc sale; un paso de deshacer | — |
 | Sugerir rellenos de huecos | Hasta 4 huecos de la página que se ve en la vista de ocupación y qué golpe de qué pista los rellenaría (que alterne con las de al lado, sin choque de frecuencia con ellas si hay análisis, y con sitio); solo texto, no escribe nada | — |
@@ -1159,6 +1199,8 @@ paleta de 256.
 | `variante` | Alternar variante A/B | — |
 | `resaltado` | Resaltado en vivo | — |
 | `ocupacion` | Vista de ocupación | — |
+| `panico` | Pánico: silenciar todo lo que suena | `f12` |
+| `pausa_panico` | Pánico en pausa (otra vez: reanudar) | `shift-f12` |
 
 | En `[colores]` | Para |
 | --- | --- |
@@ -1185,6 +1227,10 @@ paleta de 256.
 | En `[ocupacion]` | Para | Por defecto |
 | --- | --- | --- |
 | `visible` | enseñar la vista de ocupación al arrancar (`true`/`false`; la paleta la enseña y la oculta en vivo); sus colores, `hueco` y `sugerencia` en `[colores]` | `false` |
+
+| En `[voces]` | Para | Por defecto |
+| --- | --- | --- |
+| `limite` | notas de instrumento y voces de sintetizador que suenan a la vez entre todas las pistas (de 1 a 256); al llegar, una nota nueva roba la más antigua de cualquier pista (con el fundido mínimo). Aparte va el límite de cada pista (`voices` en el script) | `64` |
 
 | En `[dispositivos]` | Para | Por defecto |
 | --- | --- | --- |
@@ -4476,4 +4522,6 @@ song.lua:1: ')' expected near <eof>
 ```
 
 Error de sintaxis de Lua: falta cerrar un paréntesis, unas comillas o un
+`end`.
+as comillas o un
 `end`.

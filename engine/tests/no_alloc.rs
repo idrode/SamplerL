@@ -2,7 +2,8 @@
 //! asignador global cuenta las reservas que hace este hilo mientras corre
 //! `Engine::process`, con retrasos (swing, humanize), retrigger, pitch,
 //! instrumentos (polifonía, ADSR, bucles), el EQ (suavizado y automatizado),
-//! el EQ dinámico con sidechain (y la reducción que publica para su vista), efectos por corte (con sus colas), bucles de corte con fundido, nubes de granos en vivo, sintetizadores (mono con accent, slide y el sub de cada nota, polifónicos con unison y sub abierto, un subharm de 8 voces con sus seis capas, un sh101 con legato, curvas y notas en vivo), grupos con sus efectos y macros que se mueven en vivo, mandos MIDI en todos sus destinos (moviéndose y soltándose), cambios de
+//! el EQ dinámico con sidechain (y la reducción que publica para su vista),
+//! el límite de voces entre pistas y el pánico (puntual y en pausa), efectos por corte (con sus colas), bucles de corte con fundido, nubes de granos en vivo, sintetizadores (mono con accent, slide y el sub de cada nota, polifónicos con unison y sub abierto, un subharm de 8 voces con sus seis capas, un sh101 con legato, curvas y notas en vivo), grupos con sus efectos y macros que se mueven en vivo, mandos MIDI en todos sus destinos (moviéndose y soltándose), cambios de
 //! patrón al compás, un patrón que se suelta a la cola de basura y el paso
 //! de cada pista y el retardo de salida que se publican para la interfaz;
 //! y el callback de un dispositivo con el traspaso del motor de uno a otro.
@@ -1560,6 +1561,62 @@ fn the_audio_thread_never_allocates() {
         }
     });
     assert_eq!(n, 0, "reservas al arrancar en un compás");
+
+    // Límite de voces entre pistas (roba la más antigua de cualquiera, al
+    // bajarlo y con notas nuevas), pánico puntual y en pausa (con pads,
+    // notas, sintetizador, granos y preescucha que no entran) y reanudar.
+    let held: Vec<f32> = (0..24_000).map(|i| (i as f32 * 0.05).sin() * 0.3).collect();
+    let held = Arc::new(Sample::from_interleaved(&held, 1, RATE, RATE).unwrap());
+    controller.set_voice_limit(3).unwrap();
+    for key in 0..6u8 {
+        controller
+            .note_on(6, &held, 0..24_000, instrument, key as f32, 0.8, 30 + key)
+            .unwrap();
+        controller
+            .synth_note_on(7, poly, key as f32, 0.8, 30 + key)
+            .unwrap();
+    }
+    let n = counted(|| {
+        for _ in 0..100 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas con el límite de voces");
+    controller.panic(false).unwrap();
+    controller.play_slice_on(2, &sample, &slices, 1).unwrap();
+    let n = counted(|| {
+        for _ in 0..100 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas con el pánico");
+    controller.panic(true).unwrap();
+    controller.play_slice_on(2, &sample, &slices, 1).unwrap();
+    controller
+        .note_on(6, &held, 0..24_000, instrument, 0.0, 0.8, 40)
+        .unwrap();
+    controller.synth_note_on(7, poly, 0.0, 0.8, 40).unwrap();
+    controller
+        .grain_on(1, &sample, 0..sample.frames(), 0.0, 1.0, 40)
+        .unwrap();
+    controller.preview_slice(&sample, &slices, 0).unwrap();
+    let n = counted(|| {
+        for _ in 0..200 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas en la pausa del pánico");
+    assert_eq!(engine.sounding_voices(), 0);
+    controller.resume().unwrap();
+    controller
+        .set_voice_limit(engine::DEFAULT_VOICE_LIMIT)
+        .unwrap();
+    let n = counted(|| {
+        for _ in 0..200 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas al reanudar");
     controller.collect_garbage();
 }
 

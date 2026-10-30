@@ -40,10 +40,10 @@ pub use device::{
     AudioBackend, AudioDeviceInfo, AudioEvent, AudioOutput, CpalBackend, NULL_NAME, OutputInfo,
 };
 pub use engine::{
-    Batch, Controller, Engine, MAX_ATTACK_MS, MAX_BEND, MAX_CHOKE, MAX_CROSSFADE_MS,
-    MAX_RELEASE_MS, MAX_START_BAR, MAX_TRACKS, MidiNote, PlayMode, SHAPE_ATTACK, SHAPE_CROSSFADE,
-    SHAPE_LENGTH, SHAPE_PAN, SHAPE_PARAMS, SHAPE_RELEASE, SendError, ShapeCurves, SliceShape,
-    loop_seam_room, new_engine,
+    Batch, Controller, DEFAULT_VOICE_LIMIT, Engine, MAX_ATTACK_MS, MAX_BEND, MAX_CHOKE,
+    MAX_CROSSFADE_MS, MAX_RELEASE_MS, MAX_START_BAR, MAX_TRACKS, MAX_VOICE_LIMIT, MidiNote,
+    PlayMode, SHAPE_ATTACK, SHAPE_CROSSFADE, SHAPE_LENGTH, SHAPE_PAN, SHAPE_PARAMS, SHAPE_RELEASE,
+    SendError, ShapeCurves, SliceShape, loop_seam_room, new_engine,
 };
 pub use fx::{
     DEFAULT_Q, DynEqParams, EQ_BANDS, EQ_DEFAULT_FREQS, EQ_DEFAULT_Q, EQ_FREQ_RANGE, EQ_GAIN_RANGE,

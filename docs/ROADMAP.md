@@ -734,3 +734,8 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
 12. ✅ **Mover un corte no suena**: `,` `.` `<` `>`, arrastrar una marca
     y ← → ya no preescuchan; suena la tecla del corte, espacio y un clic
     sin arrastrar sobre el corte en la onda.
+13. ✅ **Botón de pánico**: F12 corta al instante todas las voces (cortes,
+    pads, notas, sintetizadores, granos, preescucha y colas de los efectos
+    de corte) sin tocar el secuenciador; Shift-F12 además no deja sonar
+    nada nuevo hasta volver a pulsarla. Límite de voces entre pistas
+    (`[voces] limite`, 64 por defecto) que roba la más antigua.

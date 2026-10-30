@@ -406,6 +406,8 @@ pub struct App {
     /// que se le suma al retardo de la salida (`retardo_ms`).
     highlighting: bool,
     highlight_delay_ms: f64,
+    /// La pausa del pánico está puesta (lo pidió esta ventana).
+    hushed: bool,
     /// Vista de ocupación por paso (ver `occupancy`).
     occupancy: occupancy::Occupancy,
 }
@@ -518,6 +520,7 @@ impl App {
             cursors: Default::default(),
             highlighting: true,
             highlight_delay_ms: 0.0,
+            hushed: false,
             occupancy: Default::default(),
         };
         app.reload_blocks();
@@ -605,6 +608,9 @@ impl App {
         self.highlighting = config.highlight.enabled;
         self.highlight_delay_ms = config.highlight.delay_ms;
         self.set_occupancy(config.occupancy.visible);
+        if let Err(e) = self.controller.set_voice_limit(config.voices.limit) {
+            self.message = format!("motor: {e}");
+        }
         if !config.warnings.is_empty() {
             self.message = config
                 .warnings
@@ -3381,6 +3387,8 @@ impl App {
             Action::Browser => self.open_browser(),
             Action::EditTracker => self.open_tracker_edit(),
             Action::Occupancy => self.toggle_occupancy(),
+            Action::Panic => self.panic(false),
+            Action::PanicPause => self.panic(true),
             Action::FillGap => self.open_occupancy_cursor(),
             Action::SuggestFills => self.suggest_fills(),
             Action::TapTempo => self.start_tap(Instant::now()),
@@ -3485,7 +3493,7 @@ impl App {
         self.release_pads();
         self.message = match self.mode {
             Mode::Play => {
-                "modo tocar: 1-0 y q-i disparan cortes (en un instrumento, notas desde la raíz) · ←→ eligen corte (sin sonar) · espacio o clic en la onda lo preescucha · m mute · s solo · [ ] sección · l repetir sección · v variante A/B · Esc vuelve al editor"
+                "modo tocar: 1-0 y q-i disparan cortes (en un instrumento, notas desde la raíz) · ←→ eligen corte (sin sonar) · espacio o clic en la onda lo preescucha · m mute · s solo · [ ] sección · l repetir sección · v variante A/B · F12 pánico · Esc vuelve al editor"
             }
             Mode::Edit => "modo editor",
         }
@@ -3765,6 +3773,36 @@ impl App {
         };
     }
 
+    /// El botón de pánico: corta ya todas las voces (el secuenciador
+    /// sigue). `pause`: pone la pausa (no suena nada nuevo) o, si ya
+    /// estaba, la quita; sin él, solo silencia (y una pausa puesta sigue).
+    fn panic(&mut self, pause: bool) {
+        // Las teclas tocadas se olvidan: sus note off ya no hacen falta.
+        self.release_pads();
+        let resuming = pause && self.hushed;
+        let result = if resuming {
+            self.controller.resume()
+        } else {
+            self.controller.panic(pause)
+        };
+        if let Err(e) = result {
+            self.message = format!("motor: {e}");
+            return;
+        }
+        let key = self.keys.describe(Bound::Action(Action::PanicPause));
+        let was = self.hushed;
+        self.hushed = (was || pause) && !resuming;
+        self.message = if resuming {
+            "pánico: reanudado, vuelve a sonar".into()
+        } else if pause {
+            format!("PÁNICO en pausa: no suena nada nuevo; el compás sigue · {key} reanuda")
+        } else if was {
+            format!("pánico: silencio; sigue la pausa · {key} reanuda")
+        } else {
+            "pánico: silencio; lo siguiente entra como siempre".into()
+        };
+    }
+
     /// Recorre los cortes (←/→ en el modo tocar): selecciona el siguiente o
     /// el anterior, sin sonar (se oye con espacio, su tecla o un clic).
     pub fn browse_slice(&mut self, forward: bool) {
@@ -3789,6 +3827,12 @@ impl App {
     /// Atiende una tecla: atajos propios; si no, en modo tocar dispara
     /// cortes y en modo editor escribe.
     pub fn handle(&mut self, input: Input) -> Flow {
+        // El pánico antes que nada: con cualquier cosa abierta.
+        if let Some(Bound::Action(a @ (Action::Panic | Action::PanicPause))) =
+            self.keys.lookup(&input)
+        {
+            return self.run_action(a);
+        }
         if let Some(prompt) = &mut self.prompt {
             match input.key {
                 Key::Enter => {
@@ -4158,6 +4202,7 @@ impl App {
             bpm: s.bpm,
             bar: s.bar,
             step: s.step,
+            hushed: s.hushed,
         });
         let selected_name = self
             .tracks()

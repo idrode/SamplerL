@@ -91,6 +91,12 @@ pub const BINDABLE: &[(&str, Bound, &[&str])] = &[
     ("variante", Bound::Action(Action::ToggleVariant), &[]),
     ("resaltado", Bound::Action(Action::Highlight), &[]),
     ("ocupacion", Bound::Action(Action::Occupancy), &[]),
+    ("panico", Bound::Action(Action::Panic), &["f12"]),
+    (
+        "pausa_panico",
+        Bound::Action(Action::PanicPause),
+        &["shift-f12"],
+    ),
 ];
 
 /// `[midi] macros`: el controlador (CC) de cada macro, por orden; `None`
@@ -141,6 +147,30 @@ const OCCUPANCY_KEYS: &[(&str, &str, &str)] = &[(
     "visible",
     "enseñar la vista de ocupación al arrancar (`true`/`false`; la paleta la enseña y la oculta en vivo); sus colores, `hueco` y `sugerencia` en `[colores]`",
     "`false`",
+)];
+
+/// `[voces]`: cuántas voces suenan a la vez.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VoicesConfig {
+    /// Notas de instrumento y voces de sintetizador a la vez entre todas
+    /// las pistas (`limite`); al llegar, la nueva roba la más antigua.
+    pub limit: usize,
+}
+
+impl Default for VoicesConfig {
+    fn default() -> Self {
+        VoicesConfig {
+            limit: engine::DEFAULT_VOICE_LIMIT,
+        }
+    }
+}
+
+/// Claves de `[voces]` (para la guía).
+#[cfg(test)]
+const VOICES_KEYS: &[(&str, &str, &str)] = &[(
+    "limite",
+    "notas de instrumento y voces de sintetizador que suenan a la vez entre todas las pistas (de 1 a 256); al llegar, una nota nueva roba la más antigua de cualquier pista (con el fundido mínimo). Aparte va el límite de cada pista (`voices` en el script)",
+    "`64`",
 )];
 
 /// Claves de `[dispositivos]` (para la guía).
@@ -533,6 +563,8 @@ pub struct Config {
     pub highlight: HighlightConfig,
     /// `[ocupacion]`: si se ve al arrancar.
     pub occupancy: OccupancyConfig,
+    /// `[voces]`: el límite de voces a la vez.
+    pub voices: VoicesConfig,
     /// `[dispositivos]`: los elegidos la última vez.
     pub devices: crate::devices::Choice,
     /// `[dispositivos] terminal`: la terminal del panel de dispositivos en
@@ -726,6 +758,23 @@ impl Config {
                         }
                     }
                 }
+                "voces" => {
+                    for (key, value) in inner {
+                        let limit = value
+                            .as_integer()
+                            .filter(|n| (1..=engine::MAX_VOICE_LIMIT as i64).contains(n));
+                        match (key.as_str(), limit) {
+                            ("limite" | "límite", Some(n)) => config.voices.limit = n as usize,
+                            ("limite" | "límite", None) => config.warnings.push(format!(
+                                "[voces] limite: un número de 1 a {}",
+                                engine::MAX_VOICE_LIMIT
+                            )),
+                            _ => config
+                                .warnings
+                                .push(format!("[voces] «{key}» no existe (hay: limite)")),
+                        }
+                    }
+                }
                 "dispositivos" => {
                     for (key, value) in inner {
                         if key == "terminal" {
@@ -752,7 +801,7 @@ impl Config {
                     }
                 }
                 other => config.warnings.push(format!(
-                    "{name}: sección [{other}] desconocida (hay: teclas, colores, midi, editor, resaltado, ocupacion, dispositivos)"
+                    "{name}: sección [{other}] desconocida (hay: teclas, colores, midi, editor, resaltado, ocupacion, voces, dispositivos)"
                 )),
             }
         }
@@ -864,6 +913,10 @@ fn guide_markdown() -> String {
     }
     out.push_str("\n| En `[ocupacion]` | Para | Por defecto |\n| --- | --- | --- |\n");
     for (name, what, default) in OCCUPANCY_KEYS {
+        out.push_str(&format!("| `{name}` | {what} | {default} |\n"));
+    }
+    out.push_str("\n| En `[voces]` | Para | Por defecto |\n| --- | --- | --- |\n");
+    for (name, what, default) in VOICES_KEYS {
         out.push_str(&format!("| `{name}` | {what} | {default} |\n"));
     }
     out.push_str("\n| En `[dispositivos]` | Para | Por defecto |\n| --- | --- | --- |\n");
@@ -1359,7 +1412,7 @@ brillo = "red"
             [
                 "[teclas] cargar: F1 es siempre la paleta de comandos",
                 "[teclas] explorador: Alt-S ya es de guardar; no se usa",
-                "[teclas] «inventada» no existe (hay: paleta, guardar, cargar, marcha, cue, ir_al_error, ir_a_linea, buscar, buscar_siguiente, buscar_anterior, siguiente_pista, recargar, ordenes, completar, salir, modo_tocar, deshacer, rehacer, explorador, tap_tempo, macros, metronomo, exportar, seccion_siguiente, seccion_anterior, repetir_seccion, variante, resaltado, ocupacion)",
+                "[teclas] «inventada» no existe (hay: paleta, guardar, cargar, marcha, cue, ir_al_error, ir_a_linea, buscar, buscar_siguiente, buscar_anterior, siguiente_pista, recargar, ordenes, completar, salir, modo_tocar, deshacer, rehacer, explorador, tap_tempo, macros, metronomo, exportar, seccion_siguiente, seccion_anterior, repetir_seccion, variante, resaltado, ocupacion, panico, pausa_panico)",
                 "[teclas] salir: «q»: una letra sin ctrl- ni alt- escribiría texto",
                 "[teclas] Ctrl-G era de ir_al_error; ahora es de marcha",
                 "[colores] tenue: color no válido",

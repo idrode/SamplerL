@@ -413,6 +413,42 @@ fn ctrl_space_and_the_cue_from_the_editor_window() {
 }
 
 #[test]
+fn the_panic_keys_from_the_editor_window_reach_the_main_one() {
+    use ratatui_textarea::{Input, Key};
+    let f12 = |shift: bool| Input {
+        key: Key::F(12),
+        shift,
+        ..Input::default()
+    };
+    let path = fixture("split_panic", Some(SONG));
+    let (mut main, mut engine) = main_window(&path, None);
+    let (mut editor, _idle) = editor_window(&path);
+    pump(&mut main, &mut editor);
+    let before = editor.text_for_test();
+    // Shift-F12: la pausa del pánico en la principal (su motor calla).
+    editor.handle(f12(true));
+    pump_until(&mut main, &mut editor, |m, _| {
+        m.view().message.starts_with("PÁNICO en pausa")
+    });
+    offline::render(&mut engine, 512, 2);
+    let paused = offline::render(&mut engine, BAR, 2);
+    assert!(paused.iter().all(|&s| s == 0.0));
+    main.tick();
+    assert!(main.view().transport.hushed);
+    // Otra vez: reanuda.
+    editor.handle(f12(true));
+    pump_until(&mut main, &mut editor, |m, _| {
+        m.view().message.starts_with("pánico: reanudado")
+    });
+    assert!(
+        offline::render(&mut engine, BAR, 2)
+            .iter()
+            .any(|&s| s != 0.0)
+    );
+    assert_eq!(editor.text_for_test(), before);
+}
+
+#[test]
 fn pasting_in_the_editor_window_keeps_the_indent_and_undoes_at_once() {
     let path = fixture("split_paste", Some(SONG));
     let (mut main, _engine) = main_window(&path, None);

@@ -216,7 +216,23 @@ enum Command {
     },
     /// Suelta la nube en vivo de esa tecla: no nacen más granos.
     GrainOff { track: usize, key: u8 },
+    /// Pánico (inmediato): corta con el fundido mínimo todas las voces que
+    /// suenan (cortes, pads, notas, sintetizadores, granos, preescucha y
+    /// las colas de los efectos de corte), sin tocar el secuenciador. Con
+    /// `hold`, además no deja nacer ninguna hasta `Resume`.
+    Panic { hold: bool },
+    /// Vuelven a nacer voces tras un pánico con `hold`.
+    Resume,
+    /// Voces a la vez entre todas las pistas (inmediato).
+    SetVoiceLimit(usize),
 }
+
+/// Voces que pueden sonar a la vez entre todas las pistas (las notas de
+/// los instrumentos y las voces de los sintetizadores), por defecto: al
+/// llegar, una nota nueva roba la más antigua de cualquier pista.
+pub const DEFAULT_VOICE_LIMIT: usize = 64;
+/// Límite de voces más alto que se puede pedir.
+pub const MAX_VOICE_LIMIT: usize = 256;
 
 /// Cómo se reproduce un rango: ganancia, velocidad de lectura (pitch),
 /// sentido y la forma del corte (envolvente; ver [`SliceShape`]).
@@ -566,6 +582,15 @@ impl Voice {
         self.rendered < self.length && !matches!(self.release, Some((0, _)))
     }
 
+    /// Corta la voz con el fundido mínimo y, con ella, la cola de los
+    /// efectos de su corte (el pánico).
+    fn hush(&mut self) {
+        self.release();
+        if let Some(fx) = &mut self.fx {
+            fx.spend_tail(usize::MAX);
+        }
+    }
+
     /// Empieza un fundido de salida aunque el corte no haya terminado.
     fn release(&mut self) {
         if self.release.is_none() {
@@ -765,6 +790,8 @@ pub enum SendError {
     InvalidGroup(&'static str),
     /// Macro que no existe o valor fuera de 0 a 1.
     InvalidMacro(&'static str),
+    /// Límite de voces fuera de 1 a [`MAX_VOICE_LIMIT`].
+    InvalidVoiceLimit(usize),
 }
 
 impl fmt::Display for SendError {
@@ -782,6 +809,12 @@ impl fmt::Display for SendError {
             SendError::InvalidArrangement(reason) => write!(f, "arreglo: {reason}"),
             SendError::InvalidGroup(reason) => write!(f, "grupo: {reason}"),
             SendError::InvalidMacro(reason) => write!(f, "macro: {reason}"),
+            SendError::InvalidVoiceLimit(n) => {
+                write!(
+                    f,
+                    "límite de voces {n} fuera de rango (1 a {MAX_VOICE_LIMIT})"
+                )
+            }
             SendError::InvalidStartBar(bar) => write!(
                 f,
                 "compás de arranque {bar} fuera de rango (0 a {MAX_START_BAR})"
@@ -1186,6 +1219,13 @@ pub struct Engine {
     staged_macros: Option<Macros>,
     /// Mandos MIDI: su tabla y su estado (ver [`crate::knob`]).
     knobs: crate::knob::KnobState,
+    /// Pausa del pánico: no nace ninguna voz hasta `Resume`.
+    hushed: bool,
+    /// Voces a la vez entre todas las pistas (ver [`DEFAULT_VOICE_LIMIT`]).
+    voice_limit: usize,
+    /// Orden de llegada de las notas y voces de sintetizador entre todas
+    /// las pistas (para robar la más antigua).
+    stamp: u64,
 }
 
 /// Silencio para el sidechain de una pista que calla en este trozo.
@@ -1303,6 +1343,9 @@ pub fn new_engine(sample_rate: u32) -> (Controller, Engine) {
             pending_macros: None,
             staged_macros: None,
             knobs: crate::knob::KnobState::default(),
+            hushed: false,
+            voice_limit: DEFAULT_VOICE_LIMIT,
+            stamp: 0,
         },
     )
 }
@@ -1859,6 +1902,31 @@ impl Controller {
         self.send(Command::StopPreview, None)
     }
 
+    /// Pánico (inmediato, sin esperar al compás): corta con el fundido
+    /// mínimo todas las voces que suenan (cortes, pads, notas de
+    /// instrumento, sintetizadores, granos, preescucha y las colas de los
+    /// efectos de corte) y apaga sus notas MIDI. El secuenciador y el
+    /// compás siguen; los envíos (delay, reverb) acaban su cola. Con
+    /// `hold` (pausa), no nace ninguna voz nueva hasta [`Controller::resume`];
+    /// sin él, lo siguiente entra como siempre (y una pausa puesta sigue).
+    pub fn panic(&mut self, hold: bool) -> Result<(), SendError> {
+        self.send(Command::Panic { hold }, None)
+    }
+
+    /// Termina la pausa de un pánico: vuelven a nacer voces.
+    pub fn resume(&mut self) -> Result<(), SendError> {
+        self.send(Command::Resume, None)
+    }
+
+    /// Voces a la vez entre todas las pistas (de 1 a [`MAX_VOICE_LIMIT`]);
+    /// al llegar, una nota nueva roba la más antigua. Inmediato.
+    pub fn set_voice_limit(&mut self, voices: usize) -> Result<(), SendError> {
+        if !(1..=MAX_VOICE_LIMIT).contains(&voices) {
+            return Err(SendError::InvalidVoiceLimit(voices));
+        }
+        self.send(Command::SetVoiceLimit(voices), None)
+    }
+
     /// Enciende o apaga el metrónomo: un clic en cada pulso, con acento en
     /// el primero del compás. Inmediato.
     pub fn set_metronome(&mut self, on: bool) -> Result<(), SendError> {
@@ -2018,6 +2086,34 @@ impl Engine {
 
     fn handle(&mut self, cmd: Command) {
         match cmd {
+            Command::Play { sample, .. }
+            | Command::NoteOn { sample, .. }
+            | Command::GrainOn { sample, .. }
+            | Command::Preview { sample, .. }
+                if self.hushed =>
+            {
+                self.discard(sample);
+            }
+            Command::SynthOn { .. } if self.hushed => {}
+            Command::Panic { hold } => {
+                self.panic();
+                // Uno puntual en plena pausa no la quita.
+                if hold {
+                    self.hushed = true;
+                    self.status.set_hushed(true);
+                }
+            }
+            Command::Resume => {
+                self.hushed = false;
+                self.status.set_hushed(false);
+            }
+            Command::SetVoiceLimit(voices) => {
+                self.voice_limit = voices;
+                // Lo que ya sobra se roba ya.
+                while self.counted_voices() > self.voice_limit {
+                    self.steal_oldest();
+                }
+            }
             Command::Play {
                 track,
                 sample,
@@ -2235,6 +2331,8 @@ impl Engine {
                     t.fresh = true;
                 }
                 t.synth_patch = Some(patch);
+                self.make_room_for_synth(track, &patch);
+                let t = &mut self.tracks[track];
                 let ev = NoteEvent {
                     pitch: patch.root + semitones,
                     gain,
@@ -2448,6 +2546,10 @@ impl Engine {
     /// paso o su parte del retrigger). Corta las pistas de su grupo de
     /// choke.
     fn play_hit(&mut self, t: usize, hit: Trigger, gate: usize) {
+        // En la pausa del pánico, el secuenciador sigue sin sonar.
+        if self.hushed {
+            return;
+        }
         let hit = self.per_hit(t, hit);
         let Some(pattern) = &self.tracks[t].pattern else {
             return;
@@ -2634,6 +2736,7 @@ impl Engine {
                 key: None,
                 sub: hit.sub.unwrap_or_default(),
             };
+            self.make_room_for_synth(t, &patch);
             let born = self.tracks[t].synth.note_on(&patch, ev);
             if let Some((channel, root)) = midi {
                 let note = root as i32 + semitones.round() as i32;
@@ -2736,6 +2839,12 @@ impl Engine {
         let fade = ((FADE_SECONDS * self.sample_rate as f32) as u64).max(1);
         let voices = instrument.voices as usize;
         let is_voice = |n: &Option<Note>| n.as_ref().is_some_and(Note::is_voice);
+        // El límite entre todas las pistas (si la pista está llena, roba
+        // abajo la suya).
+        let full = self.tracks[t].notes.iter().filter(|n| is_voice(n)).count() >= voices;
+        while !full && self.counted_voices() >= self.voice_limit {
+            self.steal_oldest();
+        }
         loop {
             let track = &mut self.tracks[t];
             if track.notes.iter().filter(|n| is_voice(n)).count() < voices {
@@ -2751,9 +2860,11 @@ impl Engine {
             self.park_tail(t, stolen);
             self.midi_off_born(t, born);
         }
+        // El orden entre todas las pistas sirve también dentro de la pista.
+        self.stamp += 1;
         let track = &mut self.tracks[t];
-        track.born += 1;
-        on.born = track.born;
+        track.born = self.stamp;
+        on.born = self.stamp;
         let note = Note::new(sample.clone(), instrument, on, fade);
         let free = (0..MAX_VOICES)
             .find(|&v| !is_voice(&track.notes[v]))
@@ -2766,6 +2877,116 @@ impl Engine {
                 self.discard(old.sample);
             }
         }
+    }
+
+    /// Notas de instrumento y voces de sintetizador que cuentan, entre
+    /// todas las pistas.
+    fn counted_voices(&self) -> usize {
+        self.tracks
+            .iter()
+            .map(|t| t.notes.iter().flatten().filter(|n| n.is_voice()).count() + t.synth.voices())
+            .sum()
+    }
+
+    /// Roba (fundido mínimo) la nota o voz de sintetizador más antigua de
+    /// todas las pistas.
+    fn steal_oldest(&mut self) {
+        let mut oldest: Option<(u64, usize, Option<usize>)> = None;
+        for (t, track) in self.tracks.iter().enumerate() {
+            for (v, note) in track.notes.iter().enumerate() {
+                if let Some(n) = note.as_ref().filter(|n| n.is_voice())
+                    && oldest.is_none_or(|(at, _, _)| n.born < at)
+                {
+                    oldest = Some((n.born, t, Some(v)));
+                }
+            }
+            if let Some(at) = track.synth.oldest()
+                && oldest.is_none_or(|(o, _, _)| at < o)
+            {
+                oldest = Some((at, t, None));
+            }
+        }
+        match oldest {
+            Some((_, t, Some(v))) => {
+                let mut stolen = self.tracks[t].notes[v].take().expect("es una voz");
+                stolen.kill();
+                let born = stolen.born;
+                self.park_tail(t, stolen);
+                self.midi_off_born(t, born);
+            }
+            Some((_, t, None)) => self.tracks[t].synth.steal_oldest(),
+            None => {}
+        }
+    }
+
+    /// Antes de una nota del sintetizador de la pista `t`: si ocupa una
+    /// voz más y no caben, roba la más antigua de todas las pistas (si su
+    /// pista está llena, el sintetizador roba la suya).
+    fn make_room_for_synth(&mut self, t: usize, patch: &Patch) {
+        self.stamp += 1;
+        self.tracks[t].synth.stamp = self.stamp;
+        let synth = &self.tracks[t].synth;
+        if !synth.needs_voice(patch) || synth.voices() >= patch.voices as usize {
+            return;
+        }
+        while self.counted_voices() >= self.voice_limit {
+            self.steal_oldest();
+        }
+    }
+
+    /// El pánico: todas las voces que suenan se cortan con el fundido
+    /// mínimo (las colas de los efectos de corte, también); el
+    /// secuenciador sigue.
+    fn panic(&mut self) {
+        let now = self.transport.frame;
+        for t in 0..MAX_TRACKS {
+            self.tracks[t].retrig = None;
+            self.trigger(t, None);
+            if let Some(fading) = &mut self.tracks[t].fading {
+                fading.hush();
+            }
+            self.kill_notes(t);
+            self.midi_note_off(t, now);
+        }
+        if let Some(old) = self.preview.take() {
+            self.fade_preview(old);
+        }
+        if let Some(fading) = &mut self.preview_fading {
+            fading.hush();
+        }
+    }
+
+    /// Voces que suenan (o hacen su fundido o su cola) en todo el motor:
+    /// la de cada pista y la que se apaga, notas, voces de sintetizador,
+    /// nubes de granos y la preescucha. Para los tests.
+    pub fn sounding_voices(&self) -> usize {
+        let tracks: usize = self
+            .tracks
+            .iter()
+            .map(|t| {
+                usize::from(
+                    t.voice
+                        .as_ref()
+                        .is_some_and(|v| v.is_active() || v.ringing()),
+                ) + usize::from(t.fading.is_some())
+                    + t.notes
+                        .iter()
+                        .chain(&t.tails)
+                        .flatten()
+                        .filter(|n| n.is_active())
+                        .count()
+                    + usize::from(t.synth.is_active())
+                    + usize::from(t.cloud.is_active())
+            })
+            .sum();
+        let preview = usize::from(self.preview.as_ref().is_some_and(Voice::is_active))
+            + usize::from(self.preview_fading.is_some());
+        tracks + preview
+    }
+
+    /// Si el pánico tiene en pausa las voces.
+    pub fn is_hushed(&self) -> bool {
+        self.hushed
     }
 
     /// Guarda una nota cortada en las colas de la pista (si están llenas,

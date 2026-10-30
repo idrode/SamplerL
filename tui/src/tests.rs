@@ -266,6 +266,7 @@ fn engine_panel_only_reads_the_view_model() {
             bpm: 174.0,
             bar: 7,
             step: Some(13),
+            hushed: false,
         },
         tracks: vec![TrackView {
             name: "amen".into(),
@@ -455,6 +456,7 @@ fn tracker_view(step: Option<usize>, running: bool) -> ViewModel {
             bpm: 120.0,
             bar: 3,
             step,
+            hushed: false,
         },
         tracks: vec![
             TrackView {
@@ -2338,8 +2340,7 @@ fn moving_a_slice_is_silent_and_its_key_plays_it() {
     app.handle(esc());
     app.handle(ctrl('t'));
     offline::render(&mut engine, 2000, 2);
-    let heard =
-        |engine: &mut Engine| offline::render(engine, 4000, 2).iter().any(|&s| s != 0.0);
+    let heard = |engine: &mut Engine| offline::render(engine, 4000, 2).iter().any(|&s| s != 0.0);
     assert!(!heard(&mut engine));
     // Elegir y mover el corte 2 con todas las teclas: no suena.
     app.handle(special(Key::Right));
@@ -2536,6 +2537,7 @@ mod mpe;
 mod navigation;
 mod notes;
 mod occupancy;
+mod panic;
 mod record;
 mod resample;
 mod sample_key;
