@@ -346,28 +346,29 @@ pub fn build(src: &Source) -> Roll {
                 .spans
                 .get(lap)
                 .and_then(|s| s.get(step).copied().flatten());
-            let target = match span {
-                None => Err(GENERATED.to_string()),
-                Some(span) => {
-                    let token = token_at(src.lines, span);
-                    match others.iter().find(|(s, _)| *s == span) {
-                        Some((_, other)) => Err(format!(
-                            "esa cadena la usa también la pista «{other}»: edítala en el código"
-                        )),
-                        None if !src.loaded => Ok(Target {
-                            span,
-                            token,
-                            melody,
-                        }),
-                        None => literal(&roll, def, &token, melody, hit.as_ref(), humanized)
-                            .map(|()| Target {
+            let target =
+                match span {
+                    None => Err(GENERATED.to_string()),
+                    Some(span) => {
+                        let token = token_at(src.lines, span);
+                        match others.iter().find(|(s, _)| *s == span) {
+                            Some((_, other)) => Err(format!(
+                                "esa cadena la usa también la pista «{other}»: edítala en el código"
+                            )),
+                            None if !src.loaded => Ok(Target {
                                 span,
                                 token,
                                 melody,
                             }),
+                            None => literal(&roll, def, &token, melody, hit.as_ref(), humanized)
+                                .map(|()| Target {
+                                    span,
+                                    token,
+                                    melody,
+                                }),
+                        }
                     }
-                }
-            };
+                };
             roll.columns.push(Column {
                 lap,
                 step,
@@ -630,8 +631,7 @@ impl Plan {
                     .into(),
             ),
             _ => {
-                self.edits
-                    .insert(target.span, (target.token.clone(), text));
+                self.edits.insert(target.span, (target.token.clone(), text));
                 Ok(())
             }
         }
@@ -724,7 +724,11 @@ fn insert(roll: &Roll, col: usize, pitch: i32) -> Result<Change, String> {
     let message = match &column.hit {
         None if target.token == "." => {
             plan.set(target, new_token(roll, target.melody, pitch))?;
-            format!("nota {} en el paso {}", roll.pitch_name(pitch), column.step + 1)
+            format!(
+                "nota {} en el paso {}",
+                roll.pitch_name(pitch),
+                column.step + 1
+            )
         }
         None if target.token == engine::notation::HOLD => {
             return Err(
@@ -775,9 +779,7 @@ fn out_of_reach(roll: &Roll, pitch: i32) -> String {
 
 /// La nota de `(col, pitch)`: su cabeza y lo que dura.
 fn note_under(roll: &Roll, col: usize, pitch: i32) -> Result<(usize, usize), String> {
-    let note = roll
-        .note_at(col, pitch)
-        .ok_or("no hay ninguna nota ahí")?;
+    let note = roll.note_at(col, pitch).ok_or("no hay ninguna nota ahí")?;
     Ok((note.col, note.len))
 }
 
@@ -1074,7 +1076,10 @@ fn shifted(roll: &Roll, head: usize, target: &Target, semitones: i32) -> Result<
     }
     match roll.axis {
         Axis::Notes => with_pitches(roll, target, &new),
-        Axis::Slices => Ok(with_slice(&target.token, &slice_text(roll, new[0] as usize))),
+        Axis::Slices => Ok(with_slice(
+            &target.token,
+            &slice_text(roll, new[0] as usize),
+        )),
     }
 }
 
@@ -1101,7 +1106,9 @@ fn duplicate(
         let source = roll.target(from)?;
         let dest = roll.target(to)?;
         if source.melody != dest.melody {
-            return Err("una vuelta es de melody() y la otra de steps(): cópialo en el código".into());
+            return Err(
+                "una vuelta es de melody() y la otra de steps(): cópialo en el código".into(),
+            );
         }
         if dest.token != "." || roll.columns[to].hit.is_some() {
             return Err(format!(
@@ -1111,19 +1118,22 @@ fn duplicate(
         }
         // Un `_` al principio (de una nota de antes) o al empezar una
         // vuelta no tiene nota a la que alargar.
-        let text = if source.token == engine::notation::HOLD && (k == 0 || roll.columns[to].step == 0)
-        {
-            ".".to_string()
-        } else {
-            source.token.clone()
-        };
+        let text =
+            if source.token == engine::notation::HOLD && (k == 0 || roll.columns[to].step == 0) {
+                ".".to_string()
+            } else {
+                source.token.clone()
+            };
         plan.set(dest, text)?;
     }
     Ok(Change {
         edits: plan.edits(),
         cursor: (col + n, pitch),
         selection: selection.map(|_| (a + n, b + n)),
-        message: format!("{n} {} duplicados detrás", if n == 1 { "paso" } else { "pasos" }),
+        message: format!(
+            "{n} {} duplicados detrás",
+            if n == 1 { "paso" } else { "pasos" }
+        ),
     })
 }
 
@@ -1164,9 +1174,7 @@ fn with_pitches(roll: &Roll, target: &Target, pitches: &[i32]) -> Result<String,
             .enumerate()
             .map(|(i, &p)| {
                 let degree = parts.get(i).copied().unwrap_or(all_degrees);
-                if degree
-                    && let Some(d) = roll.degrees.and_then(|k| degree_of(k, roll.root, p))
-                {
+                if degree && let Some(d) = roll.degrees.and_then(|k| degree_of(k, roll.root, p)) {
                     return d.to_string();
                 }
                 // Sin octava solo la primera nota que cae en la de la raíz
@@ -1205,9 +1213,9 @@ impl NoteStyle {
         let first = head.chars().find(|c| c.is_ascii_alphabetic());
         NoteStyle {
             upper: first.is_some_and(|c| c.is_ascii_uppercase()),
-            flats: head
-                .char_indices()
-                .any(|(i, c)| c == 'b' && i > 0 && head[..i].ends_with(|p: char| p.is_ascii_alphabetic())),
+            flats: head.char_indices().any(|(i, c)| {
+                c == 'b' && i > 0 && head[..i].ends_with(|p: char| p.is_ascii_alphabetic())
+            }),
             octave: head.chars().any(|c| c.is_ascii_digit()) || head.is_empty(),
         }
     }
@@ -1247,8 +1255,13 @@ fn degree_of(key: Key, root: i32, midi: i32) -> Option<i64> {
 
 /// Si las notas de un token de `melody()` son grados (`1`, `-2`, `1+3+5`).
 fn head_is_degrees(head: &str) -> bool {
-    head.split('+')
-        .all(|part| !part.is_empty() && part.trim_start_matches('-').chars().all(|c| c.is_ascii_digit()))
+    head.split('+').all(|part| {
+        !part.is_empty()
+            && part
+                .trim_start_matches('-')
+                .chars()
+                .all(|c| c.is_ascii_digit())
+    })
 }
 
 /// Separa un token de `melody()` en sus notas (`c+e+g`, `bb3`, `1+3`) y
@@ -1466,7 +1479,10 @@ mod tests {
         assert_eq!(with_step_pitches("1^3@0.5", &[5]), "1^5@0.5");
         assert_eq!(with_step_pitches("3'^7@0.5r2", &[0, 4]), "3'^0^4@0.5r2");
         assert_eq!(with_step_pitches("1%0^4^7", &[2, 6, 9]), "1%2^6^9");
-        assert_eq!(with_step_pitches("kick{lp=800}^-5", &[-3]), "kick{lp=800}^-3");
+        assert_eq!(
+            with_step_pitches("kick{lp=800}^-5", &[-3]),
+            "kick{lp=800}^-3"
+        );
     }
 
     #[test]

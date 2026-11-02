@@ -692,6 +692,46 @@ versión nueva del protocolo si cambia.
 6. ✅ **Congelar pista**: render de una pista a un WAV del proyecto que la
    sustituye; reversible y en un paso de deshacer.
 
+## Fase W: piano roll editable ✅
+
+Hechas las seis partes. Pedida por el usuario: ver y editar las líneas
+melódicas, los bajos y los patrones de cortes en una cuadrícula (tono en
+vertical, tiempo en horizontal), y que cada cambio se escriba de vuelta en
+el texto Lua. Detalle y decisiones en «Fase W» de
+[docs/ESTADO.md](ESTADO.md); el uso, en «Piano roll» de
+[docs/GUIA.md](GUIA.md) y un recuadro en el paso 9 del tutorial.
+
+Reglas de siempre: hilo de audio sin reservas, mutex ni E/S (el motor no
+cambia); `golden.rs` idéntico; cambios por lotes atómicos al compás; error
+con la línea y sigue sonando lo anterior; portable (x86_64 y ARM64);
+resaltado y tracker compatibles; versión nueva del protocolo.
+
+1. ✅ **Vista de solo lectura**: notas (instrumentos, sintetizadores,
+   `melody()`) o cortes con su etiqueta; duración, volumen, acordes, la
+   escala de `key()` y lo de fuera; `:length(n)`, varias vueltas, las
+   variaciones de `every`/`chance` con otro estilo y lo generado tal como
+   sonará; el paso que se oye con la sincronía de la fase M; scroll,
+   zoom (1/32 a 1/4, o automático) y ajuste a la tesitura; medias celdas y
+   cuadrantes.
+2. ✅ **Edición con teclado**: insertar, borrar, semitono, octava,
+   duración, mover, volumen, duplicar un rango y transponer una
+   selección, escrito en los tokens (un paso de deshacer, al compás);
+   rejilla configurable; lo que no se puede reescribir de forma segura
+   dice por qué.
+3. ✅ **Ratón**: clic, arrastrar (mover o alargar), rueda, Ctrl y rueda;
+   nunca suena.
+4. ✅ **Preescucha**: Espacio (y, a elegir, al insertar con el teclado); el
+   pánico la corta.
+5. ✅ **Dónde se ve**: panel en la principal (paleta) y en su ventana
+   (`tui --window-roll`, `[roll] terminal`, socket propio, protocolo 6),
+   sincronizado con el editor esté donde esté.
+6. ✅ **Configuración**: `[roll]`, `[roll.teclas]` y los colores `roll_*`;
+   acciones en la paleta y en `[teclas]`.
+
+Queda por comprobar en una terminal de verdad (ver «Sin verificar» en
+ESTADO): el ratón (arrastres, Ctrl y la rueda) y la legibilidad de la
+rejilla, sobre todo las medias celdas y los cuadrantes.
+
 ## Mejoras sueltas
 
 Arreglos pequeños fuera de las fases, con las reglas de siempre. Detalle

@@ -701,7 +701,7 @@ Todas las opciones (`keep`, `formant`, `crossfade`) están en
 
 ## Paso 9. Líneas melódicas
 
-> **Referencia:** [pista:melody(notas)](GUIA.md#pistamelodynotas) · [scale([nombre [, tónica]])](GUIA.md#scalenombre--tónica) · [escala:melody(grados [, golpe])](GUIA.md#escalamelodygrados--golpe) · [Modo tocar (Esc)](GUIA.md#modo-tocar-esc) · [MIDI](GUIA.md#midi) · [Dispositivos: audio y MIDI](GUIA.md#dispositivos-audio-y-midi).
+> **Referencia:** [pista:melody(notas)](GUIA.md#pistamelodynotas) · [scale([nombre [, tónica]])](GUIA.md#scalenombre--tónica) · [escala:melody(grados [, golpe])](GUIA.md#escalamelodygrados--golpe) · [Modo tocar (Esc)](GUIA.md#modo-tocar-esc) · [MIDI](GUIA.md#midi) · [Dispositivos: audio y MIDI](GUIA.md#dispositivos-audio-y-midi) · [Piano roll](GUIA.md#piano-roll).
 
 **Una melodía.** `melody` escribe notas por su nombre: `c d e f g a b`,
 con `#` o `b` (`eb` es mi bemol), y la octava detrás si hace falta
@@ -745,6 +745,14 @@ track("teclas", teclas):steps(menor:melody("1 . 3 .  5 . 3 .  4 . . .  5 . 7 .",
 `menor:melody(...)` devuelve `"1^0 . 1^3 ..."`: en un instrumento, cada
 `^` son semitonos sobre la raíz. Las escalas que hay, en `scale`
 ([sección 4](GUIA.md#4-api-de-lua)).
+
+> **¿Mejor en una cuadrícula?** F1 «Piano roll» enseña la pista
+> seleccionada con las notas en vertical y los pasos en horizontal (sirve
+> igual para el bajo del paso 11). F1 «Editar en el piano roll», o un
+> clic, y luego: Enter pone una nota, `+` y `-` la suben o la bajan, `]`
+> la alarga y Espacio la oye. Cada cambio se escribe en la cadena de
+> `melody` como si lo hubieras tecleado, y Ctrl-Z lo deshace. Ver
+> [Piano roll](GUIA.md#piano-roll).
 
 > **¿En qué tonalidad está tu sample?** F1 «Tonalidad del sample» (o
 > Ctrl-K en el explorador) la analiza; `r` la pone de raíz del

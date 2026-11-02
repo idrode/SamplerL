@@ -241,7 +241,11 @@ pub fn layout(view: &RollView, area: Rect) -> RollLayout {
     let (lo, hi) = wanted(view);
     let span = hi - lo + 1;
     let height = grid.height.max(1) as i32;
-    let per_row = if view.notes_axis && span > height { 2 } else { 1 };
+    let per_row = if view.notes_axis && span > height {
+        2
+    } else {
+        1
+    };
     let rows = height * per_row;
     let (min, max) = view.bounds;
     // Arriba: lo pedido o lo más agudo de la tesitura (las notas, centradas
@@ -317,7 +321,9 @@ fn note_color(style: NoteStyle, track: Color) -> Style {
     match style {
         NoteStyle::Scale => Style::new().fg(track),
         NoteStyle::Outside => Style::new().fg(t.roll_outside),
-        NoteStyle::Variation => Style::new().fg(t.roll_variation).add_modifier(Modifier::ITALIC),
+        NoteStyle::Variation => Style::new()
+            .fg(t.roll_variation)
+            .add_modifier(Modifier::ITALIC),
         NoteStyle::Generated => Style::new().fg(t.roll_generated),
         NoteStyle::Dropped => Style::new().fg(t.dim),
     }
@@ -358,7 +364,12 @@ impl Widget for RollPanel<'_> {
             lay.zoom.name()
         );
         if shown < view.steps && view.steps > 0 {
-            title.push_str(&format!(" · pasos {}–{} de {}", lay.first + 1, last, view.steps));
+            title.push_str(&format!(
+                " · pasos {}–{} de {}",
+                lay.first + 1,
+                last,
+                view.steps
+            ));
         }
         title.push(' ');
         let border = if view.cursor.is_some() {
@@ -373,7 +384,13 @@ impl Widget for RollPanel<'_> {
         let inner = Block::bordered().inner(area);
         if inner.height < 3 || lay.grid.width == 0 {
             if inner.height > 0 {
-                buf.set_stringn(inner.x, inner.y, "(sin sitio)", inner.width as usize, Style::new().fg(t.dim));
+                buf.set_stringn(
+                    inner.x,
+                    inner.y,
+                    "(sin sitio)",
+                    inner.width as usize,
+                    Style::new().fg(t.dim),
+                );
             }
             return;
         }
@@ -451,7 +468,13 @@ impl Widget for RollPanel<'_> {
             if upper < view.bounds.0 - (lay.per_row - 1) || upper > view.bounds.1 {
                 continue;
             }
-            buf.set_stringn(inner.x, y, &name, lay.label.saturating_sub(1) as usize, style);
+            buf.set_stringn(
+                inner.x,
+                y,
+                &name,
+                lay.label.saturating_sub(1) as usize,
+                style,
+            );
             // El fondo de la fila y las marcas de tiempo.
             for cx in 0..g.width {
                 let x = g.x + cx;
@@ -463,9 +486,8 @@ impl Widget for RollPanel<'_> {
                 if col >= view.steps {
                     break;
                 }
-                let bg = row_bg(upper).or_else(|| {
-                    (lay.per_row == 2).then(|| row_bg(upper - 1)).flatten()
-                });
+                let bg = row_bg(upper)
+                    .or_else(|| (lay.per_row == 2).then(|| row_bg(upper - 1)).flatten());
                 let mut cell = Style::new();
                 if let Some(bg) = bg {
                     cell = cell.bg(bg);
@@ -510,13 +532,22 @@ impl Widget for RollPanel<'_> {
         let rich = lay.per_row == 1 && lay.zoom.steps_per_cell() == 1;
         if rich {
             for note in &view.notes {
-                let Some(y) = lay.y_of(note.pitch) else { continue };
+                let Some(y) = lay.y_of(note.pitch) else {
+                    continue;
+                };
                 let style = note_color(note.style, track);
                 for k in 0..note.len {
                     let col = note.col + k;
                     let Some(x) = lay.x_of(col) else { continue };
                     let glyphs: [char; 2] = if k == 0 {
-                        [head_glyph(note), if note.style == NoteStyle::Dropped { ' ' } else { '█' }]
+                        [
+                            head_glyph(note),
+                            if note.style == NoteStyle::Dropped {
+                                ' '
+                            } else {
+                                '█'
+                            },
+                        ]
                     } else {
                         ['━', '━']
                     };
@@ -604,7 +635,9 @@ impl Widget for RollPanel<'_> {
                 let x = g.x + (i % g.width as usize) as u16;
                 let y = g.y + (i / g.width as usize) as u16;
                 let style = note_color(styles[i].unwrap_or(NoteStyle::Scale), track);
-                buf[(x, y)].set_char(quadrant(*b)).set_fg(style.fg.unwrap_or(track));
+                buf[(x, y)]
+                    .set_char(quadrant(*b))
+                    .set_fg(style.fg.unwrap_or(track));
             }
         }
         // El cursor, invertido.
@@ -628,7 +661,13 @@ impl Widget for RollPanel<'_> {
         buf.set_stringn(inner.x, y, &view.status, room, Style::new());
         let rx = inner.x + room as u16;
         if rx < inner.right() {
-            buf.set_stringn(rx, y, &right, inner.right() as usize - rx as usize, Style::new().fg(t.dim));
+            buf.set_stringn(
+                rx,
+                y,
+                &right,
+                inner.right() as usize - rx as usize,
+                Style::new().fg(t.dim),
+            );
         }
     }
 }

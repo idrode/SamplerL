@@ -154,15 +154,11 @@ impl RollWindow {
 
     /// El ratón en la celda `x`, `y` de la terminal.
     pub fn mouse(&mut self, action: MouseAction, x: u16, y: u16) {
-        let inside = x >= self.area.x
-            && y >= self.area.y
-            && x < self.area.right()
-            && y < self.area.bottom();
-        if self.view.is_some() && (inside || matches!(action, MouseAction::Drag | MouseAction::Up)) {
-            let (x, y) = (
-                x.saturating_sub(self.area.x),
-                y.saturating_sub(self.area.y),
-            );
+        let inside =
+            x >= self.area.x && y >= self.area.y && x < self.area.right() && y < self.area.bottom();
+        if self.view.is_some() && (inside || matches!(action, MouseAction::Drag | MouseAction::Up))
+        {
+            let (x, y) = (x.saturating_sub(self.area.x), y.saturating_sub(self.area.y));
             self.send(&FromRoll::Mouse { action, x, y });
         }
     }

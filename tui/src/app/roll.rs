@@ -60,6 +60,9 @@ pub struct RollState {
     /// La preescucha que suena y cuándo se suelta.
     preview: Option<(Instant, Vec<u8>)>,
     keys: RollKeys,
+    /// El último modelo calculado: se rehace solo con otra carga (otra
+    /// etiqueta de la pista), otra pista o otro texto.
+    cache: std::cell::RefCell<Option<(u32, u64, std::rc::Rc<Roll>)>>,
     /// En su ventana.
     link: Option<RollLink>,
     terminal: Option<Vec<String>>,
@@ -121,17 +124,31 @@ impl App {
     }
 
     /// El piano roll de la pista seleccionada (lo cargado).
-    pub(super) fn current_roll(&self) -> Option<Roll> {
+    pub(super) fn current_roll(&self) -> Option<std::rc::Rc<Roll>> {
+        use std::hash::{Hash, Hasher};
         let song = self.host.song()?;
         let def = self.tracks().get(self.selected)?;
         let lines = self.editor.lines();
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        lines.hash(&mut hasher);
+        self.loaded_text.hash(&mut hasher);
+        let text = hasher.finish();
+        if let Some((tag, hash, roll)) = &*self.roll.cache.borrow()
+            && *tag == def.tag
+            && *hash == text
+            && roll.track == def.name
+        {
+            return Some(roll.clone());
+        }
         let loaded = self.loaded_text.as_deref() == Some(self.text().as_str());
-        Some(roll::build(&roll::Source {
+        let roll = std::rc::Rc::new(roll::build(&roll::Source {
             song,
             def,
             lines,
             loaded,
-        }))
+        }));
+        *self.roll.cache.borrow_mut() = Some((def.tag, text, roll.clone()));
+        Some(roll)
     }
 
     /// La columna del ciclo que se oye, con la sincronía del resaltado.
@@ -174,12 +191,16 @@ impl App {
             .host
             .song()
             .and_then(|s| s.key.map(|k| k.transposed(s.transpose)))
-            .map_or(String::new(), |k| format!(" · {} {}", k.tonic_name(), k.scale.name));
+            .map_or(String::new(), |k| {
+                format!(" · {} {}", k.tonic_name(), k.scale.name)
+            });
         let status = match cursor {
             Some((col, pitch)) => roll.describe(col, pitch),
             None => format!(
                 "F1 «Editar en el piano roll» o un clic para editar{}",
-                roll.locked.as_ref().map_or(String::new(), |w| format!(" · {w}"))
+                roll.locked
+                    .as_ref()
+                    .map_or(String::new(), |w| format!(" · {w}"))
             ),
         };
         let snap = if r.snap_on {
@@ -377,7 +398,14 @@ impl App {
         let selection = self.roll_selection();
         let arrow = matches!(
             input.key,
-            Key::Left | Key::Right | Key::Up | Key::Down | Key::PageUp | Key::PageDown | Key::Home | Key::End
+            Key::Left
+                | Key::Right
+                | Key::Up
+                | Key::Down
+                | Key::PageUp
+                | Key::PageDown
+                | Key::Home
+                | Key::End
         );
         if arrow && !input.ctrl && !input.alt {
             if input.shift && matches!(input.key, Key::Left | Key::Right) {
@@ -480,7 +508,11 @@ impl App {
                 let next = if op == RollOp::NextNote {
                     heads.iter().find(|h| **h > (col, pitch)).or(heads.first())
                 } else {
-                    heads.iter().rev().find(|h| **h < (col, pitch)).or(heads.last())
+                    heads
+                        .iter()
+                        .rev()
+                        .find(|h| **h < (col, pitch))
+                        .or(heads.last())
                 };
                 if let Some(&(c, p)) = next {
                     self.roll.cursor = Some((c, p));
@@ -599,7 +631,14 @@ impl App {
         self.roll_preview_note(roll, col, &pitches, len, gain);
     }
 
-    fn roll_preview_note(&mut self, roll: &Roll, _col: usize, pitches: &[i32], len: usize, gain: f32) {
+    fn roll_preview_note(
+        &mut self,
+        roll: &Roll,
+        _col: usize,
+        pitches: &[i32],
+        len: usize,
+        gain: f32,
+    ) {
         self.stop_roll_preview();
         let Some(def) = self.tracks().get(self.selected).cloned() else {
             return;
@@ -640,7 +679,9 @@ impl App {
     }
 
     fn preview_track_slice(&mut self, def: &script::TrackDef, slice: usize) {
-        let result = self.controller.preview_slice(&def.sample, &def.slices, slice);
+        let result = self
+            .controller
+            .preview_slice(&def.sample, &def.slices, slice);
         self.message = match result {
             Ok(()) => format!("preescucha {}: corte {}", def.name, slice + 1),
             Err(e) => format!("motor: {e}"),
@@ -703,7 +744,11 @@ impl App {
         match action {
             MouseAction::ScrollUp | MouseAction::ScrollDown => {
                 let top = self.roll.top.unwrap_or(lay.top);
-                let d = if action == MouseAction::ScrollUp { 3 } else { -3 };
+                let d = if action == MouseAction::ScrollUp {
+                    3
+                } else {
+                    -3
+                };
                 let (lo, hi) = roll.bounds();
                 self.roll.top = Some((top + d).clamp(lo, hi.max(lo)));
                 if let Some((c, p)) = self.roll.cursor {
@@ -772,7 +817,10 @@ impl App {
                     self.roll.drag = Some(drag);
                     self.roll.cursor = Some(drag.to);
                     self.message = if drag.resize {
-                        format!("alargar hasta el paso {} (al soltar)", col % roll.length + 1)
+                        format!(
+                            "alargar hasta el paso {} (al soltar)",
+                            col % roll.length + 1
+                        )
                     } else {
                         format!(
                             "mover a {} · paso {} (al soltar)",
@@ -927,6 +975,12 @@ impl App {
     #[cfg(test)]
     pub fn roll_view_for_test(&self) -> Option<RollView> {
         self.roll_view()
+    }
+
+    /// El modelo del piano roll (en los tests).
+    #[cfg(test)]
+    pub fn current_roll_for_test(&self) -> Option<std::rc::Rc<Roll>> {
+        self.current_roll()
     }
 
     /// Dónde se dibujó el piano roll (en los tests).

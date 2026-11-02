@@ -163,7 +163,10 @@ fn the_panel_draws_at_several_sizes() {
             "{w}×{h}\n{screen}"
         );
         // Los nombres de las notas a la izquierda.
-        assert!(screen.contains("A2") || screen.contains("C3"), "{w}×{h}\n{screen}");
+        assert!(
+            screen.contains("A2") || screen.contains("C3"),
+            "{w}×{h}\n{screen}"
+        );
         // El tracker y el sample no se ven: el piano roll está en su sitio.
         assert!(!screen.contains(" tracker "), "{w}×{h}\n{screen}");
     }
@@ -227,7 +230,10 @@ fn each_edit_lands_in_its_tokens_and_reloads_the_same() {
     assert_round_trip(&path, &app, &song);
     // Cada cambio, un paso de deshacer.
     app.handle(ctrl('z'));
-    assert_eq!(app.text_for_test(), song.replacen(". . . e3", "c2 _ _ e3", 1));
+    assert_eq!(
+        app.text_for_test(),
+        song.replacen(". . . e3", "c2 _ _ e3", 1)
+    );
 }
 
 #[test]
@@ -248,7 +254,9 @@ track("lead", piano)
     let before: Vec<&str> = song.lines().collect();
     let after: Vec<&str> = edited.lines().collect();
     assert_eq!(before.len(), after.len());
-    let changed: Vec<usize> = (0..before.len()).filter(|&i| before[i] != after[i]).collect();
+    let changed: Vec<usize> = (0..before.len())
+        .filter(|&i| before[i] != after[i])
+        .collect();
     assert_eq!(changed, [4]);
     assert_eq!(&after[4][..18], &before[4][..18]);
     assert!(after[4].ends_with(r#"  )   -- otro"#));
@@ -319,7 +327,10 @@ track("lead", piano):length(12):melody("c4 . e4 .  g4 _ . .  c5 . . .")
     at(&mut app, 10, 67, key('.'));
     at(&mut app, 11, 67, key('.'));
     let message = app.view().message;
-    assert!(message.contains("no cruza el final de la vuelta"), "{message}");
+    assert!(
+        message.contains("no cruza el final de la vuelta"),
+        "{message}"
+    );
 }
 
 #[test]
@@ -346,7 +357,13 @@ track("b", amen):steps(p)
     let view = app.roll_view_for_test().unwrap();
     assert!(view.notes.iter().all(|n| n.style == Style::Generated));
     check(&mut app, 0, 60, key('+'), "no está escrito tal cual");
-    check(&mut app, 1, 60, special(Key::Enter), "no está escrito tal cual");
+    check(
+        &mut app,
+        1,
+        60,
+        special(Key::Enter),
+        "no está escrito tal cual",
+    );
     // Una vuelta que `every` cambia: la otra sí.
     app.run_action(Action::NextTrack);
     app.tick();
@@ -361,16 +378,28 @@ track("b", amen):steps(p)
     assert!(view.notes.iter().any(|n| n.style == Style::Dropped));
     at(&mut app, 0, 60, key('+'));
     assert_eq!(app.text_for_test(), song);
-    assert!(app.view().message.contains("no hay ninguna nota"), "{}", app.view().message);
+    assert!(
+        app.view().message.contains("no hay ninguna nota"),
+        "{}",
+        app.view().message
+    );
     at(&mut app, 0, 60, special(Key::Enter));
     assert_eq!(app.text_for_test(), song);
-    assert!(app.view().message.contains("quitan este golpe"), "{}", app.view().message);
+    assert!(
+        app.view().message.contains("quitan este golpe"),
+        "{}",
+        app.view().message
+    );
     // Una cadena compartida por dos pistas.
     app.run_action(Action::NextTrack);
     app.tick();
     at(&mut app, 1, 0, special(Key::Enter));
     assert_eq!(app.text_for_test(), song);
-    assert!(app.view().message.contains("la usa también la pista «b»"), "{}", app.view().message);
+    assert!(
+        app.view().message.contains("la usa también la pista «b»"),
+        "{}",
+        app.view().message
+    );
     // Un texto sin cargar.
     app.run_action(Action::NextTrack);
     app.tick();
@@ -380,7 +409,11 @@ track("b", amen):steps(p)
     let text = app.text_for_test();
     at(&mut app, 1, 0, special(Key::Enter));
     assert_eq!(app.text_for_test(), text);
-    assert!(app.view().message.contains("carga antes"), "{}", app.view().message);
+    assert!(
+        app.view().message.contains("carga antes"),
+        "{}",
+        app.view().message
+    );
 }
 
 #[test]
@@ -413,7 +446,11 @@ track("lead", piano):melody("c4 e4 g4 .  . . . .  . . . .  . . . .")
     press(&mut app, shift(Key::Right));
     press(&mut app, key('d'));
     assert_eq!(app.text_for_test(), s);
-    assert!(app.view().message.contains("ya tiene algo"), "{}", app.view().message);
+    assert!(
+        app.view().message.contains("ya tiene algo"),
+        "{}",
+        app.view().message
+    );
 }
 
 #[test]
@@ -473,7 +510,11 @@ fn moving_or_resizing_never_sounds_and_preview_does_until_panic() {
     app.roll_cursor_to(4, C3 + 1);
     app.handle(key(' '));
     let audio = engine.render(4096);
-    assert!(audio.iter().any(|s| s.abs() > 1e-3), "{}", app.view().message);
+    assert!(
+        audio.iter().any(|s| s.abs() > 1e-3),
+        "{}",
+        app.view().message
+    );
     app.run_action(Action::Panic);
     engine.render(4096);
     assert!(silent(&engine));
@@ -546,7 +587,10 @@ fn snap_and_zoom_keys() {
     let view = app.roll_view_for_test().unwrap();
     assert!(!view.zoom_auto);
     let screen = text(&draw(&mut app, 100, 30));
-    assert!(screen.contains("1/8") || screen.contains("1/16"), "{screen}");
+    assert!(
+        screen.contains("1/8") || screen.contains("1/16"),
+        "{screen}"
+    );
     // Esc suelta las teclas: vuelven al editor.
     app.handle(esc());
     assert!(app.roll_cursor().is_none());
@@ -622,14 +666,22 @@ mod window {
         let socket = link::roll_socket_path(&socket_dir(&path), &path);
         let mode = std::fs::metadata(&socket).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
-        let dir = std::fs::metadata(socket_dir(&path)).unwrap().permissions().mode();
+        let dir = std::fs::metadata(socket_dir(&path))
+            .unwrap()
+            .permissions()
+            .mode();
         assert_eq!(dir & 0o777, 0o700);
         // Dibujar una vez le dice a la principal su tamaño.
         screen(&mut roll, 100, 30);
-        until(&mut main, &mut editor, &mut roll, &mut engine, |_, _, r| r.view().is_some());
+        until(&mut main, &mut editor, &mut roll, &mut engine, |_, _, r| {
+            r.view().is_some()
+        });
         let s = screen(&mut roll, 100, 30);
         assert!(s.contains("piano roll · bajo"), "{s}");
-        assert!(s.contains("song.lua · conectado con la ventana principal"), "{s}");
+        assert!(
+            s.contains("song.lua · conectado con la ventana principal"),
+            "{s}"
+        );
         // En la principal ya no se ve (está fuera).
         assert!(main.view().roll.is_none());
 
@@ -662,7 +714,8 @@ mod window {
         });
         // Y el piano roll lo enseña.
         until(&mut main, &mut editor, &mut roll, &mut engine, |_, _, r| {
-            r.view().is_some_and(|v| v.notes.iter().any(|n| n.col == 2 && n.pitch == pitch))
+            r.view()
+                .is_some_and(|v| v.notes.iter().any(|n| n.col == 2 && n.pitch == pitch))
         });
 
         // Escribir en el editor deja el piano roll sin editar hasta cargar.
@@ -693,7 +746,9 @@ mod window {
 
         // Volver a meterlo: la ventana se cierra y se ve en la principal.
         main.run_action(Action::RollBack);
-        until(&mut main, &mut editor, &mut roll, &mut engine, |_, _, r| r.leaving());
+        until(&mut main, &mut editor, &mut roll, &mut engine, |_, _, r| {
+            r.leaving()
+        });
         assert!(!socket.exists(), "el socket se borra");
         assert!(main.view().roll.is_some());
     }
@@ -717,7 +772,11 @@ mod window {
             got.extend(conn.receive::<ToRoll>().unwrap_or_default());
             std::thread::sleep(Duration::from_millis(5));
         }
-        assert!(main.view().message.contains("otra versión"), "{}", main.view().message);
+        assert!(
+            main.view().message.contains("otra versión"),
+            "{}",
+            main.view().message
+        );
     }
 
     #[test]
@@ -732,9 +791,14 @@ mod window {
         // Una terminal que no existe.
         app.set_roll_terminal(Some(vec!["/no/existe/foot".into()]));
         app.run_action(Action::RollWindow);
-        assert!(app.view().message.contains("no se pudo lanzar"), "{}", app.view().message);
+        assert!(
+            app.view().message.contains("no se pudo lanzar"),
+            "{}",
+            app.view().message
+        );
         assert_eq!(
-            crate::app::roll_command(&["foot".into(), "-e".into()], Path::new("/bin/tui"), &path)[2..],
+            crate::app::roll_command(&["foot".into(), "-e".into()], Path::new("/bin/tui"), &path)
+                [2..],
             ["/bin/tui", "--window-roll", &path.display().to_string()]
         );
     }
@@ -748,7 +812,10 @@ mod window {
         let back = ToRoll::decode(ToRoll::View(view.clone()).encode().trim_end()).unwrap();
         assert_eq!(back, ToRoll::View(view));
         for m in [
-            FromRoll::Size { width: 100, height: 30 },
+            FromRoll::Size {
+                width: 100,
+                height: 30,
+            },
             FromRoll::Key(Input {
                 key: Key::Char('V'),
                 shift: true,
@@ -765,4 +832,61 @@ mod window {
         }
         assert!(FromRoll::decode("raton\tvolar\t1\t2").is_err());
     }
+}
+
+/// Lo que cuesta el piano roll en cada fotograma, en release:
+/// `cargo test --release -p tui coste_roll -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn coste_roll() {
+    let song = r#"bpm(170)
+local piano = sample("break.wav"):instrument({ root = "C4" })
+track("lead", piano):length(64)
+  :melody("c4 _ e4 g4  c5+e5+g5 _ _ .  a4 . c5 .  e5 _ _ _  c4 _ e4 g4  c5+e5+g5 _ _ .  a4 . c5 .  e5 _ _ _  c4 _ e4 g4  c5+e5+g5 _ _ .  a4 . c5 .  e5 _ _ _  c4 _ e4 g4  c5+e5+g5 _ _ .  a4 . c5 .  e5 _ _ _")
+  :every(4, function(c) c:pitch(7) end)
+  :chance(0.3, "gain", 0.5)
+local amen = sample("break.wav"):slice(2)
+for i = 1, 7 do
+  track("d" .. i, amen):steps("1 . 2 .  1 . 2 .  1 . 2 .  1 . 2 .")
+end
+"#;
+    let (_, mut app, _engine) = roll_on("coste_roll", song, 0);
+    let roll = app.current_roll_for_test().unwrap();
+    println!(
+        "ciclo: {} columnas, {} notas; Column {} B, Note {} B, Step {} B",
+        roll.steps(),
+        roll.notes.len(),
+        std::mem::size_of::<crate::roll::Column>(),
+        std::mem::size_of::<crate::roll::Note>(),
+        std::mem::size_of::<engine::Step>()
+    );
+    let n = 300;
+    let t = std::time::Instant::now();
+    for _ in 0..n {
+        std::hint::black_box(app.view());
+    }
+    let with = t.elapsed() / n;
+    let t = std::time::Instant::now();
+    for _ in 0..n {
+        std::hint::black_box(draw(&mut app, 100, 30));
+    }
+    let drawn = t.elapsed() / n;
+    app.run_action(Action::PianoRoll);
+    let t = std::time::Instant::now();
+    for _ in 0..n {
+        std::hint::black_box(app.view());
+    }
+    let without = t.elapsed() / n;
+    let t = std::time::Instant::now();
+    for _ in 0..n {
+        std::hint::black_box(draw(&mut app, 100, 30));
+    }
+    let drawn_without = t.elapsed() / n;
+    app.run_action(Action::PianoRoll);
+    let view = app.roll_view_for_test().unwrap();
+    let line = crate::link::Message::encode(&crate::link::ToRoll::View(view));
+    println!(
+        "view: {with:?} con el piano roll, {without:?} sin él; dibujar 100×30: {drawn:?} con, {drawn_without:?} sin; vista por el socket: {} bytes",
+        line.len()
+    );
 }

@@ -724,7 +724,8 @@ impl Message for ToRoll {
                     }),
                     pair_text(view.range),
                     pair_text(Some(view.bounds)),
-                    view.cursor.map_or(String::new(), |(c, p)| format!("{c},{p}")),
+                    view.cursor
+                        .map_or(String::new(), |(c, p)| format!("{c},{p}")),
                     pair_text(view.selection),
                     view.playhead.map_or(String::new(), |p| p.to_string()),
                     format!(

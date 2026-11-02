@@ -111,8 +111,18 @@ pub const ROLL_KEYS: &[(&str, RollOp, &[&str], &str)] = &[
         &["G"],
         "la rejilla siguiente: 1/16, 1/8, 1/4, 1/2, 1/1",
     ),
-    ("acercar", RollOp::ZoomIn, &["z"], "más detalle en el tiempo (hasta 1/32)"),
-    ("alejar", RollOp::ZoomOut, &["Z"], "menos detalle (hasta 1/4)"),
+    (
+        "acercar",
+        RollOp::ZoomIn,
+        &["z"],
+        "más detalle en el tiempo (hasta 1/32)",
+    ),
+    (
+        "alejar",
+        RollOp::ZoomOut,
+        &["Z"],
+        "menos detalle (hasta 1/4)",
+    ),
     (
         "ajustar",
         RollOp::Fit,
@@ -125,14 +135,24 @@ pub const ROLL_KEYS: &[(&str, RollOp, &[&str], &str)] = &[
         &["space", "p"],
         "preescucha la nota del cursor (o la fila, en un hueco)",
     ),
-    ("siguiente", RollOp::NextNote, &["tab"], "a la nota siguiente"),
+    (
+        "siguiente",
+        RollOp::NextNote,
+        &["tab"],
+        "a la nota siguiente",
+    ),
     (
         "anterior",
         RollOp::PreviousNote,
         &["shift-tab"],
         "a la nota anterior",
     ),
-    ("salir", RollOp::Exit, &["esc"], "suelta las teclas (el piano roll se sigue viendo)"),
+    (
+        "salir",
+        RollOp::Exit,
+        &["esc"],
+        "suelta las teclas (el piano roll se sigue viendo)",
+    ),
 ];
 
 /// Una tecla del piano roll: `enter`, `x`, `+`, `shift-tab`, `ctrl-d`.
@@ -173,7 +193,9 @@ impl RollKey {
             "home" | "inicio" => Key::Home,
             "end" | "fin" => Key::End,
             _ if rest.chars().count() == 1 => Key::Char(rest.chars().next().unwrap_or(' ')),
-            f if f.starts_with('f') && f[1..].parse::<u8>().is_ok_and(|n| (1..=12).contains(&n)) => {
+            f if f.starts_with('f')
+                && f[1..].parse::<u8>().is_ok_and(|n| (1..=12).contains(&n)) =>
+            {
                 Key::F(f[1..].parse().unwrap_or(1))
             }
             _ => return Err(format!("«{text}»: tecla desconocida")),
@@ -294,16 +316,31 @@ mod tests {
     fn the_defaults_and_a_change() {
         let mut keys = RollKeys::default();
         assert_eq!(keys.lookup(&input(Key::Enter, false)), Some(RollOp::Insert));
-        assert_eq!(keys.lookup(&input(Key::Char('V'), true)), Some(RollOp::Louder));
-        assert_eq!(keys.lookup(&input(Key::Char('v'), false)), Some(RollOp::Softer));
-        assert_eq!(keys.lookup(&input(Key::Tab, true)), Some(RollOp::PreviousNote));
+        assert_eq!(
+            keys.lookup(&input(Key::Char('V'), true)),
+            Some(RollOp::Louder)
+        );
+        assert_eq!(
+            keys.lookup(&input(Key::Char('v'), false)),
+            Some(RollOp::Softer)
+        );
+        assert_eq!(
+            keys.lookup(&input(Key::Tab, true)),
+            Some(RollOp::PreviousNote)
+        );
         assert_eq!(keys.lookup(&input(Key::Tab, false)), Some(RollOp::NextNote));
         keys.set("insertar", &["n".into()]).unwrap();
         assert_eq!(keys.lookup(&input(Key::Enter, false)), None);
-        assert_eq!(keys.lookup(&input(Key::Char('n'), false)), Some(RollOp::Insert));
+        assert_eq!(
+            keys.lookup(&input(Key::Char('n'), false)),
+            Some(RollOp::Insert)
+        );
         // `x` pasa a insertar: ya no borra.
         keys.set("insertar", &["x".into()]).unwrap();
-        assert_eq!(keys.lookup(&input(Key::Char('x'), false)), Some(RollOp::Insert));
+        assert_eq!(
+            keys.lookup(&input(Key::Char('x'), false)),
+            Some(RollOp::Insert)
+        );
         assert!(keys.set("volar", &["q".into()]).is_err());
         assert!(keys.set("borrar", &["ctrl-".into()]).is_err());
         assert_eq!(keys.describe(RollOp::Preview), "Espacio");

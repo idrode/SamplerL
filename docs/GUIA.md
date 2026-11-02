@@ -62,6 +62,9 @@ la sección 4 (con sus parámetros, rangos y un ejemplo cada una).
   `reverse_pattern`), escalas y `melody`, y la tonalidad de la canción
   (`key`, con grados en `melody`) y transponerlo todo (`transpose`).
 - Modos gate y one-shot y grupos de choke (`pista:mode`, `pista:choke`).
+- Ver y editar melodías, bajos y patrones de cortes en un piano roll
+  («Piano roll» en la paleta, o en su ventana con `--window-roll`): cada
+  cambio se escribe en su token del código.
 
 **Sonido**
 - Efectos de pista (`pista:fx`): filtros, bitcrusher, compresor,
@@ -1826,6 +1829,167 @@ sugerencia = "#005f00" # fondo de los huecos que se sugiere rellenar
 ```
 
 > **Usado en el tutorial:** [paso 12, Variación y estructura](PRIMERA-CANCION.md#paso-12-variación-y-estructura).
+
+### Piano roll
+
+La pista seleccionada en una cuadrícula: el tono en vertical y los pasos
+en horizontal. F1 «Piano roll» lo enseña o lo oculta (en el sitio del
+sample y del tracker; con el editor en su ventana, en el de la onda
+grande) y F1 «Editar en el piano roll», o un clic encima, le da las
+teclas. Cada cambio se escribe en el código Lua, en los caracteres de los
+pasos que toca y en nada más, como un solo paso de deshacer, y se carga
+como Ctrl-L: entra en el compás siguiente.
+
+```
+┌ piano roll · bajo · instrumento · 16 pasos · A minor · auto 1/32 ───┐
+│     1       : ▼     :       :                                       │
+│E3   ┆             ██            ██                                  │
+│C3   ┆       ██━━                ██                                  │
+│A2   ██━━  ██                ██                                      │
+│G2   ┆               ██━━━━━━                                        │
+│C3 · vuelta 1 paso 5: «c3»                              rejilla 1/16 │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**Qué se ve.** Lo que va a sonar, leído del secuenciador, como en la
+vista de ocupación:
+
+- En un instrumento, un sintetizador o una pista con `melody()`, una fila
+  por nota, con su nombre (`C4` es el do central). En una pista de cortes,
+  una fila por corte, con su etiqueta si la tiene.
+- Cada nota es un bloque: la cabeza dice el volumen (`█▓▒░` por su `@`)
+  o lleva una marca (la cifra de su retrigger, `◂` reverse, `▴`/`▾` el
+  pitch de un corte, `!` accent, `/` slide), y `━` lo que dura con `_`.
+  Las notas de un acorde se apilan en el mismo paso.
+- Con `key()`, las filas de la escala y las de la tónica tienen otro fondo
+  (`roll_escala`, `roll_tonica`), y una nota fuera de la escala va en otro
+  color (`roll_fuera`). Cuenta `transpose()`: se ve lo que suena. Sin
+  `key()`, se marcan las filas de los do.
+- Varias vueltas (`every`, `chance`, `fill`, `:length(n)` distintos): el
+  ciclo entero, una vuelta detrás de otra (`v2` arriba donde empieza cada
+  una, si no dura un compás). Lo que una vuelta cambia respecto al patrón
+  escrito va en cursiva (`roll_variacion`); un golpe que esa vuelta quita,
+  `×`. Lo generado (`euclid`, `rotate`, `mutate`, `shuffle`, una cadena
+  hecha a trozos) se ve tal como sonará, en otro color (`roll_generado`).
+- `▼` y la columna del paso que se oye, con la misma sincronía que el
+  resaltado en vivo.
+- **Zoom**: `auto` (por defecto) elige el más detallado con el que cabe el
+  ciclo; a mano, `1/32` (dos columnas por paso), `1/16` (una), `1/8` (dos
+  pasos por columna) o `1/4` (cuatro), con cuadrantes (`▌▐▘▗`...) para no
+  perder qué paso suena. Si la tesitura no cabe a una fila por semitono,
+  cada fila lleva dos (`▀` la de arriba, `▄` la de abajo; el nombre dice
+  cuál es la natural: `C4▄`). La vista sigue al cursor y se ajusta sola a
+  la tesitura de la pista.
+
+**Teclas** (con el cursor del piano roll):
+
+| Tecla | Hace |
+| --- | --- |
+| ← → ↑ ↓ | mueve el cursor (en el tiempo, lo que diga la rejilla) |
+| RePág, AvPág, Inicio, Fin | una octava arriba o abajo; principio o final del ciclo |
+| Shift-← →, `s` | selecciona pasos (con `s`, las flechas la alargan; `s` o Esc la quitan) |
+| Enter, `i` | pone una nota en el cursor; sobre otra del mismo paso, la añade al acorde |
+| Supr, Retroceso, `x` | quita la nota (de un acorde, solo esa) y sus `_` |
+| `+` `-` | un semitono arriba o abajo (en cortes: el corte de al lado) |
+| `>` `<` | una octava (en cortes: `^` ±12) |
+| `]` `[` | un paso más o menos (`_`) |
+| `.` `,` | mueve la nota, o la selección, lo que diga la rejilla |
+| `V` `v` | volumen (`@`) ±0,1 |
+| `d` | duplica la selección (o la nota) justo detrás, sobre silencios |
+| Espacio, `p` | la preescucha de la nota del cursor (en un hueco, la de esa fila) |
+| `g`, `G` | enciende o apaga la rejilla; la siguiente (1/16, 1/8, 1/4, 1/2, 1/1) |
+| `z`, `Z` | más o menos zoom (deja de ser `auto`); `f` ajusta la vista a la tesitura |
+| Tab, Shift-Tab | a la nota siguiente o la anterior |
+| Esc | suelta las teclas (el piano roll se sigue viendo) |
+
+Con la selección, `+` `-` `>` `<` transponen todas las notas que empiezan
+en ella y `,` `.` las mueven juntas. Deshacer, rehacer, cargar, marcha,
+cue, la pista siguiente (Ctrl-O) y el pánico siguen funcionando. Las
+teclas se cambian en `[roll.teclas]` (ver «Configuración»).
+
+**Ratón** (si la terminal lo manda y `[editor] raton` está encendido): un
+clic en un hueco pone una nota; agarrar una nota por la cabeza y
+arrastrarla la mueve (de tono y de paso, a la rejilla); agarrarla por
+cualquier otro de sus pasos y arrastrar la alarga o la acorta; el clic
+derecho la quita; la rueda sube y baja la vista; Shift y la rueda, a los
+lados; Ctrl y la rueda, el zoom. El cambio se escribe al soltar. Para
+alargar con el ratón una nota de un solo paso, el zoom `1/32` o `]`.
+
+**Nada suena por moverlo.** Ni las teclas que mueven, alargan o
+transponen ni el ratón disparan sonido: solo la preescucha (Espacio). Con
+`[roll] escuchar_al_insertar = true`, también suena la nota que se pone
+con el teclado. El pánico (F12) corta la preescucha.
+
+**Cómo se escribe.** En `melody()`, por su nombre (`c3`, `f#4`), con el
+estilo del token (mayúsculas, bemoles) y sin octava si no la llevaba y
+sigue en la de la raíz; un grado sigue siendo un grado si la nota nueva es
+de la escala (`3` → `4`), y si no, va por su nombre. En `steps()` de un
+instrumento, `^` en semitonos sobre la raíz (`1^7`, y los acordes
+`1^0^4^7`); en una pista de cortes, el número del corte o su etiqueta. Los
+demás sufijos del token (`r4`, `'`, `{lp=800}`...) no cambian, y nada más
+del texto se mueve: ni los comentarios ni la sangría.
+
+```lua
+local piano = sample("amen.wav"):instrument({ root = "C4" })
+track("bajo", piano)
+  :melody("c2 _ . c2  eb2 _ . g2  f2 _ _ _  c2 . eb2+g2 .")
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen):steps("1 . 3 .  2 . 3r4 .  1' . 3 .  2 . 3^7 .")
+```
+
+**Qué no se edita, y por qué** (lo dice la línea de estado del panel): un
+texto distinto del cargado (carga antes con Ctrl-L); lo que no está
+escrito tal cual (`euclid`, `rotate`, `mutate`, `shuffle`, una cadena
+hecha a trozos o en varias líneas); una vuelta que `every`, `chance` o
+`fill` cambian (se edita la vuelta escrita, o el código); un golpe que
+`chance` o `every` quitan en esa vuelta; una cadena que comparten dos
+pistas (`local p = "..."` en las dos); y una pista congelada. Con `every`
+y `c:melody("...")`, cada vuelta se escribe en su cadena; las vueltas que
+usan la misma cadena cambian juntas. Una nota no cruza el final de su
+vuelta (cada vuelta es su texto).
+
+**Errores típicos:**
+
+- *«ahí ya hay una nota»*: mover o duplicar solo escribe sobre silencios
+  (`.`); quita o mueve antes lo que estorba.
+- *«ese paso alarga la nota de antes»*: el paso es un `_`; acorta la nota
+  con `[` o pon la nueva en un silencio.
+- *«queda a más de ±36 semitonos de la raíz»*: el instrumento no llega;
+  cambia su `root` o la octava.
+- *«un acorde tiene como mucho 4 notas»*.
+- En una pista de cortes cada paso es un golpe: un acorde no tiene
+  sentido, y `+` `-` cambian de corte.
+
+**En su ventana.** F1 «Abrir el piano roll en su ventana» lo saca a una
+terminal nueva (`[roll] terminal` o, si no, `[editor] terminal`, detrás
+`tui --window-roll <script>`), unida a la principal por un socket privado
+(solo del usuario), como el panel de dispositivos. Esa ventana no evalúa
+el script ni suena: manda las teclas y el ratón a la principal y dibuja lo
+que ella le devuelve, así que el editor, en la principal o en su ventana,
+ve cada cambio como un paso de deshacer. Si escribes en el editor sin
+cargar, el piano roll deja de editar hasta que cargas. F1 «Volver a meter
+el piano roll en la principal» lo devuelve; Ctrl-Q cierra su ventana (la
+principal sigue). Las dos tienen que ser de la misma versión del programa.
+Si la terminal no se puede lanzar, se queda en la principal y la línea de
+estado dice cómo abrirlo a mano.
+
+En `config.toml`, la sección `[roll]` (y `[roll.teclas]`; tablas en
+«Configuración»):
+
+```toml
+[roll]
+visible = false              # enseñarlo al arrancar
+zoom = "auto"                # o "1/32", "1/16", "1/8", "1/4"
+rejilla = "1/16"             # o "1/8", "1/4", "1/2", "1/1"
+ajustar = true               # la rejilla encendida
+escuchar_al_insertar = false
+terminal = "kitty --class sampler-roll -e"
+
+[roll.teclas]
+insertar = ["enter", "n"]
+```
+
+> **Usado en el tutorial:** [paso 9, Líneas melódicas](PRIMERA-CANCION.md#paso-9-líneas-melódicas).
 
 ### Vista del sidechain
 

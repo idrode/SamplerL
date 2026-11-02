@@ -187,13 +187,8 @@ impl Default for RollConfig {
 }
 
 /// Las rejillas del piano roll: nombre y pasos.
-pub const ROLL_SNAPS: &[(&str, usize)] = &[
-    ("1/16", 1),
-    ("1/8", 2),
-    ("1/4", 4),
-    ("1/2", 8),
-    ("1/1", 16),
-];
+pub const ROLL_SNAPS: &[(&str, usize)] =
+    &[("1/16", 1), ("1/8", 2), ("1/4", 4), ("1/2", 8), ("1/1", 16)];
 
 /// Claves de `[roll]`, qué hacen y su valor por defecto (para la guía).
 #[cfg(test)]
@@ -1348,7 +1343,10 @@ mod tests {
         assert!(roll.visible && !roll.snap_on && roll.preview_on_insert);
         assert_eq!(roll.zoom, Some(crate::roll_panel::Zoom::Z8));
         assert_eq!(roll.snap, 4);
-        assert_eq!(roll.terminal.as_deref(), Some(&["foot".to_string(), "-e".into()][..]));
+        assert_eq!(
+            roll.terminal.as_deref(),
+            Some(&["foot".to_string(), "-e".into()][..])
+        );
         let n = Input {
             key: Key::Char('n'),
             ..Input::default()
