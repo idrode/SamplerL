@@ -26,8 +26,9 @@ use ratatui_textarea::{Input, Key};
 /// 3, lo que suena para resaltarlo en el código: `suena`; la 4, el panel de
 /// dispositivos en su ventana, en su propio socket: [`ToDevices`] y
 /// [`FromDevices`]; la 5, la línea de los mandos MIDI en la vista del panel
-/// de dispositivos).
-pub const VERSION: u32 = 5;
+/// de dispositivos; la 6, el piano roll en su ventana, en su propio socket:
+/// [`ToRoll`] y [`FromRoll`]).
+pub const VERSION: u32 = 6;
 
 /// Lo que se deja pendiente de escribir antes de dar el otro extremo por
 /// perdido (no lee).

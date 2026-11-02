@@ -551,3 +551,218 @@ fn snap_and_zoom_keys() {
     app.handle(esc());
     assert!(app.roll_cursor().is_none());
 }
+
+// ---------------------------------------------------------------------
+// En su ventana.
+
+mod window {
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::{Duration, Instant};
+
+    use super::super::split::{editor_window, main_window, socket_dir};
+    use super::*;
+    use crate::link::{self, Conn, FromRoll, Message, ToRoll};
+    use crate::roll_window::RollWindow;
+
+    /// La principal (con el editor en su ventana) y el piano roll en la
+    /// suya, conectados por sus sockets en el mismo proceso.
+    fn three_windows(test: &str, song: &str) -> (PathBuf, App, App, RollWindow, Engine, Engine) {
+        let path = fixture(test, Some(song));
+        let (mut main, main_engine) = main_window(&path, None);
+        main.set_socket_dir(socket_dir(&path));
+        let (editor, editor_engine) = editor_window(&path);
+        // Una «terminal» que no hace nada: la ventana se abre a mano.
+        main.set_roll_terminal(Some(vec!["true".into()]));
+        main.run_action(Action::RollWindow);
+        let socket = link::roll_socket_path(&socket_dir(&path), &path);
+        let roll = RollWindow::new(&socket);
+        (path, main, editor, roll, main_engine, editor_engine)
+    }
+
+    fn pump(main: &mut App, editor: &mut App, roll: &mut RollWindow, engine: &mut Engine) {
+        for _ in 0..4 {
+            offline::render(engine, 256, 2);
+            main.tick();
+            editor.tick();
+            roll.tick();
+        }
+    }
+
+    fn until(
+        main: &mut App,
+        editor: &mut App,
+        roll: &mut RollWindow,
+        engine: &mut Engine,
+        what: impl Fn(&App, &App, &RollWindow) -> bool,
+    ) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !what(main, editor, roll) {
+            assert!(
+                Instant::now() < deadline,
+                "no llegó a pasar: {} · {}",
+                main.view().message,
+                screen(roll, 100, 30).lines().last().unwrap_or_default()
+            );
+            pump(main, editor, roll, engine);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn screen(roll: &mut RollWindow, width: u16, height: u16) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal.draw(|frame| roll.draw(frame)).unwrap();
+        text(terminal.backend().buffer())
+    }
+
+    #[test]
+    fn the_roll_in_its_window_edits_the_text_the_editor_window_sees() {
+        let (path, mut main, mut editor, mut roll, mut engine, _e) =
+            three_windows("roll_window", ROLL_SONG);
+        // El socket, solo del usuario.
+        let socket = link::roll_socket_path(&socket_dir(&path), &path);
+        let mode = std::fs::metadata(&socket).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+        let dir = std::fs::metadata(socket_dir(&path)).unwrap().permissions().mode();
+        assert_eq!(dir & 0o777, 0o700);
+        // Dibujar una vez le dice a la principal su tamaño.
+        screen(&mut roll, 100, 30);
+        until(&mut main, &mut editor, &mut roll, &mut engine, |_, _, r| r.view().is_some());
+        let s = screen(&mut roll, 100, 30);
+        assert!(s.contains("piano roll · bajo"), "{s}");
+        assert!(s.contains("song.lua · conectado con la ventana principal"), "{s}");
+        // En la principal ya no se ve (está fuera).
+        assert!(main.view().roll.is_none());
+
+        // Una tecla en la ventana del piano roll: abre su cursor; el
+        // cursor va al hueco del paso 3 y Enter pone una nota.
+        roll.handle(special(Key::Right));
+        until(&mut main, &mut editor, &mut roll, &mut engine, |_, _, r| {
+            r.view().is_some_and(|v| v.cursor.is_some())
+        });
+        let (col, _) = roll.view().unwrap().cursor.unwrap();
+        for _ in col..2 {
+            roll.handle(special(Key::Right));
+        }
+        for _ in 2..col {
+            roll.handle(special(Key::Left));
+        }
+        until(&mut main, &mut editor, &mut roll, &mut engine, |_, _, r| {
+            r.view().and_then(|v| v.cursor).is_some_and(|c| c.0 == 2)
+        });
+        let (_, pitch) = roll.view().unwrap().cursor.unwrap();
+        roll.handle(special(Key::Enter));
+        let note = crate::roll::tests_note_text(pitch);
+        let expected = ROLL_SONG.replacen("a2 _ . a2", &format!("a2 _ {note} a2"), 1);
+        until(&mut main, &mut editor, &mut roll, &mut engine, |m, _, _| {
+            m.text_for_test() == expected
+        });
+        // El editor en su ventana lo recibe como un paso de deshacer.
+        until(&mut main, &mut editor, &mut roll, &mut engine, |_, e, _| {
+            e.text_for_test() == expected
+        });
+        // Y el piano roll lo enseña.
+        until(&mut main, &mut editor, &mut roll, &mut engine, |_, _, r| {
+            r.view().is_some_and(|v| v.notes.iter().any(|n| n.col == 2 && n.pitch == pitch))
+        });
+
+        // Escribir en el editor deja el piano roll sin editar hasta cargar.
+        editor.handle(esc());
+        editor.handle(esc());
+        editor.editor.insert_str("-- x\n");
+        until(&mut main, &mut editor, &mut roll, &mut engine, |m, _, _| {
+            m.text_for_test().starts_with("-- x")
+        });
+        roll.handle(special(Key::Right));
+        roll.handle(special(Key::Enter));
+        until(&mut main, &mut editor, &mut roll, &mut engine, |_, _, r| {
+            r.view().is_some_and(|v| v.status.contains("carga antes"))
+        });
+        // Sin tocar el texto.
+        assert_eq!(main.text_for_test(), format!("-- x\n{expected}"));
+
+        // El ratón en la ventana: Ctrl y la rueda, el zoom.
+        roll.mouse(MouseAction::ZoomOut, 20, 10);
+        until(&mut main, &mut editor, &mut roll, &mut engine, |_, _, r| {
+            r.view().is_some_and(|v| !v.zoom_auto)
+        });
+        // En varios tamaños.
+        for (w, h) in [(60, 16), (100, 30), (160, 50)] {
+            let s = screen(&mut roll, w, h);
+            assert!(s.contains("piano roll"), "{w}×{h}\n{s}");
+        }
+
+        // Volver a meterlo: la ventana se cierra y se ve en la principal.
+        main.run_action(Action::RollBack);
+        until(&mut main, &mut editor, &mut roll, &mut engine, |_, _, r| r.leaving());
+        assert!(!socket.exists(), "el socket se borra");
+        assert!(main.view().roll.is_some());
+    }
+
+    #[test]
+    fn a_roll_of_another_version_is_turned_away() {
+        let (path, mut main, _editor, _roll, _engine, _e) =
+            three_windows("roll_version", ROLL_SONG);
+        let socket = link::roll_socket_path(&socket_dir(&path), &path);
+        // La de la prueba se cuela antes: la primera conexión se la queda
+        // ella; esta es otra.
+        drop(_roll);
+        let stream = std::os::unix::net::UnixStream::connect(&socket).unwrap();
+        let mut conn = Conn::new(stream).unwrap();
+        conn.send(&FromRoll::Hello { version: 5 }).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut got = Vec::new();
+        while !got.iter().any(|m| matches!(m, ToRoll::Bye(_))) {
+            assert!(Instant::now() < deadline, "{} {got:?}", main.view().message);
+            main.tick();
+            got.extend(conn.receive::<ToRoll>().unwrap_or_default());
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(main.view().message.contains("otra versión"), "{}", main.view().message);
+    }
+
+    #[test]
+    fn the_launcher_falls_back_to_the_panel_here() {
+        let (path, mut app, _engine) = open("roll_launch", Some(ROLL_SONG));
+        app.set_socket_dir(socket_dir(&path));
+        app.set_roll_terminal(None);
+        app.run_action(Action::RollWindow);
+        let message = app.view().message;
+        assert!(message.contains("tui --window-roll"), "{message}");
+        assert!(app.view().roll.is_some());
+        // Una terminal que no existe.
+        app.set_roll_terminal(Some(vec!["/no/existe/foot".into()]));
+        app.run_action(Action::RollWindow);
+        assert!(app.view().message.contains("no se pudo lanzar"), "{}", app.view().message);
+        assert_eq!(
+            crate::app::roll_command(&["foot".into(), "-e".into()], Path::new("/bin/tui"), &path)[2..],
+            ["/bin/tui", "--window-roll", &path.display().to_string()]
+        );
+    }
+
+    #[test]
+    fn the_messages_round_trip() {
+        let view = {
+            let (_, app, _e) = roll_on("roll_messages", ROLL_SONG, 0);
+            app.roll_view_for_test().unwrap()
+        };
+        let back = ToRoll::decode(ToRoll::View(view.clone()).encode().trim_end()).unwrap();
+        assert_eq!(back, ToRoll::View(view));
+        for m in [
+            FromRoll::Size { width: 100, height: 30 },
+            FromRoll::Key(Input {
+                key: Key::Char('V'),
+                shift: true,
+                ..Input::default()
+            }),
+            FromRoll::Key(special(Key::PageDown)),
+            FromRoll::Mouse {
+                action: MouseAction::ZoomIn,
+                x: 3,
+                y: 4,
+            },
+        ] {
+            assert_eq!(FromRoll::decode(m.encode().trim_end()).unwrap(), m);
+        }
+        assert!(FromRoll::decode("raton\tvolar\t1\t2").is_err());
+    }
+}

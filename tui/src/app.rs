@@ -25,6 +25,8 @@ mod cue;
 mod devices;
 #[cfg(test)]
 pub use devices::devices_command;
+#[cfg(test)]
+pub use roll::roll_command;
 mod freeze;
 mod key;
 mod learn;

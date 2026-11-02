@@ -23,6 +23,7 @@ mod record;
 mod roll;
 mod roll_keys;
 mod roll_panel;
+mod roll_window;
 mod sidechain;
 mod tap;
 #[cfg(test)]
@@ -43,6 +44,7 @@ uso: tui --edit <canción.lua | proyecto.sampler> [--allow-audio] [--allow-midi]
      tui --edit <canción.lua> [--allow-audio --audio-device NOMBRE] [--midi-in PUERTO] [--midi-out PUERTO]
      tui --list-devices                           (dispositivos de audio y puertos MIDI, y sale)
      tui --window-devices <canción.lua | proyecto.sampler>   (panel de dispositivos de una principal)
+     tui --window-roll <canción.lua | proyecto.sampler>      (piano roll de una principal)
      tui <archivo.wav> --render <salida.wav>
      tui <archivo.wav> --detect-bpm               (propone bpm() y compases)
      tui --script <canción.lua> --render <salida.wav> [--bars M] [--from N] [--metronome] [--track pista]
@@ -76,6 +78,9 @@ uso: tui --edit <canción.lua | proyecto.sampler> [--allow-audio] [--allow-midi]
   --window-devices  abre solo el panel de dispositivos y conecta con la ventana principal
                de ese script (F1 «Abrir el panel de dispositivos en su ventana» lo lanza
                con [dispositivos] terminal o [editor] terminal)
+  --window-roll  abre solo el piano roll y conecta con la ventana principal de ese script
+               (F1 «Abrir el piano roll en su ventana» lo lanza con [roll] terminal o
+               [editor] terminal)
   --list-devices  lista los dispositivos de salida de audio (abre la tarjeta para
                preguntarle qué admite) y los puertos MIDI, y sale
   --new      con --edit: si el script no existe, empieza uno con la plantilla (se
@@ -142,6 +147,7 @@ fn run() -> Result<(), BoxError> {
     let mut midi_out = None;
     let mut list_devices = false;
     let mut window_devices = None;
+    let mut window_roll = None;
     while let Some(arg) = args.next() {
         let mut value = || {
             args.next()
@@ -156,6 +162,7 @@ fn run() -> Result<(), BoxError> {
             "--midi-out" => midi_out = Some(value()?),
             "--list-devices" => list_devices = true,
             "--window-devices" => window_devices = Some(value()?),
+            "--window-roll" => window_roll = Some(value()?),
             "--metronome" => metronome = true,
             "--detect-bpm" => detect = true,
             "--analyze-masking" => masking = true,
@@ -227,6 +234,16 @@ fn run() -> Result<(), BoxError> {
             .into());
         }
         return run_devices_window(std::path::Path::new(&target));
+    }
+    if let Some(target) = window_roll {
+        if std::env::args().count() != 3 {
+            return Err(format!(
+                "--window-roll no se combina con otras opciones (la canción es de la ventana \
+                 principal)\n{USAGE}"
+            )
+            .into());
+        }
+        return run_roll_window(std::path::Path::new(&target));
     }
     if device_flags && edit.is_none() {
         return Err(
@@ -882,6 +899,89 @@ fn run_devices_window(path: &std::path::Path) -> Result<(), BoxError> {
     result
 }
 
+/// Lo que hace el ratón, sin crossterm (así se prueba la aplicación).
+fn mouse_action(m: &ratatui::crossterm::event::MouseEvent) -> Option<app::MouseAction> {
+    use app::MouseAction;
+    use ratatui::crossterm::event::{KeyModifiers, MouseButton, MouseEventKind};
+    let ctrl = m.modifiers.contains(KeyModifiers::CONTROL);
+    let shift = m.modifiers.contains(KeyModifiers::SHIFT);
+    match m.kind {
+        MouseEventKind::Down(MouseButton::Left) => Some(MouseAction::Down),
+        MouseEventKind::Drag(MouseButton::Left) => Some(MouseAction::Drag),
+        MouseEventKind::Up(MouseButton::Left) => Some(MouseAction::Up),
+        // Ctrl y la rueda: el zoom del piano roll.
+        MouseEventKind::ScrollUp if ctrl => Some(MouseAction::ZoomIn),
+        MouseEventKind::ScrollDown if ctrl => Some(MouseAction::ZoomOut),
+        // Shift y la rueda: hacia los lados.
+        MouseEventKind::ScrollUp if shift => Some(MouseAction::ScrollLeft),
+        MouseEventKind::ScrollDown if shift => Some(MouseAction::ScrollRight),
+        MouseEventKind::ScrollUp => Some(MouseAction::ScrollUp),
+        MouseEventKind::ScrollDown => Some(MouseAction::ScrollDown),
+        MouseEventKind::Down(MouseButton::Right) => Some(MouseAction::RightDown),
+        MouseEventKind::ScrollLeft => Some(MouseAction::ScrollLeft),
+        MouseEventKind::ScrollRight => Some(MouseAction::ScrollRight),
+        _ => None,
+    }
+}
+
+/// `--window-roll`: solo el piano roll, conectado con la ventana principal
+/// del mismo script por su socket. Con el ratón si `[editor] raton` (por
+/// defecto, sí) y la terminal lo deja.
+fn run_roll_window(path: &std::path::Path) -> Result<(), BoxError> {
+    use ratatui::crossterm::event::{self, Event, KeyEventKind};
+    let script = if path
+        .extension()
+        .is_some_and(|e| e == script::project::EXTENSION)
+    {
+        script::Project::load(path)?.script
+    } else {
+        path.to_path_buf()
+    };
+    let socket = link::roll_socket_path(&link::runtime_dir()?, &script);
+    let config = match config::dir() {
+        Some(dir) => config::Config::load(&dir.join("config.toml"), theme::truecolor()),
+        None => config::Config::default(),
+    };
+    theme::set(config.theme);
+    let mut window = roll_window::RollWindow::new(&socket);
+    let mut terminal = ratatui::init();
+    let mouse = config.editor.mouse
+        && ratatui::crossterm::execute!(std::io::stdout(), event::EnableMouseCapture).is_ok();
+    let _modes = TerminalModes {
+        paste: false,
+        releases: false,
+        mouse,
+    };
+    let result = (|| -> Result<(), BoxError> {
+        loop {
+            window.tick();
+            if window.leaving() {
+                return Ok(());
+            }
+            terminal.draw(|frame| window.draw(frame))?;
+            if !event::poll(Duration::from_millis(30))? {
+                continue;
+            }
+            match event::read()? {
+                Event::Key(key) if key.kind != KeyEventKind::Release => {
+                    if window.handle(key.into()) == app::Flow::Quit {
+                        return Ok(());
+                    }
+                }
+                Event::Mouse(m) => {
+                    if let Some(action) = mouse_action(&m) {
+                        window.mouse(action, m.column, m.row);
+                    }
+                }
+                _ => {}
+            }
+        }
+    })();
+    drop(_modes);
+    ratatui::restore();
+    result
+}
+
 /// El bucle de la interfaz en la terminal: dibuja, lee teclas y pegados y
 /// atiende al motor y al enlace en cada vuelta.
 fn run_terminal(
@@ -982,43 +1082,7 @@ fn run_terminal(
                     }
                     Event::Paste(text) => app.paste(&text),
                     Event::Mouse(m) => {
-                        use app::MouseAction;
-                        use event::{MouseButton, MouseEventKind};
-                        let action = match m.kind {
-                            MouseEventKind::Down(MouseButton::Left) => Some(MouseAction::Down),
-                            MouseEventKind::Drag(MouseButton::Left) => Some(MouseAction::Drag),
-                            MouseEventKind::Up(MouseButton::Left) => Some(MouseAction::Up),
-                            // Ctrl y la rueda: el zoom del piano roll.
-                            MouseEventKind::ScrollUp
-                                if m.modifiers.contains(event::KeyModifiers::CONTROL) =>
-                            {
-                                Some(MouseAction::ZoomIn)
-                            }
-                            MouseEventKind::ScrollDown
-                                if m.modifiers.contains(event::KeyModifiers::CONTROL) =>
-                            {
-                                Some(MouseAction::ZoomOut)
-                            }
-                            // Shift y la rueda: hacia los lados.
-                            MouseEventKind::ScrollUp
-                                if m.modifiers.contains(event::KeyModifiers::SHIFT) =>
-                            {
-                                Some(MouseAction::ScrollLeft)
-                            }
-                            MouseEventKind::ScrollDown
-                                if m.modifiers.contains(event::KeyModifiers::SHIFT) =>
-                            {
-                                Some(MouseAction::ScrollRight)
-                            }
-                            MouseEventKind::ScrollUp => Some(MouseAction::ScrollUp),
-                            MouseEventKind::ScrollDown => Some(MouseAction::ScrollDown),
-                            MouseEventKind::Down(MouseButton::Right) => {
-                                Some(MouseAction::RightDown)
-                            }
-                            MouseEventKind::ScrollLeft => Some(MouseAction::ScrollLeft),
-                            MouseEventKind::ScrollRight => Some(MouseAction::ScrollRight),
-                            _ => None,
-                        };
+                        let action = mouse_action(&m);
                         if let Some(action) = action {
                             app.mouse(action, m.column, m.row);
                         }

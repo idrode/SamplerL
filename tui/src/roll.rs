@@ -1439,6 +1439,12 @@ fn format_number(value: f32) -> String {
     text.trim_end_matches('0').trim_end_matches('.').to_string()
 }
 
+/// Cómo se escribe una nota nueva en `melody()` (para los tests).
+#[cfg(test)]
+pub fn tests_note_text(midi: i32) -> String {
+    note_text(midi, NoteStyle::default(), true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
