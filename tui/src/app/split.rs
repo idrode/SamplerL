@@ -169,6 +169,10 @@ fn opens_in_main(action: Action) -> bool {
             | Action::AnalyzeMasking
             | Action::FillGap
             | Action::SuggestFills
+            | Action::PianoRoll
+            | Action::EditRoll
+            | Action::RollWindow
+            | Action::RollBack
             | Action::Record
             | Action::JumpSection
             | Action::Resample

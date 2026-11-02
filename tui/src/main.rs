@@ -20,6 +20,9 @@ mod model;
 mod occupancy;
 mod palette;
 mod record;
+mod roll;
+mod roll_keys;
+mod roll_panel;
 mod sidechain;
 mod tap;
 #[cfg(test)]
@@ -985,6 +988,17 @@ fn run_terminal(
                             MouseEventKind::Down(MouseButton::Left) => Some(MouseAction::Down),
                             MouseEventKind::Drag(MouseButton::Left) => Some(MouseAction::Drag),
                             MouseEventKind::Up(MouseButton::Left) => Some(MouseAction::Up),
+                            // Ctrl y la rueda: el zoom del piano roll.
+                            MouseEventKind::ScrollUp
+                                if m.modifiers.contains(event::KeyModifiers::CONTROL) =>
+                            {
+                                Some(MouseAction::ZoomIn)
+                            }
+                            MouseEventKind::ScrollDown
+                                if m.modifiers.contains(event::KeyModifiers::CONTROL) =>
+                            {
+                                Some(MouseAction::ZoomOut)
+                            }
                             // Shift y la rueda: hacia los lados.
                             MouseEventKind::ScrollUp
                                 if m.modifiers.contains(event::KeyModifiers::SHIFT) =>

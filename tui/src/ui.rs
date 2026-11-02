@@ -55,8 +55,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     if view.editor_outside {
         // Sin editor aquí, el ratón no tiene dónde escribir.
         app.editor_area = None;
-        let sample_area = draw_main_window(frame, &view);
-        app.sample_area = Some(Block::bordered().inner(sample_area));
+        let (sample_area, roll_area) = draw_main_window(frame, &view);
+        app.sample_area = sample_area.map(|a| Block::bordered().inner(a));
+        app.set_roll_area(roll_area);
         return;
     }
     let [main, fx, help] = Layout::vertical([
@@ -113,9 +114,17 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     if occupancy > 0 {
         frame.render_widget(OccupancyPanel(&view), occupancy_area);
     }
-    frame.render_widget(SamplePanel(&view), sample_area);
-    app.sample_area = Some(Block::bordered().inner(sample_area));
-    frame.render_widget(TrackerPanel(&view), tracker_area);
+    if let Some(roll) = &view.roll {
+        // El piano roll, en el sitio del sample y del tracker.
+        frame.render_widget(crate::roll_panel::RollPanel(roll), rest_area);
+        app.sample_area = None;
+        app.set_roll_area(Some(rest_area));
+    } else {
+        frame.render_widget(SamplePanel(&view), sample_area);
+        app.sample_area = Some(Block::bordered().inner(sample_area));
+        frame.render_widget(TrackerPanel(&view), tracker_area);
+        app.set_roll_area(None);
+    }
     // La vista del sidechain, encima del sample y el tracker (el editor
     // sigue a la vista).
     if let Some(sidechain) = &view.sidechain {
@@ -156,8 +165,9 @@ fn tracker_first(height: u16, normal: u16, squeezed: u16) -> u16 {
 /// La ventana principal con el editor en la suya (fase L): las vistas
 /// ocupan toda la ventana. Arriba, el transporte y el enlace; la forma de
 /// onda grande; debajo, el mezclador y el tracker; abajo, los efectos.
-/// Devuelve dónde quedó el panel del sample.
-fn draw_main_window(frame: &mut Frame, view: &ViewModel) -> Rect {
+/// Devuelve dónde quedaron el panel del sample y el piano roll (que va en
+/// el sitio de la onda grande).
+fn draw_main_window(frame: &mut Frame, view: &ViewModel) -> (Option<Rect>, Option<Rect>) {
     let [top, body, fx, help] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Min(8),
@@ -197,16 +207,21 @@ fn draw_main_window(frame: &mut Frame, view: &ViewModel) -> Rect {
     if occupancy > 0 {
         frame.render_widget(OccupancyPanel(view), occupancy_area);
     }
+    let mut roll_area = None;
+    if let Some(roll) = &view.roll {
+        frame.render_widget(crate::roll_panel::RollPanel(roll), sample_area);
+        roll_area = Some(sample_area);
+    }
     // Con la vista del sidechain, a la derecha del sample (hasta la
     // mitad).
-    let side = if view.sidechain.is_some() {
+    let side = if view.sidechain.is_some() && roll_area.is_none() {
         (sample_area.width / 2).min(SIDECHAIN_WIDTH)
     } else {
         0
     };
     let [sample_area, sidechain_area] =
         Layout::horizontal([Constraint::Min(0), Constraint::Length(side)]).areas(sample_area);
-    if let Some(sidechain) = &view.sidechain {
+    if let Some(sidechain) = view.sidechain.as_ref().filter(|_| roll_area.is_none()) {
         frame.render_widget(crate::sidechain::SidechainPanel(sidechain), sidechain_area);
     }
     // Con un análisis de choques hecho, su tabla a la derecha del sample.
@@ -216,9 +231,11 @@ fn draw_main_window(frame: &mut Frame, view: &ViewModel) -> Rect {
         .map_or(0, |table| ClashPanel::width(table, sample_area.width));
     let [sample_area, clash_area] =
         Layout::horizontal([Constraint::Min(0), Constraint::Length(width)]).areas(sample_area);
-    frame.render_widget(BigSamplePanel(view), sample_area);
-    if width > 0 {
-        frame.render_widget(ClashPanel(view), clash_area);
+    if roll_area.is_none() {
+        frame.render_widget(BigSamplePanel(view), sample_area);
+        if width > 0 {
+            frame.render_widget(ClashPanel(view), clash_area);
+        }
     }
     // El mezclador, lo que pidan sus tiras (hasta la mitad); el tracker,
     // lo demás.
@@ -230,7 +247,7 @@ fn draw_main_window(frame: &mut Frame, view: &ViewModel) -> Rect {
     frame.render_widget(FxPanel(view), fx);
     frame.render_widget(HelpLine(view), help);
     draw_popups(frame, view, None);
-    sample_area
+    (roll_area.is_none().then_some(sample_area), roll_area)
 }
 
 /// Ancho de la vista del sidechain en la ventana principal sin editor.

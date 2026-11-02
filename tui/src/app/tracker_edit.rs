@@ -53,6 +53,7 @@ impl App {
             .min(self.track_rows(track).saturating_sub(1));
         self.tracker_edit = Some(TrackerCursor { track, row });
         self.occupancy.cursor = None;
+        self.roll.cursor = None;
         self.message = HELP.into();
     }
 

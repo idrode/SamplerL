@@ -41,6 +41,15 @@ pub struct Theme {
     /// huecos que se sugiere rellenar.
     pub gap: Color,
     pub suggestion: Color,
+    /// Piano roll: fondo de las filas de la tónica y de la escala de
+    /// `key()`, notas fuera de la escala, variaciones de `every`/`chance`,
+    /// lo generado y la selección.
+    pub roll_tonic: Color,
+    pub roll_scale: Color,
+    pub roll_outside: Color,
+    pub roll_variation: Color,
+    pub roll_generated: Color,
+    pub roll_selection: Color,
 }
 
 /// Cómo se marca en el código lo que suena.
@@ -99,6 +108,12 @@ impl Default for Theme {
             highlight_mode: HighlightMode::Background,
             gap: Color::Indexed(88),
             suggestion: Color::Indexed(28),
+            roll_tonic: Color::Indexed(238),
+            roll_scale: Color::Indexed(235),
+            roll_outside: Color::Indexed(203),
+            roll_variation: Color::Indexed(180),
+            roll_generated: Color::Indexed(245),
+            roll_selection: Color::Indexed(24),
         }
     }
 }
@@ -117,6 +132,12 @@ pub const NAMES: &[&str] = &[
     "nivel",
     "hueco",
     "sugerencia",
+    "roll_tonica",
+    "roll_escala",
+    "roll_fuera",
+    "roll_variacion",
+    "roll_generado",
+    "roll_seleccion",
 ];
 
 /// Qué pinta cada color de [`NAMES`] (para la guía).
@@ -134,6 +155,12 @@ pub const DESCRIPTIONS: &[&str] = &[
     "medidores de nivel",
     "fondo de los pasos donde no suena nada en la vista de ocupación",
     "fondo de los huecos que se sugiere rellenar en la vista de ocupación",
+    "piano roll: fondo de las filas de la tónica (o de los do, sin `key()`)",
+    "piano roll: fondo de las filas de las notas de la escala de `key()`",
+    "piano roll: notas fuera de la escala de `key()`",
+    "piano roll: variaciones de `every`, `chance` y `fill` (en cursiva)",
+    "piano roll: lo generado (`euclid`, `rotate`, `mutate`, `shuffle`...), que no se edita",
+    "piano roll: fondo de la selección",
 ];
 
 impl Theme {
@@ -151,6 +178,12 @@ impl Theme {
             "nivel" => &mut self.meter,
             "hueco" => &mut self.gap,
             "sugerencia" => &mut self.suggestion,
+            "roll_tonica" => &mut self.roll_tonic,
+            "roll_escala" => &mut self.roll_scale,
+            "roll_fuera" => &mut self.roll_outside,
+            "roll_variacion" => &mut self.roll_variation,
+            "roll_generado" => &mut self.roll_generated,
+            "roll_seleccion" => &mut self.roll_selection,
             _ => return false,
         };
         *slot = color;

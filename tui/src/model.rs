@@ -107,6 +107,8 @@ pub struct ViewModel {
     pub occupancy_cursor: Option<(usize, usize)>,
     /// Sugerencias de relleno pedidas desde la paleta (de esta carga).
     pub fill_suggestions: Vec<crate::occupancy::Suggestion>,
+    /// El piano roll, si se ve en esta ventana.
+    pub roll: Option<crate::roll_panel::RollView>,
 }
 
 /// Tabla de choques de frecuencia del último análisis.

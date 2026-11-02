@@ -14,8 +14,12 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use crate::app::MouseAction;
 use crate::devices::{DevicesView, Entry, Kind};
 use crate::highlight::Highlight;
+use crate::roll::{Note, Scale, Style as NoteStyle};
+use crate::roll_panel::{RollView, Zoom};
+use ratatui_textarea::{Input, Key};
 
 /// Versión del protocolo: los dos extremos tienen que tener la misma (la
 /// 2 añade el traspaso del editor: `historial`, `devuelve` y `vuelvo`; la
@@ -171,6 +175,131 @@ pub enum ToDevices {
     Bye(String),
     /// La principal vuelve a meter el panel: la ventana se cierra.
     GiveBack,
+}
+
+/// Del piano roll (en su ventana) a la principal.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FromRoll {
+    Hello {
+        version: u32,
+    },
+    /// El tamaño del panel (para el ratón y para desplazar).
+    Size {
+        width: u16,
+        height: u16,
+    },
+    /// Una tecla.
+    Key(Input),
+    /// El ratón, en la celda `x`, `y` del panel.
+    Mouse {
+        action: MouseAction,
+        x: u16,
+        y: u16,
+    },
+}
+
+/// De la principal al piano roll.
+#[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::large_enum_variant)]
+pub enum ToRoll {
+    /// Respuesta al saludo: la versión y el script (para el título).
+    Welcome { version: u32, title: String },
+    /// Lo que hay que dibujar, cada vez que cambia.
+    View(RollView),
+    /// La principal cierra esta conexión (y por qué): no se reintenta.
+    Bye(String),
+    /// La principal vuelve a meter el piano roll: la ventana se cierra.
+    GiveBack,
+}
+
+/// Una tecla como texto: `nombre,ctrl,alt,shift` (`c:x` un carácter).
+fn input_text(input: &Input) -> String {
+    let key = match input.key {
+        Key::Char(c) => format!("c:{c}"),
+        Key::F(n) => format!("f:{n}"),
+        Key::Backspace => "backspace".into(),
+        Key::Enter => "enter".into(),
+        Key::Left => "left".into(),
+        Key::Right => "right".into(),
+        Key::Up => "up".into(),
+        Key::Down => "down".into(),
+        Key::Tab => "tab".into(),
+        Key::Delete => "delete".into(),
+        Key::Home => "home".into(),
+        Key::End => "end".into(),
+        Key::PageUp => "pageup".into(),
+        Key::PageDown => "pagedown".into(),
+        Key::Esc => "esc".into(),
+        _ => "null".into(),
+    };
+    format!(
+        "{key}\t{}{}{}",
+        u8::from(input.ctrl),
+        u8::from(input.alt),
+        u8::from(input.shift)
+    )
+}
+
+fn input_from(key: &str, mods: &str, verb: &str) -> Result<Input, String> {
+    let key = match key {
+        k if k.starts_with("c:") => Key::Char(
+            k[2..]
+                .chars()
+                .next()
+                .ok_or_else(|| format!("«{verb}»: carácter vacío"))?,
+        ),
+        k if k.starts_with("f:") => Key::F(number(&k[2..], verb)?),
+        "backspace" => Key::Backspace,
+        "enter" => Key::Enter,
+        "left" => Key::Left,
+        "right" => Key::Right,
+        "up" => Key::Up,
+        "down" => Key::Down,
+        "tab" => Key::Tab,
+        "delete" => Key::Delete,
+        "home" => Key::Home,
+        "end" => Key::End,
+        "pageup" => Key::PageUp,
+        "pagedown" => Key::PageDown,
+        "esc" => Key::Esc,
+        "null" => Key::Null,
+        other => return Err(format!("«{verb}»: tecla desconocida «{other}»")),
+    };
+    let m: Vec<bool> = mods.chars().map(|c| c == '1').collect();
+    Ok(Input {
+        key,
+        ctrl: m.first().copied().unwrap_or(false),
+        alt: m.get(1).copied().unwrap_or(false),
+        shift: m.get(2).copied().unwrap_or(false),
+    })
+}
+
+const MOUSE_ACTIONS: [(MouseAction, &str); 10] = [
+    (MouseAction::Down, "pulsa"),
+    (MouseAction::Drag, "arrastra"),
+    (MouseAction::Up, "suelta"),
+    (MouseAction::RightDown, "derecho"),
+    (MouseAction::ScrollUp, "arriba"),
+    (MouseAction::ScrollDown, "abajo"),
+    (MouseAction::ScrollLeft, "izquierda"),
+    (MouseAction::ScrollRight, "derecha"),
+    (MouseAction::ZoomIn, "acerca"),
+    (MouseAction::ZoomOut, "aleja"),
+];
+
+/// Un par `a,b` de números (vacío: `None`).
+fn pair<T: std::str::FromStr>(text: &str, verb: &str) -> Result<Option<(T, T)>, String> {
+    if text.is_empty() {
+        return Ok(None);
+    }
+    let (a, b) = text
+        .split_once(',')
+        .ok_or_else(|| format!("«{verb}»: par no válido «{text}»"))?;
+    Ok(Some((number(a, verb)?, number(b, verb)?)))
+}
+
+fn pair_text<T: std::fmt::Display>(value: Option<(T, T)>) -> String {
+    value.map_or(String::new(), |(a, b)| format!("{a},{b}"))
 }
 
 /// Escapa un campo.
@@ -523,6 +652,198 @@ impl Message for ToDevices {
     }
 }
 
+impl Message for FromRoll {
+    fn encode(&self) -> String {
+        match self {
+            FromRoll::Hello { version } => line("hola", &[&version.to_string()]),
+            FromRoll::Size { width, height } => {
+                line("tamano", &[&width.to_string(), &height.to_string()])
+            }
+            FromRoll::Key(input) => {
+                let text = input_text(input);
+                let (key, mods) = text.split_once('\t').unwrap_or((&text, "000"));
+                line("tecla", &[key, mods])
+            }
+            FromRoll::Mouse { action, x, y } => {
+                let name = MOUSE_ACTIONS
+                    .iter()
+                    .find(|(a, _)| a == action)
+                    .map_or("pulsa", |(_, n)| n);
+                line("raton", &[name, &x.to_string(), &y.to_string()])
+            }
+        }
+    }
+
+    fn decode(text: &str) -> Result<Self, String> {
+        let (verb, f) = split(text)?;
+        let v = verb.as_str();
+        Ok(match v {
+            "hola" => FromRoll::Hello {
+                version: number(field(&f, 0, v)?, v)?,
+            },
+            "tamano" => FromRoll::Size {
+                width: number(field(&f, 0, v)?, v)?,
+                height: number(field(&f, 1, v)?, v)?,
+            },
+            "tecla" => FromRoll::Key(input_from(field(&f, 0, v)?, field(&f, 1, v)?, v)?),
+            "raton" => {
+                let name = field(&f, 0, v)?;
+                FromRoll::Mouse {
+                    action: MOUSE_ACTIONS
+                        .iter()
+                        .find(|(_, n)| *n == name)
+                        .map(|(a, _)| *a)
+                        .ok_or_else(|| format!("«{v}»: acción desconocida «{name}»"))?,
+                    x: number(field(&f, 1, v)?, v)?,
+                    y: number(field(&f, 2, v)?, v)?,
+                }
+            }
+            other => return Err(format!("mensaje desconocido «{other}»")),
+        })
+    }
+}
+
+impl Message for ToRoll {
+    fn encode(&self) -> String {
+        match self {
+            ToRoll::Welcome { version, title } => line("hola", &[&version.to_string(), title]),
+            ToRoll::View(view) => {
+                // Lo fijo, los nombres de los cortes (cuántos y cada uno) y
+                // las notas (cuántas y cada una: columna, duración, nota,
+                // sombreado, marca y estilo).
+                let mut fields = vec![
+                    view.title.clone(),
+                    u8::from(view.notes_axis).to_string(),
+                    view.steps.to_string(),
+                    view.length.to_string(),
+                    view.bar_steps.to_string(),
+                    view.scale.map_or(String::new(), |s| {
+                        let mask: u16 = (0..12).filter(|i| s.mask[*i]).map(|i| 1 << i).sum();
+                        format!("{},{mask}", s.tonic)
+                    }),
+                    pair_text(view.range),
+                    pair_text(Some(view.bounds)),
+                    view.cursor.map_or(String::new(), |(c, p)| format!("{c},{p}")),
+                    pair_text(view.selection),
+                    view.playhead.map_or(String::new(), |p| p.to_string()),
+                    format!(
+                        "{}{}",
+                        if view.zoom_auto { "auto " } else { "" },
+                        view.zoom.name()
+                    ),
+                    view.first.to_string(),
+                    view.top.map_or(String::new(), |t| t.to_string()),
+                    view.status.clone(),
+                    view.snap.clone(),
+                    view.color.to_string(),
+                    view.labels.len().to_string(),
+                ];
+                fields.extend(view.labels.iter().cloned());
+                fields.push(view.notes.len().to_string());
+                fields.extend(view.notes.iter().map(|n| {
+                    format!(
+                        "{},{},{},{},{},{}",
+                        n.col,
+                        n.len,
+                        n.pitch,
+                        n.shade,
+                        n.mark,
+                        n.style.code()
+                    )
+                }));
+                fields_line("vista", &fields)
+            }
+            ToRoll::Bye(reason) => line("adios", &[reason]),
+            ToRoll::GiveBack => line("devuelve", &[]),
+        }
+    }
+
+    fn decode(text: &str) -> Result<Self, String> {
+        let (verb, f) = split(text)?;
+        let v = verb.as_str();
+        Ok(match v {
+            "hola" => ToRoll::Welcome {
+                version: number(field(&f, 0, v)?, v)?,
+                title: field(&f, 1, v)?.into(),
+            },
+            "vista" => {
+                let scale = field(&f, 5, v)?;
+                let scale = pair::<i32>(scale, v)?.map(|(tonic, mask)| Scale {
+                    tonic,
+                    mask: std::array::from_fn(|i| mask & (1 << i) != 0),
+                });
+                let playhead = field(&f, 10, v)?;
+                let top = field(&f, 13, v)?;
+                let mut view = RollView {
+                    title: field(&f, 0, v)?.into(),
+                    notes_axis: field(&f, 1, v)? == "1",
+                    steps: number(field(&f, 2, v)?, v)?,
+                    length: number(field(&f, 3, v)?, v)?,
+                    bar_steps: number(field(&f, 4, v)?, v)?,
+                    scale,
+                    range: pair(field(&f, 6, v)?, v)?,
+                    bounds: pair(field(&f, 7, v)?, v)?.unwrap_or((0, 127)),
+                    cursor: match pair::<i64>(field(&f, 8, v)?, v)? {
+                        Some((c, p)) if c >= 0 => Some((c as usize, p as i32)),
+                        _ => None,
+                    },
+                    selection: pair(field(&f, 9, v)?, v)?,
+                    playhead: if playhead.is_empty() {
+                        None
+                    } else {
+                        Some(number(playhead, v)?)
+                    },
+                    zoom: Zoom::from_name(field(&f, 11, v)?.trim_start_matches("auto "))
+                        .unwrap_or_default(),
+                    zoom_auto: field(&f, 11, v)?.starts_with("auto "),
+                    first: number(field(&f, 12, v)?, v)?,
+                    top: if top.is_empty() {
+                        None
+                    } else {
+                        Some(number(top, v)?)
+                    },
+                    status: field(&f, 14, v)?.into(),
+                    snap: field(&f, 15, v)?.into(),
+                    color: number(field(&f, 16, v)?, v)?,
+                    ..RollView::default()
+                };
+                let labels: usize = number(field(&f, 17, v)?, v)?;
+                let mut at = 18;
+                for _ in 0..labels {
+                    view.labels.push(field(&f, at, v)?.into());
+                    at += 1;
+                }
+                let notes: usize = number(field(&f, at, v)?, v)?;
+                at += 1;
+                for _ in 0..notes {
+                    let text = field(&f, at, v)?;
+                    at += 1;
+                    let parts: Vec<&str> = text.split(',').collect();
+                    let [col, len, pitch, shade, mark, style] = parts[..] else {
+                        return Err(format!("«{v}»: nota no válida «{text}»"));
+                    };
+                    view.notes.push(Note {
+                        col: number(col, v)?,
+                        len: number(len, v)?,
+                        pitch: number(pitch, v)?,
+                        shade: number(shade, v)?,
+                        mark: mark.chars().next().unwrap_or(' '),
+                        style: style
+                            .chars()
+                            .next()
+                            .and_then(NoteStyle::from_code)
+                            .ok_or_else(|| format!("«{v}»: estilo no válido «{style}»"))?,
+                    });
+                }
+                ToRoll::View(view)
+            }
+            "adios" => ToRoll::Bye(field(&f, 0, v)?.into()),
+            "devuelve" => ToRoll::GiveBack,
+            other => return Err(format!("mensaje desconocido «{other}»")),
+        })
+    }
+}
+
 /// Una conexión sin bloqueos: lo leído se junta hasta tener líneas
 /// enteras y lo que no se pudo escribir espera a la siguiente vuelta.
 pub struct Conn {
@@ -740,6 +1061,16 @@ pub fn devices_socket_path(dir: &Path, script: &Path) -> PathBuf {
         .file_stem()
         .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
     dir.join(format!("{stem}-disp.sock"))
+}
+
+/// Socket del piano roll de la instancia de un script (aparte de los del
+/// editor y los dispositivos).
+pub fn roll_socket_path(dir: &Path, script: &Path) -> PathBuf {
+    let editor = socket_path(dir, script);
+    let stem = editor
+        .file_stem()
+        .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
+    dir.join(format!("{stem}-roll.sock"))
 }
 
 /// Hash FNV-1a de 64 bits (estable entre versiones de Rust, a diferencia

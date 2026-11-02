@@ -780,6 +780,10 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Pánico: silenciar todo lo que suena | Corta al instante todas las voces (cortes, pads, notas, sintetizadores, granos, preescucha y las colas de los efectos de corte) sin parar el secuenciador: lo siguiente entra como siempre. Funciona con cualquier cosa abierta | — |
 | Pánico en pausa (otra vez: reanudar) | Como el pánico, y además no deja sonar nada nuevo (pasos, pads, notas, preescucha) hasta reanudar; el secuenciador y el compás siguen contando y el metrónomo suena | — |
 | Vista de ocupación | Enseña u oculta la rejilla de qué pista suena en cada paso (una fila por pista, Σ cuántas suenan y los pasos vacíos resaltados), de lo que toca el secuenciador; con el editor en su ventana, en la principal | — |
+| Piano roll | Enseña u oculta el piano roll de la pista seleccionada: notas (o cortes) en vertical y pasos en horizontal, con su duración, volumen, acordes, la escala de key() y las variaciones de every/chance; de lo que toca el secuenciador | — |
+| Editar en el piano roll | Cursor en el piano roll: flechas, Enter pone una nota, Supr la quita, +/- semitono, </> octava, ]/[ duración, ,/. mover, V/v volumen, d duplica, s o Shift-←→ selecciona, Espacio la oye, g rejilla, z/Z zoom, Esc sale; cada cambio se escribe en su token del código (un paso de deshacer) y carga | — |
+| Abrir el piano roll en su ventana | Lo saca a una terminal nueva ([roll] terminal o, si no, [editor] terminal), unida a esta por un socket privado; edita el mismo texto que el editor | — |
+| Volver a meter el piano roll en la principal | Cierra su ventana y lo enseña aquí | — |
 | Rellenar un hueco desde la vista de ocupación | Cursor en la vista de ocupación: ←→ paso, ↑↓ pista, Tab el hueco siguiente, Enter pone en ese silencio un golpe de la pista (el anterior, cambiable) escrito en su token del código y carga, Esc sale; un paso de deshacer | — |
 | Sugerir rellenos de huecos | Hasta 4 huecos de la página que se ve en la vista de ocupación y qué golpe de qué pista los rellenaría (que alterne con las de al lado, sin choque de frecuencia con ellas si hay análisis, y con sitio); solo texto, no escribe nada | — |
 | Congelar la pista seleccionada | Renderiza la pista tras sus efectos a congelado/<pista>.wav y la cambia por ese WAV (frozen() al final del script): ahorra CPU; el resto del texto no se toca y Ctrl-Z la devuelve | — |
@@ -1199,6 +1203,8 @@ paleta de 256.
 | `variante` | Alternar variante A/B | — |
 | `resaltado` | Resaltado en vivo | — |
 | `ocupacion` | Vista de ocupación | — |
+| `piano_roll` | Piano roll | — |
+| `editar_roll` | Editar en el piano roll | — |
 | `panico` | Pánico: silenciar todo lo que suena | `f12` |
 | `pausa_panico` | Pánico en pausa (otra vez: reanudar) | `shift-f12` |
 
@@ -1216,6 +1222,12 @@ paleta de 256.
 | `nivel` | medidores de nivel |
 | `hueco` | fondo de los pasos donde no suena nada en la vista de ocupación |
 | `sugerencia` | fondo de los huecos que se sugiere rellenar en la vista de ocupación |
+| `roll_tonica` | piano roll: fondo de las filas de la tónica (o de los do, sin `key()`) |
+| `roll_escala` | piano roll: fondo de las filas de las notas de la escala de `key()` |
+| `roll_fuera` | piano roll: notas fuera de la escala de `key()` |
+| `roll_variacion` | piano roll: variaciones de `every`, `chance` y `fill` (en cursiva) |
+| `roll_generado` | piano roll: lo generado (`euclid`, `rotate`, `mutate`, `shuffle`...), que no se edita |
+| `roll_seleccion` | piano roll: fondo de la selección |
 
 | En `[resaltado]` | Para | Por defecto |
 | --- | --- | --- |
@@ -1227,6 +1239,41 @@ paleta de 256.
 | En `[ocupacion]` | Para | Por defecto |
 | --- | --- | --- |
 | `visible` | enseñar la vista de ocupación al arrancar (`true`/`false`; la paleta la enseña y la oculta en vivo); sus colores, `hueco` y `sugerencia` en `[colores]` | `false` |
+
+| En `[roll]` | Para | Por defecto |
+| --- | --- | --- |
+| `visible` | enseñar el piano roll al arrancar (`true`/`false`; la paleta lo enseña y lo oculta en vivo) | `false` |
+| `zoom` | lo que es una columna: `"1/32"`, `"1/16"`, `"1/8"` o `"1/4"`; `"auto"`, el más detallado con el que cabe el ciclo entero (`z` y `Z` lo cambian a mano) | `"auto"` |
+| `rejilla` | a cuánto se mueven el cursor, las notas y los clics: `"1/16"`, `"1/8"`, `"1/4"`, `"1/2"` o `"1/1"` | `"1/16"` |
+| `ajustar` | la rejilla encendida al arrancar (`true`/`false`; `g` la cambia) | `true` |
+| `escuchar_al_insertar` | suena la nota al insertarla con el teclado (nunca con el ratón ni al mover) | `false` |
+| `terminal` | comando que abre una terminal nueva para el piano roll en su ventana; detrás va `tui --window-roll <script>` | la de `[editor] terminal` |
+
+| En `[roll.teclas]` | Orden | Por defecto |
+| --- | --- | --- |
+| `insertar` | pone una nota en el cursor (sobre otra del mismo paso, la añade al acorde) | `enter`, `i` |
+| `borrar` | quita la nota del cursor (de un acorde, solo esa) y sus `_` | `delete`, `backspace`, `x` |
+| `subir` | un semitono arriba la nota del cursor o la selección (en cortes: el corte siguiente) | `+`, `=` |
+| `bajar` | un semitono abajo (en cortes: el corte anterior) | `-` |
+| `octava_arriba` | una octava arriba (en cortes: `^` +12) | `>` |
+| `octava_abajo` | una octava abajo (en cortes: `^` -12) | `<` |
+| `alargar` | un paso más (`_`) | `]` |
+| `acortar` | un paso menos | `[` |
+| `antes` | mueve la nota o la selección antes, lo que diga la rejilla | `,` |
+| `despues` | mueve la nota o la selección después | `.` |
+| `mas_volumen` | `@` +0.1 | `V` |
+| `menos_volumen` | `@` -0.1 | `v` |
+| `duplicar` | copia la selección (o la nota) justo detrás, sobre silencios | `d` |
+| `seleccionar` | empieza o quita una selección de pasos en el cursor (también Shift y ←→) | `s` |
+| `rejilla` | enciende o apaga la rejilla (apagada, todo va de paso en paso) | `g` |
+| `tamano_rejilla` | la rejilla siguiente: 1/16, 1/8, 1/4, 1/2, 1/1 | `G` |
+| `acercar` | más detalle en el tiempo (hasta 1/32) | `z` |
+| `alejar` | menos detalle (hasta 1/4) | `Z` |
+| `ajustar` | vuelve a ajustar la vista a la tesitura de la pista | `f` |
+| `escuchar` | preescucha la nota del cursor (o la fila, en un hueco) | `space`, `p` |
+| `siguiente` | a la nota siguiente | `tab` |
+| `anterior` | a la nota anterior | `shift-tab` |
+| `salir` | suelta las teclas (el piano roll se sigue viendo) | `esc` |
 
 | En `[voces]` | Para | Por defecto |
 | --- | --- | --- |

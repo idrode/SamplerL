@@ -38,6 +38,7 @@ mod split;
 #[cfg(test)]
 pub use split::editor_command;
 mod occupancy;
+mod roll;
 mod tracker_edit;
 
 /// Plantilla para un script nuevo.
@@ -410,6 +411,8 @@ pub struct App {
     hushed: bool,
     /// Vista de ocupación por paso (ver `occupancy`).
     occupancy: occupancy::Occupancy,
+    /// El piano roll (ver `roll`).
+    roll: roll::RollState,
 }
 
 impl App {
@@ -522,7 +525,9 @@ impl App {
             highlight_delay_ms: 0.0,
             hushed: false,
             occupancy: Default::default(),
+            roll: Default::default(),
         };
+        app.apply_roll_config(&crate::config::RollConfig::default());
         app.reload_blocks();
         Ok(app)
     }
@@ -608,6 +613,7 @@ impl App {
         self.highlighting = config.highlight.enabled;
         self.highlight_delay_ms = config.highlight.delay_ms;
         self.set_occupancy(config.occupancy.visible);
+        self.apply_roll_config(&config.roll);
         if let Err(e) = self.controller.set_voice_limit(config.voices.limit) {
             self.message = format!("motor: {e}");
         }
@@ -3429,6 +3435,10 @@ impl App {
             Action::RefreshDevices => self.refresh_devices(),
             Action::DevicesWindow => self.launch_devices_window(),
             Action::DevicesBack => self.reclaim_devices_window(),
+            Action::PianoRoll => self.toggle_roll(),
+            Action::EditRoll => self.open_roll_cursor(),
+            Action::RollWindow => self.launch_roll_window(),
+            Action::RollBack => self.reclaim_roll_window(),
             Action::Quit => {
                 let armed = std::mem::replace(&mut self.quit_armed, false);
                 return self.request_quit(armed);
@@ -3779,6 +3789,7 @@ impl App {
     fn panic(&mut self, pause: bool) {
         // Las teclas tocadas se olvidan: sus note off ya no hacen falta.
         self.release_pads();
+        self.forget_roll_preview();
         let resuming = pause && self.hushed;
         let result = if resuming {
             self.controller.resume()
@@ -3936,6 +3947,13 @@ impl App {
             )
         {
             return self.handle_occupancy_cursor(input);
+        }
+        // Y con el piano roll al mando.
+        if self.roll.cursor.is_some()
+            && self.local_roll_view_shown()
+            && !matches!(bound, Some(Bound::Action(a)) if roll::passes_through(a))
+        {
+            return self.handle_roll(input);
         }
         // El modo vim: en Normal, las letras son órdenes.
         if self.mode == Mode::Edit
@@ -4164,6 +4182,7 @@ impl App {
         self.flush_midi();
         self.flush_expression();
         self.release_expired_pads(Instant::now());
+        self.tick_roll();
         self.watch_recording();
         let status = self.controller.status();
         self.cursors.observe(&status);
@@ -4672,6 +4691,7 @@ impl App {
             occupancy: None,
             occupancy_cursor: self.occupancy.cursor.map(|c| (c.row, c.col)),
             fill_suggestions: self.fill_suggestions(),
+            roll: self.local_roll_view(),
         };
         view.occupancy = self.occupancy_grid(&view);
         self.link_view(&mut view);

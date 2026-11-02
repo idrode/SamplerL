@@ -2552,6 +2552,7 @@ mod stretch;
 mod swap;
 mod tempo;
 mod tracker_edit;
+mod roll;
 mod tracker_rows;
 mod transport;
 mod variants;

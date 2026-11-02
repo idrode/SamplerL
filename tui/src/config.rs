@@ -91,6 +91,8 @@ pub const BINDABLE: &[(&str, Bound, &[&str])] = &[
     ("variante", Bound::Action(Action::ToggleVariant), &[]),
     ("resaltado", Bound::Action(Action::Highlight), &[]),
     ("ocupacion", Bound::Action(Action::Occupancy), &[]),
+    ("piano_roll", Bound::Action(Action::PianoRoll), &[]),
+    ("editar_roll", Bound::Action(Action::EditRoll), &[]),
     ("panico", Bound::Action(Action::Panic), &["f12"]),
     (
         "pausa_panico",
@@ -148,6 +150,85 @@ const OCCUPANCY_KEYS: &[(&str, &str, &str)] = &[(
     "enseñar la vista de ocupación al arrancar (`true`/`false`; la paleta la enseña y la oculta en vivo); sus colores, `hueco` y `sugerencia` en `[colores]`",
     "`false`",
 )];
+
+/// `[roll]`: el piano roll.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RollConfig {
+    /// Se ve al arrancar (`visible`).
+    pub visible: bool,
+    /// Zoom en el tiempo al abrirlo (`zoom`; `None`, `"auto"`: el más
+    /// detallado con el que cabe el ciclo).
+    pub zoom: Option<crate::roll_panel::Zoom>,
+    /// Pasos de la rejilla (`rejilla`: 1/16 es 1, 1/8 es 2...) y si está
+    /// encendida (`ajustar`).
+    pub snap: usize,
+    pub snap_on: bool,
+    /// Suena la nota al insertarla con el teclado (`escuchar_al_insertar`).
+    pub preview_on_insert: bool,
+    /// La terminal del piano roll en su ventana (`terminal`; si no, la de
+    /// `[editor]`).
+    pub terminal: Option<Vec<String>>,
+    /// `[roll.teclas]`.
+    pub keys: crate::roll_keys::RollKeys,
+}
+
+impl Default for RollConfig {
+    fn default() -> Self {
+        RollConfig {
+            visible: false,
+            zoom: None,
+            snap: 1,
+            snap_on: true,
+            preview_on_insert: false,
+            terminal: None,
+            keys: Default::default(),
+        }
+    }
+}
+
+/// Las rejillas del piano roll: nombre y pasos.
+pub const ROLL_SNAPS: &[(&str, usize)] = &[
+    ("1/16", 1),
+    ("1/8", 2),
+    ("1/4", 4),
+    ("1/2", 8),
+    ("1/1", 16),
+];
+
+/// Claves de `[roll]`, qué hacen y su valor por defecto (para la guía).
+#[cfg(test)]
+const ROLL_CONFIG_KEYS: &[(&str, &str, &str)] = &[
+    (
+        "visible",
+        "enseñar el piano roll al arrancar (`true`/`false`; la paleta lo enseña y lo oculta en vivo)",
+        "`false`",
+    ),
+    (
+        "zoom",
+        "lo que es una columna: `\"1/32\"`, `\"1/16\"`, `\"1/8\"` o `\"1/4\"`; `\"auto\"`, el más detallado con el que cabe el ciclo entero (`z` y `Z` lo cambian a mano)",
+        "`\"auto\"`",
+    ),
+    (
+        "rejilla",
+        "a cuánto se mueven el cursor, las notas y los clics: `\"1/16\"`, `\"1/8\"`, `\"1/4\"`, `\"1/2\"` o `\"1/1\"`",
+        "`\"1/16\"`",
+    ),
+    (
+        "ajustar",
+        "la rejilla encendida al arrancar (`true`/`false`; `g` la cambia)",
+        "`true`",
+    ),
+    (
+        "escuchar_al_insertar",
+        "suena la nota al insertarla con el teclado (nunca con el ratón ni al mover)",
+        "`false`",
+    ),
+    (
+        "terminal",
+        "comando que abre una terminal nueva para el piano roll en su ventana; detrás va `tui --window-roll <script>`",
+        "la de `[editor] terminal`",
+    ),
+];
 
 /// `[voces]`: cuántas voces suenan a la vez.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -565,6 +646,8 @@ pub struct Config {
     pub occupancy: OccupancyConfig,
     /// `[voces]`: el límite de voces a la vez.
     pub voices: VoicesConfig,
+    /// `[roll]` y `[roll.teclas]`: el piano roll.
+    pub roll: RollConfig,
     /// `[dispositivos]`: los elegidos la última vez.
     pub devices: crate::devices::Choice,
     /// `[dispositivos] terminal`: la terminal del panel de dispositivos en
@@ -758,6 +841,7 @@ impl Config {
                         }
                     }
                 }
+                "roll" => config.parse_roll(inner),
                 "voces" => {
                     for (key, value) in inner {
                         let limit = value
@@ -801,7 +885,7 @@ impl Config {
                     }
                 }
                 other => config.warnings.push(format!(
-                    "{name}: sección [{other}] desconocida (hay: teclas, colores, midi, editor, resaltado, ocupacion, voces, dispositivos)"
+                    "{name}: sección [{other}] desconocida (hay: teclas, colores, midi, editor, resaltado, ocupacion, roll, voces, dispositivos)"
                 )),
             }
         }
@@ -877,6 +961,79 @@ impl Config {
     }
 }
 
+impl Config {
+    /// `[roll]` y su `[roll.teclas]`.
+    fn parse_roll(&mut self, inner: &toml::Table) {
+        for (key, value) in inner {
+            match key.as_str() {
+                "visible" | "ajustar" | "escuchar_al_insertar" => match value.as_bool() {
+                    Some(on) => match key.as_str() {
+                        "visible" => self.roll.visible = on,
+                        "ajustar" => self.roll.snap_on = on,
+                        _ => self.roll.preview_on_insert = on,
+                    },
+                    None => self.warnings.push(format!("[roll] {key}: true o false")),
+                },
+                "zoom" => match value.as_str() {
+                    Some("auto") => self.roll.zoom = None,
+                    Some(name) if crate::roll_panel::Zoom::from_name(name).is_some() => {
+                        self.roll.zoom = crate::roll_panel::Zoom::from_name(name)
+                    }
+                    _ => self.warnings.push(
+                        "[roll] zoom: \"auto\", \"1/32\", \"1/16\", \"1/8\" o \"1/4\"".into(),
+                    ),
+                },
+                "rejilla" => {
+                    let steps = value
+                        .as_str()
+                        .and_then(|v| ROLL_SNAPS.iter().find(|(n, _)| *n == v))
+                        .map(|(_, s)| *s);
+                    match steps {
+                        Some(steps) => self.roll.snap = steps,
+                        None => self.warnings.push(
+                            "[roll] rejilla: \"1/16\", \"1/8\", \"1/4\", \"1/2\" o \"1/1\"".into(),
+                        ),
+                    }
+                }
+                "terminal" => match terminal_words(value) {
+                    Some(words) => self.roll.terminal = Some(words),
+                    None => self.warnings.push(
+                        "[roll] terminal: un comando, como \"kitty --class sampler-roll -e\" o una lista de palabras".into(),
+                    ),
+                },
+                "teclas" => {
+                    let Some(table) = value.as_table() else {
+                        self.warnings
+                            .push("[roll.teclas]: una tabla de orden = tecla".into());
+                        continue;
+                    };
+                    for (name, keys) in table {
+                        let keys: Option<Vec<String>> = match keys {
+                            toml::Value::String(k) => Some(vec![k.clone()]),
+                            toml::Value::Array(list) => {
+                                list.iter().map(|v| v.as_str().map(String::from)).collect()
+                            }
+                            _ => None,
+                        };
+                        let result = match keys {
+                            Some(keys) => self.roll.keys.set(name, &keys),
+                            None => Err(format!(
+                                "[roll.teclas] {name}: una tecla o una lista de teclas"
+                            )),
+                        };
+                        if let Err(e) = result {
+                            self.warnings.push(e);
+                        }
+                    }
+                }
+                _ => self.warnings.push(format!(
+                    "[roll] «{key}» no existe (hay: visible, zoom, rejilla, ajustar, escuchar_al_insertar, terminal, teclas; los colores, roll_* en [colores])"
+                )),
+            }
+        }
+    }
+}
+
 /// Marcas de la tabla de la configuración en la guía.
 #[cfg(test)]
 const GUIDE_BEGIN: &str = "<!-- config:inicio (generado desde tui/src/config.rs) -->";
@@ -914,6 +1071,15 @@ fn guide_markdown() -> String {
     out.push_str("\n| En `[ocupacion]` | Para | Por defecto |\n| --- | --- | --- |\n");
     for (name, what, default) in OCCUPANCY_KEYS {
         out.push_str(&format!("| `{name}` | {what} | {default} |\n"));
+    }
+    out.push_str("\n| En `[roll]` | Para | Por defecto |\n| --- | --- | --- |\n");
+    for (name, what, default) in ROLL_CONFIG_KEYS {
+        out.push_str(&format!("| `{name}` | {what} | {default} |\n"));
+    }
+    out.push_str("\n| En `[roll.teclas]` | Orden | Por defecto |\n| --- | --- | --- |\n");
+    for (name, _, keys, what) in crate::roll_keys::ROLL_KEYS {
+        let keys: Vec<String> = keys.iter().map(|k| format!("`{k}`")).collect();
+        out.push_str(&format!("| `{name}` | {what} | {} |\n", keys.join(", ")));
     }
     out.push_str("\n| En `[voces]` | Para | Por defecto |\n| --- | --- | --- |\n");
     for (name, what, default) in VOICES_KEYS {
@@ -1168,6 +1334,39 @@ mod tests {
     }
 
     #[test]
+    fn the_roll_section_and_its_keys() {
+        let config = Config::parse(
+            "[roll]\nvisible = true\nzoom = \"1/8\"\nrejilla = \"1/4\"\najustar = false\n\
+             escuchar_al_insertar = true\nterminal = \"foot -e\"\n\
+             [roll.teclas]\ninsertar = \"n\"\nborrar = [\"x\", \"delete\"]\n\
+             [colores]\nroll_fuera = \"red\"\n",
+            false,
+            "config.toml",
+        );
+        assert!(config.warnings.is_empty(), "{:?}", config.warnings);
+        let roll = &config.roll;
+        assert!(roll.visible && !roll.snap_on && roll.preview_on_insert);
+        assert_eq!(roll.zoom, Some(crate::roll_panel::Zoom::Z8));
+        assert_eq!(roll.snap, 4);
+        assert_eq!(roll.terminal.as_deref(), Some(&["foot".to_string(), "-e".into()][..]));
+        let n = Input {
+            key: Key::Char('n'),
+            ..Input::default()
+        };
+        assert_eq!(roll.keys.lookup(&n), Some(crate::roll_keys::RollOp::Insert));
+        assert_eq!(config.theme.roll_outside, Color::Red);
+        // Lo que no vale, avisado; lo demás, por defecto.
+        let config = Config::parse(
+            "[roll]\nzoom = \"1/3\"\nrejilla = 2\nvolar = 1\n[roll.teclas]\nvolar = \"q\"\n",
+            false,
+            "config.toml",
+        );
+        assert_eq!(config.warnings.len(), 4, "{:?}", config.warnings);
+        assert_eq!(config.roll.zoom, None);
+        assert_eq!(config.roll.snap, 1);
+    }
+
+    #[test]
     fn the_devices_section_names_them() {
         let config = Config::parse(
             "[dispositivos]\naudio = \"Auriculares USB\"\nmidi_entrada = \"Seaboard:Seaboard MIDI 1\"\n\
@@ -1412,11 +1611,11 @@ brillo = "red"
             [
                 "[teclas] cargar: F1 es siempre la paleta de comandos",
                 "[teclas] explorador: Alt-S ya es de guardar; no se usa",
-                "[teclas] «inventada» no existe (hay: paleta, guardar, cargar, marcha, cue, ir_al_error, ir_a_linea, buscar, buscar_siguiente, buscar_anterior, siguiente_pista, recargar, ordenes, completar, salir, modo_tocar, deshacer, rehacer, explorador, tap_tempo, macros, metronomo, exportar, seccion_siguiente, seccion_anterior, repetir_seccion, variante, resaltado, ocupacion, panico, pausa_panico)",
+                "[teclas] «inventada» no existe (hay: paleta, guardar, cargar, marcha, cue, ir_al_error, ir_a_linea, buscar, buscar_siguiente, buscar_anterior, siguiente_pista, recargar, ordenes, completar, salir, modo_tocar, deshacer, rehacer, explorador, tap_tempo, macros, metronomo, exportar, seccion_siguiente, seccion_anterior, repetir_seccion, variante, resaltado, ocupacion, piano_roll, editar_roll, panico, pausa_panico)",
                 "[teclas] salir: «q»: una letra sin ctrl- ni alt- escribiría texto",
                 "[teclas] Ctrl-G era de ir_al_error; ahora es de marcha",
                 "[colores] tenue: color no válido",
-                "[colores] «brillo» no existe (hay: acento, tenue, error, linea_error, aviso_pasos, aviso, onda, cortes, sonando, nivel, hueco, sugerencia)",
+                "[colores] «brillo» no existe (hay: acento, tenue, error, linea_error, aviso_pasos, aviso, onda, cortes, sonando, nivel, hueco, sugerencia, roll_tonica, roll_escala, roll_fuera, roll_variacion, roll_generado, roll_seleccion)",
             ]
         );
         assert_eq!(config.theme.accent, Color::Rgb(0xff, 0x87, 0x00));

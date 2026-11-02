@@ -36,6 +36,9 @@ pub enum MouseAction {
     ScrollDown,
     ScrollLeft,
     ScrollRight,
+    /// Ctrl y la rueda (el zoom del piano roll).
+    ZoomIn,
+    ZoomOut,
 }
 
 /// Líneas que mueve cada paso de la rueda.
@@ -77,6 +80,12 @@ impl App {
         if action == MouseAction::Down {
             self.slice_drag = None;
         }
+        // El piano roll, si se ve aquí y el ratón está encima (o arrastra).
+        if let Some(area) = self.roll.area.filter(|_| self.local_roll_view_shown())
+            && self.roll_mouse(action, column, row, area)
+        {
+            return;
+        }
         if self.slice_drag.is_some() || self.on_sample(action, column, row) {
             self.mouse_sample(action, column);
             return;
@@ -89,7 +98,11 @@ impl App {
             return;
         };
         match action {
-            MouseAction::RightDown | MouseAction::ScrollLeft | MouseAction::ScrollRight => {}
+            MouseAction::RightDown
+            | MouseAction::ScrollLeft
+            | MouseAction::ScrollRight
+            | MouseAction::ZoomIn
+            | MouseAction::ZoomOut => {}
             MouseAction::ScrollUp | MouseAction::ScrollDown => {
                 let inside = area.contains(ratatui::layout::Position::new(column, row));
                 if inside {
@@ -200,6 +213,7 @@ impl App {
             MouseAction::ScrollLeft | MouseAction::ScrollRight => {
                 self.pan_wave(action == MouseAction::ScrollRight);
             }
+            MouseAction::ZoomIn | MouseAction::ZoomOut => {}
             MouseAction::Drag => {
                 let Some(area) = self.sample_area else { return };
                 let frames = self.shown_frames().len();

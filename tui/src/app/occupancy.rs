@@ -175,6 +175,7 @@ impl App {
         self.set_occupancy(true);
         self.tracker_edit = None;
         self.pending_edit = None;
+        self.roll.cursor = None;
         let Some(grid) = self.current_grid().filter(|g| !g.rows.is_empty()) else {
             self.message = "no hay pistas en la vista de ocupación".into();
             return;
