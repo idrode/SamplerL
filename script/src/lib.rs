@@ -348,6 +348,10 @@ pub struct TrackDef {
     /// vuelta del ciclo (como `bars`); `None` donde no se sabe (un patrón
     /// generado con `euclid`, `rotate`...). Ver [`TrackDef::sounding_span`].
     pub spans: Vec<Vec<Option<TokenSpan>>>,
+    /// Por vuelta del ciclo (como `spans`): si su texto es de `melody()`
+    /// (notas por su nombre o grados) y no de `steps()`. Lo usa el piano
+    /// roll para escribir cada paso como está escrito.
+    pub melody: Vec<bool>,
     /// Congelada (`frozen()`): suena su WAV en vez de lo que dice el script.
     pub frozen: Option<FrozenDef>,
 }
@@ -3026,6 +3030,7 @@ fn track_source(lua: &Lua, name: &str, source: &AnyUserData) -> mlua::Result<Tra
         slice_fx: Vec::new(),
         tag: 0,
         spans: Vec::new(),
+        melody: Vec::new(),
         frozen: None,
     };
     if let Ok(source) = source.borrow::<SlicedHandle>() {
@@ -3049,6 +3054,7 @@ fn track_source(lua: &Lua, name: &str, source: &AnyUserData) -> mlua::Result<Tra
             transforms: Vec::new(),
             steps_set: false,
             written: Vec::new(),
+            written_melody: false,
             steps_at: String::new(),
             melodic: Rc::default(),
         });
@@ -3074,6 +3080,7 @@ fn track_source(lua: &Lua, name: &str, source: &AnyUserData) -> mlua::Result<Tra
             transforms: Vec::new(),
             steps_set: false,
             written: Vec::new(),
+            written_melody: false,
             steps_at: String::new(),
             melodic: Rc::default(),
         });
@@ -3105,6 +3112,7 @@ fn track_source(lua: &Lua, name: &str, source: &AnyUserData) -> mlua::Result<Tra
             transforms: Vec::new(),
             steps_set: false,
             written: Vec::new(),
+            written_melody: false,
             steps_at: String::new(),
             melodic: Rc::default(),
         });
@@ -3245,6 +3253,8 @@ struct TrackBuild {
     steps_set: bool,
     /// Dónde está escrito cada paso de `:steps()` (ver [`written`]).
     written: Vec<Option<TokenSpan>>,
+    /// Ese texto es de `:melody()` (y no de `:steps()`).
+    written_melody: bool,
     /// Archivo y línea del último `:steps()` (`song.lua:3: `): para los
     /// errores que solo se ven al acabar el script (los efectos de un paso
     /// que no caben con los de su corte, si el corte los recibe después).
@@ -3344,6 +3354,7 @@ fn expand(track: TrackBuild, rng: &mut Rng, timing: Timing) -> Result<TrackDef, 
         transforms,
         steps_set: _,
         written,
+        written_melody,
         steps_at,
         melodic,
     } = track;
@@ -3379,9 +3390,11 @@ fn expand(track: TrackBuild, rng: &mut Rng, timing: Timing) -> Result<TrackDef, 
 
     let mut bars = Vec::with_capacity(cycle as usize);
     let mut spans = Vec::with_capacity(cycle as usize);
+    let mut melody = Vec::with_capacity(cycle as usize);
     for b in 0..cycle {
         let mut steps = def.steps.clone();
         let mut lap_spans = written.clone();
+        let mut lap_melody = written_melody;
         for transform in &transforms {
             match transform {
                 Transform::Every { n, func } if b % n == 0 => {
@@ -3397,12 +3410,18 @@ fn expand(track: TrackBuild, rng: &mut Rng, timing: Timing) -> Result<TrackDef, 
                         melodic: melodic.clone(),
                         plays: Plays::of(&def),
                         written: Rc::new(RefCell::new(lap_spans.clone())),
+                        written_melody: Rc::new(Cell::new(lap_melody)),
                     };
-                    let (shared, shared_spans) = (bar.steps.clone(), bar.written.clone());
+                    let (shared, shared_spans, shared_melody) = (
+                        bar.steps.clone(),
+                        bar.written.clone(),
+                        bar.written_melody.clone(),
+                    );
                     func.call::<()>(bar)
                         .map_err(|e| ScriptError::from_lua(&e))?;
                     steps = shared.borrow().clone();
                     lap_spans = shared_spans.borrow().clone();
+                    lap_melody = shared_melody.get();
                 }
                 Transform::Every { .. } => {}
                 Transform::Fill {
@@ -3424,6 +3443,7 @@ fn expand(track: TrackBuild, rng: &mut Rng, timing: Timing) -> Result<TrackDef, 
         }
         bars.push(steps);
         spans.push(lap_spans);
+        melody.push(lap_melody);
     }
     // Swing: los contratiempos de semicorchea de la canción (pasos 2, 4,
     // 6... desde 1 en cada compás) se retrasan.
@@ -3475,6 +3495,7 @@ fn expand(track: TrackBuild, rng: &mut Rng, timing: Timing) -> Result<TrackDef, 
     }
     def.bars = bars;
     def.spans = spans;
+    def.melody = melody;
     step_fx_fit(&def).map_err(|e| ScriptError::new(format!("{steps_at}steps: {e}")))?;
     Ok(def)
 }
@@ -6139,6 +6160,7 @@ impl UserData for TrackHandle {
         // `:steps("1 . 3' ...")`: patrón base en mini-notación.
         methods.add_method("steps", |lua, this, text: String| {
             this.set_steps(lua, &text, &text)?;
+            this.with_track(|t| t.written_melody = false);
             Ok(this.clone())
         });
 
@@ -6156,7 +6178,10 @@ impl UserData for TrackHandle {
                 }
             }
             this.set_steps(lua, &steps, &text)?;
-            this.with_track(|t| t.melodic.set(true));
+            this.with_track(|t| {
+                t.melodic.set(true);
+                t.written_melody = true;
+            });
             Ok(this.clone())
         });
 
@@ -6571,6 +6596,8 @@ struct BarHandle {
     /// Dónde está escrito cada paso de esta vuelta: el de la pista hasta
     /// que un `:steps()` lo sustituye.
     written: Rc<RefCell<Vec<Option<TokenSpan>>>>,
+    /// Ese texto es de `melody()`.
+    written_melody: Rc<Cell<bool>>,
 }
 
 impl BarHandle {
@@ -6593,6 +6620,7 @@ impl BarHandle {
             melodic: self.melodic.clone(),
             plays: self.plays,
             written: self.written.clone(),
+            written_melody: self.written_melody.clone(),
         }
     }
 
@@ -6621,6 +6649,7 @@ impl UserData for BarHandle {
         // Sustituye los pasos de este compás.
         methods.add_method("steps", |lua, this, text: String| {
             this.set_steps(lua, &text, &text)?;
+            this.written_melody.set(false);
             Ok(this.handle())
         });
         // Sustituye los pasos por notas (como `pista:melody`).
@@ -6628,6 +6657,7 @@ impl UserData for BarHandle {
             let steps = patterns::notes(&text, this.root, this.key).map_err(|e| fail(lua, e))?;
             this.set_steps(lua, &steps, &text)?;
             this.melodic.set(true);
+            this.written_melody.set(true);
             Ok(this.handle())
         });
         // Invierte el sentido de cada golpe del compás.

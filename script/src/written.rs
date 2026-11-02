@@ -10,7 +10,8 @@ use mlua::Lua;
 
 /// Dónde está escrito un paso: fila (desde 0) y columnas en caracteres
 /// (`start..end`) del texto cargado.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// Se ordenan por fila y columna.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TokenSpan {
     pub row: usize,
     pub start: usize,
