@@ -27,8 +27,9 @@ use ratatui_textarea::{Input, Key};
 /// dispositivos en su ventana, en su propio socket: [`ToDevices`] y
 /// [`FromDevices`]; la 5, la línea de los mandos MIDI en la vista del panel
 /// de dispositivos; la 6, el piano roll en su ventana, en su propio socket:
-/// [`ToRoll`] y [`FromRoll`]).
-pub const VERSION: u32 = 7;
+/// [`ToRoll`] y [`FromRoll`]; la 8, en `estado`, la variante, la grabación
+/// y el nivel del master para la cabecera de la ventana del editor).
+pub const VERSION: u32 = 8;
 
 /// Lo que se deja pendiente de escribir antes de dar el otro extremo por
 /// perdido (no lee).
@@ -151,6 +152,12 @@ pub struct RemoteState {
     pub slice: usize,
     /// El cue como se ve (vacío: no hay).
     pub cue: String,
+    /// La variante A/B (vacío: ninguna), lo que se graba como se ve
+    /// (vacío: nada) y el nivel del master en dB enteros (`None`: silencio),
+    /// para la cabecera.
+    pub variant: String,
+    pub recording: String,
+    pub master_db: Option<i32>,
 }
 
 /// Del panel de dispositivos (en su ventana) a la principal.
@@ -447,6 +454,9 @@ impl Message for ToEditor {
                     &s.track,
                     &s.slice.to_string(),
                     &s.cue,
+                    &s.variant,
+                    &s.recording,
+                    &s.master_db.map_or(String::new(), |db| db.to_string()),
                 ],
             ),
             ToEditor::Labels(labels) => {
@@ -522,8 +532,11 @@ impl Message for ToEditor {
                     },
                     track: field(&f, 4, v)?.into(),
                     slice: number(field(&f, 5, v)?, v)?,
-                    // (Una principal de antes no lo manda.)
+                    // (Una principal de antes no los manda.)
                     cue: f.get(6).cloned().unwrap_or_default(),
+                    variant: f.get(7).cloned().unwrap_or_default(),
+                    recording: f.get(8).cloned().unwrap_or_default(),
+                    master_db: f.get(9).and_then(|db| db.parse().ok()),
                 })
             }
             "etiquetas" => ToEditor::Labels(f),
@@ -1336,6 +1349,9 @@ mod tests {
             track: "drums".into(),
             slice: 3,
             cue: "drop (entrada 2)".into(),
+            variant: "B".into(),
+            recording: "REC drums 1/2".into(),
+            master_db: Some(-6),
         }));
         roundtrip(ToEditor::State(RemoteState::default()));
         roundtrip(ToEditor::Labels(vec!["kick".into(), "caja\tgorda".into()]));

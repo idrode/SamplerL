@@ -325,6 +325,31 @@ fn dock(area: Rect, tabs: Vec<Tab>) -> Option<Dock> {
     Some(Dock { area, tabs })
 }
 
+impl Grid {
+    /// Sin nada colocado (cada ventana pone lo suyo).
+    pub fn empty(screen: Rect) -> Grid {
+        Grid {
+            screen,
+            size: Size::of(screen.width, screen.height),
+            menu: None,
+            header: None,
+            ruler: None,
+            editor: None,
+            wave: None,
+            tracker: None,
+            mixer: None,
+            fx: None,
+            lanes: None,
+            scope: None,
+            spectrum: None,
+            reference: None,
+            dock: None,
+            message: None,
+            keys: None,
+        }
+    }
+}
+
 /// La rejilla para una terminal de `screen` con `needs`.
 pub fn grid(screen: Rect, needs: &Needs) -> Grid {
     let size = Size::of(screen.width, screen.height);

@@ -273,24 +273,44 @@ impl Widget for ClashPanel<'_> {
     }
 }
 
-/// Dibuja el editor en su propia ventana (`tui --window-editor`): el
-/// editor entero, la línea del enlace con la principal y la de ayuda.
+/// Dibuja el editor en su propia ventana (`tui --window-editor`): con
+/// alto, la barra de menús y la cabecera con lo que suena en la principal
+/// arriba; el editor; las visualizaciones de su panel (las dibuja la
+/// principal); la línea del enlace; y el mensaje y las teclas (en una sola
+/// línea si no hay alto).
 pub fn draw_editor_window(frame: &mut Frame, app: &mut App) {
     let view = app.view();
-    // Las visualizaciones de su panel (las dibuja la principal), abajo.
+    let screen = frame.area();
+    let roomy = screen.height >= 20;
     let stacked = stacked_viz(&view);
-    let viz_height = crate::viz::total_height(&stacked).min(frame.area().height / 2);
-    let [main, viz, link, help] = Layout::vertical([
+    let viz_height = crate::viz::total_height(&stacked).min(screen.height / 2);
+    let [menu, header, main, viz, link, message, help] = Layout::vertical([
+        Constraint::Length(u16::from(roomy)),
+        Constraint::Length(u16::from(screen.height >= 12)),
         Constraint::Min(3),
         Constraint::Length(viz_height),
         Constraint::Length(1),
+        Constraint::Length(u16::from(roomy)),
         Constraint::Length(1),
     ])
-    .areas(frame.area());
+    .areas(screen);
+    let mut grid = crate::layout::Grid::empty(screen);
+    if menu.height > 0 {
+        grid.menu = Some(menu);
+        crate::menu::MenuBar {
+            open: view.menu.as_ref().map(|m| m.open),
+            hint: "F10 menú · F1 paleta ",
+        }
+        .render(menu, frame.buffer_mut());
+    }
+    if header.height > 0 {
+        crate::screen::Header(&view).render(header, frame.buffer_mut());
+    }
     if !stacked.is_empty() {
         frame.render_widget(crate::viz::VizPanels(&stacked), viz);
     }
     let popup = draw_editor(frame, app, &view, main);
+    grid.editor = Some(main);
     let text = view.link.clone().unwrap_or_default();
     let color = if text.starts_with('✗') {
         warning_color()
@@ -298,8 +318,30 @@ pub fn draw_editor_window(frame: &mut Frame, app: &mut App) {
         accent()
     };
     frame.render_widget(Line::from(text).fg(color), link);
-    frame.render_widget(HelpLine(&view), help);
+    if roomy {
+        frame.render_widget(crate::screen::MessageLine(&view), message);
+        frame.render_widget(crate::screen::KeysLine(&view), help);
+    } else {
+        frame.render_widget(HelpLine(&view), help);
+    }
     draw_popups(frame, &view, popup);
+    if let Some(open) = &view.menu {
+        let bar = grid.menu.unwrap_or(Rect {
+            height: 1,
+            ..screen
+        });
+        crate::menu::MenuBar {
+            open: Some(open.open),
+            hint: "F10 menú · F1 paleta ",
+        }
+        .render(bar, frame.buffer_mut());
+        let area = crate::menu::dropdown_area(screen, bar, open);
+        frame.render_widget(crate::menu::Dropdown(open), area);
+    }
+    app.set_grid(grid);
+    if crate::theme::ascii() {
+        crate::screen::to_ascii(frame.buffer_mut());
+    }
 }
 
 /// Lo que se abre encima de los paneles.

@@ -637,6 +637,11 @@ impl App {
                 .map_or(String::new(), |t| t.name.clone()),
             slice: self.selected_slice + 1,
             cue: self.cue.map_or(String::new(), |bar| self.cue_text(bar)),
+            variant: self.host.variant().map_or(String::new(), |c| c.to_string()),
+            recording: self.recording_text().unwrap_or_default(),
+            // En dB enteros: así no se manda en cada vuelta.
+            master_db: (self.master_meter > 0.0)
+                .then(|| (20.0 * self.master_meter.log10()).round() as i32),
         });
         let Some(Link::Main(main)) = &mut self.link else {
             return;
@@ -1130,6 +1135,9 @@ impl App {
                         ..Default::default()
                     };
                     view.cue = (!s.cue.is_empty()).then(|| s.cue.clone());
+                    view.variant = s.variant.chars().next();
+                    view.recording = (!s.recording.is_empty()).then(|| s.recording.clone());
+                    view.master.level = s.master_db.map_or(0.0, |db| 10f32.powf(db as f32 / 20.0));
                 }
             }
         }

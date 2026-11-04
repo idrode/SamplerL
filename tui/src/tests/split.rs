@@ -673,3 +673,68 @@ fn pantalla_ventanas() {
     println!("{}", text(&draw(&mut main, 120, 40)));
     println!("{}", text(&ui_editor(&mut editor, 80, 16)));
 }
+
+#[test]
+fn the_editor_window_has_the_menus_and_a_header_with_the_main_state() {
+    use super::f;
+    use ratatui_textarea::{Input, Key};
+    let path = fixture("split_menus", Some(SONG));
+    let (mut main, mut engine) = main_window(&path, None);
+    let (mut editor, _idle) = editor_window(&path);
+    pump(&mut main, &mut editor);
+    offline::render(&mut engine, 3 * STEP + 100, 2);
+    pump_until(&mut main, &mut editor, |_, e| {
+        link_line(e).contains("compás 0 paso 03")
+    });
+    // Con alto: menús, cabecera (lo que suena en la principal, con su
+    // master), el editor y abajo el mensaje y las teclas.
+    let screen = text(&ui_editor(&mut editor, 100, 30));
+    let lines: Vec<&str> = screen.lines().collect();
+    assert!(lines[0].starts_with(" Archivo   Editar"), "{screen}");
+    assert!(
+        lines[1].starts_with("▶ en marcha   120.0 BPM   compás 0   paso 03"),
+        "{screen}"
+    );
+    assert!(lines[1].contains("master"), "{screen}");
+    assert!(lines[29].starts_with("EDITOR"), "{screen}");
+    // Sin alto, como antes: el editor, el enlace y una línea de ayuda.
+    let screen = text(&ui_editor(&mut editor, 80, 10));
+    assert!(!screen.contains("Archivo"), "{screen}");
+    assert!(screen.contains("⇄ principal"), "{screen}");
+    // Un menú aquí: lo que es de la principal va a la principal.
+    let running = main.view().transport.running;
+    editor.handle(f(10));
+    editor.handle(Input {
+        key: Key::Char('t'),
+        alt: true,
+        ..Input::default()
+    });
+    let screen = text(&ui_editor(&mut editor, 100, 30));
+    assert!(screen.contains("Marcha / paro"), "{screen}");
+    let items = editor.view().menu.unwrap().items;
+    let at = items
+        .iter()
+        .position(|i| i.name == "Marcha / paro")
+        .unwrap();
+    for _ in 0..at {
+        editor.handle(Input {
+            key: Key::Down,
+            ..Input::default()
+        });
+    }
+    editor.handle(Input {
+        key: Key::Enter,
+        ..Input::default()
+    });
+    // La principal la recibe; el motor la hace al procesar el audio.
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while main.view().transport.running == running {
+        assert!(
+            Instant::now() < deadline,
+            "la marcha no cambió en la principal"
+        );
+        pump(&mut main, &mut editor);
+        offline::render(&mut engine, STEP, 2);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}

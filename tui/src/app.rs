@@ -4313,6 +4313,22 @@ impl App {
         }
     }
 
+    /// Lo que se graba, como se ve en la cabecera (`REC drums 1/2`).
+    pub(super) fn recording_text(&self) -> Option<String> {
+        self.recording
+            .as_ref()
+            .map(|rec| match self.controller.position() {
+                Some(p) if rec.waiting(p) => format!("REC {}: al compás", rec.track),
+                Some(p) => format!(
+                    "REC {} {}/{}",
+                    rec.track,
+                    rec.bar(p),
+                    rec.steps / self.status.map_or(engine::STEPS, |s| s.bar_steps.max(1))
+                ),
+                None => format!("REC {}", rec.track),
+            })
+    }
+
     /// La rejilla con la que se dibujó el último cuadro (la pone el
     /// dibujo).
     pub fn set_grid(&mut self, grid: crate::layout::Grid) {
@@ -4608,7 +4624,7 @@ impl App {
             playing_mode: self.mode == Mode::Play,
             focus: self.focus(),
             dock_tab: self.dock_tab,
-            menu_bar: !self.editor_window(),
+            menu_bar: true,
             menu: self.menu_view(),
             master_viz: !self.editor_window(),
             master_views: self.master_views(),
@@ -4831,21 +4847,7 @@ impl App {
             message: self.message.clone(),
             transport,
             metronome: self.metronome,
-            recording: self
-                .recording
-                .as_ref()
-                .map(|rec| match self.controller.position() {
-                    Some(p) if rec.waiting(p) => {
-                        format!("REC {}: al compás", rec.track)
-                    }
-                    Some(p) => format!(
-                        "REC {} {}/{}",
-                        rec.track,
-                        rec.bar(p),
-                        rec.steps / status.map_or(engine::STEPS, |s| s.bar_steps.max(1))
-                    ),
-                    None => format!("REC {}", rec.track),
-                }),
+            recording: self.recording_text(),
             tracks,
             selected,
             selected_slice,
