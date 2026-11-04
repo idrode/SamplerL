@@ -57,6 +57,10 @@ la sección 4 (con sus parámetros, rangos y un ejemplo cada una).
   notas (`cortes:instrument(i)`, con la raíz de su tono) y deformarlo
   (`bend`, `rev`, `warp`, `smear`, `formant`); ver
   [Editar un corte](#editar-un-corte-duraciones-notas-y-deformaciones).
+- Lanes de automatización: una curva de puntos con su propia duración en
+  cualquier parámetro que admita curvas (`pista:auto`), que se ve, se
+  dibuja con el ratón y se graba tocando un mando; ver
+  [Automatizar con lanes](#automatizar-con-lanes).
 
 **Secuenciar** (sección 3 y sección 4)
 - Pasos con la mini-notación: reverse, pitch con duración (`^`) o sin ella
@@ -823,7 +827,7 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Volver a meter el panel de dispositivos en la principal | Con el panel de dispositivos en su ventana: la cierra y lo abre aquí | — |
 | Modo vim | Enciende o apaga el modo vim del editor en esta sesión (el de siempre, `[editor] modo`) | — |
 | Salir | Sale (pide confirmación si hay cambios sin guardar) | Ctrl-Q |
-| Snippet: `amen`, `fill`, `ghost`, `intro`, `euclid`, `melodia`, `polirritmo`, `barrido`, `groove`, `instrumento`, `duraciones`, `corte-melodia`, `bombo-bend`, `warp` | Inserta el snippet en el cursor (ver «Snippets» en la sección 4) | — |
+| Snippet: `amen`, `fill`, `ghost`, `intro`, `euclid`, `melodia`, `polirritmo`, `barrido`, `groove`, `instrumento`, `duraciones`, `corte-melodia`, `bombo-bend`, `warp`, `lane-barrido`, `lane-pan` | Inserta el snippet en el cursor (ver «Snippets» en la sección 4) | — |
 
 <!-- paleta:fin -->
 
@@ -3730,6 +3734,8 @@ Trozos de script con campos para rellenar. Se insertan desde el autocompletado (
 | `corte-melodia` | Un corte tocado a varias notas: su tono es la raíz (con un golpe de batería, pon root). |
 | `bombo-bend` | Un bombo que cae de tono en cada golpe (bend) y otro corte al revés. |
 | `warp` | Un corte que empieza despacio y acelera (warp) y otro difuminado con granos (smear). |
+| `lane-barrido` | Un barrido de filtro dibujado como lane, con su propia duración (polirritmo con el patrón). |
+| `lane-pan` | El pan de una pista yendo y viniendo, suave, como lane. |
 
 `amen`:
 
@@ -3858,6 +3864,25 @@ amen:set(8, { rev = true })
 local amen = sample("amen.wav"):slice(8)
 amen:set(3, { warp = 0.3 })
 amen:set(7, { smear = 0.4 })
+```
+
+`lane-barrido` (las primeras líneas son lo que necesita tener antes):
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+track("drums")
+  :fx("lowpass", { cutoff = 3000 })
+  :auto("cutoff", { {0, 200, "exp"}, {3, 9000, "exp"}, {4, 200} }, { len = "4 compases" })
+```
+
+`lane-pan` (las primeras líneas son lo que necesita tener antes):
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+track("drums")
+  :auto("pan", { {0, -0.7, "smooth"}, {1, 0.7, "smooth"}, {2, -0.7} }, { len = 2 })
 ```
 
 <!-- api:fin -->
@@ -4488,6 +4513,87 @@ group("bateria", { "kick", "caja", "hats" })
   :fx("distortion", { drive = 2, mix = 0.3 })
   :send("reverb", 0.1)
 ```
+
+### Automatizar con lanes
+
+Una lane es una curva de puntos que lleva un parámetro a lo largo de la
+pista, como la envolvente dibujada de un DAW, con su propia duración.
+
+**1. Un barrido que no coincide con el patrón.** `pista:auto(parámetro,
+puntos, opciones)`: cada punto es `{posición en compases, valor [,
+curva]}`, y la curva (`"linear"`, `"exp"`, `"smooth"`, `"step"`) dice cómo
+va hacia el siguiente. Para frecuencias, `"exp"`. La lane dura `len`, sea
+cual sea el patrón.
+
+```lua
+-- 21-lane-barrido.lua
+bpm(170)
+local amen = sample("amen.wav"):slice(8)
+-- Un patrón de 3 compases y un barrido de 4 que se repite: cada vuelta
+-- del barrido cae en otro sitio del patrón (polirritmo de automatización).
+track("drums", amen)
+  :length(48)
+  :steps(string.rep("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .  ", 3))
+  :fx("lowpass", { cutoff = 3000, q = 2 })
+  :auto("cutoff", { {0, 200, "exp"}, {3, 9000, "exp"}, {4, 200} }, { len = "4 compases" })
+```
+
+**2. Pan suave y saltos sin clics.** Una lane vale en cualquier parámetro
+que admita curvas: los de los efectos (`"cutoff"`, o `"highpass.cutoff"`
+y `"2.cutoff"` para elegir efecto), `"gain"`, `"pan"`, `"send.reverb"`,
+`"pitch"`, los del sintetizador y los de la forma de los cortes. Un
+nombre de varios sitios va al primero y lo avisa. Los saltos (`"step"`)
+se suavizan en 5 ms.
+
+```lua
+-- 22-lane-pan-y-saltos.lua
+bpm(170)
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen)
+  :steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+  -- El pan va y viene, suave, en 2 compases.
+  :auto("pan", { {0, -0.7, "smooth"}, {1, 0.7, "smooth"}, {2, -0.7} }, { len = 2 })
+  -- El volumen salta cada negra: el suavizado de 5 ms evita los clics.
+  :auto("gain", { {0, 0.3, "step"}, {0.25, 1, "step"}, {0.5, 0.5, "step"}, {0.75, 1, "step"} }, { len = 1 })
+```
+
+**3. Una vez, o hasta quedarse.** `mode = "once"` pasa una vez (desde
+`offset`) y luego el parámetro vuelve a su valor fijo; `"hold"` se queda
+en el último. Con `range = {mín, máx}` los valores van de 0 a 1, y con
+`scale = "log"` en escala logarítmica.
+
+```lua
+-- 23-lane-una-vez.lua
+bpm(170)
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen)
+  :steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+  :fx("highpass", { cutoff = 40 })
+  -- Una subida que pasa una vez a los 4 compases y vuelve a 40 Hz.
+  :auto("cutoff", { {0, 0}, {2, 1, "exp"} }, { len = 2, offset = 4, mode = "once", range = {40, 2000}, scale = "log" })
+  -- El bend de cada golpe baja de 0 a -12 a lo largo de 8 compases y se queda ahí.
+  :auto("bend", { {0, 0}, {8, -12} }, { len = 8, mode = "hold" })
+```
+
+**4. Verla y dibujarla.** F1 «Lanes de automatización» enseña las de la
+pista seleccionada, con su curva, el cursor y lo que vale ahora. Con el
+ratón: clic en un hueco añade un punto, arrastrar uno lo mueve y clic
+derecho lo borra; con un punto elegido, `c` cambia su curva, Supr lo
+borra, las flechas lo afinan y Esc lo suelta. Cada cambio se escribe en la
+tabla de su `auto()`, en un paso de deshacer. Solo si la tabla está
+escrita tal cual en la llamada: una que sale de una variable se ve
+(«solo lectura») y el panel dice cómo pasarla a literal.
+
+**5. Grabarla tocando.** F1 «Grabar lanes (touch)» la arma: con el
+transporte en marcha, un mando MIDI asignado con MIDI learn a un
+parámetro con lane (se oye mientras se mueve) o arrastrar en vertical
+sobre su curva graba lo que se toca. Al soltar (o con el mando quieto
+0,6 s), la toma se simplifica y sustituye a los puntos de ese tramo.
+
+Límites: 32 lanes por canción y 64 puntos por lane; `pista:auto_clear()`
+libera las suyas. Fuera de una pista, `lane(puntos, opciones)` es la misma
+curva para ponerla donde va un `ramp()` (un grupo, los efectos de un
+corte), pero no se edita desde el panel.
 
 ### Una macro para el subidón
 

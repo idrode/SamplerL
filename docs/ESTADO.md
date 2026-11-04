@@ -2341,6 +2341,23 @@ cursor, «fijo» y el formato de los números).
   intacto; con un mando asignado al volumen, se escribe tras 0,6 s quieto;
   armar y desarmar).
 
+### Parte 7: documentación
+
+«Automatizar con lanes» en las recetas de la guía: un tutorial en cinco
+pasos (un barrido de 4 compases sobre un patrón de 3, pan suave y saltos
+`step`, `once` y `hold` con `range` y `scale`, el panel y la edición con
+el ratón, y la grabación «touch») con sus límites; una línea en «Qué se
+puede hacer». Recetas `scripts/ejemplos/21-lane-barrido.lua`,
+`22-lane-pan-y-saltos.lua` y `23-lane-una-vez.lua`, iguales a sus bloques
+(`script/tests/guide.rs`, ahora 23), y snippets `lane-barrido` y
+`lane-pan`.
+
+### Sin probar de oído ni en una terminal de verdad
+
+Lo medido está arriba (curvas en sus puntos, sin deriva en 2000 vueltas,
+saltos acotados por el suavizado); que suene bien y que el ratón y los
+mandos se sientan bien lo dice el usuario.
+
 ## Audio de prueba y problemas conocidos
 
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`

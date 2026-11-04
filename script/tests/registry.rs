@@ -315,6 +315,8 @@ fn every_snippet_runs_after_what_it_requires() {
             "corte-melodia",
             "bombo-bend",
             "warp",
+            "lane-barrido",
+            "lane-pan",
         ]
     );
 }

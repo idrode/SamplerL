@@ -4567,6 +4567,23 @@ pub const SNIPPETS: &[Snippet] = &[
                    amen:set(${7}, { smear = ${0.4} })\n",
         requires: "local amen = sample(\"amen.wav\"):slice(8)\n",
     },
+    Snippet {
+        name: "lane-barrido",
+        summary: "Un barrido de filtro dibujado como lane, con su propia duración (polirritmo con el patrón).",
+        template: "track(\"${drums}\")\n  \
+                   :fx(\"lowpass\", { cutoff = ${3000} })\n  \
+                   :auto(\"cutoff\", { {0, ${200}, \"exp\"}, {${3}, ${9000}, \"exp\"}, {${4}, ${200}} }, { len = \"${4 compases}\" })\n",
+        requires: "local amen = sample(\"amen.wav\"):slice(8)\n\
+                   track(\"drums\", amen):steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\")\n",
+    },
+    Snippet {
+        name: "lane-pan",
+        summary: "El pan de una pista yendo y viniendo, suave, como lane.",
+        template: "track(\"${drums}\")\n  \
+                   :auto(\"pan\", { {0, ${-0.7}, \"smooth\"}, {${1}, ${0.7}, \"smooth\"}, {${2}, ${-0.7}} }, { len = ${2} })\n",
+        requires: "local amen = sample(\"amen.wav\"):slice(8)\n\
+                   track(\"drums\", amen):steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\")\n",
+    },
 ];
 
 /// Snippet por nombre.

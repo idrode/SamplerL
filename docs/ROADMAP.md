@@ -799,7 +799,7 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
        corte y por paso sobre el de siempre, en tiempo real.
     5. ✅ **Documentación**: snippets, cuatro recetas, tutorial en la guía
        y sus limitaciones.
-15. **Lanes de automatización** (pedida por el usuario): una curva de
+15. ✅ **Lanes de automatización** (pedida por el usuario): una curva de
     puntos dibujable que lleva un parámetro a lo largo del progreso de la
     pista, con su propia duración. Detalle en «Lanes de automatización» de
     [docs/ESTADO.md](ESTADO.md).
@@ -818,4 +818,5 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
     5. ✅ **Edición con el ratón** y sincronización con el código.
     6. ✅ **Grabación en vivo** («touch»): con un mando MIDI o el ratón,
        simplificada y escrita en el código.
-    7. **Documentación**: recetas, tutorial en la guía.
+    7. ✅ **Documentación**: tres recetas, dos snippets y el tutorial en la
+       guía.
