@@ -201,6 +201,8 @@ impl App {
             ));
             return true;
         }
+        // Con la grabación de lanes armada, también se apunta.
+        self.touch_knob(channel, cc, value);
         match self
             .host
             .move_learned(&mut self.controller, channel, cc, value)

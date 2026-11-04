@@ -130,13 +130,22 @@ pub fn apply(row: &LaneRow, edit: LaneEdit) -> Result<Edited, String> {
         }
     };
     Ok(Edited {
-        points: points
-            .iter()
-            .map(|&(at, value, curve)| (at / row.bar_steps as f64, written(row, value), curve))
-            .collect(),
+        points: written_points(row, &points),
         selected,
         what,
     })
+}
+
+/// Los puntos de verdad (en pasos y en las unidades del parámetro) tal como
+/// se escriben: en compases y, con `range`, de 0 a 1.
+pub fn written_points(
+    row: &LaneRow,
+    points: &[(f64, f32, LaneCurve)],
+) -> Vec<(f64, f32, LaneCurve)> {
+    points
+        .iter()
+        .map(|&(at, value, curve)| (at / row.bar_steps as f64, written(row, value), curve))
+        .collect()
 }
 
 /// Dónde queda el punto `index` llevado a `at`: en un paso entero, entre

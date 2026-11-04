@@ -162,6 +162,7 @@ fn opens_in_main(action: Action) -> bool {
             | Action::SampleKey
             | Action::SidechainView
             | Action::LanesView
+            | Action::LaneTouch
             | Action::Freeze
             | Action::Unfreeze
             | Action::MidiLearn

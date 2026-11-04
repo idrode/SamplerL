@@ -2305,6 +2305,42 @@ cursor, «fijo» y el formato de los números).
   flechas, Supr y clic derecho; solo lectura con su motivo; el texto
   cambiado espera a cargar; una tabla en varias líneas conserva su forma).
 
+### Parte 6: grabar en vivo («touch»)
+
+- **La lógica, pura** (`tui/src/touch.rs`): una toma son (fase de la
+  lane, valor) en el orden en que se tocaron. `last_pass` se queda con la
+  última vuelta (un salto atrás de más de media lane es una vuelta nueva,
+  en `loop`) y con lo último que se tocó en cada posición (volver atrás
+  dentro de la vuelta borra lo de después); `simplify` es Ramer-Douglas-
+  Peucker en la altura de la escala de la vista (tolerancia 1 %); `merge`
+  deja los puntos de la lane de fuera del tramo tocado y pone dentro la
+  toma simplificada en rectas, subiendo la tolerancia si no cabe en 64
+  puntos.
+- **En la interfaz** (`tui/src/app/lanes.rs`): «Grabar lanes (touch)» en
+  la paleta la arma y la desarma (`Action::LaneTouch`). Armada y con el
+  transporte en marcha, se graba en la fase de ahora de la lane (la que
+  publica el motor):
+  - un mando MIDI aprendido (MIDI learn) cuyo parámetro tiene lane en su
+    pista (los nombres son los mismos: `lowpass.cutoff`, `gain`,
+    `send.reverb`, `synth.cutoff`): su CC llevado a su rango y curva. Se
+    oye mientras se mueve, porque el mando ya manda sobre la curva; la
+    toma se cierra con el mando 0,6 s quieto (`tick_touch`);
+  - arrastrar en vertical sobre la curva de una lane en el panel (la
+    posición la pone el cursor, no el ratón); se cierra al soltar. Con el
+    ratón no se oye hasta que se escribe.
+  Al cerrarse, la toma se escribe en la tabla de su `auto()` por el mismo
+  camino que las ediciones (un paso de deshacer, y carga); desarmar cierra
+  lo que quede abierto.
+- **Limitación**: el segundo efecto con el mismo nombre (`lowpass#2` en
+  los mandos) no se casa con su lane.
+- **Tests**: `tui/src/touch.rs` (una recta son dos puntos y una esquina
+  tres, lo que se desvía menos que la tolerancia fuera, la última vuelta,
+  la toma en su tramo y lo de fuera intacto, una toma muy movida cabe en 64
+  puntos) y `tui/src/tests/lanes.rs` (con el ratón, arriba un rato y abajo
+  otro, se escribe al soltar con los dos valores y el punto de fuera
+  intacto; con un mando asignado al volumen, se escribe tras 0,6 s quieto;
+  armar y desarmar).
+
 ## Audio de prueba y problemas conocidos
 
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`

@@ -44,6 +44,7 @@ pub enum Action {
     SampleKey,
     SidechainView,
     LanesView,
+    LaneTouch,
     Freeze,
     Unfreeze,
     MidiLearn,
@@ -302,6 +303,12 @@ pub const ACTIONS: &[ActionDef] = &[
         action: Action::LanesView,
         name: "Lanes de automatización",
         description: "Enseña o quita las lanes de la pista seleccionada (pista:auto): su curva, sus puntos y el cursor de lo que suena, en tiempo real",
+        keys: "",
+    },
+    ActionDef {
+        action: Action::LaneTouch,
+        name: "Grabar lanes (touch)",
+        description: "Arma o desarma la grabación de lanes: con el transporte en marcha, mover un mando MIDI asignado a un parámetro con lane (o arrastrar en vertical sobre su curva en el panel) graba sus valores; al soltar (o con el mando 0,6 s quieto), la toma simplificada sustituye a los puntos de ese tramo en el código",
         keys: "",
     },
     ActionDef {

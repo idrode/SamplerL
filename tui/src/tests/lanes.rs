@@ -328,6 +328,91 @@ fn a_table_in_several_lines_keeps_its_shape() {
     );
 }
 
+/// Mueve el motor `steps` pasos con un `tick` cada octavo de paso.
+fn advance(app: &mut App, engine: &mut Engine, steps: usize) {
+    play(app, engine, steps);
+}
+
+#[test]
+fn touch_with_the_mouse_records_over_the_stretch_it_played() {
+    let (mut app, mut engine, area) = open_edit("lanes_touch_mouse");
+    palette(&mut app, "grabar lanes");
+    assert!(
+        app.view().message.contains("armado"),
+        "{}",
+        app.view().message
+    );
+    advance(&mut app, &mut engine, 4);
+    // Arriba del todo (4) un rato y luego abajo (0), donde sea en x: manda
+    // el cursor.
+    let (x, top) = cell(area, 0, 10, 0);
+    let (_, bottom) = cell(area, 0, 10, 3);
+    app.mouse(MouseAction::Down, x, top);
+    for _ in 0..16 {
+        advance(&mut app, &mut engine, 1);
+        app.mouse(MouseAction::Drag, x, top);
+    }
+    for _ in 0..16 {
+        advance(&mut app, &mut engine, 1);
+        app.mouse(MouseAction::Drag, x, bottom);
+    }
+    let before = auto_line(&app, "gain");
+    app.mouse(MouseAction::Up, x, bottom);
+    let after = auto_line(&app, "gain");
+    assert_ne!(after, before, "{}", app.view().message);
+    assert!(app.view().error.is_none(), "{:?}", app.view().error);
+    assert!(
+        app.view().message.contains("toma grabada"),
+        "{}",
+        app.view().message
+    );
+    // Lo tocado: un tramo a 4 y otro a 0, y el primer punto de antes (el
+    // del paso 0, fuera de la toma) se queda.
+    assert!(after.contains("{0, 0.5}"), "{after}");
+    assert!(after.contains(", 4}"), "{after}");
+    assert!(after.contains(", 0}"), "{after}");
+    // Desarmar.
+    palette(&mut app, "grabar lanes");
+    assert!(app.view().message.contains("desarmado"));
+}
+
+#[test]
+fn touch_with_a_midi_knob_records_when_it_rests() {
+    use crate::midi::{MidiEvent, TimedEvent};
+    let (mut app, mut engine, _area) = open_edit("lanes_touch_midi");
+    let cc = |value: u8| TimedEvent {
+        micros: 0,
+        event: MidiEvent::Controller {
+            channel: 1,
+            number: 21,
+            value,
+        },
+    };
+    // El CC 21 al volumen de la pista.
+    palette(&mut app, "midi learn");
+    type_query(&mut app, "drums gain");
+    app.handle(special(Key::Enter));
+    app.midi_event(cc(0));
+    assert!(
+        app.view().message.contains("mando asignado"),
+        "{}",
+        app.view().message
+    );
+    palette(&mut app, "grabar lanes");
+    advance(&mut app, &mut engine, 2);
+    for i in 0..24u8 {
+        app.midi_event(cc(i * 5));
+        advance(&mut app, &mut engine, 1);
+    }
+    let before = auto_line(&app, "gain");
+    // Quieto más de 0,6 s: la toma se cierra en el siguiente tick.
+    std::thread::sleep(std::time::Duration::from_millis(700));
+    app.tick();
+    let after = auto_line(&app, "gain");
+    assert_ne!(after, before, "{}", app.view().message);
+    assert!(app.view().error.is_none(), "{:?}", app.view().error);
+}
+
 /// Para ver el panel sin terminal: `cargo test -p tui pantalla_lanes --
 /// --ignored --nocapture`.
 #[test]

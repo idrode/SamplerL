@@ -31,6 +31,7 @@ mod tap;
 #[cfg(test)]
 mod tests;
 mod theme;
+mod touch;
 mod ui;
 
 use std::sync::Arc;

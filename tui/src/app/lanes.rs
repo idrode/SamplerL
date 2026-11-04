@@ -77,7 +77,11 @@ impl App {
         let Some(area) = self.lanes_area.filter(|_| self.lanes_open) else {
             return false;
         };
-        let dragging = self.lane_drag.is_some();
+        let dragging = self.lane_drag.is_some()
+            || self
+                .touch
+                .as_ref()
+                .is_some_and(|t| t.takes.iter().any(|k| k.mouse));
         if !dragging && !area.contains(Position::new(x, y)) {
             if action == MouseAction::Down {
                 self.lanes_focus = None;
@@ -93,6 +97,10 @@ impl App {
             width: area.width.saturating_sub(2),
             height: area.height.saturating_sub(2),
         };
+        // Grabando: el ratón toca el valor en vez de editar los puntos.
+        if self.touch_mouse(action, x, y, inner, &view) {
+            return true;
+        }
         match action {
             MouseAction::Drag if dragging => {
                 let Some(focus) = self.lanes_focus.clone() else {
@@ -221,13 +229,15 @@ impl App {
 
     /// Aplica `edit` a la lane de `row` y la escribe en el código.
     fn lane_edit(&mut self, row: &LaneRow, edit: LaneEdit) {
-        let edited = match lanes_edit::apply(row, edit) {
-            Ok(edited) => edited,
-            Err(why) => {
-                self.message = format!("lanes: {why}");
-                return;
-            }
-        };
+        match lanes_edit::apply(row, edit) {
+            Ok(edited) => self.write_lane(row, &edited),
+            Err(why) => self.message = format!("lanes: {why}"),
+        }
+    }
+
+    /// Escribe los puntos de `edited` en la tabla de la lane de `row`, en un
+    /// paso de deshacer, y carga.
+    pub(super) fn write_lane(&mut self, row: &LaneRow, edited: &lanes_edit::Edited) {
         let span = match &row.editable {
             Ok(span) => *span,
             Err(why) => {
@@ -372,4 +382,227 @@ fn replace_span(lines: &[String], span: script::TableSpan, text: &str) -> String
         }
     }
     out
+}
+
+/// La grabación de lanes («touch»), armada: las tomas abiertas.
+#[derive(Debug, Default)]
+pub(crate) struct Touch {
+    takes: Vec<Take>,
+}
+
+/// Lo que se ha tocado de un parámetro: (fase de la lane, valor), desde
+/// el ratón o desde un mando MIDI, y cuándo se tocó por última vez.
+#[derive(Debug)]
+struct Take {
+    track: String,
+    param: String,
+    samples: Vec<(f64, f32)>,
+    last: std::time::Instant,
+    mouse: bool,
+}
+
+/// Lo que un mando tiene que estar quieto para cerrar su toma.
+const KNOB_IDLE: std::time::Duration = std::time::Duration::from_millis(600);
+
+impl App {
+    /// «Grabar lanes (touch)»: la arma o la desarma (y cierra lo que se
+    /// estaba grabando).
+    pub(super) fn toggle_touch(&mut self) {
+        match self.touch.take() {
+            Some(touch) => {
+                let wrote = !touch.takes.is_empty();
+                for take in touch.takes {
+                    self.finish_take(take);
+                }
+                self.message = if wrote {
+                    format!("{} · grabar lanes: desarmado", self.message)
+                } else {
+                    "grabar lanes: desarmado".into()
+                };
+            }
+            None => {
+                self.touch = Some(Touch::default());
+                self.message = "grabar lanes: armado · con el transporte en marcha, mueve un mando MIDI \
+                                asignado a un parámetro con lane, o arrastra en vertical sobre su curva"
+                    .into();
+            }
+        }
+    }
+
+    /// La lane `param` de la pista `track`, con lo que publica el motor.
+    fn lane_row(&self, track: &str, param: &str) -> Option<LaneRow> {
+        let song = self.host.song()?;
+        let index = song.tracks.iter().position(|t| t.name == track)?;
+        LanesView::new(Some(song), index, self.status.as_ref())?
+            .lanes
+            .into_iter()
+            .find(|r| r.param == param)
+    }
+
+    /// Apunta en la toma de `track`/`param` el valor `value` en la fase de
+    /// ahora de su lane (con el transporte en marcha y la grabación
+    /// armada). `true` si había lane.
+    fn touch_record(&mut self, track: &str, param: &str, value: f32, mouse: bool) -> bool {
+        if self.touch.is_none() || !self.status.is_some_and(|s| s.running) {
+            return false;
+        }
+        let Some(phase) = self
+            .lane_row(track, param)
+            .and_then(|r| r.live)
+            .and_then(|l| l.phase)
+        else {
+            return false;
+        };
+        let Some(touch) = &mut self.touch else {
+            return false;
+        };
+        let now = std::time::Instant::now();
+        match touch
+            .takes
+            .iter_mut()
+            .find(|t| t.track == track && t.param == param)
+        {
+            Some(take) => {
+                take.samples.push((phase as f64, value));
+                take.last = now;
+            }
+            None => touch.takes.push(Take {
+                track: track.to_string(),
+                param: param.to_string(),
+                samples: vec![(phase as f64, value)],
+                last: now,
+                mouse,
+            }),
+        }
+        self.message = format!(
+            "grabando {track} · {param}: {}",
+            crate::lanes_panel::number(value)
+        );
+        true
+    }
+
+    /// Cierra una toma: la simplifica, la pone en su tramo de la lane y la
+    /// escribe en el código.
+    fn finish_take(&mut self, take: Take) {
+        let Some(row) = self.lane_row(&take.track, &take.param) else {
+            return;
+        };
+        let points: Vec<(f64, f32, engine::LaneCurve)> = row
+            .lane
+            .points()
+            .iter()
+            .map(|p| (p.at, p.value, p.curve))
+            .collect();
+        let merged = crate::touch::merge(
+            &points,
+            &take.samples,
+            row.lane.length(),
+            |v| row.level(v),
+            |l| row.value_at(l),
+            engine::MAX_LANE_POINTS,
+        );
+        let edited = lanes_edit::Edited {
+            points: lanes_edit::written_points(&row, &merged),
+            selected: 0,
+            what: "toma grabada",
+        };
+        self.write_lane(&row, &edited);
+    }
+
+    /// Cierra las tomas de los mandos que llevan un rato quietos (en cada
+    /// `tick`).
+    pub(super) fn tick_touch(&mut self) {
+        let Some(touch) = &mut self.touch else { return };
+        let now = std::time::Instant::now();
+        let (done, open): (Vec<Take>, Vec<Take>) = std::mem::take(&mut touch.takes)
+            .into_iter()
+            .partition(|t| !t.mouse && now.duration_since(t.last) >= KNOB_IDLE);
+        touch.takes = open;
+        for take in done {
+            self.finish_take(take);
+        }
+    }
+
+    /// Un mando MIDI se ha movido: con la grabación armada, apunta su valor
+    /// en la lane de su parámetro, si la tiene.
+    pub(super) fn touch_knob(&mut self, channel: u8, cc: u8, value: u8) {
+        if self.touch.is_none() {
+            return;
+        }
+        let moved: Vec<(String, String, f32)> = self
+            .learned
+            .iter()
+            .filter(|l| l.listens(channel, cc))
+            .map(|l| {
+                let map = engine::KnobMap {
+                    target: engine::KnobTarget::Bus { param: 0 },
+                    min: l.min,
+                    max: l.max,
+                    curve: l.curve,
+                    latch: false,
+                };
+                (
+                    l.track.clone(),
+                    l.param.clone(),
+                    map.value(value as f32 / 127.0),
+                )
+            })
+            .collect();
+        for (track, param, v) in moved {
+            self.touch_record(&track, &param, v, false);
+        }
+    }
+
+    /// El ratón sobre la curva de una lane con la grabación armada y en
+    /// marcha: graba el valor de esa altura (en la fase del cursor); al
+    /// soltar, cierra la toma. `true` si era para esto.
+    fn touch_mouse(
+        &mut self,
+        action: MouseAction,
+        x: u16,
+        y: u16,
+        inner: Rect,
+        view: &LanesView,
+    ) -> bool {
+        if self.touch.is_none() || !self.status.is_some_and(|s| s.running) {
+            return false;
+        }
+        match action {
+            MouseAction::Down | MouseAction::Drag => {
+                let hit = view.lanes.iter().enumerate().find(|(i, _)| {
+                    let curve = curve_area(inner, *i);
+                    let column = Rect {
+                        y: curve.y,
+                        height: curve.height,
+                        ..curve
+                    };
+                    // Al arrastrar vale salirse un poco por arriba o abajo.
+                    action == MouseAction::Drag && x >= column.x && x < column.right()
+                        || column.contains(Position::new(x, y))
+                });
+                let Some((i, row)) = hit else { return true };
+                let curve = curve_area(inner, i);
+                let (_, value) = position(row, curve, x, y);
+                self.touch_record(&view.track, &row.param.clone(), value, true);
+                true
+            }
+            MouseAction::Up => {
+                let takes: Vec<Take> = match &mut self.touch {
+                    Some(touch) => {
+                        let (mouse, rest) = std::mem::take(&mut touch.takes)
+                            .into_iter()
+                            .partition(|t| t.mouse);
+                        touch.takes = rest;
+                        mouse
+                    }
+                    None => Vec::new(),
+                };
+                for take in takes {
+                    self.finish_take(take);
+                }
+                true
+            }
+            _ => false,
+        }
+    }
 }

@@ -287,6 +287,8 @@ pub struct App {
     lanes_area: Option<ratatui::layout::Rect>,
     lanes_focus: Option<lanes::LaneFocus>,
     lane_drag: Option<lanes::LaneDrag>,
+    /// La grabación de lanes («touch»), armada, con sus tomas abiertas.
+    touch: Option<lanes::Touch>,
     /// Mandos MIDI asignados (los del proyecto o, sin ellos, los de la
     /// configuración), la lista para asignar uno, el que espera su CC, la
     /// lista de mandos abierta y el último CC que llegó.
@@ -474,6 +476,7 @@ impl App {
             lanes_area: None,
             lanes_focus: None,
             lane_drag: None,
+            touch: None,
             learned: Vec::new(),
             knob_picker: None,
             learning: None,
@@ -3415,6 +3418,7 @@ impl App {
             Action::SampleKey => self.open_sample_key(),
             Action::SidechainView => self.toggle_sidechain(),
             Action::LanesView => self.toggle_lanes(),
+            Action::LaneTouch => self.toggle_touch(),
             Action::Freeze => self.freeze_selected(),
             Action::MidiLearn => self.open_midi_learn(),
             Action::MidiKnobs => self.open_knob_list(),
@@ -4224,6 +4228,7 @@ impl App {
         self.flush_expression();
         self.release_expired_pads(Instant::now());
         self.tick_roll();
+        self.tick_touch();
         self.watch_recording();
         let status = self.controller.status();
         self.cursors.observe(&status);

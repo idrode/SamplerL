@@ -765,6 +765,7 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Tonalidad del sample | Analiza la tonalidad del sample de la pista (las tres más probables, la raíz y la confianza): r la pone de raíz del instrumento, i inserta un instrumento con ella, k propone key() para la canción | Ctrl-K en el explorador |
 | Vista del sidechain | Enseña o quita, por cada EQ dinámico y compresor, quién lo dispara, cuánto reduce ahora y sus curvas (disparo y reducción) en tiempo real | — |
 | Lanes de automatización | Enseña o quita las lanes de la pista seleccionada (pista:auto): su curva, sus puntos y el cursor de lo que suena, en tiempo real | — |
+| Grabar lanes (touch) | Arma o desarma la grabación de lanes: con el transporte en marcha, mover un mando MIDI asignado a un parámetro con lane (o arrastrar en vertical sobre su curva en el panel) graba sus valores; al soltar (o con el mando 0,6 s quieto), la toma simplificada sustituye a los puntos de ese tramo en el código | — |
 | Metrónomo | Enciende o apaga el clic en cada pulso (no entra en lo exportado salvo que se pida) | — |
 | Reiniciar medidores | Pone a cero los medidores y quita los avisos de limitador y saturación | — |
 | Etiquetar el corte seleccionado | Abre «etiquetar N » para escribir la etiqueta (kick, snare...); se guarda en el proyecto | — |

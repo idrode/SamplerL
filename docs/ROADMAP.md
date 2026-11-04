@@ -816,5 +816,6 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
     4b. ✅ **Lectura en vivo del valor** en el mismo panel: número, barra y
        un punto sobre la curva.
     5. ✅ **Edición con el ratón** y sincronización con el código.
-    6. **Grabación en vivo** (opcional).
+    6. ✅ **Grabación en vivo** («touch»): con un mando MIDI o el ratón,
+       simplificada y escrita en el código.
     7. **Documentación**: recetas, tutorial en la guía.
