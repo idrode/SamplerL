@@ -86,6 +86,17 @@ impl LaneRow {
         }
     }
 
+    /// Lo que se lee ahora: el valor que publica el motor (con «fijo» fuera
+    /// del tramo de una `once`), o nada si aún no ha llegado.
+    pub fn reading(&self) -> Option<String> {
+        let live = self.live?;
+        let value = number(live.value);
+        Some(match live.phase {
+            Some(_) => value,
+            None => format!("{value} fijo"),
+        })
+    }
+
     /// La columna (de `width`) de la posición `steps` de la lane.
     pub fn column(&self, steps: f64, width: u16) -> u16 {
         let x = steps / self.lane.length() * width as f64;
@@ -126,6 +137,20 @@ impl LanesView {
     }
 }
 
+/// Un valor como se lee: sin decimales los grandes, con dos los pequeños.
+pub fn number(value: f32) -> String {
+    if value.abs() >= 100.0 {
+        format!("{value:.0}")
+    } else if value.abs() >= 10.0 {
+        format!("{value:.1}")
+    } else {
+        format!("{value:.2}")
+    }
+}
+
+/// Columnas de la barra del valor.
+const BAR: usize = 12;
+
 /// El panel: por lane, su título y su curva (rellena por debajo en octavos
 /// de celda), con sus puntos (`●`) y el cursor de lo que suena.
 pub struct LanesPanel<'a>(pub &'a LanesView);
@@ -155,7 +180,18 @@ impl Widget for LanesPanel<'_> {
                 height: 1,
                 ..inner
             };
-            Line::from(Span::from(row.title()).bold()).render(title, buf);
+            // El título y, a la derecha, lo que se lee: el valor y su barra.
+            let head = row.title();
+            let mut spans = vec![Span::from(head.clone()).bold()];
+            if let Some(reading) = row.reading() {
+                let level = row.live.map_or(0.0, |l| row.level(l.value));
+                let used = head.chars().count() + reading.chars().count() + BAR + 4;
+                let gap = (inner.width as usize).saturating_sub(used).max(1);
+                spans.push(Span::from(" ".repeat(gap)));
+                spans.push(Span::from(format!("▸ {reading} ")).fg(accent()).bold());
+                spans.push(Span::from(crate::ui::meter(level, BAR)).fg(accent()));
+            }
+            Line::from(spans).render(title, buf);
             y += 1;
             let rows = CURVE_ROWS.min(inner.bottom().saturating_sub(y));
             if rows == 0 {
@@ -214,6 +250,14 @@ fn draw_curve(row: &LaneRow, area: Rect, buf: &mut Buffer) {
         let level = (row.level(point.value) * (height as f32 - 1.0)).round() as u16;
         buf[(area.x + x, area.bottom() - 1 - level)]
             .set_char('●')
+            .set_fg(accent());
+    }
+    // Lo que suena: un rombo sobre la curva, en la columna del cursor y a
+    // la altura del valor que publica el motor.
+    if let (Some(x), Some(live)) = (cursor, row.live) {
+        let level = (row.level(live.value) * (height as f32 - 1.0)).round() as u16;
+        buf[(area.x + x, area.bottom() - 1 - level)]
+            .set_char('◆')
             .set_fg(accent());
     }
 }

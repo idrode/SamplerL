@@ -85,10 +85,43 @@ fn the_curve_its_points_and_the_cursor_are_where_they_should_be() {
         lines[5]
     );
     // Arriba, en la columna 24 de la curva (25 con el borde), el cursor
-    // está sobre lo lleno; en la primera mitad, vacío.
+    // con su valor (1, lo más alto): el rombo; en la primera mitad, vacío.
     let top: Vec<char> = lines[2].chars().collect();
-    assert_eq!(top[25], '█', "{}", lines[2]);
+    assert_eq!(top[25], '◆', "{}", lines[2]);
     assert_eq!(top[5], ' ', "{}", lines[2]);
+}
+
+#[test]
+fn the_live_reading_shows_the_value_its_bar_and_a_mark_on_the_curve() {
+    let (_, mut app, mut engine) = open("lanes_live", Some(SONG_LANES));
+    palette(&mut app, "lanes de automatización");
+    // A mitad del segundo compás de la lane del gain: vale 1.
+    play(&mut app, &mut engine, 24);
+    let view = app.view().lanes.unwrap();
+    let gain = &view.lanes[1];
+    let live = gain.live.expect("publicada");
+    assert_eq!(live.value, 1.0);
+    assert_eq!(gain.reading().as_deref(), Some("1.00"));
+    let single = crate::lanes_panel::LanesView {
+        track: view.track.clone(),
+        lanes: vec![gain.clone()],
+    };
+    let buffer = draw_widget(crate::lanes_panel::LanesPanel(&single), 60, 7);
+    let lines: Vec<String> = text(&buffer).lines().map(str::to_string).collect();
+    // El título lleva la lectura y su barra llena (1 es el máximo).
+    assert!(lines[1].contains("▸ 1.00 ████████████"), "{}", lines[1]);
+    // El rombo, arriba (el valor más alto), en la columna del cursor.
+    let x = gain.column(live.phase.unwrap() as f64, 58) as usize + 1;
+    assert_eq!(lines[2].chars().nth(x), Some('◆'), "{}", lines[2]);
+    // Fuera del tramo de una once: el valor fijo, sin cursor.
+    let mut once = gain.clone();
+    once.live = Some(engine::LaneLive {
+        value: 0.8,
+        phase: None,
+    });
+    assert_eq!(once.reading().as_deref(), Some("0.80 fijo"));
+    assert_eq!(crate::lanes_panel::number(2345.6), "2346");
+    assert_eq!(crate::lanes_panel::number(12.34), "12.3");
 }
 
 /// Para ver el panel sin terminal: `cargo test -p tui pantalla_lanes --

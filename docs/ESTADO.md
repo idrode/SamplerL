@@ -2243,6 +2243,20 @@ con `golden.rs` idéntico y `no_alloc.rs` en verde.
   y el cursor en sus celdas). `cargo test -p tui pantalla_lanes --
   --ignored --nocapture` lo enseña.
 
+### Parte 4b: la lectura en vivo
+
+En el mismo panel, de lo que publica el motor (`Status::lanes`, un
+atómico por lane a tasa de control): a la derecha del título de cada lane,
+el valor de ahora (`▸ 631`, `▸ 0.80 fijo` fuera del tramo de una `once`;
+`lanes_panel::number`: sin decimales de 100 en adelante, uno de 10 a 100,
+dos por debajo) y una barra de 12 columnas con su nivel entre el mínimo y
+el máximo de la lane; y sobre la curva, un `◆` en la columna del cursor a
+la altura del valor (encima de los puntos). Es el valor de la lane, antes
+del suavizado de 5 ms y de un mando MIDI o un `~` que manden sobre ella.
+Test en `tui/src/tests/lanes.rs` (el valor de la lane del gain a mitad de
+su segundo compás, su texto, la barra llena, el rombo en la columna del
+cursor, «fijo» y el formato de los números).
+
 ## Audio de prueba y problemas conocidos
 
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`
