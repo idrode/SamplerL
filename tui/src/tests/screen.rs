@@ -95,7 +95,8 @@ fn ascii_draws_the_ruler_and_the_tabs_without_unicode_blocks() {
     // A 60 de ancho, en la mitad derecha, las pestañas van con el nombre
     // corto.
     assert!(screen.contains(" 3 trk "), "{screen}");
-    assert!(screen.contains(" 6 lan "), "{screen}");
+    // Las que no caben, con la marca (en ASCII, `>`).
+    assert!(screen.lines().nth(6).unwrap().ends_with('>'), "{screen}");
 }
 
 #[test]
@@ -210,4 +211,22 @@ fn pantalla_ascii() {
         println!("{w}×{h}\n{}\n", text(&draw(&mut app, w, h)));
     }
     theme::set_ascii(false);
+}
+
+#[test]
+fn the_tab_strip_scrolls_to_show_the_chosen_tab() {
+    let (_, mut app, _engine) = open("screen_tabs_scroll", Some(SONG));
+    let screen = text(&draw(&mut app, 80, 24));
+    assert!(screen.contains('›'), "hay más a la derecha: {screen}");
+    // Alt-8 (espectro): su pestaña se ve, elegida.
+    app.handle(Input {
+        key: Key::Char('8'),
+        alt: true,
+        ..Input::default()
+    });
+    let buffer = draw(&mut app, 80, 24);
+    let screen = text(&buffer);
+    let (x, y) = find(&buffer, " 8 esp").unwrap_or_else(|| panic!("{screen}"));
+    assert_eq!(buffer[(x + 1, y)].bg, theme::get().accent, "{screen}");
+    assert!(screen.contains('‹'), "hay más a la izquierda: {screen}");
 }

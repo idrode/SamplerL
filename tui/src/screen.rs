@@ -360,17 +360,47 @@ fn empty(view: &ViewModel, panel: Panel, why: &str, area: Rect, buf: &mut Buffer
         .render(area, buf);
 }
 
-/// Las pestañas del dock en `strip`, con la que se ve resaltada.
-/// Devuelve dónde quedó cada una (para el ratón).
+/// Las pestañas del dock en `strip`, con la que se ve resaltada. Si no
+/// caben todas, empiezan más adelante para que se vea la elegida, con `‹`
+/// y `›` donde hay más. Devuelve dónde quedó cada una (para el ratón).
 fn tab_strip(dock: &Dock, shown: Tab, strip: Rect, buf: &mut Buffer) -> Vec<(Rect, Tab)> {
     let theme = crate::theme::get();
     buf.set_style(strip, Style::new().bg(theme.header));
+    let labels: Vec<String> = dock
+        .labels()
+        .into_iter()
+        .map(|l| format!(" {l} "))
+        .collect();
+    let widths: Vec<u16> = labels
+        .iter()
+        .map(|l| l.chars().count() as u16 + 1)
+        .collect();
+    let room = strip.width.saturating_sub(2);
+    let chosen = dock.tabs.iter().position(|t| *t == shown).unwrap_or(0);
+    // La primera que se ve: la menor que deja ver la elegida.
+    let mut first = 0;
+    while first < chosen && widths[first..=chosen].iter().sum::<u16>() > room {
+        first += 1;
+    }
     let mut x = strip.x;
+    if first > 0 {
+        buf.set_string(x, strip.y, "‹", Style::new().fg(theme.dim).bg(theme.header));
+        x += 1;
+    }
     let mut hits = Vec::new();
-    for (tab, label) in dock.tabs.iter().zip(dock.labels()) {
-        let label = format!(" {label} ");
+    for (i, (tab, label)) in dock.tabs.iter().zip(&labels).enumerate().skip(first) {
         let width = label.chars().count() as u16;
-        if x + width > strip.right() {
+        if x + width
+            > strip
+                .right()
+                .saturating_sub(u16::from(i + 1 < dock.tabs.len()))
+        {
+            buf.set_string(
+                strip.right() - 1,
+                strip.y,
+                "›",
+                Style::new().fg(theme.dim).bg(theme.header),
+            );
             break;
         }
         let style = if *tab == shown {
@@ -378,7 +408,7 @@ fn tab_strip(dock: &Dock, shown: Tab, strip: Rect, buf: &mut Buffer) -> Vec<(Rec
         } else {
             Style::new().fg(dim()).bg(theme.header)
         };
-        buf.set_string(x, strip.y, &label, style);
+        buf.set_string(x, strip.y, label, style);
         hits.push((
             Rect {
                 x,
