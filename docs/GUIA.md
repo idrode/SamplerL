@@ -402,7 +402,9 @@ anterior.
   que suena y el elegido, resaltados) y al pie dónde empieza cada uno en
   ms; debajo, a la izquierda el mezclador (una tira por pista con su
   medidor vertical, el nivel en dB, el volumen, mute `M`, solo `S`, `SAT`
-  si satura y los envíos, y la del master con `LIM` y `SAT`) y a la
+  si satura y los envíos, y la del master con `LIM` y `SAT`; con el
+  ratón, un clic en la tira elige la pista y en `M` o `S` los cambia en
+  vivo) y a la
   derecha el tracker con todas las pistas a la vez (las columnas se
   estrechan para que quepan; si ni así, el título dice cuántas se ven); y
   abajo los efectos. Tras analizar los choques de frecuencia (F1
@@ -893,6 +895,11 @@ tiene el paso (`efectos lp=800,q=4 crush=6`): se cambian, se añaden o se
 borran y Enter los escribe; cada efecto va como dentro de sus llaves y
 separado por espacios, o con las llaves (`{lp=800}{crush=6}`); vacía, los
 quita. **Supr** quita los efectos del paso. **Esc** sale.
+
+Con el ratón, un clic en una celda del tracker pone ahí el cursor (sin
+pasar por la paleta) y otro clic en la misma celda hace lo de Enter; la
+rueda lo sube y lo baja. Un clic en el nombre de una columna elige esa
+pista, y el clic derecho en él le pone o le quita el mute en vivo.
 
 El cambio se escribe en el código, en el token de ese paso de su
 `steps("...")` (solo cambian sus caracteres: `2` pasa a ser
@@ -1700,9 +1707,11 @@ marcas ni `:s`.
 ### El ratón, de un vistazo
 
 Si la terminal lo manda (dentro de tmux, `set -g mouse on`) y `[editor]
-raton` está encendido (por defecto), el ratón sirve en cuatro sitios; en
-los demás paneles (el tracker, la vista de ocupación, el mezclador) aún
-no, y se usan con las teclas.
+raton` está encendido (por defecto), el ratón sirve en todos los paneles
+que se editan o se tocan. El panel de efectos, el del motor y las
+visualizaciones solo se miran. Nada suena ni se escribe en el código
+por un clic suelto: lo que escribe es la línea de órdenes que abre el
+segundo clic, como con Enter.
 
 | Dónde | Qué hace | Más |
 | --- | --- | --- |
@@ -1710,9 +1719,13 @@ no, y se usan con las teclas.
 | Vista del sample | arrastrar una marca mueve el corte, clic lo elige y suena, clic derecho pone o quita un corte, la rueda acerca y aleja | [Modo tocar](#modo-tocar-esc) |
 | Piano roll | clic pone una nota, arrastrar la mueve o la alarga, clic derecho la borra; nunca suena | [Piano roll](#piano-roll) |
 | Lanes de automatización | clic añade un punto, arrastrar lo mueve, clic derecho lo borra; armado el touch, arrastrar en vertical graba | [Automatizar con lanes](#automatizar-con-lanes) |
+| Tracker | clic en el nombre elige la pista y el clic derecho la silencia (`m`); clic en una celda pone ahí el cursor de edición y otro clic en ella abre sus efectos (Enter); con el cursor, la rueda lo sube y lo baja | [Editar los efectos de un paso](#editar-los-efectos-de-un-paso-desde-el-tracker) |
+| Vista de ocupación | clic en el nombre elige la pista y el clic derecho la silencia; clic en una celda pone ahí el cursor para rellenar y otro clic en ella abre `rellenar` (Enter); la rueda mueve el cursor de pista en pista y Shift y la rueda, de paso en paso | [Vista de ocupación](#vista-de-ocupación) |
+| Mezclador (con el editor en su ventana) | clic en una tira elige la pista; en su `M`, mute, y en su `S`, solo, en vivo | [El editor en su propia ventana](#el-editor-en-su-propia-ventana) |
 
 Con la paleta o la línea de órdenes abiertas encima, el ratón no hace
-nada. Shift y arrastrar (Alt en algunas terminales) sigue seleccionando
+nada, y lo que tapan las visualizaciones, la vista del sidechain o el
+panel de las lanes no recibe el clic. Shift y arrastrar (Alt en algunas terminales) sigue seleccionando
 texto para copiar con la terminal.
 
 ### Resaltado en vivo
@@ -1813,7 +1826,9 @@ huecos.
 ocupación» abre la vista con un cursor (invertido) en el primer hueco de
 la pista seleccionada. ←→ cambia de paso, ↑↓ de pista (la pista que se
 elige es la que va a sonar en el hueco), Tab salta al hueco siguiente y
-Esc sale. Sobre un silencio, Enter abre la línea de órdenes con
+Esc sale. Con el ratón, un clic en una celda pone ahí el cursor (también
+sin abrirlo antes desde la paleta), otro clic en la misma hace lo de
+Enter, y la rueda lo mueve (Shift y la rueda, de paso en paso). Sobre un silencio, Enter abre la línea de órdenes con
 `rellenar` y el golpe anterior de esa pista tal como está escrito (sin sus
 efectos de paso); se cambia por el que se quiera (`2`, `1@0.5`, `kick'`,
 `3r2{lp=800}`...) y Enter lo escribe en el `.` de ese paso del código,

@@ -2635,7 +2635,9 @@ faltaba eran los límites y algunos enlaces:
   literal en la llamada, `lane()` suelta no se edita, y el touch con el
   ratón no se oye hasta escribirse.
 - **Lo demás**: «El ratón, de un vistazo» en la sección 2 (editor, vista
-  del sample, piano roll y lanes; el tracker y la ocupación aún no) y los
+  del sample, piano roll y lanes; el tracker, la ocupación y el mezclador
+  se añadieron después, ver «El ratón en el tracker, la ocupación y el
+  mezclador») y los
   límites de grupos (4, de un nivel), macros (8) y visualizaciones (`size`,
   `bands`, la cola que descarta si la interfaz se atrasa).
 - **Tutorial**: el bajo del paso 11 es un `sh101` con una lane de cutoff
@@ -2652,6 +2654,38 @@ faltaba eran los límites y algunos enlaces:
 
 El bajo `sh101` con su lane y la caja afinada del tutorial: el equilibrio
 con la batería lo decide el usuario.
+
+## El ratón en el tracker, la ocupación y el mezclador
+
+- **Geometría única** (`tui/src/ui.rs`): `TrackerLayout`,
+  `OccupancyLayout` y `MixerLayout` calculan lo que antes calculaba cada
+  `render` (columnas, pistas que se ven, primer paso por el
+  desplazamiento, ventana de pasos y de pistas de la ocupación, tiras del
+  mezclador) y tienen su `hit(x, y)` (`TrackerHit`, `OccupancyHit`,
+  `MixerHit`). El dibujo los usa para pintar y `ui::draw` los guarda en
+  `App::panels` (`app/panels.rs`, `PanelAreas`): lo que se ve y lo que
+  pulsa el ratón no pueden separarse. Lo que va encima (visualizaciones,
+  sidechain, lanes) se apunta en `covers` y ahí el clic no llega abajo.
+- **Qué hace** (`App::panels_mouse`, tras el piano roll y las lanes y
+  antes de la vista del sample; en los dos modos, sin nada encima, y solo
+  pulsar y la rueda: arrastrar y soltar siguen siendo del editor):
+  - tracker: el nombre elige la pista y el clic derecho le pone o le
+    quita el mute en vivo (`toggle_live_at`, el de `m`); una celda abre
+    ahí el cursor de edición y otro clic en la del cursor hace lo de Enter
+    (`start_step_edit`); la rueda mueve el cursor;
+  - ocupación: lo mismo con su cursor para rellenar (`start_fill` en el
+    segundo clic), la rueda de pista en pista y la horizontal (o Shift y
+    la rueda) de paso en paso;
+  - mezclador: la tira elige la pista y su `M` y su `S` son mute y solo en
+    vivo.
+  Nada suena ni escribe en el código por un clic: lo que escribe es la
+  línea de órdenes del segundo, como con las teclas.
+- **Tests**: `tui/src/tests/panels_mouse.rs` (cada clic, en la posición
+  de lo dibujado; la paleta abierta lo apaga).
+
+### Sin probar en una terminal de verdad
+
+Con el ratón de la terminal del usuario y dentro de tmux.
 
 ## Audio de prueba y problemas conocidos
 

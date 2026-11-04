@@ -844,3 +844,8 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
     el ratón) y el tutorial con un bajo `sh101`, una lane del filtro y la
     caja del break tocada como melodía. Detalle en «Guía y tutorial al
     día» de [docs/ESTADO.md](ESTADO.md).
+18. ✅ **El ratón en el tracker, la vista de ocupación y el mezclador**
+    (pedida por el usuario): elegir pista, mute y solo, y abrir y mover
+    los cursores de edición y de relleno con un clic. Detalle en «El ratón
+    en el tracker, la ocupación y el mezclador» de
+    [docs/ESTADO.md](ESTADO.md).
