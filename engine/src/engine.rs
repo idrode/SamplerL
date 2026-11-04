@@ -7,7 +7,8 @@ use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::arrangement::{Arrangement, Place, Playlist, resume};
 use crate::automation::{
-    Automation, MAX_MACROS, MIX_GAIN, MIX_PAN, MIX_PARAMS, MIX_SEND, Macros, MixCurves, mix,
+    Automation, CurveEnv, MAX_MACROS, MIX_GAIN, MIX_PAN, MIX_PARAMS, MIX_SEND, Macros, MixCurves,
+    mix,
 };
 use crate::bus::{BUSES, Buses, Rack};
 use crate::fx::{Fx, FxState, MAX_FX, MAX_PARAMS};
@@ -605,11 +606,11 @@ impl SliceShape {
     /// La forma con la que suena un golpe en `steps`/`seconds` de la
     /// canción (con las macros en `macros`): los parámetros con curva
     /// toman su valor ahí.
-    pub(crate) fn at(&self, steps: f64, seconds: f64, macros: &Macros) -> SliceShape {
+    pub(crate) fn at(&self, steps: f64, seconds: f64, env: &CurveEnv) -> SliceShape {
         let mut shape = *self;
         for (param, curve) in self.curves.iter().enumerate() {
             let Some(curve) = curve else { continue };
-            let value = curve.value(steps, seconds, macros, false);
+            let value = curve.value_in(steps, seconds, 0.0, env, false);
             match param {
                 SHAPE_ATTACK => shape.attack_ms = value,
                 SHAPE_RELEASE => shape.release_ms = value,
@@ -3113,8 +3114,11 @@ impl Engine {
             return hit;
         }
         let (steps, seconds) = self.song_position();
+        let env = CurveEnv {
+            macros: &self.macros,
+        };
         if let Some(curve) = pattern.pitch_curve {
-            let semitones = curve.value(steps, seconds, &self.macros, false) as f64;
+            let semitones = curve.value_in(steps, seconds, 0.0, &env, false) as f64;
             let factor = 2f64.powf(semitones / 12.0);
             let limit = 2f64.powf(crate::sequencer::MAX_SEMITONES as f64 / 12.0);
             let rate = hit.playback.rate;
@@ -3124,10 +3128,10 @@ impl Engine {
                 .map(|r| r.map(|r| (r * factor).clamp(1.0 / limit, limit)));
         }
         if let Some(curve) = pattern.formant_curve {
-            hit.playback.formant = Some(curve.value(steps, seconds, &self.macros, false));
+            hit.playback.formant = Some(curve.value_in(steps, seconds, 0.0, &env, false));
         }
         if shaped {
-            let shape = hit.playback.shape.at(steps, seconds, &self.macros);
+            let shape = hit.playback.shape.at(steps, seconds, &env);
             hit.end = shape.range(hit.start..hit.full_end).end;
             hit.playback.shape = shape;
         }
@@ -3631,12 +3635,15 @@ impl Engine {
             .playlist
             .as_ref()
             .map_or((0, 0), |p| (p.origin_step, p.origin_frame));
+        // Lo que miran las curvas en este trozo: copias locales (los
+        // relojes las prestan sin tocar `self`).
+        let macros = self.macros;
         let clock = Clock {
             steps: self.transport.position_steps(rate) - origin_step as f64,
             seconds: (self.transport.frame - origin_frame) as f64 / rate as f64,
             frames_per_step: crate::sequencer::frames_per_step(self.transport.bpm(), rate),
             sample_rate: rate,
-            macros: self.macros,
+            env: CurveEnv { macros: &macros },
             knobs: self.knobs.advance(n, rate),
         };
         // Quién escucha a quién por sidechain: las que se escuchan se mezclan
@@ -3764,7 +3771,7 @@ impl Engine {
                     frame: self.transport.frame,
                     bar: self.transport.running.then(|| self.transport.current_bar()),
                     bar_length: self.transport.bar_length(rate),
-                    macros: clock.macros,
+                    env: clock.env,
                     knobs: clock.knobs,
                     track: t,
                 };
@@ -3784,7 +3791,7 @@ impl Engine {
                     seconds: clock.seconds,
                     frames_per_step: clock.frames_per_step,
                     sample_rate: rate,
-                    macros: clock.macros,
+                    env: clock.env,
                 };
                 let fade = ((FADE_SECONDS * rate as f32) as u32).max(1);
                 ended = track.cloud.mix_into(buf, &params, &at, fade);
@@ -3799,7 +3806,7 @@ impl Engine {
                     seconds: clock.seconds,
                     frames_per_step: clock.frames_per_step,
                     sample_rate: rate,
-                    macros: clock.macros,
+                    env: clock.env,
                 };
                 track
                     .cloud
@@ -3930,7 +3937,7 @@ impl Engine {
                 steps: clock.steps,
                 seconds: clock.seconds,
                 frames_per_step: clock.frames_per_step,
-                macros: clock.macros,
+                env: clock.env,
                 knobs: clock.knobs,
             },
             &mut self.master[..2 * n],
@@ -4318,13 +4325,13 @@ fn put_pattern(track: &mut Track, new: Option<Pattern>, sample_rate: u32) -> Opt
 }
 
 /// Dónde está la canción al empezar un trozo de mezcla.
-pub(crate) struct Clock {
+pub(crate) struct Clock<'a> {
     pub steps: f64,
     pub seconds: f64,
     pub frames_per_step: f64,
     pub sample_rate: u32,
-    /// El valor de cada macro en este trozo.
-    pub macros: Macros,
+    /// Lo que miran las curvas en este trozo (las macros).
+    pub env: CurveEnv<'a>,
     /// Lo que mandan los mandos MIDI en este trozo.
     pub knobs: crate::knob::KnobLive,
 }
@@ -4387,7 +4394,9 @@ fn mix_target(
     let steps = clock.steps + k as f64 / clock.frames_per_step;
     let seconds = clock.seconds + k as f64 / clock.sample_rate as f64;
     let at = |i: usize, fixed: f32| {
-        let value = curves[i].map_or(fixed, |c| c.value(steps, seconds, &clock.macros, false));
+        let value = curves[i].map_or(fixed, |c| {
+            c.value_in(steps, seconds, 0.0, &clock.env, false)
+        });
         if knobs {
             let target = crate::knob::KnobTarget::Mix {
                 track: track as u8,
@@ -4435,7 +4444,7 @@ fn modulate_chain(
             clock.steps + frames / clock.frames_per_step,
             clock.seconds + frames / rate as f64,
             0.0,
-            &clock.macros,
+            &clock.env,
             (own < MAX_TRACKS).then_some((&clock.knobs, own)),
             snap,
             snap && block == 0,
@@ -4466,7 +4475,7 @@ pub(crate) fn drive_block(
     steps: f64,
     seconds: f64,
     origin: f64,
-    macros: &Macros,
+    env: &CurveEnv,
     knobs: Option<(&crate::knob::KnobLive, usize)>,
     snap: bool,
     first: bool,
@@ -4487,7 +4496,7 @@ pub(crate) fn drive_block(
             let lock = lock.filter(|&(s, _)| p == 0 && s == slot).map(|(_, hz)| hz);
             let mut target = match (lock, curve) {
                 (Some(hz), _) => Some(hz),
-                (None, Some(a)) => Some(a.curve.value_at(steps, seconds, origin, macros, log)),
+                (None, Some(a)) => Some(a.curve.value_in(steps, seconds, origin, env, log)),
                 (None, None) => None,
             };
             // Un mando MIDI encima (de la pista): manda según su peso.

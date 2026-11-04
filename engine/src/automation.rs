@@ -53,13 +53,32 @@ pub enum Curve {
     Macro { index: u8, from: f32, to: f32 },
 }
 
+/// Lo que una curva puede mirar además de la posición de la canción: el
+/// valor de cada macro. Va por referencia en los relojes de cada trozo
+/// (`Clock`, `BusClock`, `SongClock`, `grain::Position`), así que puede
+/// crecer sin copiar más en cada trozo.
+#[derive(Debug, Clone, Copy)]
+pub struct CurveEnv<'a> {
+    pub macros: &'a Macros,
+}
+
+/// Las macros a 0, para evaluar fuera del motor (tests, precálculo).
+static IDLE_MACROS: Macros = [0.0; MAX_MACROS];
+
+impl CurveEnv<'static> {
+    /// Sin nada que se mueva en vivo: las macros a 0.
+    pub const IDLE: CurveEnv<'static> = CurveEnv {
+        macros: &IDLE_MACROS,
+    };
+}
+
 impl Curve {
     /// Valor en la posición `steps` de la canción (pasos con decimales
     /// desde que arrancó) y `seconds` (segundos desde que arrancó), con las
     /// macros en `macros`. Con `log`, se interpola en escala logarítmica
     /// (frecuencias).
     pub fn value(&self, steps: f64, seconds: f64, macros: &Macros, log: bool) -> f32 {
-        self.value_at(steps, seconds, 0.0, macros, log)
+        self.value_in(steps, seconds, 0.0, &CurveEnv { macros }, log)
     }
 
     /// Como [`Curve::value`], para una curva que suena en un golpe cuyo
@@ -73,11 +92,24 @@ impl Curve {
         macros: &Macros,
         log: bool,
     ) -> f32 {
+        self.value_in(steps, seconds, origin, &CurveEnv { macros }, log)
+    }
+
+    /// Lo que usa el motor: como [`Curve::value_at`], con todo lo que
+    /// puede mirar una curva en `env`.
+    pub fn value_in(
+        &self,
+        steps: f64,
+        seconds: f64,
+        origin: f64,
+        env: &CurveEnv,
+        log: bool,
+    ) -> f32 {
         let (a, b, t) = match *self {
             Curve::Macro { index, from, to } => (
                 from,
                 to,
-                macros
+                env.macros
                     .get(index as usize)
                     .map_or(0.0, |v| v.clamp(0.0, 1.0) as f64),
             ),

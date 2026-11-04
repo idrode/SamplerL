@@ -197,7 +197,7 @@ fn smeared(dry: &Arc<Sample>, amount: f32) -> Vec<f32> {
             seconds: 0.0,
             frames_per_step: 1.0,
             sample_rate: rate,
-            macros: [0.0; crate::automation::MAX_MACROS],
+            env: crate::automation::CurveEnv::IDLE,
         };
         let _ = cloud.mix_into(chunk, &granular, &at, 1);
     }

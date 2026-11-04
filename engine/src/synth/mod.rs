@@ -1885,7 +1885,7 @@ pub struct Synth {
 /// Dónde está la canción al empezar un trozo (lo que siguen las curvas y
 /// el redisparo de las capas).
 #[derive(Debug, Clone, Copy)]
-pub struct SongClock {
+pub struct SongClock<'a> {
     pub steps: f64,
     pub seconds: f64,
     pub frames_per_step: f64,
@@ -1897,8 +1897,8 @@ pub struct SongClock {
     pub bar: Option<(u64, u64)>,
     /// Lo que dura un compás al tempo de ahora (el del compás virtual).
     pub bar_length: u64,
-    /// El valor de cada macro en este trozo.
-    pub macros: crate::automation::Macros,
+    /// Lo que miran las curvas (las macros).
+    pub env: crate::automation::CurveEnv<'a>,
     /// Lo que mandan los mandos MIDI en este trozo, y la pista del motor
     /// del sintetizador (para saber cuáles son suyos; fuera del motor,
     /// ninguna).
@@ -1906,10 +1906,10 @@ pub struct SongClock {
     pub track: usize,
 }
 
-impl SongClock {
+impl SongClock<'static> {
     /// Un reloj parado al principio (para tests y medidas), con compases de
     /// `bar_length` frames.
-    pub fn stopped(frames_per_step: f64, bar_length: u64) -> SongClock {
+    pub fn stopped(frames_per_step: f64, bar_length: u64) -> SongClock<'static> {
         SongClock {
             steps: 0.0,
             seconds: 0.0,
@@ -1917,7 +1917,7 @@ impl SongClock {
             frame: 0,
             bar: None,
             bar_length,
-            macros: [0.0; crate::automation::MAX_MACROS],
+            env: crate::automation::CurveEnv::IDLE,
             knobs: crate::knob::KnobLive::default(),
             track: usize::MAX,
         }
@@ -2205,7 +2205,7 @@ impl Synth {
             let mut to = [0.0; PARAM_COUNT];
             for (i, p) in PARAMS.iter().enumerate() {
                 let goal = curves[i].map_or(patch.params[i], |c| {
-                    c.value(steps, seconds, &clock.macros, p.log)
+                    c.value_in(steps, seconds, 0.0, &clock.env, p.log)
                 });
                 // Un mando MIDI encima, según su peso.
                 let goal = if clock.track < crate::engine::MAX_TRACKS {
@@ -2382,7 +2382,7 @@ pub fn render(
             frame: at as u64,
             bar: Some((bar_start, bar_length)),
             bar_length,
-            macros: [0.0; crate::automation::MAX_MACROS],
+            env: crate::automation::CurveEnv::IDLE,
             knobs: crate::knob::KnobLive::default(),
             track: usize::MAX,
         };

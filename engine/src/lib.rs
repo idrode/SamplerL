@@ -32,8 +32,8 @@ pub mod synth;
 
 pub use arrangement::{Arrangement, MAX_ENTRIES, MAX_SECTIONS};
 pub use automation::{
-    Automation, Curve, LfoRate, MAX_AUTOMATIONS, MAX_MACROS, MIX_GAIN, MIX_PAN, MIX_PARAMS,
-    MIX_SEND, Macros, MixCurves,
+    Automation, Curve, CurveEnv, LfoRate, MAX_AUTOMATIONS, MAX_MACROS, MIX_GAIN, MIX_PAN,
+    MIX_PARAMS, MIX_SEND, Macros, MixCurves,
 };
 pub use bpm::{BpmGuess, detect_bpm};
 pub use bus::{Buses, DelayParams, Division, ReverbParams};

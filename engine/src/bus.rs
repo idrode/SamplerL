@@ -204,11 +204,12 @@ pub(crate) struct Rack {
 
 /// Dónde está la canción al empezar un trozo (para las curvas de los
 /// buses): pasos, segundos y frames por paso.
-pub(crate) struct BusClock {
+pub(crate) struct BusClock<'a> {
     pub steps: f64,
     pub seconds: f64,
     pub frames_per_step: f64,
-    pub macros: crate::automation::Macros,
+    /// Lo que miran las curvas (las macros).
+    pub env: crate::automation::CurveEnv<'a>,
     /// Lo que mandan los mandos MIDI en este trozo.
     pub knobs: crate::knob::KnobLive,
 }
@@ -236,7 +237,7 @@ impl Rack {
         for (i, current) in self.moving.iter_mut().enumerate() {
             let fixed = self.params.value(i);
             let mut target =
-                self.params.curves[i].map(|c| c.value(steps, seconds, &clock.macros, false));
+                self.params.curves[i].map(|c| c.value_in(steps, seconds, 0.0, &clock.env, false));
             // Un mando MIDI encima, según su peso.
             let knob = crate::knob::KnobTarget::Bus { param: i as u8 };
             if clock.knobs.find(knob).is_some() {
