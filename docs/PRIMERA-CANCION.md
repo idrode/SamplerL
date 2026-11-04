@@ -485,7 +485,7 @@ principal.
 
 ## Paso 6. Efectos en un solo corte
 
-> **Referencia:** [cortes:fx(cuál, nombre, parámetros)](GUIA.md#cortesfxcuál-nombre-parámetros) · [cortes:set([i,] parámetros)](GUIA.md#cortesseti-parámetros) · [Resaltado en vivo](GUIA.md#resaltado-en-vivo) · [Ensuciar solo la caja (efectos por corte)](GUIA.md#ensuciar-solo-la-caja-efectos-por-corte).
+> **Referencia:** [cortes:fx(cuál, nombre, parámetros)](GUIA.md#cortesfxcuál-nombre-parámetros) · [cortes:set([i,] parámetros)](GUIA.md#cortesseti-parámetros) · [Resaltado en vivo](GUIA.md#resaltado-en-vivo) · [Ensuciar solo la caja (efectos por corte)](GUIA.md#ensuciar-solo-la-caja-efectos-por-corte) · [Editar los efectos de un paso desde el tracker](GUIA.md#editar-los-efectos-de-un-paso-desde-el-tracker) · [El ratón, de un vistazo](GUIA.md#el-ratón-de-un-vistazo).
 
 Un efecto puede sonar solo en un corte: ensuciar solo la caja, quitar
 solo el clic del bombo. Hay dos maneras.
@@ -530,6 +530,15 @@ Dentro de las llaves va el efecto (`lp`, `hp`, `crush`, `drive`...), `=`
 y su valor principal; tras comas, los demás (`{lp=800,q=4}`). Varios
 efectos, cada uno en sus llaves: `3{crush=6}{lp=900}`. Todo, en
 «Efectos por paso» de la [sección 3](GUIA.md#3-mini-notación).
+
+> **¿Sin escribir las llaves?** Haz clic en una celda del tracker (la de
+> la fila 06 de `drums`, la de `4{hp=4000}`): queda marcada, invertida. Otro clic en la misma
+> abre la línea de órdenes con sus efectos (`efectos hp=4000`); cámbialos
+> (`hp=4000 crush=6`) y Enter los escribe en las llaves de ese paso del
+> código y carga. Ctrl-Z lo deshace; Esc suelta el tracker. Sin ratón, lo
+> mismo con F1 «Editar los efectos de un paso en el tracker» y las
+> flechas. Ver [Editar los efectos de un paso desde el
+> tracker](GUIA.md#editar-los-efectos-de-un-paso-desde-el-tracker).
 
 **Si no pasa:** un paso con un efecto mal escrito sale subrayado en rojo
 antes de guardar. Entre el corte y el paso caben 4 efectos: si no, la
@@ -600,7 +609,10 @@ volumen) en la tabla de `pista:fx`.
 
 **Mute y solo.** Para escuchar una pista sola o quitar otra mientras
 pruebas: en el modo tocar (Esc), Ctrl-O elige la pista, `m` la silencia y
-`s` la pone en solo, al instante. Otra vez, lo quita. F1 «Quitar mute y
+`s` la pone en solo, al instante. Otra vez, lo quita. Con el ratón, el
+clic derecho en el nombre de una pista, arriba del tracker, la silencia
+(y otro, la devuelve); con el editor en su ventana, las tiras del
+mezclador tienen su `M` y su `S` para pulsarlas. F1 «Quitar mute y
 solo» los quita todos. En el script, `:mute()` y `:solo()` hacen lo mismo
 al empezar el compás (el paso 12 los usa).
 
@@ -1106,6 +1118,15 @@ track("drums", amen)
   repetirse 3 veces. El azar se tira al cargar, para 16 compases que se
   repiten: cada Ctrl-S lo vuelve a tirar.
 
+> **¿Dónde hay huecos?** F1 «Vista de ocupación» enseña, encima del
+> tracker, una fila por pista con lo que suena en cada paso, y debajo
+> (`Σ`) cuántas pistas suenan a la vez: los pasos en los que no suena
+> ninguna salen resaltados. Haz clic en un silencio (`·`) de la fila de
+> `drums`, el segundo paso por ejemplo, y otro clic en el mismo: la línea
+> de órdenes propone el golpe anterior de la pista (`rellenar kick`);
+> cámbialo si quieres y Enter lo escribe en el `.` de ese paso del código
+> y carga. Ctrl-Z lo deshace. Ver [Vista de ocupación](GUIA.md#vista-de-ocupación).
+
 **Otra respuesta en la melodía.** `every(n, función)` cambia un compás de
 cada `n`: los compases 1, 3, 5... (el primero de cada 2, contando desde
 el principio). Cambia el párrafo de `track("teclas", teclas)`:
@@ -1355,7 +1376,7 @@ end)
 | `el corte N no existe` | El detector encontró menos golpes que los que pediste: quita ese número del patrón o pide menos cortes |
 | `el patrón necesita 16 pasos` | Cuenta los pasos: cuatro grupos de cuatro (o los de `:length(n)`) |
 | He cambiado algo y no se oye | ¿Has cargado (Ctrl-S)? Los cambios entran al empezar el compás siguiente. Con secciones, ¿esa pista suena en esta sección? ¿Estás en la variante B? |
-| Una pista no se oye | `:mute()` en el script o `m` en vivo (`M` en el tracker); otra pista en solo; `:gain(0)`; la sección la silencia |
+| Una pista no se oye | `:mute()` en el script o `m` en vivo (`M` en el tracker; el clic derecho en su nombre la devuelve); otra pista en solo; `:gain(0)`; la sección la silencia |
 | Suena saturado o distorsionado | El panel del motor dice `LIMITADOR` o `SATURA`: baja los `:gain()`, los `@` y los envíos (ver «Saturación», [sección 7](GUIA.md#7-solución-de-problemas)) |
 | Muy fuerte de golpe | Un `@` o un `:gain()` mayor que 1 (llegan hasta 4). Baja el volumen del sistema antes de probar |
 | El instrumento suena desafinado | `root` tiene que ser la nota en la que suena tu sample (paso 8) |

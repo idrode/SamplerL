@@ -914,6 +914,8 @@ la vuelta que se ve (si sale de un `c:steps("...")`, ese texto). Con el
 editor en su ventana, se edita desde la principal y el cambio llega al
 editor como un solo paso de deshacer.
 
+> **Usado en el tutorial:** [paso 6, Efectos en un solo corte](PRIMERA-CANCION.md#paso-6-efectos-en-un-solo-corte).
+
 ### Modo tocar (Esc)
 
 | Teclas | Cortes de la pista seleccionada |
@@ -1725,8 +1727,10 @@ segundo clic, como con Enter.
 
 Con la paleta o la línea de órdenes abiertas encima, el ratón no hace
 nada, y lo que tapan las visualizaciones, la vista del sidechain o el
-panel de las lanes no recibe el clic. Shift y arrastrar (Alt en algunas terminales) sigue seleccionando
-texto para copiar con la terminal.
+panel de las lanes no recibe el clic. Shift y arrastrar (Alt en algunas
+terminales) sigue seleccionando texto para copiar con la terminal.
+
+> **Usado en el tutorial:** [paso 6, Efectos en un solo corte](PRIMERA-CANCION.md#paso-6-efectos-en-un-solo-corte) · [paso 7, Efectos de pista y automatización](PRIMERA-CANCION.md#paso-7-efectos-de-pista-y-automatización) · [paso 12, Variación y estructura](PRIMERA-CANCION.md#paso-12-variación-y-estructura).
 
 ### Resaltado en vivo
 
