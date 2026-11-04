@@ -2526,6 +2526,7 @@ mod highlight;
 mod history;
 mod import;
 mod instrument;
+mod lanes;
 mod learn;
 mod length;
 mod main_window;

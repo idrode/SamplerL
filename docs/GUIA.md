@@ -764,6 +764,7 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Notas de los cortes | Lista la nota de cada corte de la pista en cifrado americano (C#4), con sus cents si está desafinada | — |
 | Tonalidad del sample | Analiza la tonalidad del sample de la pista (las tres más probables, la raíz y la confianza): r la pone de raíz del instrumento, i inserta un instrumento con ella, k propone key() para la canción | Ctrl-K en el explorador |
 | Vista del sidechain | Enseña o quita, por cada EQ dinámico y compresor, quién lo dispara, cuánto reduce ahora y sus curvas (disparo y reducción) en tiempo real | — |
+| Lanes de automatización | Enseña o quita las lanes de la pista seleccionada (pista:auto): su curva, sus puntos y el cursor de lo que suena, en tiempo real | — |
 | Metrónomo | Enciende o apaga el clic en cada pulso (no entra en lo exportado salvo que se pida) | — |
 | Reiniciar medidores | Pone a cero los medidores y quita los avisos de limitador y saturación | — |
 | Etiquetar el corte seleccionado | Abre «etiquetar N » para escribir la etiqueta (kick, snare...); se guarda en el proyecto | — |

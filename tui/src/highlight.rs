@@ -132,6 +132,7 @@ mod tests {
             section_lost: false,
             heard: None,
             hushed: false,
+            lanes: [None; engine::MAX_LANES],
         };
         for &(slot, cursor) in cursors {
             status.tracks[slot].cursor = Some(cursor);

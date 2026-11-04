@@ -203,3 +203,61 @@ fn without_the_lane_in_the_table_the_curve_stays_at_its_minimum() {
             .is_err()
     );
 }
+
+#[test]
+fn the_engine_publishes_what_each_lane_gives() {
+    let lane = Lane::new(
+        &[
+            point(0.0, 0.2, LaneCurve::Linear),
+            point(16.0, 1.0, LaneCurve::Linear),
+        ],
+        32.0,
+        false,
+    )
+    .unwrap();
+    let once = Lane::new(&[point(0.0, 0.5, LaneCurve::Linear)], 4.0, false)
+        .unwrap()
+        .with_timing(engine::LaneMode::Once, 0.0, 0.9)
+        .unwrap();
+    let mut lanes = Lanes::new();
+    lanes.set(3, Some(lane)).unwrap();
+    lanes.set(4, Some(once)).unwrap();
+    let dc = Arc::new(Sample::from_interleaved(&[0.5; 4800], 1, RATE, RATE).unwrap());
+    let slices = Slices::grid(&dc, 1);
+    let pattern = Pattern::from_steps(dc, &slices, vec![Some(Step::new(0)); 16]).unwrap();
+    let (mut controller, mut engine) = new_engine(RATE);
+    let mut batch = Batch::new();
+    batch
+        .set_bpm(120.0)
+        .set_lanes(lanes)
+        .set_pattern(0, Some(pattern));
+    controller.apply(batch).unwrap();
+    controller.start().unwrap();
+    // Ocho pasos (48 000 frames), en trozos de 512.
+    let mut out = vec![0.0f32; 2 * 512];
+    for _ in 0..(48_000 / 512) {
+        engine.process(&mut out, 2);
+    }
+    let status = controller.status();
+    let live = status.lanes[3].expect("la lane 3");
+    let phase = live.phase.unwrap();
+    // Del último bloque de 512 frames (el motor lo mezcla en trozos):
+    // entre el frame 47 104 y el 47 616.
+    assert!(
+        (47_104.0 / 6000.0..47_616.0 / 6000.0).contains(&phase),
+        "{phase}"
+    );
+    assert!((live.value - lane.value(phase as f64)).abs() < 1e-5);
+    // La once, pasado su tramo: el valor fijo y sin fase.
+    let after = status.lanes[4].unwrap();
+    assert_eq!((after.value, after.phase), (0.9, None));
+    assert!(status.lanes[0].is_none());
+    // Sin lanes, se borran.
+    let mut batch = Batch::new();
+    batch.set_lanes(Lanes::new());
+    controller.apply(batch).unwrap();
+    for _ in 0..(100_000 / 512) {
+        engine.process(&mut out, 2);
+    }
+    assert!(controller.status().lanes.iter().all(Option::is_none));
+}

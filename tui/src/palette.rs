@@ -43,6 +43,7 @@ pub enum Action {
     SliceNotes,
     SampleKey,
     SidechainView,
+    LanesView,
     Freeze,
     Unfreeze,
     MidiLearn,
@@ -295,6 +296,12 @@ pub const ACTIONS: &[ActionDef] = &[
         action: Action::SidechainView,
         name: "Vista del sidechain",
         description: "Enseña o quita, por cada EQ dinámico y compresor, quién lo dispara, cuánto reduce ahora y sus curvas (disparo y reducción) en tiempo real",
+        keys: "",
+    },
+    ActionDef {
+        action: Action::LanesView,
+        name: "Lanes de automatización",
+        description: "Enseña o quita las lanes de la pista seleccionada (pista:auto): su curva, sus puntos y el cursor de lo que suena, en tiempo real",
         keys: "",
     },
     ActionDef {

@@ -53,6 +53,8 @@ pub struct ViewModel {
     pub key: Option<crate::key_panel::KeyView>,
     /// Vista del sidechain abierta.
     pub sidechain: Option<crate::sidechain::SidechainView>,
+    /// Las lanes de la pista seleccionada, con el panel abierto.
+    pub lanes: Option<crate::lanes_panel::LanesView>,
     /// MIDI learn: la lista de parámetros para asignar, y la de mandos.
     pub knob_picker: Option<BlockPickerView>,
     pub knobs: Option<KnobsView>,

@@ -1674,6 +1674,8 @@ pub struct Engine {
     lanes: Option<Box<crate::lane::Lanes>>,
     pending_lanes: Option<Box<crate::lane::Lanes>>,
     staged_lanes: Option<Box<crate::lane::Lanes>>,
+    /// Se han publicado lanes (para borrarlas al quitarlas).
+    lanes_published: bool,
     /// Mandos MIDI: su tabla y su estado (ver [`crate::knob`]).
     knobs: crate::knob::KnobState,
     /// Pausa del pánico: no nace ninguna voz hasta `Resume`.
@@ -1802,6 +1804,7 @@ pub fn new_engine(sample_rate: u32) -> (Controller, Engine) {
             lanes: None,
             pending_lanes: None,
             staged_lanes: None,
+            lanes_published: false,
             knobs: crate::knob::KnobState::default(),
             hushed: false,
             voice_limit: DEFAULT_VOICE_LIMIT,
@@ -3673,6 +3676,7 @@ impl Engine {
 
     fn mix_with(&mut self, n: usize, lanes: &crate::lane::Lanes) {
         self.master[..2 * n].fill(0.0);
+        self.publish_lanes(lanes);
         let smoothing = 1.0 - (-1.0 / (GAIN_SMOOTHING_SECONDS * self.sample_rate as f32)).exp();
         // Con alguna pista en solo, solo suenan las que lo están.
         let any_solo = self.tracks.iter().any(Track::soloed);
@@ -4188,6 +4192,28 @@ impl Engine {
     fn discard_pattern(&mut self, pattern: Pattern) {
         if let Err(rtrb::PushError::Full(garbage)) = self.garbage.push(Garbage::Pattern(pattern)) {
             std::mem::forget(garbage);
+        }
+    }
+
+    /// Publica lo que da cada lane al empezar el trozo (para la vista):
+    /// solo con lanes, y una vez más al quitarlas, para borrarlas. Un
+    /// atómico por lane.
+    fn publish_lanes(&mut self, lanes: &crate::lane::Lanes) {
+        if lanes.is_empty() && !self.lanes_published {
+            return;
+        }
+        self.lanes_published = !lanes.is_empty();
+        let (origin_step, _) = self
+            .playlist
+            .as_ref()
+            .map_or((0, 0), |p| (p.origin_step, p.origin_frame));
+        let steps = self.transport.position_steps(self.sample_rate) - origin_step as f64;
+        for index in 0..crate::lane::MAX_LANES {
+            let live = lanes.get(index).map(|lane| crate::status::LaneLive {
+                value: lane.value(steps),
+                phase: lane.phase(steps).map(|p| p as f32),
+            });
+            self.status.set_lane(index, live);
         }
     }
 

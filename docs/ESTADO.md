@@ -2213,6 +2213,36 @@ con `golden.rs` idéntico y `no_alloc.rs` en verde.
   huecos; 12 errores con línea, más de 32 lanes, y el modelo de antes
   sigue; congelar).
 
+### Parte 4: el panel, de solo lectura
+
+- **Lo que publica el motor** (`engine/src/status.rs`): `Status::lanes:
+  [Option<LaneLive>; 32]`, con `LaneLive { value, phase }` de cada lane de
+  la tabla. `Engine::publish_lanes`, al empezar cada trozo (a tasa de
+  control), calcula el valor y la fase de cada lane en la posición de la
+  canción y los escribe con `SharedStatus::set_lane`: los dos f32 en un
+  solo `AtomicU64` por lane (así nunca se leen de trozos distintos), sin
+  bloqueos; sin lanes no hace nada, y al quitarlas las borra una vez. La
+  fase es `None` fuera del tramo de una `once` (y el valor, el fijo).
+- **El panel** (`tui/src/lanes_panel.rs`): `LanesView::new(song, pista,
+  status)` (puro) junta las lanes de la pista seleccionada
+  (`TrackDef::lanes` y `Song::lanes`) con lo publicado; `LanesPanel`
+  dibuja por lane su título (parámetro, duración en compases, modo y
+  offset) y su curva en 4 filas de octavos de celda (cada columna, rellena
+  hasta el valor de la lane en su centro, entre el mínimo y el máximo de
+  sus puntos; en escala log si la lane lo es), sus puntos (`●`) y el
+  cursor (la columna de su fase: la curva en el color de acento y lo vacío
+  con `│`). Paleta: «Lanes de automatización» (`Action::LanesView`, abre y
+  cierra; desde la ventana del editor va a la principal). Va abajo del
+  sample y el tracker, o abajo de la forma de onda grande con el editor en
+  su ventana.
+- **Tests**: `engine/tests/lanes.rs` (lo publicado: la fase en el último
+  bloque, el valor de la lane en esa fase, una `once` pasada con su valor
+  fijo y sin fase, un hueco vacío y que se borran al quitarlas) y
+  `tui/src/tests/lanes.rs` (la paleta lo abre y lo cierra con las lanes y
+  sus títulos; el cursor sigue al motor; en pantalla; la curva, los puntos
+  y el cursor en sus celdas). `cargo test -p tui pantalla_lanes --
+  --ignored --nocapture` lo enseña.
+
 ## Audio de prueba y problemas conocidos
 
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`

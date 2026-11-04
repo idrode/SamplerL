@@ -280,6 +280,8 @@ pub struct App {
     key_panel: Option<key::KeyPanel>,
     /// Vista del sidechain abierta, con su historial.
     sidechain: Option<crate::sidechain::Sidechain>,
+    /// Panel de las lanes de automatización abierto.
+    lanes_open: bool,
     /// Mandos MIDI asignados (los del proyecto o, sin ellos, los de la
     /// configuración), la lista para asignar uno, el que espera su CC, la
     /// lista de mandos abierta y el último CC que llegó.
@@ -463,6 +465,7 @@ impl App {
             macro_panel: None,
             key_panel: None,
             sidechain: None,
+            lanes_open: false,
             learned: Vec::new(),
             knob_picker: None,
             learning: None,
@@ -3403,6 +3406,7 @@ impl App {
             Action::Macros => self.open_macros(),
             Action::SampleKey => self.open_sample_key(),
             Action::SidechainView => self.toggle_sidechain(),
+            Action::LanesView => self.toggle_lanes(),
             Action::Freeze => self.freeze_selected(),
             Action::MidiLearn => self.open_midi_learn(),
             Action::MidiKnobs => self.open_knob_list(),
@@ -3709,6 +3713,34 @@ impl App {
         } else {
             "vista del sidechain: F1 «Vista del sidechain» otra vez para cerrarla".into()
         };
+    }
+
+    /// «Lanes de automatización»: enseña o quita el panel con las lanes de
+    /// la pista seleccionada.
+    pub fn toggle_lanes(&mut self) {
+        self.lanes_open = !self.lanes_open;
+        if !self.lanes_open {
+            self.message = "lanes cerradas".into();
+            return;
+        }
+        let view = self.lanes_view();
+        self.message = match view {
+            Some(v) if v.lanes.is_empty() => format!(
+                "lanes: la pista \"{}\" no tiene; ponle una con pista:auto(...)",
+                v.track
+            ),
+            Some(v) => format!(
+                "lanes de \"{}\": {}; F1 «Lanes de automatización» otra vez para cerrarlas",
+                v.track,
+                v.lanes.len()
+            ),
+            None => "lanes: no hay ninguna pista".into(),
+        };
+    }
+
+    /// Las lanes de la pista seleccionada, con lo que publica el motor.
+    fn lanes_view(&self) -> Option<crate::lanes_panel::LanesView> {
+        crate::lanes_panel::LanesView::new(self.host.song(), self.selected, self.status.as_ref())
     }
 
     /// Vacía los medidores y los avisos de saturación.
@@ -4422,6 +4454,7 @@ impl App {
                 .sidechain
                 .as_ref()
                 .map(|s| s.view(self.host.song())),
+            lanes: self.lanes_open.then(|| self.lanes_view()).flatten(),
             devices: self.devices_popup(),
             vim: self.vim.as_ref().map(vim::Vim::label),
             timeline,

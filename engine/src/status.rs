@@ -49,6 +49,18 @@ pub struct Status {
     pub heard: Option<f64>,
     /// La pausa del pánico: no nace ninguna voz hasta reanudar.
     pub hushed: bool,
+    /// Lo que da cada lane de automatización de la tabla del motor al
+    /// empezar el último trozo (`None`: hueco vacío).
+    pub lanes: [Option<LaneLive>; crate::lane::MAX_LANES],
+}
+
+/// Una lane en el último trozo: su valor y dónde va (pasos desde su
+/// inicio); `phase` es `None` si no actúa ahí (`once` fuera de su tramo:
+/// entonces `value` es el valor fijo).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LaneLive {
+    pub value: f32,
+    pub phase: Option<f32>,
 }
 
 /// Paso que disparó una pista: de qué patrón ([`crate::Pattern::with_tag`]),
@@ -138,6 +150,9 @@ pub(crate) struct SharedStatus {
     section_looping: AtomicBool,
     section_lost: AtomicBool,
     hushed: AtomicBool,
+    /// Cada lane: valor (32 bits altos) y fase (32 bajos) de un f32, en un
+    /// solo atómico (se leen juntos); `NONE`, sin lane.
+    lanes: [AtomicU64; crate::lane::MAX_LANES],
 }
 
 impl SharedStatus {
@@ -166,7 +181,18 @@ impl SharedStatus {
             section_looping: AtomicBool::new(false),
             section_lost: AtomicBool::new(false),
             hushed: AtomicBool::new(false),
+            lanes: std::array::from_fn(|_| AtomicU64::new(NONE)),
         }
+    }
+
+    /// Lo que da la lane `index` ahora (`None`: hueco vacío). La fase,
+    /// `None` fuera de su tramo.
+    pub fn set_lane(&self, index: usize, live: Option<LaneLive>) {
+        let packed = live.map_or(NONE, |l| {
+            let phase = l.phase.unwrap_or(f32::NAN);
+            ((l.value.to_bits() as u64) << 32) | phase.to_bits() as u64
+        });
+        self.lanes[index].store(packed, Relaxed);
     }
 
     // --- Escritura (hilo de audio) ---
@@ -355,6 +381,15 @@ impl SharedStatus {
             section_lost: self.section_lost.swap(false, Relaxed),
             heard: self.position().map(|p| p - delay),
             hushed: self.hushed.load(Relaxed),
+            lanes: std::array::from_fn(|i| {
+                opt(self.lanes[i].load(Relaxed)).map(|p| {
+                    let phase = f32::from_bits(p as u32);
+                    LaneLive {
+                        value: f32::from_bits((p >> 32) as u32),
+                        phase: (!phase.is_nan()).then_some(phase),
+                    }
+                })
+            }),
         }
     }
 }

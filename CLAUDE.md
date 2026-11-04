@@ -110,7 +110,7 @@ El detalle de lo hecho (dónde está cada cosa en el código, cómo funciona, su
   - `script/tests/golden.rs`: huellas del audio (solo en x86_64); sin usar nada nuevo, idénticas bit a bit.
   - `script/tests/guide.rs`: la guía coincide con el registro (`cargo run -p script --example guia`) y sus bloques de Lua y las recetas de `scripts/ejemplos/` (los de la guía y los del tutorial) se ejecutan; todo enlace interno entre los dos archivos y dentro de cada uno apunta a un ancla que existe; el script del tutorial (bloques `lua entero`, `añade` y `cambia`) se reconstruye paso a paso y cada estado se carga. Las tablas de la paleta y de la configuración se reescriben con `ACTUALIZAR_GUIA=1 cargo test -p tui the_guide_lists_the_palette` (y `the_guide_lists_the_config`).
   - `script/tests/registry.rs`: cada función, efecto, parámetro y snippet del registro existe y funciona en Lua.
-- **Ver la interfaz sin terminal**: `cargo test -p tui pantalla -- --ignored --nocapture` (y `pantalla_autocompletado`, `pantalla_paleta`, `pantalla_bloques`, `pantalla_choques`, `pantalla_ventanas`, `pantalla_acid`, `pantalla_ocupacion`, `pantalla_dispositivos`, `pantalla_sidechain`, `pantalla_roll`).
+- **Ver la interfaz sin terminal**: `cargo test -p tui pantalla -- --ignored --nocapture` (y `pantalla_autocompletado`, `pantalla_paleta`, `pantalla_bloques`, `pantalla_choques`, `pantalla_ventanas`, `pantalla_acid`, `pantalla_ocupacion`, `pantalla_dispositivos`, `pantalla_sidechain`, `pantalla_roll`, `pantalla_lanes`).
 - **Audio de prueba**: `scripts/render-demo.sh` genera un break sintético y lo renderiza a `renders/` sin tocar la tarjeta (ver `docs/ESTADO.md`).
 - **Pendiente conocido**: cpal avisa de un underrun al arrancar el stream (una vez, ~200 ms).
 

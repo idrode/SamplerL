@@ -49,6 +49,16 @@ fn meter_color() -> Color {
     theme::get().meter
 }
 
+/// Las últimas `height` filas de `area` (todas, si no caben).
+fn bottom_part(area: Rect, height: u16) -> Rect {
+    let height = height.min(area.height);
+    Rect {
+        y: area.bottom() - height,
+        height,
+        ..area
+    }
+}
+
 /// Dibuja toda la interfaz.
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let view = app.view();
@@ -134,6 +144,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             ..rest_area
         };
         frame.render_widget(crate::sidechain::SidechainPanel(sidechain), area);
+    }
+    // Las lanes de la pista seleccionada, abajo del sample y el tracker.
+    if let Some(lanes) = &view.lanes {
+        frame.render_widget(
+            crate::lanes_panel::LanesPanel(lanes),
+            bottom_part(rest_area, lanes.height()),
+        );
     }
     frame.render_widget(FxPanel(&view), fx);
     frame.render_widget(HelpLine(&view), help);
@@ -223,6 +240,13 @@ fn draw_main_window(frame: &mut Frame, view: &ViewModel) -> (Option<Rect>, Optio
         Layout::horizontal([Constraint::Min(0), Constraint::Length(side)]).areas(sample_area);
     if let Some(sidechain) = view.sidechain.as_ref().filter(|_| roll_area.is_none()) {
         frame.render_widget(crate::sidechain::SidechainPanel(sidechain), sidechain_area);
+    }
+    // Las lanes de la pista seleccionada, abajo de la forma de onda.
+    if let Some(lanes) = view.lanes.as_ref().filter(|_| roll_area.is_none()) {
+        frame.render_widget(
+            crate::lanes_panel::LanesPanel(lanes),
+            bottom_part(sample_area, lanes.height()),
+        );
     }
     // Con un análisis de choques hecho, su tabla a la derecha del sample.
     let width = view
