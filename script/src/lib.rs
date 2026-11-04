@@ -60,6 +60,8 @@ fn one_bar_is_singular() {
 pub mod blocks;
 mod freeze;
 mod lanes;
+mod viz;
+pub use viz::VizDef;
 pub mod learn;
 pub use freeze::FreezeRender;
 use freeze::apply_frozen;
@@ -176,6 +178,8 @@ pub struct Song {
     /// Lanes de automatización (`auto()`, `lane()`): el índice es el de la
     /// tabla del motor; `None`, un hueco libre.
     pub lanes: Vec<Option<LaneDef>>,
+    /// Visualizaciones pedidas (`pista:scope()`, `master():spectrum()`...).
+    pub viz: Vec<VizDef>,
 }
 
 /// La tonalidad de la canción (`key("A", "minor")`): la usan `scale()`
@@ -1157,6 +1161,7 @@ impl ScriptHost {
             frozen: Vec::new(),
             lanes: Vec::new(),
             warnings: warnings.clone(),
+            viz: Vec::new(),
         }));
         // La caché pasa al estado de Lua durante la evaluación y vuelve después.
         let cache = Rc::new(RefCell::new(std::mem::take(&mut self.samples)));
@@ -1187,6 +1192,7 @@ impl ScriptHost {
         let groups = std::mem::take(&mut state.borrow_mut().groups);
         let macros = std::mem::take(&mut state.borrow_mut().macros);
         let lanes = std::mem::take(&mut state.borrow_mut().lanes);
+        let viz = std::mem::take(&mut state.borrow_mut().viz);
         let frozen = std::mem::take(&mut state.borrow_mut().frozen);
         let (key, transpose) = {
             let builder = state.borrow();
@@ -1373,6 +1379,7 @@ impl ScriptHost {
                 groups: groups.clone(),
                 macros: macros.clone(),
                 lanes: lanes.clone(),
+                viz: viz.clone(),
                 key,
                 transpose,
             });
@@ -2300,6 +2307,20 @@ impl ScriptHost {
 
         let st = state.clone();
         globals.set(
+            "master",
+            lua.create_function(move |_, ()| Ok(viz::MasterHandle { state: st.clone() }))?,
+        )?;
+        let st = state.clone();
+        globals.set(
+            "viz_off",
+            lua.create_function(move |_, ()| {
+                st.borrow_mut().viz.clear();
+                Ok(())
+            })?,
+        )?;
+
+        let st = state.clone();
+        globals.set(
             "lane",
             lua.create_function(move |lua, (points, options): (Table, Option<Table>)| {
                 lanes::lane(lua, &mut st.borrow_mut(), &points, options.as_ref())
@@ -2478,6 +2499,30 @@ impl ScriptHost {
 /// El lote que hace sonar `song`. `before`, lo que sonaba (para quitar sus
 /// grupos si `song` ya no tiene): los grupos y las macros solo van si hacen
 /// falta, para no gastar sitio en la cola de comandos.
+/// Qué fuentes del motor copian muestras: las pistas (por su hueco) y el
+/// master de las visualizaciones de audio de `song`.
+pub fn viz_flags(song: &Song, slots: &[Option<String>; MAX_TRACKS]) -> [bool; engine::VIZ_SOURCES] {
+    let mut on = [false; engine::VIZ_SOURCES];
+    for v in song
+        .viz
+        .iter()
+        .filter(|v| !viz::PATTERN_KINDS.contains(&v.kind))
+    {
+        match &v.track {
+            None => on[engine::VIZ_MASTER] = true,
+            Some(name) => {
+                if let Some(i) = slots
+                    .iter()
+                    .position(|s| s.as_deref() == Some(name.as_str()))
+                {
+                    on[i] = true;
+                }
+            }
+        }
+    }
+    on
+}
+
 fn song_batch(
     song: &Song,
     slots: &[Option<String>; MAX_TRACKS],
@@ -2505,6 +2550,11 @@ fn song_batch(
             *value = def.value;
         }
         batch.set_macros(macros);
+    }
+    // Qué fuentes copian muestras para las visualizaciones de audio
+    // (también para apagar las que había).
+    if !song.viz.is_empty() || before.is_some_and(|b| !b.viz.is_empty()) {
+        batch.set_viz(viz_flags(song, slots));
     }
     // Las lanes, enteras (también para quitar las que había).
     if !song.lanes.is_empty() || before.is_some_and(|b| !b.lanes.is_empty()) {
@@ -3267,6 +3317,8 @@ struct Builder {
     lanes: Vec<Option<LaneDef>>,
     /// Los avisos de la carga.
     warnings: Rc<RefCell<Vec<String>>>,
+    /// Visualizaciones (`pista:scope()`, `master():spectrum()`...).
+    viz: Vec<VizDef>,
 }
 
 /// `frozen(pista, wav [, huella])`, por aplicar al acabar el script.
@@ -6816,6 +6868,24 @@ impl UserData for TrackHandle {
                 Ok((this.clone(), warning))
             },
         );
+        // Visualizaciones de la pista (`:scope{ size = 6 }`...).
+        for &kind in viz::KINDS {
+            methods.add_method(kind, move |lua, this, table: Option<Table>| {
+                viz::add(
+                    lua,
+                    &mut this.state.borrow_mut(),
+                    kind,
+                    Some(&this.name),
+                    table.as_ref(),
+                )?;
+                Ok(this.clone())
+            });
+        }
+        methods.add_method("viz_off", |_, this, ()| {
+            let name = Some(this.name.clone());
+            this.state.borrow_mut().viz.retain(|v| v.track != name);
+            Ok(this.clone())
+        });
         methods.add_method("auto_clear", |lua, this, param: Option<String>| {
             lanes::auto_clear(
                 lua,

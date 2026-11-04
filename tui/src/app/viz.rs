@@ -1,6 +1,3 @@
-// Hasta que lo pida el script (la API, más adelante), solo lo usan los tests.
-#![allow(dead_code)]
-
 //! Las visualizaciones pedidas y lo que se dibuja de ellas (ver
 //! `crate::viz`): las de rejilla, del modelo del piano roll de su pista con
 //! el cursor del resaltado en vivo; las de audio, de las muestras que copia
@@ -13,7 +10,9 @@ use super::App;
 
 impl App {
     /// Pone las visualizaciones `specs` y enciende en el motor las colas de
-    /// las fuentes de audio que piden (entran al compás, con un lote).
+    /// las fuentes de audio que piden (entran al compás, con un lote). Para
+    /// los tests: en uso, las pone el script ([`App::sync_viz`]).
+    #[cfg(test)]
     pub fn set_viz(&mut self, specs: Vec<VizSpec>) {
         let flags = self.viz_flags(&specs);
         if flags != self.viz_sent {
@@ -23,6 +22,29 @@ impl App {
                 self.viz_sent = flags;
             }
         }
+        self.viz = specs;
+    }
+
+    /// Tras una carga buena, las visualizaciones de su modelo: el lote de
+    /// la carga ya enciende sus fuentes en el motor.
+    pub(super) fn sync_viz(&mut self) {
+        let specs: Vec<VizSpec> = self.host.song().map_or_else(Vec::new, |song| {
+            song.viz
+                .iter()
+                .filter_map(|v| {
+                    Some(VizSpec {
+                        kind: crate::viz::VizKind::from_name(v.kind)?,
+                        source: match &v.track {
+                            Some(name) => VizSource::Track(name.clone()),
+                            None => VizSource::Master,
+                        },
+                        size: v.size,
+                        bands: v.bands,
+                    })
+                })
+                .collect()
+        });
+        self.viz_sent = self.viz_flags(&specs);
         self.viz = specs;
     }
 

@@ -169,6 +169,46 @@ fn spectrum_peaks_where_the_tone_is_and_draws_bars() {
     assert!(screen.contains('█'), "{screen}");
 }
 
+#[test]
+fn the_script_asks_for_them_and_the_load_switches_the_engine_on() {
+    let (mut app, mut engine) = open_tone("viz_from_lua");
+    let mut text = app.editor.lines().join("\n");
+    text.push_str(
+        "\ntrack(\"tono\"):scope{ size = 5 }:punchcard{ size = 2 }\nmaster():spectrum()\n",
+    );
+    let path = fixture("viz_from_lua_2", None);
+    let dir = path.parent().unwrap();
+    std::fs::copy(
+        Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../target/tmp/tui_viz_from_lua/tono.wav"
+        )),
+        dir.join("tono.wav"),
+    )
+    .unwrap();
+    std::fs::write(&path, &text).unwrap();
+    let (controller, engine2) = new_engine(RATE);
+    drop(std::mem::replace(&mut engine, engine2));
+    app = App::open(&path, controller, RATE).unwrap();
+    assert!(app.view().error.is_none(), "{:?}", app.view().error);
+    let kinds: Vec<&str> = app
+        .view()
+        .viz
+        .iter()
+        .map(|v| match v {
+            VizView::Grid(_) => "grid",
+            VizView::Scope(_) => "scope",
+            VizView::Spectrum(_) => "spectrum",
+        })
+        .collect();
+    assert_eq!(kinds, ["scope", "grid", "spectrum"]);
+    play(&mut app, &mut engine, 20);
+    let VizView::Scope(scope) = &app.view().viz[0] else {
+        panic!()
+    };
+    assert!(scope.triggered, "el lote de la carga encendió la cola");
+}
+
 /// Para verlas sin terminal: `cargo test -p tui pantalla_viz -- --ignored
 /// --nocapture`.
 #[test]

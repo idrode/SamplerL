@@ -30,6 +30,8 @@ pub enum Receiver {
     Instrument,
     /// Grupo de pistas: `group("bateria", { ... })`.
     Group,
+    /// El master, para sus visualizaciones: `master()`.
+    Master,
 }
 
 impl Receiver {
@@ -44,6 +46,7 @@ impl Receiver {
             Receiver::Scale => "escala",
             Receiver::Instrument => "instrumento",
             Receiver::Group => "grupo",
+            Receiver::Master => "master",
         }
     }
 }
@@ -152,6 +155,7 @@ const LAYER: &str = "es una capa del subharm: sus divisores son enteros y su niv
 const ENVELOPE: &str = "la envolvente se fija con el sintetizador al cargar; para mover el volumen en el tiempo, el de la pista (`:gain()` con `ramp()` o `lfo()`)";
 const DUR: &str = "es una duración que puede ser una figura (\"1/8\") o compases, no solo ms; para cambiarla golpe a golpe, en las llaves del paso (`3{dur=1/16}`)";
 const LOOP_POINTS: &str = "son los puntos del tramo que se repite y cada golpe los lee al nacer; para cambiarlos golpe a golpe, en las llaves del paso (`3{loop_start=40}`)";
+const VIEW: &str = "es de cómo se ve, no de cómo suena: se lee al cargar";
 const DELAY_TIME: &str = "es una figura (\"1/8\"), no un número; además, mover el retardo de una línea con repeticiones dentro suena a cambio de pitch";
 
 /// Efecto de pista para `:fx(nombre, parámetros)`.
@@ -1089,6 +1093,28 @@ pub const FUNCTIONS: &[Function] = &[
             },
         ],
         template: "lane({ {0, ${0}}, {${1}, ${1}, \"smooth\"} }, { len = \"${2 compases}\" })",
+        example: None,
+    },
+    Function {
+        name: "master",
+        receiver: Receiver::Global,
+        signature: "master()",
+        returns: Some(Receiver::Master),
+        summary: "El master, para ponerle visualizaciones: `master():spectrum()`.",
+        doc: "Tiene `scope`, `spectrum`, `pitchwheel` y `spiral` (las de audio: las de rejilla son de una pista) y `viz_off`.",
+        params: &[],
+        template: "master():spectrum{ size = ${6} }",
+        example: None,
+    },
+    Function {
+        name: "viz_off",
+        receiver: Receiver::Global,
+        signature: "viz_off()",
+        returns: None,
+        summary: "Quita todas las visualizaciones (las de las pistas y las del master).",
+        doc: "Las que se pidan después, en el mismo script, sí salen.",
+        params: &[],
+        template: "viz_off()",
         example: None,
     },
     Function {
@@ -2619,6 +2645,110 @@ pub const FUNCTIONS: &[Function] = &[
         example: None,
     },
     Function {
+        name: "punchcard",
+        receiver: Receiver::Track,
+        signature: "pista:punchcard([opciones])",
+        returns: Some(Receiver::Track),
+        summary: "Una rejilla con los golpes (o las notas) de la pista por paso, y el cursor de lo que suena.",
+        doc: "Sale del patrón, no del audio: lo que sonará, con `every`, `chance` y `fill` ya resueltos (el mismo modelo que el piano roll). Una fila por corte o nota que suena; una columna por paso del ciclo. Va en un panel fijo arriba del sample y el tracker. Entra con la carga; si el script falla, siguen las de antes.",
+        params: &[Param {
+            name: "opciones",
+            description: "`size` (filas) y, en `spectrum`, `bands` (ver abajo)",
+        }],
+        template: "punchcard{ size = ${6} }",
+        example: Some(
+            "bpm(170)\n\
+             local amen = sample(\"amen.wav\"):slice(8)\n\
+             track(\"drums\", amen):steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\"):punchcard{ size = 4 }\n",
+        ),
+    },
+    Function {
+        name: "pianoroll",
+        receiver: Receiver::Track,
+        signature: "pista:pianoroll([opciones])",
+        returns: Some(Receiver::Track),
+        summary: "Como `punchcard`, con todas las notas del rango y su nombre a la izquierda.",
+        doc: "Para melodías: una fila por nota (de la más alta a la más baja del rango que toca), con su nombre. Solo de lectura: para editar, el piano roll de la paleta.",
+        params: &[Param {
+            name: "opciones",
+            description: "`size` (filas) y, en `spectrum`, `bands` (ver abajo)",
+        }],
+        template: "pianoroll{ size = ${6} }",
+        example: None,
+    },
+    Function {
+        name: "scope",
+        receiver: Receiver::Track,
+        signature: "pista:scope([opciones])",
+        returns: Some(Receiver::Track),
+        summary: "Un osciloscopio de lo que sale de la pista, con la onda quieta.",
+        doc: "El motor copia lo que sale de la pista (tras su volumen y su pan) a una cola, solo mientras haya un `scope` o un `spectrum` que lo lea (sin ellas, no copia nada); la interfaz toma una ventana de 43 ms que empieza en un cruce por cero de subida (así una señal periódica no se mueve) y la dibuja con Braille. Se enciende al compás.",
+        params: &[Param {
+            name: "opciones",
+            description: "`size` (filas) y, en `spectrum`, `bands` (ver abajo)",
+        }],
+        template: "scope{ size = ${6} }",
+        example: Some(
+            "bpm(170)\n\
+             local amen = sample(\"amen.wav\"):slice(8)\n\
+             track(\"drums\", amen):steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\"):scope{ size = 6 }\n\
+             master():spectrum{ bands = 48 }\n",
+        ),
+    },
+    Function {
+        name: "spectrum",
+        receiver: Receiver::Track,
+        signature: "pista:spectrum([opciones])",
+        returns: Some(Receiver::Track),
+        summary: "El espectro de lo que sale de la pista, en barras.",
+        doc: "FFT de 2048 puntos con ventana de Hann, bandas en escala logarítmica de 30 Hz a 20 kHz (de −90 a 0 dB) y una caída lenta para que no parpadee. Las muestras, como las de `scope`.",
+        params: &[Param {
+            name: "opciones",
+            description: "`size` (filas) y, en `spectrum`, `bands` (ver abajo)",
+        }],
+        template: "spectrum{ size = ${6}, bands = ${32} }",
+        example: None,
+    },
+    Function {
+        name: "pitchwheel",
+        receiver: Receiver::Track,
+        signature: "pista:pitchwheel([opciones])",
+        returns: Some(Receiver::Track),
+        summary: "Una rueda con las doce notas y cuánto suena cada una ahora.",
+        doc: "De las muestras (como `spectrum`): la energía de cada clase de nota (do, do#...) en las octavas audibles, en una rueda de doce sectores con do arriba; el más fuerte, resaltado.",
+        params: &[Param {
+            name: "opciones",
+            description: "`size` (filas) y, en `spectrum`, `bands` (ver abajo)",
+        }],
+        template: "pitchwheel{ size = ${6} }",
+        example: None,
+    },
+    Function {
+        name: "spiral",
+        receiver: Receiver::Track,
+        signature: "pista:spiral([opciones])",
+        returns: Some(Receiver::Track),
+        summary: "La onda en espiral: cada vuelta, un ciclo de la nota más fuerte.",
+        doc: "De las muestras: la señal enrollada en una espiral cuyo periodo es el de la nota más fuerte (la de `pitchwheel`); con una nota estable, la espiral se queda quieta.",
+        params: &[Param {
+            name: "opciones",
+            description: "`size` (filas) y, en `spectrum`, `bands` (ver abajo)",
+        }],
+        template: "spiral{ size = ${6} }",
+        example: None,
+    },
+    Function {
+        name: "viz_off",
+        receiver: Receiver::Track,
+        signature: "pista:viz_off()",
+        returns: Some(Receiver::Track),
+        summary: "Quita las visualizaciones de la pista.",
+        doc: "Las demás siguen. Para quitarlas todas, `viz_off()`.",
+        params: &[],
+        template: "viz_off()",
+        example: None,
+    },
+    Function {
         name: "steps",
         receiver: Receiver::Bar,
         signature: "c:steps(texto)",
@@ -2697,6 +2827,73 @@ pub const FUNCTIONS: &[Function] = &[
             description: "volumen lineal (0 a 4)",
         }],
         template: "gain(${0.5})",
+        example: None,
+    },
+    Function {
+        name: "scope",
+        receiver: Receiver::Master,
+        signature: "master():scope([opciones])",
+        returns: Some(Receiver::Master),
+        summary: "Un osciloscopio de lo que sale del master, con la onda quieta.",
+        doc: "Lo que sale de la mezcla, tras el limitador (lo que se oye). Se enciende al compás.",
+        params: &[Param {
+            name: "opciones",
+            description: "`size` (filas) y, en `spectrum`, `bands` (ver abajo)",
+        }],
+        template: "scope{ size = ${6} }",
+        example: None,
+    },
+    Function {
+        name: "spectrum",
+        receiver: Receiver::Master,
+        signature: "master():spectrum([opciones])",
+        returns: Some(Receiver::Master),
+        summary: "El espectro de lo que sale del master, en barras.",
+        doc: "Lo que sale de la mezcla, tras el limitador (lo que se oye). Las muestras, como las de `scope`.",
+        params: &[Param {
+            name: "opciones",
+            description: "`size` (filas) y, en `spectrum`, `bands` (ver abajo)",
+        }],
+        template: "spectrum{ size = ${6}, bands = ${32} }",
+        example: None,
+    },
+    Function {
+        name: "pitchwheel",
+        receiver: Receiver::Master,
+        signature: "master():pitchwheel([opciones])",
+        returns: Some(Receiver::Master),
+        summary: "Una rueda con las doce notas y cuánto suena cada una ahora.",
+        doc: "Lo que sale de la mezcla, tras el limitador (lo que se oye). De las muestras (como `spectrum`): la energía de cada clase de nota (do, do#...) en las octavas audibles, en una rueda de doce sectores con do arriba; el más fuerte, resaltado.",
+        params: &[Param {
+            name: "opciones",
+            description: "`size` (filas) y, en `spectrum`, `bands` (ver abajo)",
+        }],
+        template: "pitchwheel{ size = ${6} }",
+        example: None,
+    },
+    Function {
+        name: "spiral",
+        receiver: Receiver::Master,
+        signature: "master():spiral([opciones])",
+        returns: Some(Receiver::Master),
+        summary: "La onda en espiral: cada vuelta, un ciclo de la nota más fuerte.",
+        doc: "Lo que sale de la mezcla, tras el limitador (lo que se oye). De las muestras: la señal enrollada en una espiral cuyo periodo es el de la nota más fuerte (la de `pitchwheel`); con una nota estable, la espiral se queda quieta.",
+        params: &[Param {
+            name: "opciones",
+            description: "`size` (filas) y, en `spectrum`, `bands` (ver abajo)",
+        }],
+        template: "spiral{ size = ${6} }",
+        example: None,
+    },
+    Function {
+        name: "viz_off",
+        receiver: Receiver::Master,
+        signature: "master():viz_off()",
+        returns: Some(Receiver::Master),
+        summary: "Quita las visualizaciones del master.",
+        doc: "Las de las pistas siguen.",
+        params: &[],
+        template: "viz_off()",
         example: None,
     },
 ];
@@ -4136,6 +4333,38 @@ pub const LANE_TABLE: Effect = Effect {
     summary: "Cómo dura y cómo acaba una lane de automatización.",
     params: LANE_PARAMS,
     template: "{ len = \"${4 compases}\" }",
+};
+
+/// Opciones de las visualizaciones (`pista:scope{...}`, `master():spectrum{...}`).
+pub const VIZ_PARAMS: &[FxParam] = &[
+    FxParam {
+        name: "size",
+        description: "alto del panel, en filas (sin los bordes)",
+        default: Some("6"),
+        valid: "1–40",
+        values: &[],
+        template: "size = ${6}",
+        automate: Auto::No(VIEW),
+    },
+    FxParam {
+        name: "bands",
+        description: "en `spectrum`, cuántas bandas (en escala logarítmica de 30 Hz a 20 kHz)",
+        default: Some("32"),
+        valid: "4–128",
+        values: &[],
+        template: "bands = ${32}",
+        automate: Auto::No(VIEW),
+    },
+];
+
+/// La tabla de opciones de las visualizaciones, como un efecto (para el
+/// autocompletado y la ayuda de sus claves).
+pub const VIZ_TABLE: Effect = Effect {
+    name: "viz",
+    aliases: &[],
+    summary: "Cómo se ve una visualización.",
+    params: VIZ_PARAMS,
+    template: "{ size = ${6} }",
 };
 
 /// Parámetros de `pista:grains()` y `pista:freeze()` (los rangos y los

@@ -2509,6 +2509,32 @@ por configuración y por `LANG`.
   spectrum del master de un seno de 220 Hz: el pico en su banda y barras en
   pantalla).
 
+### Parte 5: la API, la ayuda y la guía
+
+- **Lua** (`script/src/viz.rs`): `pista:punchcard`, `pianoroll`, `scope`,
+  `spectrum`, `pitchwheel` y `spiral`, cada una con `{ size, bands }`
+  (`api::VIZ_PARAMS`; `size` de 1 a 40 filas, 6 por defecto; `bands` de 4 a
+  128, 32), y `pista:viz_off()`; `master()` (receptor nuevo del registro,
+  `Receiver::Master`) con las de audio y su `viz_off()`; y `viz_off()`
+  global. Cada llamada apunta un `VizDef { kind, track (None: el master),
+  size, bands }` en `Song::viz` (la misma de la misma fuente se
+  sustituye); las de rejilla en el master, error con la línea. Si el script
+  falla, el modelo de antes (y sus visualizaciones) sigue.
+- **El lote**: `script::viz_flags` dice qué fuentes copian (las pistas con
+  una de audio, por su hueco del motor, y el master); `song_batch` lo
+  manda si hay alguna o las había (para apagarlas). Las de rejilla no
+  encienden nada.
+- **La interfaz**: `App::sync_viz`, tras cada carga buena, pone las del
+  modelo (la cola ya la enciende el lote de la carga). El autocompletado y
+  la ayuda de la tabla de opciones (`api::VIZ_TABLE`) salen del registro;
+  la guía, generada, tiene cada función.
+- **Tests**: `script/tests/viz.rs` (lo que llega al modelo, sustituir,
+  `viz_off` de una pista, del master y de todo, las fuentes que enciende el
+  lote, errores con línea y el modelo de antes sigue), `registry.rs` (las
+  plantillas, también en `master()`) y `tui/src/tests/viz.rs` (desde el
+  script: las tres en la vista y el scope dispara con la cola que encendió
+  la carga).
+
 ## Audio de prueba y problemas conocidos
 
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`

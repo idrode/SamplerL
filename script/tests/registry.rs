@@ -54,6 +54,7 @@ fn variable(receiver: Receiver) -> &'static str {
         Receiver::Scale => "escala",
         Receiver::Instrument => "inst",
         Receiver::Group => "gr",
+        Receiver::Master => "m",
     }
 }
 
@@ -68,6 +69,7 @@ track("snare", amen:slice_at(3))
 local gr = group("gr", { "t" })
 local escala = scale("minor", "C")
 local inst = s:instrument({ root = "C3" })
+local m = master()
 "#;
 
 #[test]

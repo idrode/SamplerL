@@ -1,6 +1,3 @@
-// Hasta que lo pida el script (la API, más adelante), solo lo usan los tests.
-#![allow(dead_code)]
-
 //! Visualizaciones al estilo de Strudel, por pista o del master: las de
 //! rejilla (`punchcard`, `pianoroll`) salen del modelo del piano roll (lo
 //! que sonará) con el cursor del resaltado en vivo; las de audio
@@ -33,6 +30,20 @@ impl VizKind {
             VizKind::Pitchwheel => "pitchwheel",
             VizKind::Spiral => "spiral",
         }
+    }
+
+    /// Por su nombre en Lua.
+    pub fn from_name(name: &str) -> Option<VizKind> {
+        [
+            VizKind::Punchcard,
+            VizKind::Pianoroll,
+            VizKind::Scope,
+            VizKind::Spectrum,
+            VizKind::Pitchwheel,
+            VizKind::Spiral,
+        ]
+        .into_iter()
+        .find(|k| k.name() == name)
     }
 
     /// Necesita las muestras del motor.

@@ -61,6 +61,10 @@ la sección 4 (con sus parámetros, rangos y un ejemplo cada una).
   cualquier parámetro que admita curvas (`pista:auto`), que se ve, se
   dibuja con el ratón y se graba tocando un mando; ver
   [Automatizar con lanes](#automatizar-con-lanes).
+- Ver lo que suena, al estilo de Strudel: `pista:punchcard()` y
+  `pista:pianoroll()` (del patrón, con el cursor), `pista:scope()` y
+  `pista:spectrum()` (del audio de la pista), y lo mismo del master con
+  `master():spectrum()`; `viz_off()` las quita.
 
 **Secuenciar** (sección 3 y sección 4)
 - Pasos con la mini-notación: reverse, pitch con duración (`^`) o sin ella
@@ -2644,6 +2648,16 @@ Una lane de automatización suelta: se pone donde va un `ramp()` (en `:fx`, `:ga
 - `puntos`: `{ {posición, valor [, curva]}, ... }` (posición en compases)
 - `opciones`: `len`, `mode`, `offset`, `range`, `scale` y `rest`
 
+### `master()`
+
+Devuelve: master.
+
+El master, para ponerle visualizaciones: `master():spectrum()`. Tiene `scope`, `spectrum`, `pitchwheel` y `spiral` (las de audio: las de rejilla son de una pista) y `viz_off`.
+
+### `viz_off()`
+
+Quita todas las visualizaciones (las de las pistas y las del master). Las que se pidan después, en el mismo script, sí salen.
+
 ### `lfo(frecuencia, mín, máx)`
 
 Valor que oscila (seno) entre mín y máx (en lugar de un número). Como `ramp`, va en lugar de un número (ver la tabla que sigue). La frecuencia es un número en Hz (de 0.01 a 50) o lo que dura un ciclo en el tempo de la canción (`"1 compás"`, `"8 pasos"`). Empieza en `mín` cuando arranca el secuenciador; las frecuencias oscilan en escala logarítmica.
@@ -3713,6 +3727,111 @@ Quita la lane de ese parámetro (o todas las de la pista): vuelve a su valor fij
 ### `pista:auto_list()`
 
 Las lanes de la pista: una tabla con `param`, `len` (compases), `mode` y `points` de cada una. Para mirarlas o copiarlas desde el script (`print`).
+
+### `pista:punchcard([opciones])`
+
+Devuelve: pista.
+
+Una rejilla con los golpes (o las notas) de la pista por paso, y el cursor de lo que suena. Sale del patrón, no del audio: lo que sonará, con `every`, `chance` y `fill` ya resueltos (el mismo modelo que el piano roll). Una fila por corte o nota que suena; una columna por paso del ciclo. Va en un panel fijo arriba del sample y el tracker. Entra con la carga; si el script falla, siguen las de antes.
+
+- `opciones`: `size` (filas) y, en `spectrum`, `bands` (ver abajo)
+
+```lua
+bpm(170)
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 ."):punchcard{ size = 4 }
+```
+
+### `pista:pianoroll([opciones])`
+
+Devuelve: pista.
+
+Como `punchcard`, con todas las notas del rango y su nombre a la izquierda. Para melodías: una fila por nota (de la más alta a la más baja del rango que toca), con su nombre. Solo de lectura: para editar, el piano roll de la paleta.
+
+- `opciones`: `size` (filas) y, en `spectrum`, `bands` (ver abajo)
+
+### `pista:scope([opciones])`
+
+Devuelve: pista.
+
+Un osciloscopio de lo que sale de la pista, con la onda quieta. El motor copia lo que sale de la pista (tras su volumen y su pan) a una cola, solo mientras haya un `scope` o un `spectrum` que lo lea (sin ellas, no copia nada); la interfaz toma una ventana de 43 ms que empieza en un cruce por cero de subida (así una señal periódica no se mueve) y la dibuja con Braille. Se enciende al compás.
+
+- `opciones`: `size` (filas) y, en `spectrum`, `bands` (ver abajo)
+
+```lua
+bpm(170)
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 ."):scope{ size = 6 }
+master():spectrum{ bands = 48 }
+```
+
+### `pista:spectrum([opciones])`
+
+Devuelve: pista.
+
+El espectro de lo que sale de la pista, en barras. FFT de 2048 puntos con ventana de Hann, bandas en escala logarítmica de 30 Hz a 20 kHz (de −90 a 0 dB) y una caída lenta para que no parpadee. Las muestras, como las de `scope`.
+
+- `opciones`: `size` (filas) y, en `spectrum`, `bands` (ver abajo)
+
+### `pista:pitchwheel([opciones])`
+
+Devuelve: pista.
+
+Una rueda con las doce notas y cuánto suena cada una ahora. De las muestras (como `spectrum`): la energía de cada clase de nota (do, do#...) en las octavas audibles, en una rueda de doce sectores con do arriba; el más fuerte, resaltado.
+
+- `opciones`: `size` (filas) y, en `spectrum`, `bands` (ver abajo)
+
+### `pista:spiral([opciones])`
+
+Devuelve: pista.
+
+La onda en espiral: cada vuelta, un ciclo de la nota más fuerte. De las muestras: la señal enrollada en una espiral cuyo periodo es el de la nota más fuerte (la de `pitchwheel`); con una nota estable, la espiral se queda quieta.
+
+- `opciones`: `size` (filas) y, en `spectrum`, `bands` (ver abajo)
+
+### `pista:viz_off()`
+
+Devuelve: pista.
+
+Quita las visualizaciones de la pista. Las demás siguen. Para quitarlas todas, `viz_off()`.
+
+### `master():scope([opciones])`
+
+Devuelve: master.
+
+Un osciloscopio de lo que sale del master, con la onda quieta. Lo que sale de la mezcla, tras el limitador (lo que se oye). Se enciende al compás.
+
+- `opciones`: `size` (filas) y, en `spectrum`, `bands` (ver abajo)
+
+### `master():spectrum([opciones])`
+
+Devuelve: master.
+
+El espectro de lo que sale del master, en barras. Lo que sale de la mezcla, tras el limitador (lo que se oye). Las muestras, como las de `scope`.
+
+- `opciones`: `size` (filas) y, en `spectrum`, `bands` (ver abajo)
+
+### `master():pitchwheel([opciones])`
+
+Devuelve: master.
+
+Una rueda con las doce notas y cuánto suena cada una ahora. Lo que sale de la mezcla, tras el limitador (lo que se oye). De las muestras (como `spectrum`): la energía de cada clase de nota (do, do#...) en las octavas audibles, en una rueda de doce sectores con do arriba; el más fuerte, resaltado.
+
+- `opciones`: `size` (filas) y, en `spectrum`, `bands` (ver abajo)
+
+### `master():spiral([opciones])`
+
+Devuelve: master.
+
+La onda en espiral: cada vuelta, un ciclo de la nota más fuerte. Lo que sale de la mezcla, tras el limitador (lo que se oye). De las muestras: la señal enrollada en una espiral cuyo periodo es el de la nota más fuerte (la de `pitchwheel`); con una nota estable, la espiral se queda quieta.
+
+- `opciones`: `size` (filas) y, en `spectrum`, `bands` (ver abajo)
+
+### `master():viz_off()`
+
+Devuelve: master.
+
+Quita las visualizaciones del master. Las de las pistas siguen.
 
 ### Snippets
 

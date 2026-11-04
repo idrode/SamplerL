@@ -1771,6 +1771,7 @@ impl App {
                 }
                 self.update_waveforms();
                 self.sync_mix();
+                self.sync_viz();
                 if let Some(on) = self.host.song().and_then(|s| s.metronome) {
                     self.set_metronome(on);
                 }
