@@ -791,6 +791,7 @@ fn run_editor(path: &std::path::Path, args: DeviceArgs, split: bool) -> Result<(
     };
     app.set_global_blocks(script::blocks::global_dir());
     theme::set(config.theme);
+    theme::set_ascii(config.interface.ascii());
     app.set_config(&config);
     // Las ranuras 1-9, de una sesión a otra.
     app.set_slots_dir(config::dir().map(|d| d.join("ranuras")));
@@ -854,6 +855,7 @@ fn run_window_editor(path: &std::path::Path) -> Result<(), BoxError> {
         None => config::Config::default(),
     };
     theme::set(config.theme);
+    theme::set_ascii(config.interface.ascii());
     app.set_config(&config);
     app.set_slots_dir(config::dir().map(|d| d.join("ranuras")));
     app.set_history_root(history::root());
@@ -880,6 +882,7 @@ fn run_devices_window(path: &std::path::Path) -> Result<(), BoxError> {
         None => config::Config::default(),
     };
     theme::set(config.theme);
+    theme::set_ascii(config.interface.ascii());
     let mut window = devices_window::DevicesWindow::new(&socket);
     let mut terminal = ratatui::init();
     let result = (|| -> Result<(), BoxError> {
@@ -948,6 +951,7 @@ fn run_roll_window(path: &std::path::Path) -> Result<(), BoxError> {
         None => config::Config::default(),
     };
     theme::set(config.theme);
+    theme::set_ascii(config.interface.ascii());
     let mut window = roll_window::RollWindow::new(&socket);
     let mut terminal = ratatui::init();
     let mouse = config.editor.mouse
@@ -1035,6 +1039,11 @@ fn run_terminal(
     };
     app.set_key_releases(releases);
     let result = (|| -> Result<(), BoxError> {
+        // Se dibuja al ritmo del refresco (`[interfaz] refresco`) o en
+        // cuanto llega algo (una tecla, el ratón): la entrada no espera al
+        // dibujo y el dibujo no se repite de más.
+        let mut last_draw: Option<std::time::Instant> = None;
+        let mut fresh_input = true;
         loop {
             app.poll_midi();
             app.tick();
@@ -1042,7 +1051,13 @@ fn run_terminal(
             if app.leaving() {
                 return Ok(());
             }
-            terminal.draw(|frame| draw(frame, app))?;
+            let frame_every = app.frame_interval();
+            let due = last_draw.is_none_or(|t| t.elapsed() >= frame_every);
+            if due || fresh_input {
+                terminal.draw(|frame| draw(frame, app))?;
+                last_draw = Some(std::time::Instant::now());
+                fresh_input = false;
+            }
             // Lo copiado, al portapapeles de la terminal (OSC 52).
             let osc = app.clipboard.take_osc();
             if !osc.is_empty() {
@@ -1053,9 +1068,12 @@ fn run_terminal(
                 }
                 let _ = out.flush();
             }
-            if !event::poll(poll)? {
+            let wait =
+                last_draw.map_or(poll, |t| frame_every.saturating_sub(t.elapsed()).min(poll));
+            if !event::poll(wait)? {
                 continue;
             }
+            fresh_input = true;
             // Lo que ya ha llegado, junto: un pegado sin bracketed paste
             // es una ráfaga de teclas.
             let mut events = vec![event::read()?];

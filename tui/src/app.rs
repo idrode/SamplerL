@@ -300,6 +300,8 @@ pub struct App {
     viz_scratch: Vec<f32>,
     /// Lo que enseña cada `spectrum` (con su caída), por su índice.
     viz_spectra: Vec<Vec<f32>>,
+    /// Cuadros por segundo (`[interfaz] refresco`).
+    refresh_hz: u32,
     /// Mandos MIDI asignados (los del proyecto o, sin ellos, los de la
     /// configuración), la lista para asignar uno, el que espera su CC, la
     /// lista de mandos abierta y el último CC que llegó.
@@ -493,6 +495,7 @@ impl App {
             viz_history: std::array::from_fn(|_| std::collections::VecDeque::new()),
             viz_scratch: Vec::new(),
             viz_spectra: Vec::new(),
+            refresh_hz: crate::config::DEFAULT_REFRESH,
             learned: Vec::new(),
             knob_picker: None,
             learning: None,
@@ -625,6 +628,12 @@ impl App {
     /// Aplica la configuración del usuario (atajos; el tema lo pone `main`
     /// en el hilo que dibuja). Sus avisos van al mensaje.
     pub fn set_config(&mut self, config: &Config) {
+        // Lo que diga la configuración; sin ella, lo decide `main` al
+        // arrancar (por `LANG`).
+        if let Some(ascii) = config.interface.ascii {
+            crate::theme::set_ascii(ascii);
+        }
+        self.refresh_hz = config.interface.refresh;
         self.editor_terminal = config.editor_terminal.clone();
         self.devices_terminal = config.devices_terminal.clone();
         self.mouse_enabled = config.editor.mouse;
@@ -3742,6 +3751,11 @@ impl App {
         } else {
             "vista del sidechain: F1 «Vista del sidechain» otra vez para cerrarla".into()
         };
+    }
+
+    /// Lo que pasa entre dos cuadros (`[interfaz] refresco`).
+    pub fn frame_interval(&self) -> std::time::Duration {
+        std::time::Duration::from_secs_f64(1.0 / self.refresh_hz.max(1) as f64)
     }
 
     /// «Lanes de automatización»: enseña o quita el panel con las lanes de

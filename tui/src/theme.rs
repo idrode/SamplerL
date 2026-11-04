@@ -199,7 +199,6 @@ thread_local! {
 
 /// Las visualizaciones (y lo que tenga alternativa) solo con ASCII, para
 /// una terminal que no pinta Braille ni bloques.
-#[allow(dead_code)]
 pub fn set_ascii(on: bool) {
     ASCII.with(|a| a.set(on));
 }

@@ -92,3 +92,36 @@ fn switching_on_enters_at_the_bar() {
     offline::render(&mut engine, 10_000, 2);
     assert_eq!(drained(&mut controller, VIZ_MASTER).len(), 4000);
 }
+
+/// Lo que cuesta copiar en el hilo de audio (`cargo test -p engine
+/// --release --test viz -- --ignored --nocapture`): 20 s con las 9 colas
+/// encendidas (vaciándolas) frente a apagadas.
+#[test]
+#[ignore]
+fn coste_en_el_hilo_de_audio() {
+    let run = |on: bool| {
+        let (mut controller, mut engine) = engine_with(Some([on; VIZ_SOURCES]));
+        let mut out = vec![0.0f32; 2 * 512];
+        let mut drained = Vec::with_capacity(VIZ_CAPACITY);
+        let start = std::time::Instant::now();
+        for _ in 0..(20 * RATE as usize / 512) {
+            engine.process(&mut out, 2);
+            if on {
+                // Fuera del cálculo del coste del audio, la interfaz vacía.
+                for s in 0..VIZ_SOURCES {
+                    drained.clear();
+                    controller.viz_samples(s, &mut drained);
+                }
+            }
+        }
+        start.elapsed().as_secs_f64()
+    };
+    let off = run(false);
+    let on = run(true);
+    println!(
+        "20 s de audio: apagadas {:.1} ms, encendidas {:.1} ms (+{:.3} % de un núcleo, vaciando incluido)",
+        off * 1000.0,
+        on * 1000.0,
+        (on - off) / 20.0 * 100.0
+    );
+}

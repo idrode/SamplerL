@@ -8,6 +8,7 @@
 pub mod grid;
 pub mod scope;
 pub mod spectrum;
+pub mod wheel;
 
 /// Qué se enseña.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,6 +86,8 @@ pub enum VizView {
     Grid(grid::GridView),
     Scope(scope::ScopeView),
     Spectrum(spectrum::SpectrumView),
+    Wheel(wheel::WheelView),
+    Spiral(wheel::SpiralView),
 }
 
 impl VizView {
@@ -94,6 +97,8 @@ impl VizView {
             VizView::Grid(g) => g.size + 2,
             VizView::Scope(s) => s.size + 2,
             VizView::Spectrum(s) => s.size + 2,
+            VizView::Wheel(w) => w.size + 2,
+            VizView::Spiral(s) => s.size + 2,
         }
     }
 }
@@ -114,6 +119,8 @@ impl ratatui::widgets::Widget for VizPanels<'_> {
                 VizView::Grid(g) => grid::GridPanel(g).render(rect, buf),
                 VizView::Scope(s) => scope::ScopePanel(s).render(rect, buf),
                 VizView::Spectrum(s) => spectrum::SpectrumPanel(s).render(rect, buf),
+                VizView::Wheel(w) => wheel::WheelPanel(w).render(rect, buf),
+                VizView::Spiral(s) => wheel::SpiralPanel(s).render(rect, buf),
             }
             y += height;
         }

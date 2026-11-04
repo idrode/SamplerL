@@ -115,7 +115,26 @@ impl App {
                     levels: self.viz_spectra.get(index).cloned().unwrap_or_default(),
                 }))
             }
-            _ => None,
+            VizKind::Pitchwheel | VizKind::Spiral => {
+                let history = self.viz_history(&spec.source)?;
+                let (a, b) = history.as_slices();
+                let samples: Vec<f32> = a.iter().chain(b).copied().collect();
+                Some(if spec.kind == VizKind::Pitchwheel {
+                    VizView::Wheel(crate::viz::wheel::wheel(
+                        &samples,
+                        self.sample_rate,
+                        spec.title(),
+                        spec.size,
+                    ))
+                } else {
+                    VizView::Spiral(crate::viz::wheel::spiral(
+                        &samples,
+                        self.sample_rate,
+                        spec.title(),
+                        spec.size,
+                    ))
+                })
+            }
         }
     }
 

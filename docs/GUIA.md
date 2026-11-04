@@ -1297,6 +1297,11 @@ paleta de 256.
 | --- | --- | --- |
 | `limite` | notas de instrumento y voces de sintetizador que suenan a la vez entre todas las pistas (de 1 a 256); al llegar, una nota nueva roba la más antigua de cualquier pista (con el fundido mínimo). Aparte va el límite de cada pista (`voices` en el script) | `64` |
 
+| En `[interfaz]` | Para | Por defecto |
+| --- | --- | --- |
+| `ascii` | dibujar las visualizaciones (y lo que tenga alternativa) solo con ASCII, sin Braille ni bloques, para una terminal que no los pinta | según `LANG`: sin UTF-8, `true` |
+| `refresco` | cuadros por segundo de la interfaz (de 5 a 120): más, las visualizaciones van más suaves y gastan más; la entrada y el ratón no esperan al dibujo | `30` |
+
 | En `[dispositivos]` | Para | Por defecto |
 | --- | --- | --- |
 | `audio` | dispositivo de salida de audio, por su nombre (el de `tui --list-devices` o el panel de dispositivos); se guarda solo al elegirlo en el panel; `--audio-device` manda sobre él | el predeterminado |

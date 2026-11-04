@@ -2535,6 +2535,44 @@ por configuración y por `LANG`.
   script: las tres en la vista y el scope dispara con la cola que encendió
   la carga).
 
+### Parte 6: `pitchwheel`, `spiral`, ASCII y refresco
+
+- **`viz/wheel.rs`**: `chroma` es un cromagrama (FFT de `CHROMA_SIZE` =
+  8192 puntos con Hann, 5,9 Hz por bin a 48 kHz, para separar las notas
+  graves: cada bin de 55 Hz a 5 kHz suma su energía a su clase de nota,
+  normalizado a la más fuerte). `pitchwheel`: una rueda en Braille con do
+  arriba y un radio por nota tan largo como suena; la más fuerte, en el
+  color de acento y nombrada. `spiral`: la onda enrollada en una espiral de
+  `TURNS` = 6 vueltas cuyo periodo es el de la nota que se oye (YIN,
+  `engine::detect_mono`, sobre las últimas 4096 muestras; sin nota, 1024
+  muestras), con el radio empujado por la muestra; el título dice la nota.
+  En ASCII, la rueda es una línea de notas con `#` y la espiral, `*`.
+- **ASCII**: `theme::ascii()` (por hilo, como el tema); `[interfaz] ascii`
+  en `config.toml` y, si no lo dice, al arrancar se mira `LC_ALL`,
+  `LC_CTYPE` o `LANG`: sin UTF-8, ASCII (`config::utf8_locale`). Lo usan las
+  seis visualizaciones.
+- **Refresco**: `[interfaz] refresco` (cuadros por segundo, de 5 a 120; 30
+  por defecto). `run_terminal` dibuja al ritmo del refresco o en cuanto
+  llega una tecla o el ratón, y espera la entrada como mucho hasta el
+  cuadro siguiente: la entrada no espera al dibujo, y con MIDI (que mira su
+  cola cada 2 ms) ya no se dibuja en cada vuelta.
+- **Coste medido** (`cargo test -p tui --release
+  coste_de_las_visualizaciones -- --ignored --nocapture`, calcular y
+  dibujar un cuadro de 140×45 en el i7, restado lo demás): `punchcard`,
+  `pianoroll` y `scope`, menos de 0,05 ms; `spectrum`, 0,27 ms (0,8 % de un
+  núcleo a 30 cuadros); `spiral`, 0,37 ms (1,1 %); `pitchwheel`, 1,04 ms
+  (3,1 %, por la FFT de 8192). En el hilo de audio (`cargo test -p engine
+  --release --test viz -- --ignored --nocapture`): las nueve colas
+  encendidas, +0,025 % de un núcleo (vaciado incluido). Memoria: 576 KB de
+  colas en el motor y 64 KB de historial por fuente encendida en la
+  interfaz.
+- **Tests**: `viz/wheel.rs` (un la, un do, un la grave, un mi grave y un
+  sol agudo encienden su clase; el silencio, nada; la espiral de 220 Hz
+  vuelve cada 218 muestras y dice A3), `tui/src/tests/viz.rs` (las dos del
+  master de un seno de 220 Hz: la rueda en el la, la espiral con A3, en
+  pantalla, y en ASCII sin Braille) y `config.rs` (`[interfaz]` y sus
+  avisos).
+
 ## Audio de prueba y problemas conocidos
 
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`

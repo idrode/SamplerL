@@ -241,6 +241,64 @@ impl Default for VoicesConfig {
     }
 }
 
+/// `[interfaz]`: cómo se dibuja.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct InterfaceConfig {
+    /// Sin Braille ni bloques (`ascii`); `None`: según `LANG` (sin UTF-8,
+    /// ASCII).
+    pub ascii: Option<bool>,
+    /// Cuadros por segundo (`refresco`).
+    pub refresh: u32,
+}
+
+impl Default for InterfaceConfig {
+    fn default() -> Self {
+        InterfaceConfig {
+            ascii: None,
+            refresh: DEFAULT_REFRESH,
+        }
+    }
+}
+
+/// Cuadros por segundo por defecto y su rango.
+pub const DEFAULT_REFRESH: u32 = 30;
+pub const REFRESH: std::ops::RangeInclusive<u32> = 5..=120;
+
+/// Si el sistema dice que la terminal es UTF-8 (`LC_ALL`, `LC_CTYPE` o
+/// `LANG`, el primero que haya): sin eso, mejor ASCII.
+pub fn utf8_locale() -> bool {
+    ["LC_ALL", "LC_CTYPE", "LANG"]
+        .iter()
+        .find_map(|v| std::env::var(v).ok().filter(|s| !s.is_empty()))
+        .is_some_and(|s| {
+            let s = s.to_ascii_lowercase();
+            s.contains("utf-8") || s.contains("utf8")
+        })
+}
+
+impl InterfaceConfig {
+    /// Dibujar en ASCII: lo que diga la configuración o, si no dice nada,
+    /// sin un `LANG` UTF-8.
+    pub fn ascii(&self) -> bool {
+        self.ascii.unwrap_or_else(|| !utf8_locale())
+    }
+}
+
+/// Claves de `[interfaz]` (para la guía).
+#[cfg(test)]
+const INTERFACE_KEYS: &[(&str, &str, &str)] = &[
+    (
+        "ascii",
+        "dibujar las visualizaciones (y lo que tenga alternativa) solo con ASCII, sin Braille ni bloques, para una terminal que no los pinta",
+        "según `LANG`: sin UTF-8, `true`",
+    ),
+    (
+        "refresco",
+        "cuadros por segundo de la interfaz (de 5 a 120): más, las visualizaciones van más suaves y gastan más; la entrada y el ratón no esperan al dibujo",
+        "`30`",
+    ),
+];
+
 /// Claves de `[voces]` (para la guía).
 #[cfg(test)]
 const VOICES_KEYS: &[(&str, &str, &str)] = &[(
@@ -641,6 +699,8 @@ pub struct Config {
     pub occupancy: OccupancyConfig,
     /// `[voces]`: el límite de voces a la vez.
     pub voices: VoicesConfig,
+    /// `[interfaz]`: ASCII y refresco.
+    pub interface: InterfaceConfig,
     /// `[roll]` y `[roll.teclas]`: el piano roll.
     pub roll: RollConfig,
     /// `[dispositivos]`: los elegidos la última vez.
@@ -851,6 +911,32 @@ impl Config {
                             _ => config
                                 .warnings
                                 .push(format!("[voces] «{key}» no existe (hay: limite)")),
+                        }
+                    }
+                }
+                "interfaz" => {
+                    for (key, value) in inner {
+                        match key.as_str() {
+                            "ascii" => match value.as_bool() {
+                                Some(on) => config.interface.ascii = Some(on),
+                                None => config
+                                    .warnings
+                                    .push("[interfaz] ascii: true o false".into()),
+                            },
+                            "refresco" => match value
+                                .as_integer()
+                                .filter(|n| REFRESH.contains(&(*n as u32)) && *n > 0)
+                            {
+                                Some(n) => config.interface.refresh = n as u32,
+                                None => config.warnings.push(format!(
+                                    "[interfaz] refresco: cuadros por segundo, de {} a {}",
+                                    REFRESH.start(),
+                                    REFRESH.end()
+                                )),
+                            },
+                            _ => config.warnings.push(format!(
+                                "[interfaz] «{key}» no existe (hay: ascii, refresco)"
+                            )),
                         }
                     }
                 }
@@ -1080,6 +1166,10 @@ fn guide_markdown() -> String {
     for (name, what, default) in VOICES_KEYS {
         out.push_str(&format!("| `{name}` | {what} | {default} |\n"));
     }
+    out.push_str("\n| En `[interfaz]` | Para | Por defecto |\n| --- | --- | --- |\n");
+    for (name, what, default) in INTERFACE_KEYS {
+        out.push_str(&format!("| `{name}` | {what} | {default} |\n"));
+    }
     out.push_str("\n| En `[dispositivos]` | Para | Por defecto |\n| --- | --- | --- |\n");
     for (name, what, default) in DEVICES_KEYS {
         out.push_str(&format!("| `{name}` | {what} | {default} |\n"));
@@ -1301,6 +1391,18 @@ fn toml_string(value: &str) -> String {
 mod tests {
     use super::*;
     use ratatui::style::Color;
+
+    #[test]
+    fn the_interface_section() {
+        let c = Config::parse("[interfaz]\nascii = true\nrefresco = 60\n", false, "c");
+        assert_eq!(c.interface.ascii, Some(true));
+        assert_eq!(c.interface.refresh, 60);
+        assert!(c.interface.ascii());
+        assert!(c.warnings.is_empty(), "{:?}", c.warnings);
+        let c = Config::parse("[interfaz]\nrefresco = 500\nzz = 1\n", false, "c");
+        assert_eq!(c.interface.refresh, DEFAULT_REFRESH);
+        assert_eq!(c.warnings.len(), 2, "{:?}", c.warnings);
+    }
 
     #[test]
     fn the_guide_lists_the_config() {

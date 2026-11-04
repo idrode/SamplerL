@@ -199,6 +199,8 @@ fn the_script_asks_for_them_and_the_load_switches_the_engine_on() {
             VizView::Grid(_) => "grid",
             VizView::Scope(_) => "scope",
             VizView::Spectrum(_) => "spectrum",
+            VizView::Wheel(_) => "pitchwheel",
+            VizView::Spiral(_) => "spiral",
         })
         .collect();
     assert_eq!(kinds, ["scope", "grid", "spectrum"]);
@@ -207,6 +209,40 @@ fn the_script_asks_for_them_and_the_load_switches_the_engine_on() {
         panic!()
     };
     assert!(scope.triggered, "el lote de la carga encendió la cola");
+}
+
+#[test]
+fn pitchwheel_and_spiral_from_the_audio() {
+    let (mut app, mut engine) = open_tone("viz_wheel");
+    app.set_viz(vec![
+        spec(VizKind::Pitchwheel, VizSource::Master, 8),
+        spec(VizKind::Spiral, VizSource::Master, 8),
+    ]);
+    play(&mut app, &mut engine, 20);
+    let view = app.view();
+    let VizView::Wheel(wheel) = &view.viz[0] else {
+        panic!("rueda")
+    };
+    // 220 Hz es un la.
+    assert_eq!(wheel.strongest(), Some(9));
+    let VizView::Spiral(spiral) = &view.viz[1] else {
+        panic!("espiral")
+    };
+    assert_eq!(spiral.note.as_deref(), Some("A3"));
+    let screen = text(&draw(&mut app, 140, 45));
+    assert!(screen.contains("pitchwheel · master"), "{screen}");
+    assert!(screen.contains("spiral · master A3"), "{screen}");
+    assert!(screen.contains('A'), "{screen}");
+    crate::theme::set_ascii(true);
+    let screen = text(&draw(&mut app, 140, 45));
+    crate::theme::set_ascii(false);
+    assert!(screen.contains("A####"), "{screen}");
+    assert!(
+        !screen
+            .chars()
+            .any(|c| ('\u{2800}'..='\u{28ff}').contains(&c)),
+        "{screen}"
+    );
 }
 
 /// Para verlas sin terminal: `cargo test -p tui pantalla_viz -- --ignored
@@ -219,7 +255,60 @@ fn pantalla_viz() {
         spec(VizKind::Punchcard, VizSource::Track("tono".into()), 2),
         spec(VizKind::Scope, VizSource::Master, 6),
         spec(VizKind::Spectrum, VizSource::Master, 6),
+        spec(VizKind::Pitchwheel, VizSource::Master, 8),
+        spec(VizKind::Spiral, VizSource::Master, 8),
     ]);
     play(&mut app, &mut engine, 20);
     println!("{}", text(&draw(&mut app, 140, 45)));
+}
+
+/// Lo que cuesta cada visualización por cuadro (calcularla y dibujarla
+/// en 140×45, en el hilo de la interfaz): `cargo test -p tui --release
+/// coste_de_las_visualizaciones -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn coste_de_las_visualizaciones() {
+    for (name, kind, source) in [
+        (
+            "punchcard",
+            VizKind::Punchcard,
+            VizSource::Track("tono".into()),
+        ),
+        (
+            "pianoroll",
+            VizKind::Pianoroll,
+            VizSource::Track("tono".into()),
+        ),
+        ("scope", VizKind::Scope, VizSource::Master),
+        ("spectrum", VizKind::Spectrum, VizSource::Master),
+        ("pitchwheel", VizKind::Pitchwheel, VizSource::Master),
+        ("spiral", VizKind::Spiral, VizSource::Master),
+    ] {
+        let (mut app, mut engine) = open_tone(&format!("viz_coste_{name}"));
+        app.set_viz(vec![spec(kind, source, 8)]);
+        play(&mut app, &mut engine, 20);
+        // Sin visualizaciones, para restar lo que cuesta el resto.
+        let base = {
+            let (mut plain, mut e) = open_tone(&format!("viz_coste_base_{name}"));
+            play(&mut plain, &mut e, 20);
+            let start = std::time::Instant::now();
+            for _ in 0..100 {
+                plain.tick();
+                draw(&mut plain, 140, 45);
+            }
+            start.elapsed().as_secs_f64() / 100.0
+        };
+        let start = std::time::Instant::now();
+        for _ in 0..100 {
+            app.tick();
+            draw(&mut app, 140, 45);
+        }
+        let frame = start.elapsed().as_secs_f64() / 100.0;
+        let extra = (frame - base).max(0.0);
+        println!(
+            "{name}: {:.2} ms por cuadro ({:.1} % de un núcleo a 30 cuadros/s)",
+            extra * 1000.0,
+            extra * 30.0 * 100.0
+        );
+    }
 }

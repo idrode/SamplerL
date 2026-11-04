@@ -833,6 +833,7 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
     3. ✅ **`scope`** con disparo por cruce por cero y Braille.
     4. ✅ **`spectrum`** con FFT.
     5. ✅ **Registro, ayuda y guía.**
-    6. **`pitchwheel`, `spiral` y degradación a ASCII.**
+    6. ✅ **`pitchwheel`, `spiral` y degradación a ASCII** (y el refresco
+       configurable).
     7. **Inline y en la ventana del editor** (opcional).
     8. **Recetas, tutorial y documentación.**
