@@ -193,6 +193,19 @@ impl Theme {
 
 thread_local! {
     static THEME: Cell<Theme> = Cell::new(Theme::default());
+    /// Dibujar sin Braille ni bloques: solo ASCII (ver [`set_ascii`]).
+    static ASCII: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Las visualizaciones (y lo que tenga alternativa) solo con ASCII, para
+/// una terminal que no pinta Braille ni bloques.
+#[allow(dead_code)]
+pub fn set_ascii(on: bool) {
+    ASCII.with(|a| a.set(on));
+}
+
+pub fn ascii() -> bool {
+    ASCII.with(Cell::get)
 }
 
 /// Pone el tema de este hilo (el que dibuja).

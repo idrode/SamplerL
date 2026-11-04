@@ -2440,6 +2440,32 @@ por configuración y por `LANG`.
   las nueve encendidas, llenas y vaciándose, sin reservas). `golden.rs`,
   idéntico.
 
+### Parte 2: `punchcard` y `pianoroll`
+
+- **`tui/src/viz/`**: `VizKind` (las seis), `VizSource` (una pista por su
+  nombre o el master), `VizSpec` (qué, de dónde, `size` en filas y
+  `bands`) y `VizView`, lo ya calculado que dibuja `VizPanels`: los
+  paneles apilados, cada uno con su borde y su título (`punchcard ·
+  drums`).
+- **La rejilla** (`viz/grid.rs`): de `roll::build` (el modelo puro del
+  piano roll: el ciclo entero que sonará, con `every`, `chance`, `fill` y lo
+  generado ya resueltos), una fila por nota o corte y una columna por paso
+  del ciclo, estirada al ancho: `█` donde empieza un golpe, `▒` mientras
+  dura (sus `_`), `·` vacío. `punchcard` solo con las filas que suenan;
+  `pianoroll`, todas las del rango (de la más alta a la más baja) con su
+  nombre a la izquierda. El cursor es la columna que se oye, con la
+  sincronía del resaltado en vivo (`App::viz_playhead`, como el del piano
+  roll), en vídeo inverso. Con `theme::ascii()`, `#`, `=`, `.` y `|`.
+- **En la interfaz** (`tui/src/app/viz.rs`): `App::set_viz(specs)` las
+  pone (la API llega después) y manda encender en el motor las colas de
+  las de audio (un lote, al compás); `App::viz_views` las calcula para la
+  vista. Van apiladas arriba del sample y el tracker, o de la forma de onda
+  grande con el editor en su ventana.
+- **Tests**: `tui/src/tests/viz.rs` (el punchcard de `drums`: dos filas,
+  los golpes en sus pasos, el cursor y en pantalla; el pianoroll de un acid
+  de do2 a sol2, las ocho filas con su nombre; en ASCII). `cargo test -p tui
+  pantalla_viz -- --ignored --nocapture` las enseña.
+
 ## Audio de prueba y problemas conocidos
 
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`

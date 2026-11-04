@@ -34,6 +34,7 @@ mod theme;
 mod touch;
 mod ui;
 mod units;
+mod viz;
 
 use std::sync::Arc;
 use std::time::Duration;

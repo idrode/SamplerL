@@ -829,7 +829,7 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
     «Visualizaciones» de [docs/ESTADO.md](ESTADO.md).
     1. ✅ **Las muestras**: una cola lock-free por pista y otra del master,
        con su flag, por el lote al compás.
-    2. **`punchcard` y `pianoroll`** desde el modelo del piano roll.
+    2. ✅ **`punchcard` y `pianoroll`** desde el modelo del piano roll.
     3. **`scope`** con disparo por cruce por cero y Braille.
     4. **`spectrum`** con FFT.
     5. **Registro, ayuda y guía.**

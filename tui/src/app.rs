@@ -43,6 +43,7 @@ mod lanes;
 mod occupancy;
 mod roll;
 mod tracker_edit;
+mod viz;
 
 /// Plantilla para un script nuevo.
 const TEMPLATE: &str = r#"bpm(170)
@@ -289,6 +290,10 @@ pub struct App {
     lane_drag: Option<lanes::LaneDrag>,
     /// La grabación de lanes («touch»), armada, con sus tomas abiertas.
     touch: Option<lanes::Touch>,
+    /// Las visualizaciones pedidas y qué fuentes del motor se han mandado
+    /// encender.
+    viz: Vec<crate::viz::VizSpec>,
+    viz_sent: [bool; engine::VIZ_SOURCES],
     /// Mandos MIDI asignados (los del proyecto o, sin ellos, los de la
     /// configuración), la lista para asignar uno, el que espera su CC, la
     /// lista de mandos abierta y el último CC que llegó.
@@ -477,6 +482,8 @@ impl App {
             lanes_focus: None,
             lane_drag: None,
             touch: None,
+            viz: Vec::new(),
+            viz_sent: [false; engine::VIZ_SOURCES],
             learned: Vec::new(),
             knob_picker: None,
             learning: None,
@@ -4468,6 +4475,7 @@ impl App {
                 .as_ref()
                 .map(|s| s.view(self.host.song())),
             lanes: self.lanes_open.then(|| self.lanes_view()).flatten(),
+            viz: self.viz_views(),
             devices: self.devices_popup(),
             vim: self.vim.as_ref().map(vim::Vim::label),
             timeline,

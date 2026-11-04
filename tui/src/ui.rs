@@ -146,6 +146,17 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         };
         frame.render_widget(crate::sidechain::SidechainPanel(sidechain), area);
     }
+    // Las visualizaciones, apiladas arriba del sample y el tracker.
+    if !view.viz.is_empty() {
+        let height = crate::viz::total_height(&view.viz).min(rest_area.height);
+        frame.render_widget(
+            crate::viz::VizPanels(&view.viz),
+            Rect {
+                height,
+                ..rest_area
+            },
+        );
+    }
     // Las lanes de la pista seleccionada, abajo del sample y el tracker.
     let mut lanes_area = None;
     if let Some(lanes) = &view.lanes {
@@ -245,6 +256,17 @@ fn draw_main_window(
         Layout::horizontal([Constraint::Min(0), Constraint::Length(side)]).areas(sample_area);
     if let Some(sidechain) = view.sidechain.as_ref().filter(|_| roll_area.is_none()) {
         frame.render_widget(crate::sidechain::SidechainPanel(sidechain), sidechain_area);
+    }
+    // Las visualizaciones, apiladas arriba de la forma de onda.
+    if !view.viz.is_empty() && roll_area.is_none() {
+        let height = crate::viz::total_height(&view.viz).min(sample_area.height);
+        frame.render_widget(
+            crate::viz::VizPanels(&view.viz),
+            Rect {
+                height,
+                ..sample_area
+            },
+        );
     }
     // Las lanes de la pista seleccionada, abajo de la forma de onda.
     let mut lanes_area = None;
