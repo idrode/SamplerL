@@ -4049,7 +4049,7 @@ track("drums")
 
 <!-- api:fin -->
 
-> **Usado en el tutorial:** [paso 3, Cargar un break y trocearlo](PRIMERA-CANCION.md#paso-3-cargar-un-break-y-trocearlo) (`bpm`, `sample`, `sample:detect_bpm`, `sample:slice`); [paso 4, El primer patrón de batería](PRIMERA-CANCION.md#paso-4-el-primer-patrón-de-batería) (`track`, `pista:steps`); [paso 5, Otro sample en otra pista](PRIMERA-CANCION.md#paso-5-otro-sample-en-otra-pista) (`sample:stretch`, `pista:length`, `pista:gain`, `pista:pan`); [paso 6, Efectos en un solo corte](PRIMERA-CANCION.md#paso-6-efectos-en-un-solo-corte) (`cortes:set`, `cortes:fx`); [paso 7, Efectos de pista y automatización](PRIMERA-CANCION.md#paso-7-efectos-de-pista-y-automatización) (`bus`, `ramp`, `lfo`, `pista:fx`, `pista:send`); [paso 8, Abrir un instrumento](PRIMERA-CANCION.md#paso-8-abrir-un-instrumento) (`sample:instrument`); [paso 9, Líneas melódicas](PRIMERA-CANCION.md#paso-9-líneas-melódicas) (`scale`, `escala:melody`, `pista:melody`); [paso 10, Efectos sobre la melodía](PRIMERA-CANCION.md#paso-10-efectos-sobre-la-melodía) (`bus`, `pista:fx`, `pista:send`); [paso 11, Un bajo que no choque con el bombo](PRIMERA-CANCION.md#paso-11-un-bajo-que-no-choque-con-el-bombo) (`priority`, `synth`); [paso 12, Variación y estructura](PRIMERA-CANCION.md#paso-12-variación-y-estructura) (`section`, `arrange`, `variant`).
+> **Usado en el tutorial:** [paso 3, Cargar un break y trocearlo](PRIMERA-CANCION.md#paso-3-cargar-un-break-y-trocearlo) (`bpm`, `sample`, `sample:detect_bpm`, `sample:slice`); [paso 4, El primer patrón de batería](PRIMERA-CANCION.md#paso-4-el-primer-patrón-de-batería) (`track`, `pista:steps`); [paso 5, Otro sample en otra pista](PRIMERA-CANCION.md#paso-5-otro-sample-en-otra-pista) (`sample:stretch`, `pista:length`, `pista:gain`, `pista:pan`); [paso 6, Efectos en un solo corte](PRIMERA-CANCION.md#paso-6-efectos-en-un-solo-corte) (`cortes:set`, `cortes:fx`); [paso 7, Efectos de pista y automatización](PRIMERA-CANCION.md#paso-7-efectos-de-pista-y-automatización) (`bus`, `ramp`, `lfo`, `pista:fx`, `pista:send`); [paso 8, Abrir un instrumento](PRIMERA-CANCION.md#paso-8-abrir-un-instrumento) (`sample:instrument`, `cortes:instrument`); [paso 9, Líneas melódicas](PRIMERA-CANCION.md#paso-9-líneas-melódicas) (`scale`, `escala:melody`, `pista:melody`); [paso 10, Efectos sobre la melodía](PRIMERA-CANCION.md#paso-10-efectos-sobre-la-melodía) (`bus`, `pista:fx`, `pista:send`); [paso 11, Un bajo que no choque con el bombo](PRIMERA-CANCION.md#paso-11-un-bajo-que-no-choque-con-el-bombo) (`priority`, `sh101`, `pista:auto`); [paso 12, Variación y estructura](PRIMERA-CANCION.md#paso-12-variación-y-estructura) (`section`, `arrange`, `variant`).
 
 ## 5. Cuantización, recarga atómica y errores
 
@@ -4250,8 +4250,6 @@ Para que el filtro se abra poco a poco a lo largo de la canción, una
 rampa en `cutoff` (o en `envmod`): `cutoff = ramp(200, 2000, "16
 compases")`. Y para variar los accents sin escribirlos, `:chance(0.3,
 "accent")` (con `"slide"`, igual).
-
-> **Usado en el tutorial:** [paso 11, Un bajo que no choque con el bombo](PRIMERA-CANCION.md#paso-11-un-bajo-que-no-choque-con-el-bombo).
 
 ### Un subgrave limpio
 
@@ -4507,6 +4505,8 @@ de afinación mínima y lenta, la misma en cada render con la misma semilla.
 `glide_mode`, `pwm_src`, `lfo_wave`) no admiten `ramp()`, `lfo()` ni
 lanes; el corte, la resonancia, los niveles, `pw`, el glide y el LFO, sí
 (la tabla de [`sh101`](#sh101-opciones-) dice cuáles).
+
+> **Usado en el tutorial:** [paso 11, Un bajo que no choque con el bombo](PRIMERA-CANCION.md#paso-11-un-bajo-que-no-choque-con-el-bombo).
 
 #### Paso a paso
 
@@ -4886,8 +4886,10 @@ Límites:
 - Fuera de una pista, `lane(puntos, opciones)` es la misma curva para
   ponerla donde va un `ramp()` (un grupo, los efectos de un corte), pero
   no se edita desde el panel.
-- Al grabar con un mando, la toma no se oye con el ratón hasta que se
-  escribe (con un mando sí, mientras se mueve).
+- Al grabar tocando con el ratón, la toma no se oye hasta que se escribe
+  (con un mando sí, mientras se mueve).
+
+> **Usado en el tutorial:** [paso 11, Un bajo que no choque con el bombo](PRIMERA-CANCION.md#paso-11-un-bajo-que-no-choque-con-el-bombo).
 
 ### Una macro para el subidón
 
@@ -5066,6 +5068,8 @@ Límites:
 - Con `keep`, cada voz de un instrumento cuesta unas cinco veces más que
   como sampler: con más de 8 a la vez, baja `voices`.
 - La vista del sample enseña el corte original, no el deformado.
+
+> **Usado en el tutorial:** [paso 8, Abrir un instrumento](PRIMERA-CANCION.md#paso-8-abrir-un-instrumento).
 
 ### Que el break deje sitio al bombo (EQ dinámico y sidechain)
 

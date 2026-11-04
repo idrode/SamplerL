@@ -23,8 +23,8 @@ fn doc(name: &str) -> String {
 }
 
 /// Carpeta con el break sintético como `amen.wav` y, para el tutorial,
-/// otro break a 120 BPM (`perc.wav`) y dos notas sintéticas: un do central
-/// (`nota.wav`) y un do grave (`bajo.wav`). Una por test: si dos tests
+/// otro break a 120 BPM (`perc.wav`) y una nota sintética, un do central
+/// (`nota.wav`). Una por test: si dos tests
 /// escriben el mismo archivo a la vez, uno puede leerlo a medias.
 fn samples(test: &str) -> PathBuf {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("guide_samples_{test}"));
@@ -41,7 +41,6 @@ fn samples(test: &str) -> PathBuf {
     let perc = synth::render_hits(synth::RATE, &hits, eighth * hits.len());
     offline::write_wav(dir.join("perc.wav"), &perc, 1, synth::RATE).unwrap();
     offline::write_wav(dir.join("nota.wav"), &note(261.63), 1, synth::RATE).unwrap();
-    offline::write_wav(dir.join("bajo.wav"), &note(65.41), 1, synth::RATE).unwrap();
     dir
 }
 

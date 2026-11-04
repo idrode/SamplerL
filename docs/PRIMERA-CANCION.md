@@ -2,7 +2,7 @@
 
 Un tutorial para quien nunca ha usado el programa. Montas una canción
 entera, paso a paso: un break troceado, una segunda percusión, efectos,
-una melodía, un bajo y una estructura con intro, drop y break. Al final
+una melodía, un bajo sintetizado y una estructura con intro, drop y break. Al final
 la guardas y la exportas a WAV.
 
 Cada paso es una acción con un resultado que puedes ver u oír. Si algo no
@@ -15,7 +15,7 @@ hay un enlace de vuelta al paso.
 **Qué debes saber antes de empezar.** Nada del programa, pero sí lo
 básico de una terminal de Linux (moverte con `cd`, crear carpetas con
 `mkdir`, copiar con `cp`), tener la toolchain de Rust para compilarlo
-una vez (`cargo`) y cuatro archivos WAV a mano (el paso 1 dice cuáles, y
+una vez (`cargo`) y tres archivos WAV a mano (el paso 1 dice cuáles, y
 cómo fabricarlos si no los tienes). `ffmpeg` solo hace falta para
 convertir formatos. No hace falta saber Lua: el tutorial dice qué escribir en cada
 paso. Lo que no verás aquí, como todas las funciones de Lua con sus
@@ -76,7 +76,7 @@ cd ~/musica/primera
 
 El script de la canción (`cancion.lua`) y sus samples van aquí.
 
-**Los samples.** Este tutorial usa cuatro archivos WAV. Ponlos en la
+**Los samples.** Este tutorial usa tres archivos WAV. Ponlos en la
 carpeta con estos nombres:
 
 | Archivo | Qué es |
@@ -84,23 +84,21 @@ carpeta con estos nombres:
 | `amen.wav` | Un break de batería (el amen o cualquier otro) |
 | `perc.wav` | Otro loop de percusión, de un compás, a otro tempo |
 | `nota.wav` | Una nota sostenida de piano, synth o voz (mejor de 2 s o más) |
-| `bajo.wav` | Una nota grave (un bajo, un synth grave) |
 
 ¿No tienes samples, o quieres probar sin derechos de autor? El
 repositorio trae un break sintético (ver «Generar el break sintético» en
-la [sección 1](GUIA.md#1-inicio-rápido)). Cópialo dos veces y fabrica las dos
-notas con `ffmpeg` (un tono puro: suena simple, pero vale para aprender):
+la [sección 1](GUIA.md#1-inicio-rápido)). Cópialo dos veces y fabrica la
+nota con `ffmpeg` (un tono puro: suena simple, pero vale para aprender):
 
 ```sh
 cp ~/sampler/renders/synth_break.wav amen.wav
 cp ~/sampler/renders/synth_break.wav perc.wav
 ffmpeg -f lavfi -i "sine=frequency=261.63:duration=3" nota.wav
-ffmpeg -f lavfi -i "sine=frequency=65.41:duration=3" bajo.wav
 ```
 
 (`~/sampler` es la carpeta del repositorio; cambia la ruta si está en
-otro sitio.) La primera nota es un do central (C4) y la segunda, un do
-dos octavas más abajo (C2). El break sintético va a 140 BPM; tus samples
+otro sitio.) La nota es un do central (C4); el bajo no necesita sample:
+es un sintetizador (paso 11). El break sintético va a 140 BPM; tus samples
 irán a otro tempo, y está bien: el paso 5 explica cómo igualarlos.
 
 **Formato.** Solo se leen archivos **WAV**. Valen mono o estéreo (el mono
@@ -648,7 +646,7 @@ track("perc", perc)
 
 ## Paso 8. Abrir un instrumento
 
-> **Referencia:** [sample:instrument([opciones])](GUIA.md#sampleinstrumentopciones) · [Modo tocar (Esc)](GUIA.md#modo-tocar-esc) · [Melodías con un instrumento](GUIA.md#melodías-con-un-instrumento).
+> **Referencia:** [sample:instrument([opciones])](GUIA.md#sampleinstrumentopciones) · [cortes:instrument([i,] [opciones])](GUIA.md#cortesinstrumenti-opciones) · [Modo tocar (Esc)](GUIA.md#modo-tocar-esc) · [Melodías con un instrumento](GUIA.md#melodías-con-un-instrumento) · [Editar un corte](GUIA.md#editar-un-corte-duraciones-notas-y-deformaciones).
 
 Hasta aquí, cada golpe era un corte. Un **instrumento** toca un sample
 como notas: cada nota suena a su altura, varias a la vez, con una
@@ -698,6 +696,25 @@ Qué es cada opción:
 
 Todas las opciones (`keep`, `formant`, `crossfade`) están en
 `sample:instrument`, [sección 4](GUIA.md#4-api-de-lua).
+
+**Un corte también es un instrumento.** No hace falta otro sample: la
+caja del break (el corte 3) se toca igual, a varias notas. Añade al
+final:
+
+```lua añade
+local caja = amen:instrument(3, { root = "C3", voices = 2 })
+
+track("caja", caja)
+  :melody(". . . .  . . . .  . . . .  c3 eb3 g3 c4")
+  :gain(0.35)
+```
+
+Ctrl-S. En el último tiempo de cada compás, la caja sube en cuatro notas:
+un redoble afinado. Un golpe de batería no tiene un tono claro, así que
+`root` va a mano (con una voz o un bajo, quítalo y lo detecta). Como en
+un sampler clásico, cada nota más aguda dura menos; con `keep = true`
+duraría lo mismo, pero en un golpe eso suena artificial (ver
+[Editar un corte](GUIA.md#editar-un-corte-duraciones-notas-y-deformaciones)).
 
 ## Paso 9. Líneas melódicas
 
@@ -879,25 +896,52 @@ melodía tapa la batería, baja su `:gain()` o sus envíos.
 
 ## Paso 11. Un bajo que no choque con el bombo
 
-> **Referencia:** [priority(pistas)](GUIA.md#prioritypistas) · [Choques de frecuencia entre pistas](GUIA.md#choques-de-frecuencia-entre-pistas) · [Que el break deje sitio al bombo (EQ dinámico y sidechain)](GUIA.md#que-el-break-deje-sitio-al-bombo-eq-dinámico-y-sidechain) · [synth(tipo, [opciones])](GUIA.md#synthtipo-opciones) · [Un bajo ácido](GUIA.md#un-bajo-ácido).
+> **Referencia:** [priority(pistas)](GUIA.md#prioritypistas) · [Choques de frecuencia entre pistas](GUIA.md#choques-de-frecuencia-entre-pistas) · [Que el break deje sitio al bombo (EQ dinámico y sidechain)](GUIA.md#que-el-break-deje-sitio-al-bombo-eq-dinámico-y-sidechain) · [sh101{ opciones }](GUIA.md#sh101-opciones-) · [Un monosynth de bajo y lead (sh101)](GUIA.md#un-monosynth-de-bajo-y-lead-sh101) · [pista:auto(parámetro, puntos [, opciones])](GUIA.md#pistaautoparámetro-puntos--opciones) · [Automatizar con lanes](GUIA.md#automatizar-con-lanes).
 
-**El bajo.** Otro instrumento, grave y de una sola voz (una nota nueva
-corta la anterior, como un bajo de verdad). Añade al final:
+**El bajo.** Esta vez sin sample: `sh101{...}` es un sintetizador
+monofónico de bajo (una nota nueva corta la anterior, como un bajo de
+verdad). Añade al final:
 
 ```lua añade
-local grave = sample("bajo.wav"):instrument({
-  root = "C2", voices = 1, adsr = { 5, 200, 0.8, 150 },
-})
+local grave = sh101{
+  saw = 0.7, pulse = 0.3, sub = 0.6, sub_div = 2,
+  cutoff = 400, res = 0.5, env_amt = 0.4,
+  a = 3, d = 250, s = 0.6, r = 120,
+  glide = 60, glide_mode = "auto",
+}
 
 track("bajo", grave)
-  :melody("c2 _ _ _  . . c2 .  eb2 _ _ .  f2 _ g2 _")
-  :fx("lowpass", { cutoff = 500 })
+  :melody("c2 _ _ _  . . c2 .  eb2 _ _ .  f2 _ g2/ _")
   :gain(0.7)
 ```
 
-Ctrl-S. Notas largas (`_`) en las mismas notas que los acordes. El
-`lowpass` a 500 Hz deja solo lo grave. Con `bajo.wav` a otra altura, pon
-su nota en `root` (paso 8).
+Ctrl-S. Notas largas (`_`) en las mismas notas que los acordes.
+
+- `saw`, `pulse` y `sub`: cuánto suena de cada onda; `sub_div = 2` pone
+  el sub una octava abajo.
+- `cutoff`, `res` y `env_amt`: el filtro, cerrado en 400 Hz, con algo de
+  resonancia, y la envolvente que lo abre un poco en cada nota.
+- `a`, `d`, `s`, `r`: la envolvente, en ms (el sustain, de 0 a 1).
+- `g2/`: la barra liga la nota con la anterior y la desliza hasta su
+  altura en `glide` ms, sin volver a atacar.
+
+**Un filtro que respira.** Una **lane** es una curva de puntos con su
+propia duración, como la automatización dibujada de un DAW. Cambia el
+párrafo de `track("bajo", grave)`:
+
+```lua cambia
+track("bajo", grave)
+  :melody("c2 _ _ _  . . c2 .  eb2 _ _ .  f2 _ g2/ _")
+  :auto("cutoff", { {0, 300, "exp"}, {1.5, 1500, "exp"}, {2, 300} }, { len = 2 })
+  :gain(0.7)
+```
+
+Cada punto es `{compás, valor, curva}`: el corte sube de 300 a 1500 Hz en
+compás y medio y se cierra en el medio que queda, y con `len = 2` vuelve
+a empezar cada 2 compases. A diferencia de `ramp()`, la forma la eliges
+tú. F1 «Lanes de automatización» la dibuja con el cursor y lo que vale
+ahora; con el ratón, sus puntos se mueven y el cambio se escribe en esta
+tabla (Ctrl-Z lo deshace).
 
 **Dónde chocan.** El bajo y el bombo suenan en la misma zona (60-100 Hz)
 y se tapan. El programa lo mide sin escucharlo: F1 «Choques de
@@ -939,8 +983,8 @@ batería, y los devuelve en cuanto pasa. Cambia el párrafo de
 
 ```lua cambia
 track("bajo", grave)
-  :melody("c2 _ _ _  . . c2 .  eb2 _ _ .  f2 _ g2 _")
-  :fx("lowpass", { cutoff = 500 })
+  :melody("c2 _ _ _  . . c2 .  eb2 _ _ .  f2 _ g2/ _")
+  :auto("cutoff", { {0, 300, "exp"}, {1.5, 1500, "exp"}, {2, 300} }, { len = 2 })
   :fx("dyneq", { freq = 80, range = 6, threshold = -30, attack = 2, release = 80, sidechain = "drums" })
   :gain(0.7)
 ```
@@ -957,8 +1001,9 @@ propio bajo. Más, en «Que el break deje sitio al bombo» de la
 
 **Si no pasa:** el informe no dice nada de `bajo` y `drums`: con tus
 samples no chocan (o poco), y no hace falta recortar. (Con los samples de
-prueba del paso 1, el choque que sale es `drums × perc`: las dos pistas
-son el mismo break sintético, y la sugerencia va a `perc`.) Si el EQ sugerido
+prueba del paso 1, el primer choque es `drums × perc`: las dos pistas son
+el mismo break sintético, y la sugerencia va a `perc`; `drums × bajo` sale
+más abajo, en los graves.) Si el EQ sugerido
 no cabe, la pista ya tiene 4 efectos: quita uno. Si `sidechain` da
 error, mira que el nombre sea el de una pista que existe.
 
@@ -1004,6 +1049,12 @@ track("teclas", teclas)
   :send("reverb", 0.25)
   :gain(0.5)
 
+local caja = amen:instrument(3, { root = "C3", voices = 2 })
+
+track("caja", caja)
+  :melody(". . . .  . . . .  . . . .  c3 eb3 g3 c4")
+  :gain(0.35)
+
 track("acordes", teclas)
   :melody("c+eb+g _ _ _  _ _ _ _  ab3+c+eb _ _ _  bb3+d+f _ _ _")
   :fx("highpass", { cutoff = 200 })
@@ -1011,13 +1062,16 @@ track("acordes", teclas)
   :send("reverb", 0.4)
   :gain(0.3)
 
-local grave = sample("bajo.wav"):instrument({
-  root = "C2", voices = 1, adsr = { 5, 200, 0.8, 150 },
-})
+local grave = sh101{
+  saw = 0.7, pulse = 0.3, sub = 0.6, sub_div = 2,
+  cutoff = 400, res = 0.5, env_amt = 0.4,
+  a = 3, d = 250, s = 0.6, r = 120,
+  glide = 60, glide_mode = "auto",
+}
 
 track("bajo", grave)
-  :melody("c2 _ _ _  . . c2 .  eb2 _ _ .  f2 _ g2 _")
-  :fx("lowpass", { cutoff = 500 })
+  :melody("c2 _ _ _  . . c2 .  eb2 _ _ .  f2 _ g2/ _")
+  :auto("cutoff", { {0, 300, "exp"}, {1.5, 1500, "exp"}, {2, 300} }, { len = 2 })
   :fx("dyneq", { freq = 80, range = 6, threshold = -30, attack = 2, release = 80, sidechain = "drums" })
   :gain(0.7)
 
@@ -1081,6 +1135,7 @@ section("intro", function()
   track("drums"):mute()
   track("teclas"):mute()
   track("bajo"):mute()
+  track("caja"):mute()
   track("acordes"):fx("lowpass", { cutoff = ramp(300, 6000, "4 compases") })
 end)
 
@@ -1100,7 +1155,8 @@ Ctrl-S. La canción tiene ahora 24 compases y vuelve a empezar al acabar:
 - **intro** (4 compases): solo la percusión y los acordes, con un filtro
   que se abre.
 - **drop** (8): todo, como estaba.
-- **break** (4): un bombo y una caja sueltos, los acordes y la melodía.
+- **break** (4): un bombo y una caja sueltos, los acordes, la melodía y
+  el redoble afinado.
 - **drop** (8) otra vez.
 
 Encima de la vista del sample, una fila enseña la línea de tiempo y por
@@ -1233,6 +1289,12 @@ track("teclas", teclas)
   :send("reverb", 0.25)
   :gain(0.5)
 
+local caja = amen:instrument(3, { root = "C3", voices = 2 })
+
+track("caja", caja)
+  :melody(". . . .  . . . .  . . . .  c3 eb3 g3 c4")
+  :gain(0.35)
+
 track("acordes", teclas)
   :melody("c+eb+g _ _ _  _ _ _ _  ab3+c+eb _ _ _  bb3+d+f _ _ _")
   :fx("highpass", { cutoff = 200 })
@@ -1240,13 +1302,16 @@ track("acordes", teclas)
   :send("reverb", 0.4)
   :gain(0.3)
 
-local grave = sample("bajo.wav"):instrument({
-  root = "C2", voices = 1, adsr = { 5, 200, 0.8, 150 },
-})
+local grave = sh101{
+  saw = 0.7, pulse = 0.3, sub = 0.6, sub_div = 2,
+  cutoff = 400, res = 0.5, env_amt = 0.4,
+  a = 3, d = 250, s = 0.6, r = 120,
+  glide = 60, glide_mode = "auto",
+}
 
 track("bajo", grave)
-  :melody("c2 _ _ _  . . c2 .  eb2 _ _ .  f2 _ g2 _")
-  :fx("lowpass", { cutoff = 500 })
+  :melody("c2 _ _ _  . . c2 .  eb2 _ _ .  f2 _ g2/ _")
+  :auto("cutoff", { {0, 300, "exp"}, {1.5, 1500, "exp"}, {2, 300} }, { len = 2 })
   :fx("dyneq", { freq = 80, range = 6, threshold = -30, attack = 2, release = 80, sidechain = "drums" })
   :gain(0.7)
 
@@ -1256,6 +1321,7 @@ section("intro", function()
   track("drums"):mute()
   track("teclas"):mute()
   track("bajo"):mute()
+  track("caja"):mute()
   track("acordes"):fx("lowpass", { cutoff = ramp(300, 6000, "4 compases") })
 end)
 
