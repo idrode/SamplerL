@@ -2019,6 +2019,10 @@ fn the_audio_thread_never_allocates() {
         }
     });
     assert_eq!(n, 0, "reservas con lanes sonando");
+    // Y lo publicó (un atómico por lane, dentro de lo que se ha contado).
+    let published = controller.status();
+    assert!(published.lanes[10].is_some() && published.lanes[31].is_some());
+    assert!(published.lanes[20].is_none());
     let mut batch = engine::Batch::new();
     batch
         .set_lanes(lane_table(50.0))

@@ -2358,6 +2358,23 @@ Lo medido está arriba (curvas en sus puntos, sin deriva en 2000 vueltas,
 saltos acotados por el suavizado); que suene bien y que el ratón y los
 mandos se sientan bien lo dice el usuario.
 
+### Después: el valor en vivo visible
+
+Pedido aparte. La publicación ya existía (parte 4b): el canal es el del
+resaltado en vivo (atómicos en `SharedStatus` que la interfaz lee en una
+instantánea en cada `tick`, cada 30 ms) y cada lane va en un solo
+`AtomicU64` con el valor y la fase (dos f32), mejor que un `AtomicU32` por
+valor: el par nunca se lee de trozos distintos.
+
+- **Motor, tests** (`engine/src/status.rs`, `engine/tests/lanes.rs`,
+  `no_alloc.rs`): un escritor en otro hilo pone valor y fase iguales en las
+  32 lanes sin parar y el lector, en 20 000 instantáneas, nunca los ve
+  distintos (sin tearing); valor y fase vuelven exactos, también `None`;
+  en una lane de escalones el valor publicado a mitad de cada compás es el
+  de su punto exacto, y en una rampa exponencial el de la curva en la fase
+  publicada; y `no_alloc.rs` comprueba que lo publicó dentro del tramo sin
+  reservas.
+
 ## Audio de prueba y problemas conocidos
 
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`

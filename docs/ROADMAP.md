@@ -820,3 +820,6 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
        simplificada y escrita en el código.
     7. ✅ **Documentación**: tres recetas, dos snippets y el tutorial en la
        guía.
+    8. **Valor en vivo visible**: ✅ tests de la publicación (sin tearing,
+       puntos conocidos); el valor junto a cada parámetro automatizado en
+       el panel de efectos, con su unidad y barra; guía.

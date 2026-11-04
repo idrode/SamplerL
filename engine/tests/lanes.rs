@@ -261,3 +261,59 @@ fn the_engine_publishes_what_each_lane_gives() {
     }
     assert!(controller.status().lanes.iter().all(Option::is_none));
 }
+
+#[test]
+fn the_published_value_is_the_curve_at_known_points() {
+    // Escalones de un compás: en cualquier trozo de cada compás, el valor
+    // publicado es exactamente el de su punto; y en una rampa, el de la
+    // curva en la fase publicada.
+    let steps = Lane::new(
+        &[
+            point(0.0, 300.0, LaneCurve::Step),
+            point(16.0, 1200.0, LaneCurve::Step),
+            point(32.0, 4800.0, LaneCurve::Step),
+        ],
+        48.0,
+        false,
+    )
+    .unwrap();
+    let ramp = Lane::new(
+        &[
+            point(0.0, 100.0, LaneCurve::Exp),
+            point(48.0, 6400.0, LaneCurve::Linear),
+        ],
+        48.0,
+        false,
+    )
+    .unwrap();
+    let mut lanes = Lanes::new();
+    lanes.set(0, Some(steps)).unwrap();
+    lanes.set(1, Some(ramp)).unwrap();
+    let dc = Arc::new(Sample::from_interleaved(&[0.5; 4800], 1, RATE, RATE).unwrap());
+    let slices = Slices::grid(&dc, 1);
+    let pattern = Pattern::from_steps(dc, &slices, vec![Some(Step::new(0)); 16]).unwrap();
+    let (mut controller, mut engine) = new_engine(RATE);
+    let mut batch = Batch::new();
+    batch
+        .set_bpm(120.0)
+        .set_lanes(lanes)
+        .set_pattern(0, Some(pattern));
+    controller.apply(batch).unwrap();
+    controller.start().unwrap();
+    let mut out = vec![0.0f32; 2 * 512];
+    for bar in 0..3 {
+        // Hasta la mitad del compás `bar` (96 000 frames por compás).
+        let target = bar * 96_000 + 48_000;
+        let mut done = if bar == 0 { 0 } else { bar * 96_000 - 48_000 };
+        while done < target {
+            engine.process(&mut out, 2);
+            done += 512;
+        }
+        let status = controller.status();
+        let live = status.lanes[0].unwrap();
+        assert_eq!(live.value, [300.0, 1200.0, 4800.0][bar], "compás {bar}");
+        let ramp_live = status.lanes[1].unwrap();
+        let phase = ramp_live.phase.unwrap() as f64;
+        assert_eq!(ramp_live.value, ramp.value(phase));
+    }
+}

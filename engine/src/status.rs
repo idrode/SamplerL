@@ -393,3 +393,69 @@ impl SharedStatus {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+
+    /// Con el motor escribiendo en un hilo y la interfaz leyendo en otro,
+    /// el valor y la fase de una lane llegan siempre del mismo trozo (van
+    /// en un solo atómico): el escritor pone los dos iguales y el lector
+    /// nunca los ve distintos.
+    #[test]
+    fn a_lane_is_never_read_half_written() {
+        let status = Arc::new(SharedStatus::new(120.0, 48_000));
+        let stop = Arc::new(AtomicBool::new(false));
+        let writer = {
+            let (status, stop) = (status.clone(), stop.clone());
+            std::thread::spawn(move || {
+                let mut i = 0u32;
+                while !stop.load(Relaxed) {
+                    let v = (i % 10_000) as f32 * 0.37;
+                    for lane in 0..crate::lane::MAX_LANES {
+                        status.set_lane(
+                            lane,
+                            Some(LaneLive {
+                                value: v,
+                                phase: Some(v),
+                            }),
+                        );
+                    }
+                    i = i.wrapping_add(1);
+                }
+            })
+        };
+        let mut seen = 0usize;
+        for _ in 0..20_000 {
+            for live in status.snapshot().lanes.iter().flatten() {
+                assert_eq!(
+                    Some(live.value),
+                    live.phase,
+                    "valor y fase de trozos distintos"
+                );
+                seen += 1;
+            }
+        }
+        stop.store(true, Relaxed);
+        writer.join().unwrap();
+        assert!(seen > 0);
+    }
+
+    #[test]
+    fn values_and_phases_round_trip_exactly() {
+        let status = SharedStatus::new(120.0, 48_000);
+        for (value, phase) in [
+            (0.0f32, Some(0.0f32)),
+            (-12.5, Some(63.999)),
+            (20_000.0, None),
+            (f32::MIN_POSITIVE, Some(1e-7)),
+        ] {
+            status.set_lane(7, Some(LaneLive { value, phase }));
+            assert_eq!(status.snapshot().lanes[7], Some(LaneLive { value, phase }));
+        }
+        status.set_lane(7, None);
+        assert_eq!(status.snapshot().lanes[7], None);
+    }
+}
