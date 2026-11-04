@@ -838,3 +838,9 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
     7. ✅ **Inline y en la ventana del editor** (opcional): `inline = true`
        y las visualizaciones dibujadas por la principal (protocolo 7).
     8. ✅ **Recetas, tutorial y documentación.**
+17. ✅ **Guía y tutorial al día** (pedida por el usuario): los límites de
+    cada novedad en la guía (sintetizadores, edición de cortes, lanes con
+    quién manda sobre ellas, grupos, macros, visualizaciones, dónde sirve
+    el ratón) y el tutorial con un bajo `sh101`, una lane del filtro y la
+    caja del break tocada como melodía. Detalle en «Guía y tutorial al
+    día» de [docs/ESTADO.md](ESTADO.md).

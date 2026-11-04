@@ -2617,6 +2617,42 @@ Que el Braille y los bloques se vean bien (y la degradación a ASCII) en la
 terminal del usuario, por SSH y en tmux, y que 30 cuadros por segundo no
 pesen por la red.
 
+## Guía y tutorial al día
+
+Repaso de `docs/GUIA.md` y `docs/PRIMERA-CANCION.md` frente al código. La
+guía ya tenía una receta por novedad y la API generada del registro; lo que
+faltaba eran los límites y algunos enlaces:
+
+- **Sintetizadores**: el bloque sub vale también en `sh101`; los límites
+  de cada uno (rangos de `sub_div`, `div` y `rdiv`, hasta 8 voces del
+  `subharm`, `sh101` solo monofónico, qué no admite curvas) y una nota de
+  que el MPE está a medias, sin probar con un Seaboard.
+- **Cortes**: para transponer un golpe de batería sin granos, remuestrear
+  la pista y volver a cortarla.
+- **Lanes**: «Quién manda» (una curva por parámetro; el `~` de un paso,
+  las llaves de un golpe, `{lp=...}` y un mando de MIDI learn frente a la
+  lane) y los límites: 32 lanes de 64 puntos, solo se editan con la tabla
+  literal en la llamada, `lane()` suelta no se edita, y el touch con el
+  ratón no se oye hasta escribirse.
+- **Lo demás**: «El ratón, de un vistazo» en la sección 2 (editor, vista
+  del sample, piano roll y lanes; el tracker y la ocupación aún no) y los
+  límites de grupos (4, de un nivel), macros (8) y visualizaciones (`size`,
+  `bands`, la cola que descarta si la interfaz se atrasa).
+- **Tutorial**: el bajo del paso 11 es un `sh101` con una lane de cutoff
+  en bucle de 2 compases (ya no hace falta `bajo.wav`: se quitó del paso 1
+  y de `script/tests/guide.rs`), y el paso 8 añade la caja del break
+  tocada como melodía con `cortes:instrument`. Los scripts enteros, las
+  secciones (la intro silencia la caja) y los enlaces de ida y vuelta
+  siguen la canción; el análisis de choques del paso 11 sigue dando
+  primero `drums × perc` con los samples de prueba (comprobado con
+  `--analyze-masking`), y la mezcla final no satura más que antes (render
+  offline).
+
+### Sin probar de oído
+
+El bajo `sh101` con su lane y la caja afinada del tutorial: el equilibrio
+con la batería lo decide el usuario.
+
 ## Audio de prueba y problemas conocidos
 
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`
