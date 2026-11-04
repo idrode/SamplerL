@@ -37,9 +37,11 @@ fn with_a_full_track_chain_the_slices_fold_into_one_line() {
         "track(\"drums\", amen)",
         "track(\"drums\", amen):fx(\"lowpass\", { cutoff = 5000 }):fx(\"highpass\", { cutoff = 40 })\n  :fx(\"distortion\", {}):fx(\"eq\", {})",
     );
-    let (_, mut app, _engine) = open("slice_fx_fold", Some(&song));
+    let (_, app, _engine) = open("slice_fx_fold", Some(&song));
     assert!(app.view().error.is_none(), "{:?}", app.view().error);
-    let screen = text(&draw(&mut app, 160, 44));
+    // Con el alto justo (el de siempre del panel), se pliegan.
+    let view = app.view();
+    let screen = text(&draw_widget(ui::FxPanel(&view), 160, ui::fx_panel_height(&view)));
     assert!(screen.contains("◇ efectos en 1, 2 snare"), "{screen}");
     // Los cuatro de la pista se siguen viendo.
     assert!(screen.contains("› eq plano"), "{screen}");

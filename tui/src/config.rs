@@ -1715,7 +1715,7 @@ brillo = "red"
                 "[teclas] salir: «q»: una letra sin ctrl- ni alt- escribiría texto",
                 "[teclas] Ctrl-G era de ir_al_error; ahora es de marcha",
                 "[colores] tenue: color no válido",
-                "[colores] «brillo» no existe (hay: acento, tenue, error, linea_error, aviso_pasos, aviso, onda, cortes, sonando, nivel, hueco, sugerencia, roll_tonica, roll_escala, roll_fuera, roll_variacion, roll_generado, roll_seleccion)",
+                "[colores] «brillo» no existe (hay: acento, tenue, error, linea_error, aviso_pasos, aviso, onda, cortes, sonando, nivel, hueco, sugerencia, roll_tonica, roll_escala, roll_fuera, roll_variacion, roll_generado, roll_seleccion, borde, borde_foco, cabecera)",
             ]
         );
         assert_eq!(config.theme.accent, Color::Rgb(0xff, 0x87, 0x00));

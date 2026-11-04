@@ -121,7 +121,7 @@ fn without_dynamics_it_says_so() {
 }
 
 #[test]
-fn in_the_main_window_it_goes_beside_the_waveform() {
+fn in_the_main_window_it_goes_to_its_tab_below_the_tracker() {
     let path = fixture("sidechain_main", Some(SONG_SIDE));
     write_sounds(&path);
     let (mut main, mut engine) = main_window(&path, None);
@@ -134,9 +134,9 @@ fn in_the_main_window_it_goes_beside_the_waveform() {
         let screen = text(&buffer);
         assert!(!screen.contains("bpm(120)"), "{screen}");
         let (x, y) = find(&buffer, "┌ sidechain").unwrap_or_else(|| panic!("{screen}"));
-        let (sx, sy) = find(&buffer, "┌ sample").unwrap();
-        assert_eq!(y, sy, "{screen}");
-        assert!(x > sx + width / 3, "{screen}");
+        let (_, ty) = find(&buffer, "┌ tracker").unwrap();
+        assert_eq!(x, 0, "{screen}");
+        assert!(y > ty, "{screen}");
         assert!(screen.contains("← kick"), "{screen}");
     }
 }

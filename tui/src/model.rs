@@ -20,6 +20,17 @@ pub struct ViewModel {
     pub dirty: bool,
     /// Modo tocar: las teclas disparan cortes en vez de escribir.
     pub playing_mode: bool,
+    /// El panel con el foco.
+    pub focus: crate::focus::Panel,
+    /// La pestaña elegida del dock (se ve si está en él; ver
+    /// [`crate::screen::shown_tab`]).
+    pub dock_tab: crate::layout::Tab,
+    /// Hay barra de menús (con sitio, la principal).
+    pub menu_bar: bool,
+    /// Scope y espectro del master en su panel, y lo que dibujan (el
+    /// scope primero).
+    pub master_viz: bool,
+    pub master_views: Vec<crate::viz::VizView>,
     /// Con el modo vim, el suyo (`NORMAL` o `INSERT`).
     pub vim: Option<&'static str>,
     /// El archivo cambió fuera del editor (se ofrece recargar).

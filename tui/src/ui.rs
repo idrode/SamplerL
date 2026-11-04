@@ -50,7 +50,7 @@ fn meter_color() -> Color {
 }
 
 /// Las visualizaciones que van en su panel (no junto al código).
-fn stacked_viz(view: &ViewModel) -> Vec<crate::viz::VizView> {
+pub fn stacked_viz(view: &ViewModel) -> Vec<crate::viz::VizView> {
     view.viz
         .iter()
         .filter(|p| p.line.is_none())
@@ -106,305 +106,22 @@ fn draw_inline_viz(
     }
 }
 
-/// Las últimas `height` filas de `area` (todas, si no caben).
-fn bottom_part(area: Rect, height: u16) -> Rect {
-    let height = height.min(area.height);
-    Rect {
-        y: area.bottom() - height,
-        height,
-        ..area
+/// El borde de un panel: con el foco, en el color `borde_foco` y el
+/// título en negrita; sin él, en `borde`.
+pub fn panel_block<'a>(view: &ViewModel, panel: crate::focus::Panel) -> Block<'a> {
+    let theme = crate::theme::get();
+    if view.focus == panel {
+        Block::bordered()
+            .border_style(Style::new().fg(theme.border_focus))
+            .title_style(Style::new().fg(theme.border_focus).bold())
+    } else {
+        Block::bordered().border_style(Style::new().fg(theme.border))
     }
 }
 
-/// Dibuja toda la interfaz.
+/// Dibuja toda la interfaz (ver [`crate::screen`]).
 pub fn draw(frame: &mut Frame, app: &mut App) {
-    let view = app.view();
-    if view.editor_outside {
-        // Sin editor aquí, el ratón no tiene dónde escribir.
-        app.editor_area = None;
-        let areas = draw_main_window(frame, &view);
-        app.sample_area = areas.sample.map(|a| Block::bordered().inner(a));
-        app.set_roll_area(areas.roll);
-        app.set_lanes_area(areas.lanes);
-        app.panels = areas.panels;
-        return;
-    }
-    let [main, fx, help] = Layout::vertical([
-        Constraint::Min(8),
-        Constraint::Length(fx_panel_height(&view)),
-        Constraint::Length(1),
-    ])
-    .areas(frame.area());
-    let [left, right] =
-        Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(main);
-
-    let popup = draw_editor(frame, app, &view, left);
-    // Motor arriba (una línea por pista), sample y tracker debajo.
-    let engine_height = (view.tracks.len() as u16 + 4).clamp(5, 12);
-    // El tracker pide 16 filas (más cabecera y bordes); el sample se queda
-    // con lo que sobre. Si así no queda nada para el sample, el tracker se
-    // queda sus filas mientras el sample tenga lo mínimo; si ni así, el
-    // reparto de siempre y el tracker se desplaza.
-    let rest = right.height.saturating_sub(engine_height);
-    // Con la vista de ocupación, ella primero: el sample se aprieta y el
-    // tracker se desplaza si hace falta.
-    let occupancy = occupancy_height(&view, rest, SAMPLE_SQUEEZED);
-    let rest = rest - occupancy;
-    let (sample_min, tracker) = if occupancy == 0 {
-        (
-            tracker_first(rest, SAMPLE_MIN, SAMPLE_SQUEEZED),
-            TRACKER_HEIGHT,
-        )
-    } else {
-        let tracker = TRACKER_HEIGHT.min(rest.saturating_sub(SAMPLE_SQUEEZED));
-        (rest - tracker, tracker)
-    };
-    let [engine_area, occupancy_area, rest_area] = Layout::vertical([
-        Constraint::Length(engine_height),
-        Constraint::Length(occupancy),
-        Constraint::Min(0),
-    ])
-    .areas(right);
-    let [sample_area, tracker_area] =
-        Layout::vertical([Constraint::Min(sample_min), Constraint::Length(tracker)])
-            .areas(rest_area);
-    // Con línea de tiempo, una fila con las secciones bajo el motor (se la
-    // quita al sample).
-    let sample_area = match &view.timeline {
-        Some(timeline) if sample_area.height > 1 => {
-            let [row, rest] =
-                Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(sample_area);
-            frame.render_widget(TimelineBar(timeline), row);
-            rest
-        }
-        _ => sample_area,
-    };
-    frame.render_widget(EnginePanel(&view), engine_area);
-    let mut panels = crate::app::PanelAreas::default();
-    if occupancy > 0 {
-        frame.render_widget(OccupancyPanel(&view), occupancy_area);
-        panels.occupancy = OccupancyLayout::new(&view, occupancy_area);
-    }
-    if let Some(roll) = &view.roll {
-        // El piano roll, en el sitio del sample y del tracker.
-        frame.render_widget(crate::roll_panel::RollPanel(roll), rest_area);
-        app.sample_area = None;
-        app.set_roll_area(Some(rest_area));
-    } else {
-        frame.render_widget(SamplePanel(&view), sample_area);
-        app.sample_area = Some(Block::bordered().inner(sample_area));
-        frame.render_widget(TrackerPanel(&view), tracker_area);
-        panels.tracker = Some(TrackerLayout::new(&view, tracker_area, false));
-        app.set_roll_area(None);
-    }
-    // La vista del sidechain, encima del sample y el tracker (el editor
-    // sigue a la vista).
-    if let Some(sidechain) = &view.sidechain {
-        let height = sidechain.height().min(rest_area.height);
-        let area = Rect {
-            height,
-            ..rest_area
-        };
-        frame.render_widget(crate::sidechain::SidechainPanel(sidechain), area);
-        panels.covers.push(area);
-    }
-    // Las visualizaciones (las de su panel), apiladas arriba del sample y
-    // el tracker.
-    let stacked = stacked_viz(&view);
-    if !stacked.is_empty() {
-        let height = crate::viz::total_height(&stacked).min(rest_area.height);
-        let area = Rect {
-            height,
-            ..rest_area
-        };
-        frame.render_widget(crate::viz::VizPanels(&stacked), area);
-        panels.covers.push(area);
-    }
-    // Las lanes de la pista seleccionada, abajo del sample y el tracker.
-    let mut lanes_area = None;
-    if let Some(lanes) = &view.lanes {
-        let area = bottom_part(rest_area, lanes.height());
-        frame.render_widget(crate::lanes_panel::LanesPanel(lanes), area);
-        lanes_area = Some(area);
-        panels.covers.push(area);
-    }
-    app.set_lanes_area(lanes_area);
-    app.panels = panels;
-    frame.render_widget(FxPanel(&view), fx);
-    frame.render_widget(HelpLine(&view), help);
-    draw_popups(frame, &view, popup);
-}
-
-/// Alto del tracker con sus 16 filas sin desplazarse (cabecera y bordes).
-pub const TRACKER_HEIGHT: u16 = engine::STEPS as u16 + 3;
-/// Alto mínimo del panel del sample con espacio de sobra y cuando hace
-/// falta para que el tracker quepa entero (bordes y dos filas de onda).
-const SAMPLE_MIN: u16 = 6;
-const SAMPLE_SQUEEZED: u16 = 4;
-/// Lo mismo para la forma de onda grande (con su fila de números y la de
-/// los ms).
-const BIG_SAMPLE_SQUEEZED: u16 = 6;
-
-/// Alto mínimo del panel de encima del tracker con `height` filas para los
-/// dos: `normal`, salvo que con él el tracker no quepa entero y con
-/// `squeezed` sí (entonces, lo que deja el tracker).
-fn tracker_first(height: u16, normal: u16, squeezed: u16) -> u16 {
-    let left = height.saturating_sub(TRACKER_HEIGHT);
-    if left < normal && left >= squeezed {
-        left
-    } else {
-        normal
-    }
-}
-
-/// La ventana principal con el editor en la suya (fase L): las vistas
-/// ocupan toda la ventana. Arriba, el transporte y el enlace; la forma de
-/// onda grande; debajo, el mezclador y el tracker; abajo, los efectos.
-/// Devuelve dónde quedaron el panel del sample y el piano roll (que va en
-/// el sitio de la onda grande).
-/// Dónde quedó cada panel de la ventana principal sin editor.
-struct MainAreas {
-    sample: Option<Rect>,
-    roll: Option<Rect>,
-    lanes: Option<Rect>,
-    panels: crate::app::PanelAreas,
-}
-
-fn draw_main_window(frame: &mut Frame, view: &ViewModel) -> MainAreas {
-    let [top, body, fx, help] = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Min(8),
-        Constraint::Length(fx_panel_height(view)),
-        Constraint::Length(1),
-    ])
-    .areas(frame.area());
-    frame.render_widget(StatusLine(view), top);
-    // Con línea de tiempo, una fila con las secciones.
-    let body = match &view.timeline {
-        Some(timeline) if body.height > 1 => {
-            let [row, rest] =
-                Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(body);
-            frame.render_widget(TimelineBar(timeline), row);
-            rest
-        }
-        _ => body,
-    };
-    // El tracker pide sus 16 filas; el sample se queda con lo demás (y
-    // al menos un tercio, o lo mínimo para que el tracker quepa entero).
-    // Con la vista de ocupación, ella primero, de lado a lado.
-    let occupancy = occupancy_height(view, body.height, BIG_SAMPLE_SQUEEZED);
-    let rest = body.height - occupancy;
-    let (sample_min, tracker) = if occupancy == 0 {
-        (
-            tracker_first(rest, rest / 3, BIG_SAMPLE_SQUEEZED),
-            TRACKER_HEIGHT,
-        )
-    } else {
-        let tracker = TRACKER_HEIGHT.min(rest.saturating_sub(BIG_SAMPLE_SQUEEZED));
-        (rest - tracker, tracker)
-    };
-    let [occupancy_area, body] =
-        Layout::vertical([Constraint::Length(occupancy), Constraint::Min(0)]).areas(body);
-    let [sample_area, lower] =
-        Layout::vertical([Constraint::Min(sample_min), Constraint::Length(tracker)]).areas(body);
-    let mut panels = crate::app::PanelAreas::default();
-    if occupancy > 0 {
-        frame.render_widget(OccupancyPanel(view), occupancy_area);
-        panels.occupancy = OccupancyLayout::new(view, occupancy_area);
-    }
-    let mut roll_area = None;
-    if let Some(roll) = &view.roll {
-        frame.render_widget(crate::roll_panel::RollPanel(roll), sample_area);
-        roll_area = Some(sample_area);
-    }
-    // Con la vista del sidechain, a la derecha del sample (hasta la
-    // mitad).
-    let side = if view.sidechain.is_some() && roll_area.is_none() {
-        (sample_area.width / 2).min(SIDECHAIN_WIDTH)
-    } else {
-        0
-    };
-    let [sample_area, sidechain_area] =
-        Layout::horizontal([Constraint::Min(0), Constraint::Length(side)]).areas(sample_area);
-    if let Some(sidechain) = view.sidechain.as_ref().filter(|_| roll_area.is_none()) {
-        frame.render_widget(crate::sidechain::SidechainPanel(sidechain), sidechain_area);
-    }
-    // Las visualizaciones (las de su panel), apiladas arriba de la forma
-    // de onda.
-    let stacked = stacked_viz(view);
-    if !stacked.is_empty() && roll_area.is_none() {
-        let height = crate::viz::total_height(&stacked).min(sample_area.height);
-        frame.render_widget(
-            crate::viz::VizPanels(&stacked),
-            Rect {
-                height,
-                ..sample_area
-            },
-        );
-    }
-    // Las lanes de la pista seleccionada, abajo de la forma de onda.
-    let mut lanes_area = None;
-    if let Some(lanes) = view.lanes.as_ref().filter(|_| roll_area.is_none()) {
-        let area = bottom_part(sample_area, lanes.height());
-        frame.render_widget(crate::lanes_panel::LanesPanel(lanes), area);
-        lanes_area = Some(area);
-    }
-    // Con un análisis de choques hecho, su tabla a la derecha del sample.
-    let width = view
-        .clash_table
-        .as_ref()
-        .map_or(0, |table| ClashPanel::width(table, sample_area.width));
-    let [sample_area, clash_area] =
-        Layout::horizontal([Constraint::Min(0), Constraint::Length(width)]).areas(sample_area);
-    if roll_area.is_none() {
-        frame.render_widget(BigSamplePanel(view), sample_area);
-        if width > 0 {
-            frame.render_widget(ClashPanel(view), clash_area);
-        }
-    }
-    // El mezclador, lo que pidan sus tiras (hasta la mitad); el tracker,
-    // lo demás.
-    let mixer_width = MixerPanel::width(view.tracks.len()).min(lower.width / 2);
-    let [mixer_area, tracker_area] =
-        Layout::horizontal([Constraint::Length(mixer_width), Constraint::Min(0)]).areas(lower);
-    frame.render_widget(MixerPanel(view), mixer_area);
-    frame.render_widget(FullTrackerPanel(view), tracker_area);
-    panels.mixer = Some(MixerLayout::new(view, mixer_area));
-    panels.tracker = Some(TrackerLayout::new(view, tracker_area, true));
-    frame.render_widget(FxPanel(view), fx);
-    frame.render_widget(HelpLine(view), help);
-    draw_popups(frame, view, None);
-    MainAreas {
-        sample: roll_area.is_none().then_some(sample_area),
-        roll: roll_area,
-        lanes: lanes_area,
-        panels,
-    }
-}
-
-/// Ancho de la vista del sidechain en la ventana principal sin editor.
-const SIDECHAIN_WIDTH: u16 = 64;
-
-/// Alto mínimo de la vista de ocupación para que diga algo (bordes, los
-/// compases y `Σ`, y una pista), y del tracker a su lado (bordes, cabecera
-/// y cuatro pasos).
-const OCCUPANCY_MIN: u16 = 5;
-const TRACKER_MIN: u16 = 7;
-
-/// Alto de la vista de ocupación (0 si no se ve) con `height` filas para
-/// ella, el sample y el tracker: la que pida, dejando al sample `squeezed`
-/// y al tracker lo mínimo para ver unas filas (el tracker se desplaza).
-fn occupancy_height(view: &ViewModel, height: u16, squeezed: u16) -> u16 {
-    if view.occupancy.is_none() {
-        return 0;
-    }
-    let room = height.saturating_sub(squeezed + TRACKER_MIN);
-    let wanted = OccupancyPanel::height(view);
-    match wanted.min(room) {
-        h if h >= OCCUPANCY_MIN.min(wanted) => h,
-        // Sin sitio ni para lo mínimo: lo mínimo (y lo demás, apretado).
-        _ => OCCUPANCY_MIN.min(wanted).min(height),
-    }
+    crate::screen::draw(frame, app);
 }
 
 /// Tabla de choques de frecuencia del último análisis (la de
@@ -418,29 +135,7 @@ pub struct ClashPanel<'a>(pub &'a ViewModel);
 
 /// Ancho de una columna de banda (` 1.25k`).
 const CLASH_COLUMN: u16 = 6;
-/// Ancho mínimo del panel de choques y lo que se deja como mínimo al
-/// sample a su izquierda.
-const CLASH_MIN: u16 = 28;
-const SAMPLE_BESIDE_CLASHES: u16 = 40;
-
 impl ClashPanel<'_> {
-    /// Ancho que pide la tabla (con el borde) en una fila de `room` de
-    /// ancho: la tabla entera si cabe en dos quintos, si no la lista; 0 si
-    /// no queda sitio para ella y el sample.
-    pub fn width(table: &ClashTableView, room: u16) -> u16 {
-        let most = room * 2 / 5;
-        if most < CLASH_MIN || room - most < SAMPLE_BESIDE_CLASHES {
-            return 0;
-        }
-        let grid = Self::names_width(table) + CLASH_COLUMN * table.bands.len() as u16 + 2;
-        let wanted = if grid <= most {
-            grid
-        } else {
-            Self::list_width(table) + 2
-        };
-        wanted.clamp(CLASH_MIN, most)
-    }
-
     fn pair(a: &str, b: &str) -> String {
         format!("{a} × {b}")
     }
@@ -454,17 +149,6 @@ impl ClashPanel<'_> {
             .unwrap_or(0)
     }
 
-    /// Ancho de una línea de la lista: pareja, banda y puntuación.
-    fn list_width(table: &ClashTableView) -> u16 {
-        table
-            .clashes
-            .iter()
-            .map(|(a, b, band, _)| {
-                (Self::pair(a, b).chars().count() + 2 + band.chars().count() + 3 + 2 + 4) as u16
-            })
-            .max()
-            .unwrap_or(0)
-    }
 }
 
 /// Color de la puntuación de un choque según lo fuerte que es.
@@ -590,28 +274,6 @@ impl Widget for ClashPanel<'_> {
     }
 }
 
-/// Línea de arriba de la ventana principal sin editor: el transporte (como
-/// en el panel del motor) y, a la derecha, el archivo y el enlace.
-pub struct StatusLine<'a>(pub &'a ViewModel);
-
-impl Widget for StatusLine<'_> {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        let view = self.0;
-        transport_line(view).render(area, buf);
-        let dirty = if view.dirty { " ●" } else { "" };
-        let right = format!(
-            "{}{dirty} · {} ",
-            view.file,
-            view.link.as_deref().unwrap_or_default()
-        );
-        let width = right.chars().count() as u16;
-        if width < area.width {
-            let x = area.x + area.width - width;
-            buf.set_string(x, area.y, right, Style::new().fg(dim()));
-        }
-    }
-}
-
 /// Dibuja el editor en su propia ventana (`tui --window-editor`): el
 /// editor entero, la línea del enlace con la principal y la de ayuda.
 pub fn draw_editor_window(frame: &mut Frame, app: &mut App) {
@@ -642,7 +304,7 @@ pub fn draw_editor_window(frame: &mut Frame, app: &mut App) {
 }
 
 /// Lo que se abre encima de los paneles.
-fn draw_popups(frame: &mut Frame, view: &ViewModel, popup: Option<Rect>) {
+pub fn draw_popups(frame: &mut Frame, view: &ViewModel, popup: Option<Rect>) {
     // El autocompletado, encima de todo (puede salirse del editor).
     if let (Some(completion), Some(area)) = (&view.completion, popup) {
         frame.render_widget(CompletionPopup(completion), area);
@@ -1051,7 +713,7 @@ impl Widget for PalettePopup<'_> {
 }
 
 /// Dibuja el editor y devuelve dónde va el autocompletado, si está abierto.
-fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rect) -> Option<Rect> {
+pub fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rect) -> Option<Rect> {
     let dirty = if view.dirty { " ●" } else { "" };
     let project = view
         .project
@@ -1062,7 +724,7 @@ fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rect) -
         .as_ref()
         .filter(|_| view.playing_mode)
         .map_or(String::new(), |l| format!(" · {l}"));
-    let mut block = Block::bordered().title(format!(" {}{dirty}{project}{link} ", view.file));
+    let mut block = panel_block(view, crate::focus::Panel::Code).title(format!(" {}{dirty}{project}{link} ", view.file));
     if view.external_change {
         block = block.title(
             Line::from(" ⚠ cambiado fuera · F3 recargar ")
@@ -1380,7 +1042,7 @@ pub fn meter(level: f32, width: usize) -> String {
 }
 
 /// Línea del master: medidor (antes del limitador), nivel en dB y avisos.
-fn master_line(master: &crate::model::MasterView) -> Line<'static> {
+pub fn master_line(master: &crate::model::MasterView) -> Line<'static> {
     let db = master
         .db()
         .map_or("  -∞ dB".to_string(), |db| format!("{db:+5.1} dB"));
@@ -1409,7 +1071,7 @@ fn master_line(master: &crate::model::MasterView) -> Line<'static> {
 
 /// Transporte: marcha, tempo, compás y paso, metrónomo, grabación y
 /// variante.
-fn transport_line(view: &ViewModel) -> Line<'static> {
+pub fn transport_line(view: &ViewModel) -> Line<'static> {
     let t = view.transport;
     let state = if t.running {
         Span::from("▶ en marcha").fg(meter_color())
@@ -1517,111 +1179,103 @@ impl Widget for TimelineBar<'_> {
     }
 }
 
-pub struct EnginePanel<'a>(pub &'a ViewModel);
+/// Resumen de una pista: el corte que suena, sus cortes (o el synth, o
+/// si está congelada), su ciclo, su longitud si no es la del compás y su
+/// ranura: `amen ▶02 · 3 cortes · ciclo 4 · pista 3`.
+pub fn track_summary(track: &crate::model::TrackView) -> String {
+    let slice = track
+        .playing_slice
+        .map_or("--".into(), |s| format!("{:02}", s + 1));
+    let what = match (track.frozen, &track.synth) {
+        (Some(false), _) => "❄ congelada".to_string(),
+        (Some(true), _) => "❄ congelada (ha cambiado)".to_string(),
+        (None, Some(s)) => format!("synth {}", s.kind),
+        (None, None) => format!("{} cortes", track.slices.len()),
+    };
+    let length = if track.length == engine::STEPS || track.length == 0 {
+        String::new()
+    } else {
+        format!(" · {} pasos", track.length)
+    };
+    format!(
+        "{} ▶{slice} · {what} · ciclo {}{length} · pista {}",
+        track.name,
+        track.cycle,
+        track.slot.map_or("-".into(), |s| (s + 1).to_string()),
+    )
+}
 
-impl Widget for EnginePanel<'_> {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        let view = self.0;
-        let mut lines = vec![transport_line(view), master_line(&view.master)];
-        if view.tracks.is_empty() {
-            lines.push(Line::from("sin pistas").fg(dim()));
-        }
-        for (i, track) in view.tracks.iter().enumerate() {
-            let selected = view.selected == Some(i);
-            let marker = if selected { "›" } else { " " };
-            let slice = track
-                .playing_slice
-                .map_or("--".into(), |s| format!("{:02}", s + 1));
-            // Congelada, con su copo detrás del nombre (se ve aunque no
-            // quepa el resto de la línea).
-            let label = match track.frozen {
-                Some(_) => format!("{}❄", track.name),
-                None => track.name.clone(),
-            };
-            let name = Span::from(format!("{marker}{label:<10}"));
-            let name = if selected {
-                name.fg(accent()).bold()
-            } else {
-                name
-            };
-            lines.push(Line::from(vec![
-                name,
-                Span::from(meter(track.level, 8)).fg(meter_color()),
-                Span::raw(format!(
-                    " ▶{slice}  {}  ciclo {}{}  pista {}",
-                    // Congelada, eso; un sintetizador no tiene cortes: su tipo.
-                    match (track.frozen, &track.synth) {
-                        (Some(false), _) => "❄ congelada".to_string(),
-                        (Some(true), _) => "❄ congelada (ha cambiado)".to_string(),
-                        (None, Some(s)) => format!("synth {}", s.kind),
-                        (None, None) => format!("{} cortes", track.slices.len()),
-                    },
-                    track.cycle,
-                    // Longitud distinta del compás: polirritmia.
-                    if track.length == engine::STEPS || track.length == 0 {
-                        String::new()
-                    } else {
-                        format!("  {} pasos", track.length)
-                    },
-                    track.slot.map_or("-".into(), |s| (s + 1).to_string()),
-                )),
-            ]));
-        }
-        Paragraph::new(lines)
-            .block(Block::bordered().title(" motor "))
-            .render(area, buf);
+/// Las teclas de un popup abierto (la paleta, el explorador...), si hay
+/// uno.
+pub fn popup_keys(view: &ViewModel) -> Option<&'static str> {
+    Some(if view.palette.is_some() {
+        "PALETA: escribe para filtrar · ↑↓ elegir · Enter ejecutar · Esc cerrar"
+    } else if view.slots.is_some() {
+        "RANURA: pulsa 1-9 · cualquier otra tecla cancela"
+    } else if view.macro_panel.is_some() {
+        "MACROS: ↑↓ elegir · ←→ ±0.05 · - + ±0.01 · 0-9 valor · Inicio 0 · Fin 1 · Esc cerrar"
+    } else if view.knob_picker.is_some() {
+        "MIDI LEARN: escribe para filtrar · ↑↓ elegir · Enter y mueve el mando · Esc cerrar"
+    } else if view.knobs.is_some() {
+        "MANDOS: ↑↓ elegir · Supr borrar · c curva · l otro mando · Enter rango · Esc cerrar"
+    } else if view.key.is_some() {
+        "TONALIDAD: ↑↓ elegir · r raíz del instrumento · i insertar instrumento · k proponer key() · Esc cerrar"
+    } else if view.browser.is_some() {
+        "SAMPLES: escribe para filtrar · ↑↓ elegir y preescuchar · Tab preescuchar · Enter insertar · Ctrl-K tonalidad · Esc cerrar"
+    } else if view.block_picker.is_some() {
+        "BLOQUES: escribe para filtrar (nombre, #etiqueta, descripción) · ↑↓ elegir · \
+         Enter · Esc cerrar"
+    } else if view.completion.is_some() {
+        "COMPLETAR: Tab aceptar · ↑↓ elegir y Enter aceptar · Esc cerrar · Enter sin elegir: salto de línea"
+    } else {
+        return None;
+    })
+}
+
+/// Las teclas de lo que tiene la entrada ahora: un popup, un cursor (su
+/// `key_help`) o el modo.
+pub fn keys_text(view: &ViewModel) -> String {
+    if let Some(keys) = popup_keys(view) {
+        keys.into()
+    } else if !view.key_help.is_empty() {
+        view.key_help.clone()
+    } else if view.playing_mode && view.editor_outside {
+        "TOCAR: 1-0 q-i cortes · ←→ elegir · espacio oír · m mute · s solo · Ctrl-O pista · Ctrl-Espacio marcha/paro · F1 paleta".into()
+    } else if view.playing_mode {
+        "TOCAR: 1-0 q-i cortes · ←→ elegir · espacio oír · m mute · s solo · Ctrl-O pista · Ctrl-Espacio marcha/paro · F1 paleta · Esc editor".into()
+    } else {
+        "Ctrl-S guardar y cargar · Ctrl-L cargar · Ctrl-Espacio marcha/paro · \
+         Ctrl-G ir al error · Ctrl-O pista · Esc tocar · F1 paleta · F2 órdenes · \
+         F4 completar · Ctrl-Q salir"
+            .into()
     }
 }
 
-/// Línea inferior: mensaje y atajos.
+/// La línea de órdenes abierta (F2).
+pub fn prompt_line(view: &ViewModel) -> Line<'static> {
+    let prompt = view.prompt.clone().unwrap_or_default();
+    Line::from(vec![
+        Span::from("orden> ").fg(accent()).bold(),
+        Span::raw(format!("{prompt}█  ")),
+        Span::from(
+            "exportar [archivo.wav] [compases] · guardar [proyecto] · \
+             abrir proyecto · muestras carpeta · etiquetar corte nombre · bpm N · \
+             bloque nombre [etiquetas] [-- descripción] · remuestrear [pista] · Esc cancelar",
+        )
+        .fg(dim()),
+    ])
+}
+
+/// Línea inferior de la ventana del editor: mensaje y atajos.
 pub struct HelpLine<'a>(pub &'a ViewModel);
 
 impl Widget for HelpLine<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let keys = if self.0.palette.is_some() {
-            "PALETA: escribe para filtrar · ↑↓ elegir · Enter ejecutar · Esc cerrar"
-        } else if self.0.slots.is_some() {
-            "RANURA: pulsa 1-9 · cualquier otra tecla cancela"
-        } else if self.0.macro_panel.is_some() {
-            "MACROS: ↑↓ elegir · ←→ ±0.05 · - + ±0.01 · 0-9 valor · Inicio 0 · Fin 1 · Esc cerrar"
-        } else if self.0.knob_picker.is_some() {
-            "MIDI LEARN: escribe para filtrar · ↑↓ elegir · Enter y mueve el mando · Esc cerrar"
-        } else if self.0.knobs.is_some() {
-            "MANDOS: ↑↓ elegir · Supr borrar · c curva · l otro mando · Enter rango · Esc cerrar"
-        } else if self.0.key.is_some() {
-            "TONALIDAD: ↑↓ elegir · r raíz del instrumento · i insertar instrumento · k proponer key() · Esc cerrar"
-        } else if self.0.browser.is_some() {
-            "SAMPLES: escribe para filtrar · ↑↓ elegir y preescuchar · Tab preescuchar · Enter insertar · Ctrl-K tonalidad · Esc cerrar"
-        } else if self.0.block_picker.is_some() {
-            "BLOQUES: escribe para filtrar (nombre, #etiqueta, descripción) · ↑↓ elegir · \
-             Enter · Esc cerrar"
-        } else if self.0.completion.is_some() {
-            "COMPLETAR: Tab aceptar · ↑↓ elegir y Enter aceptar · Esc cerrar · Enter sin elegir: salto de línea"
-        } else if !self.0.key_help.is_empty() {
-            self.0.key_help.as_str()
-        } else if self.0.playing_mode && self.0.editor_outside {
-            "TOCAR: 1-0 q-i cortes · ←→ elegir · espacio oír · m mute · s solo · Ctrl-O pista · Ctrl-Espacio marcha/paro · F1 paleta"
-        } else if self.0.playing_mode {
-            "TOCAR: 1-0 q-i cortes · ←→ elegir · espacio oír · m mute · s solo · Ctrl-O pista · Ctrl-Espacio marcha/paro · F1 paleta · Esc editor"
-        } else {
-            "Ctrl-S guardar y cargar · Ctrl-L cargar · Ctrl-Espacio marcha/paro · \
-             Ctrl-G ir al error · Ctrl-O pista · Esc tocar · F1 paleta · F2 órdenes · \
-             F4 completar · Ctrl-Q salir"
-        };
-        if let Some(prompt) = &self.0.prompt {
-            Line::from(vec![
-                Span::from("orden> ").fg(accent()).bold(),
-                Span::raw(format!("{prompt}█  ")),
-                Span::from(
-                    "exportar [archivo.wav] [compases] · guardar [proyecto] · \
-                     abrir proyecto · muestras carpeta · etiquetar corte nombre · bpm N · \
-                     bloque nombre [etiquetas] [-- descripción] · remuestrear [pista] · Esc cancelar",
-                )
-                .fg(dim()),
-            ])
-            .render(area, buf);
+        if self.0.prompt.is_some() {
+            prompt_line(self.0).render(area, buf);
             return;
         }
+        let keys = keys_text(self.0);
         let message = &self.0.message;
         let line = if message.is_empty() {
             Line::from(keys).fg(dim())
@@ -1644,7 +1298,7 @@ impl Widget for SamplePanel<'_> {
         let view = self.0;
         let Some(track) = view.selected.and_then(|i| view.tracks.get(i)) else {
             Paragraph::new(Line::from("sin pistas").fg(dim()))
-                .block(Block::bordered().title(" sample "))
+                .block(panel_block(view, crate::focus::Panel::Wave).title(" sample "))
                 .render(area, buf);
             return;
         };
@@ -1652,7 +1306,7 @@ impl Widget for SamplePanel<'_> {
             synth_panel(track, synth, area, buf);
             return;
         }
-        let block = Block::bordered().title(sample_title(view, track));
+        let block = panel_block(view, crate::focus::Panel::Wave).title(sample_title(view, track));
         let inner = block.inner(area);
         block.render(area, buf);
         if inner.width < 2 || inner.height < 2 || track.sample_frames == 0 {
@@ -1707,9 +1361,16 @@ fn sample_title(view: &ViewModel, track: &crate::model::TrackView) -> String {
             ms(w.end)
         )
     });
+    // Congelada, delante de todo (es lo que suena).
+    let frozen = match track.frozen {
+        Some(false) => "❄ congelada · ",
+        Some(true) => "❄ congelada (ha cambiado) · ",
+        None => "",
+    };
     format!(
-        " sample · {} · {}{stretch} · {seconds:.2} s{zoom} · {} cortes{chosen} ",
+        " sample · {}{} · {frozen}{}{stretch} · {seconds:.2} s{zoom} · {} cortes{chosen} ",
         track.name,
+        if track.frozen.is_some() { "❄" } else { "" },
         track.sample_name,
         track.slices.len()
     )
@@ -1834,7 +1495,7 @@ impl Widget for BigSamplePanel<'_> {
         let view = self.0;
         let Some(track) = view.selected.and_then(|i| view.tracks.get(i)) else {
             Paragraph::new(Line::from("sin pistas").fg(dim()))
-                .block(Block::bordered().title(" sample "))
+                .block(panel_block(view, crate::focus::Panel::Wave).title(" sample "))
                 .render(area, buf);
             return;
         };
@@ -1842,7 +1503,7 @@ impl Widget for BigSamplePanel<'_> {
             synth_panel(track, synth, area, buf);
             return;
         }
-        let block = Block::bordered().title(sample_title(view, track));
+        let block = panel_block(view, crate::focus::Panel::Wave).title(sample_title(view, track));
         let inner = block.inner(area);
         block.render(area, buf);
         if inner.width < 2 || track.sample_frames == 0 {
@@ -1961,24 +1622,6 @@ fn slice_mark(track: &crate::model::TrackView, i: usize) -> String {
     mark
 }
 
-/// Ancho de cada columna del tracker.
-const TRACKER_COLUMN: usize = 11;
-
-/// Tracker vertical: un paso por fila y una columna por pista, con el paso
-/// que suena en cada pista resaltado. Tiene tantas filas como la pista más
-/// larga; una pista más corta deja en blanco las que no tiene. Si todas
-/// están en la misma fila (las de 16 pasos), se resalta la fila entera.
-pub struct TrackerPanel<'a>(pub &'a ViewModel);
-
-impl Widget for TrackerPanel<'_> {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        let view = self.0;
-        let block = Block::bordered().title(format!(" tracker · compás {} ", view.transport.bar));
-        block.render(area, buf);
-        render_tracker(view, buf, &TrackerLayout::new(view, area, false));
-    }
-}
-
 /// Dónde cae el ratón en el tracker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrackerHit {
@@ -2003,15 +1646,11 @@ pub struct TrackerLayout {
 }
 
 impl TrackerLayout {
-    /// El tracker en `area` (con el borde): el compacto, junto al editor,
-    /// o con `full` el de la ventana principal sin editor.
-    pub fn new(view: &ViewModel, area: Rect, full: bool) -> Self {
+    /// El tracker en `area` (con el borde): todas las pistas que quepan,
+    /// con las columnas tan anchas como se pueda.
+    pub fn new(view: &ViewModel, area: Rect) -> Self {
         let inner = Block::bordered().inner(area);
-        let (column, shown) = if full {
-            FullTrackerPanel::columns(view.tracks.len(), inner.width)
-        } else {
-            (TRACKER_COLUMN, view.tracks.len())
-        };
+        let (column, shown) = FullTrackerPanel::columns(view.tracks.len(), inner.width);
         let rows = view
             .tracks
             .iter()
@@ -2079,9 +1718,12 @@ impl TrackerLayout {
 const FULL_TRACKER_MIN: usize = 6;
 const FULL_TRACKER_MAX: usize = 16;
 
-/// Tracker de la ventana principal sin editor: todas las pistas a la vez,
-/// con las columnas tan anchas como quepan (de 6 a 16). Si aun así no
-/// caben, el título dice cuántas se ven.
+/// Tracker vertical: un paso por fila y una columna por pista, con el paso
+/// que suena en cada pista resaltado. Tiene tantas filas como la pista más
+/// larga; una pista más corta deja en blanco las que no tiene. Si todas
+/// están en la misma fila (las de 16 pasos), se resalta la fila entera.
+/// Todas las pistas a la vez, con las columnas tan anchas como quepan (de
+/// 6 a 16); si aun así no caben, el título dice cuántas se ven.
 pub struct FullTrackerPanel<'a>(pub &'a ViewModel);
 
 impl FullTrackerPanel<'_> {
@@ -2104,16 +1746,20 @@ impl Widget for FullTrackerPanel<'_> {
         let (_, shown) = Self::columns(count, area.width.saturating_sub(2));
         // Si no caben todas, cuántas se ven.
         let tracks = if shown < count {
-            format!("{shown} de {count} pistas")
+            format!(" · {shown} de {count} pistas")
         } else {
-            format!("{count} pistas")
+            String::new()
         };
-        let block = Block::bordered().title(format!(
-            " tracker · compás {} · {tracks} ",
+        let summary = view
+            .selected
+            .and_then(|i| view.tracks.get(i))
+            .map_or(String::new(), |t| format!(" · {}", track_summary(t)));
+        let block = panel_block(view, crate::focus::Panel::Tracker).title(format!(
+            " tracker · compás {}{tracks}{summary} ",
             view.transport.bar
         ));
         block.render(area, buf);
-        render_tracker(view, buf, &TrackerLayout::new(view, area, true));
+        render_tracker(view, buf, &TrackerLayout::new(view, area));
     }
 }
 
@@ -2141,10 +1787,13 @@ fn render_tracker(view: &ViewModel, buf: &mut Buffer, layout: &TrackerLayout) {
             (false, true) => " S",
             _ => "",
         };
-        let name: String = track.name.chars().take(column - 1 - mark.len()).collect();
+        // Congelada, su copo pegado al nombre.
+        let frozen = if track.frozen.is_some() { "❄" } else { "" };
+        let room = column.saturating_sub(1 + mark.len() + frozen.chars().count());
+        let name: String = track.name.chars().take(room).collect();
         let span = Span::from(format!(
             "{:<column$}",
-            format!("{name}{mark}"),
+            format!("{name}{frozen}{mark}"),
             column = column
         ));
         header.push(if !view.audible(i) {
@@ -2408,7 +2057,7 @@ impl Widget for OccupancyPanel<'_> {
             ));
         }
         title.push(' ');
-        Block::bordered().title(title).render(area, buf);
+        panel_block(view, crate::focus::Panel::Occupancy).title(title).render(area, buf);
         if inner.height < 2 || inner.width as usize <= label {
             return;
         }
@@ -2643,7 +2292,7 @@ impl Widget for MixerPanel<'_> {
         } else {
             " mezclador ".to_string()
         };
-        let block = Block::bordered().title(title);
+        let block = panel_block(view, crate::focus::Panel::Mixer).title(title);
         let inner = block.inner(area);
         block.render(area, buf);
         // Nombre, al menos una fila de medidor, dB, volumen, mute/solo y
@@ -2934,7 +2583,7 @@ impl Widget for FxPanel<'_> {
                 .collect();
             title.push_str(&format!("· macros: {} ", macros.join(" · ")));
         }
-        let block = Block::bordered().title(title);
+        let block = panel_block(view, crate::focus::Panel::Fx).title(title);
         let inner = block.inner(area);
         block.render(area, buf);
         if view.tracks.is_empty() {

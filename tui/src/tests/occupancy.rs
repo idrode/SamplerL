@@ -178,35 +178,25 @@ fn the_panel_draws_at_two_cells_one_cell_or_scrolled() {
 }
 
 #[test]
-fn the_palette_shows_and_hides_it_above_the_sample() {
+fn the_palette_shows_and_hides_it_in_its_tab() {
     use crate::palette::Action;
     let (_, mut app, _engine) = open("occupancy_palette", Some(SONG));
     let screen = text(&draw(&mut app, 120, 40));
     assert!(!screen.contains("ocupación"), "{screen}");
     app.run_action(Action::Occupancy);
     assert!(app.view().message.contains("vista de ocupación"));
-    for (width, height) in [(120, 40), (100, 30), (80, 24)] {
+    for (width, height) in [(180, 50), (120, 40), (100, 30), (80, 24)] {
         let buffer = draw(&mut app, width, height);
         let screen = text(&buffer);
-        // En la columna de la derecha, bajo el motor y encima del sample;
-        // el editor y el tracker siguen ahí.
-        let (x, y) = find(&buffer, "┌ ocupación").unwrap_or_else(|| panic!("{screen}"));
-        assert_eq!(x, width / 2, "{screen}");
+        // En su pestaña (elegida al abrirla), bajo el sample; el editor
+        // sigue ahí.
+        let (_, y) = find(&buffer, "┌ ocupación").unwrap_or_else(|| panic!("{screen}"));
         assert!(screen.contains("Σ"), "{screen}");
         assert!(screen.contains("drums █"), "{screen}");
         assert!(screen.contains("┌ song.lua"), "{screen}");
-        // A 80×24 no queda sitio para el tracker al lado.
-        if height >= 30 {
-            assert!(screen.contains("tracker"), "{screen}");
-        }
-        if let Some((_, sample)) = find(&buffer, "┌ sample") {
-            assert!(sample > y, "{screen}");
-        }
+        let (_, sample) = find(&buffer, "┌ sample").expect(&screen);
+        assert!(sample < y, "{screen}");
     }
-    // A 120×40 caben las dos pistas y el sample.
-    let buffer = draw(&mut app, 120, 40);
-    assert!(find(&buffer, "┌ sample").is_some(), "{}", text(&buffer));
-    assert!(find(&buffer, "drums █ · █").is_some(), "{}", text(&buffer));
     app.run_action(Action::Occupancy);
     assert!(app.view().occupancy.is_none());
     assert!(!text(&draw(&mut app, 120, 40)).contains("┌ ocupación"));
@@ -231,7 +221,7 @@ fn the_config_shows_it_from_the_start_with_its_colors() {
 }
 
 #[test]
-fn with_the_editor_outside_the_main_window_shows_it_full_width() {
+fn with_the_editor_outside_the_main_window_shows_it_in_its_tab() {
     use super::split::{editor_window, main_window, pump};
     use crate::palette::Action;
     let path = fixture("occupancy_main_window", Some(SONG));
@@ -245,10 +235,10 @@ fn with_the_editor_outside_the_main_window_shows_it_full_width() {
     for (width, height) in [(120, 40), (80, 24)] {
         let buffer = draw(&mut main, width, height);
         let screen = text(&buffer);
+        // De lado a lado (no hay editor).
         let (x, y) = find(&buffer, "┌ ocupación").unwrap_or_else(|| panic!("{screen}"));
-        assert_eq!((x, y), (0, 1), "{screen}");
-        assert_eq!(buffer[(width - 1, 1)].symbol(), "┐", "{screen}");
-        assert!(screen.contains("tracker"), "{screen}");
+        assert_eq!(x, 0, "{screen}");
+        assert_eq!(buffer[(width - 1, y)].symbol(), "┐", "{screen}");
         assert!(screen.contains("┌ sample"), "{screen}");
     }
 }

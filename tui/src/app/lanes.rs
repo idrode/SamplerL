@@ -74,7 +74,7 @@ impl App {
     /// El ratón en el panel de las lanes (o arrastrando un punto): `true`
     /// si era para él.
     pub(super) fn lanes_mouse(&mut self, action: MouseAction, x: u16, y: u16) -> bool {
-        let Some(area) = self.lanes_area.filter(|_| self.lanes_open) else {
+        let Some(area) = self.lanes_area else {
             return false;
         };
         let dragging = self.lane_drag.is_some()
@@ -180,7 +180,7 @@ impl App {
 
     /// Las teclas con un punto elegido: `true` si eran para él.
     pub(super) fn lanes_key(&mut self, input: &Input) -> Option<Flow> {
-        let focus = self.lanes_focus.clone().filter(|_| self.lanes_open)?;
+        let focus = self.lanes_focus.clone().filter(|_| self.lanes_area.is_some())?;
         let view = self.lanes_view()?;
         let Some(row) = view
             .lanes

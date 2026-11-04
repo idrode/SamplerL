@@ -113,8 +113,12 @@ fn in_the_mixer_a_strip_selects_and_its_buttons_mute_and_solo() {
     pump(&mut main, &mut editor);
     let buffer = draw(&mut main, 120, 40);
     let mixer = main.panels.mixer.expect("el mezclador se ve");
-    // La tira de kick: su nombre arriba, y la fila de M y S.
-    let (name_x, name_y) = find(&buffer, "kick").unwrap();
+    // La tira de kick: su nombre arriba (la primera fila del mezclador; el
+    // tracker de al lado también lo dice), y la fila de M y S.
+    let name_y = mixer.inner.y;
+    let name_x = (mixer.inner.x..mixer.inner.right())
+        .find(|&x| buffer[(x, name_y)].symbol() == "k" && buffer[(x + 1, name_y)].symbol() == "i")
+        .unwrap();
     assert_eq!(
         crate::ui::MixerLayout::hit(&mixer, name_x, name_y),
         Some(crate::ui::MixerHit::Strip(1))

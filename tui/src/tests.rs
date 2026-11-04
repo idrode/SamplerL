@@ -130,21 +130,17 @@ fn shows_the_script_and_the_engine_state() {
     // Tres pasos de audio: el último disparado es el 2.
     offline::render(&mut engine, 2 * STEP + 100, 2);
     app.tick();
-    let screen = text(&draw(&mut app, 120, 40));
+    let screen = text(&draw(&mut app, 180, 50));
 
     assert!(screen.contains("song.lua"), "{screen}");
     assert!(screen.contains("track(\"drums\", amen)"), "{screen}");
     assert!(screen.contains("▶ en marcha"), "{screen}");
     assert!(screen.contains("120.0 BPM"), "{screen}");
     assert!(screen.contains("compás 0   paso 02"), "{screen}");
-    // En el paso 2, "drums" tocó el corte 2 y "kick" sigue con el 1.
-    assert!(screen.contains("›drums"), "{screen}");
+    // En el paso 2, "drums" (la elegida) tocó el corte 2: su resumen, en
+    // el título del tracker.
     assert!(
-        screen.contains("▶02  2 cortes  ciclo 1  pista 1"),
-        "{screen}"
-    );
-    assert!(
-        screen.contains("▶01  1 cortes  ciclo 1  pista 2"),
+        screen.contains("drums ▶02 · 2 cortes · ciclo 1 · pista 1"),
         "{screen}"
     );
     assert!(
@@ -197,9 +193,14 @@ fn lua_errors_show_in_the_editor_and_keep_playing() {
         "{screen}"
     );
     // En rojo, en el borde del editor.
-    let (x, y) = find(&buffer, "✗").unwrap();
+    let (x, y) = find(&buffer, "✗ error en").unwrap();
     assert_eq!(buffer[(x, y)].fg, Color::Red);
-    assert_eq!(buffer[(0, 0)].fg, Color::Red);
+    // La esquina del editor (bajo la cabecera y la regla).
+    assert_eq!(buffer[(0, 2)].symbol(), "┌");
+    assert_eq!(buffer[(0, 2)].fg, Color::Red);
+    // Y en la cabecera.
+    let (x, y) = find(&buffer, "✗ error l.3").unwrap();
+    assert_eq!((y, buffer[(x, y)].fg), (0, Color::Red));
     // El archivo se guardó aunque sea inválido.
     assert_eq!(
         std::fs::read_to_string(&path).unwrap().trim_end(),
@@ -259,7 +260,7 @@ fn ctrl_t_stops_and_starts_the_transport() {
 }
 
 #[test]
-fn engine_panel_only_reads_the_view_model() {
+fn header_and_track_summary_only_read_the_view_model() {
     let view = ViewModel {
         transport: TransportView {
             running: true,
@@ -280,16 +281,18 @@ fn engine_panel_only_reads_the_view_model() {
         selected: Some(0),
         ..ViewModel::default()
     };
-    let screen = text(&draw_widget(ui::EnginePanel(&view), 80, 6));
+    let screen = text(&draw_widget(crate::screen::Header(&view), 80, 1));
     assert!(
         screen.contains("174.0 BPM   compás 7   paso 13"),
         "{screen}"
     );
-    assert!(screen.contains("›amen"), "{screen}");
-    assert!(
-        screen.contains("›amen      ████░░░░ ▶02  3 cortes  ciclo 4  pista 3"),
-        "{screen}"
+    assert_eq!(
+        ui::track_summary(&view.tracks[0]),
+        "amen ▶02 · 3 cortes · ciclo 4 · pista 3"
     );
+    // El tracker lleva el resumen de la pista elegida en su título.
+    let screen = text(&draw_widget(ui::FullTrackerPanel(&view), 80, 6));
+    assert!(screen.contains("amen ▶02 · 3 cortes"), "{screen}");
 }
 
 #[test]
@@ -437,7 +440,7 @@ fn sample_panel_follows_the_selected_track() {
         screen.contains("sample · kick · break.wav · 0.12 s · 1 cortes"),
         "{screen}"
     );
-    assert!(screen.contains("›kick"), "{screen}");
+    assert!(screen.contains("tracker · compás 0 · kick"), "{screen}");
     app.handle(ctrl('o'));
     assert!(text(&draw(&mut app, 120, 40)).contains("sample · drums"));
 }
@@ -490,7 +493,7 @@ fn row_starting(buffer: &Buffer, prefix: &str) -> Option<u16> {
 #[test]
 fn tracker_shows_steps_and_highlights_the_current_row() {
     let view = tracker_view(Some(5), true);
-    let buffer = draw_widget(ui::TrackerPanel(&view), 40, 20);
+    let buffer = draw_widget(ui::FullTrackerPanel(&view), 27, 20);
     let screen = text(&buffer);
     assert!(screen.contains("tracker · compás 3"), "{screen}");
     assert!(screen.contains("   drums      kick"), "{screen}");
@@ -503,14 +506,14 @@ fn tracker_shows_steps_and_highlights_the_current_row() {
 
     // Solo la fila 05 resaltada, en todo su ancho.
     let row = row_starting(&buffer, "05").unwrap();
-    for x in 1..39 {
+    for x in 1..26 {
         assert_eq!(buffer[(x, row)].bg, Color::Blue, "x = {x}");
     }
     let other = row_starting(&buffer, "06").unwrap();
     assert_ne!(buffer[(5, other)].bg, Color::Blue);
 
     // Parado: nada resaltado.
-    let buffer = draw_widget(ui::TrackerPanel(&tracker_view(Some(5), false)), 40, 20);
+    let buffer = draw_widget(ui::FullTrackerPanel(&tracker_view(Some(5), false)), 27, 20);
     let row = row_starting(&buffer, "05").unwrap();
     assert_ne!(buffer[(5, row)].bg, Color::Blue);
 }
@@ -518,15 +521,15 @@ fn tracker_shows_steps_and_highlights_the_current_row() {
 #[test]
 fn tracker_scrolls_to_keep_the_current_row_visible() {
     // 8 de alto: borde, cabecera y 5 filas.
-    let buffer = draw_widget(ui::TrackerPanel(&tracker_view(Some(12), true)), 40, 8);
+    let buffer = draw_widget(ui::FullTrackerPanel(&tracker_view(Some(12), true)), 27, 8);
     let screen = text(&buffer);
     assert!(!screen.contains("│00 "), "{screen}");
     let row = row_starting(&buffer, "12").unwrap();
     assert_eq!(buffer[(5, row)].bg, Color::Blue, "{screen}");
     // Al final del compás no se pasa de la fila 15.
     let screen = text(&draw_widget(
-        ui::TrackerPanel(&tracker_view(Some(15), true)),
-        40,
+        ui::FullTrackerPanel(&tracker_view(Some(15), true)),
+        27,
         8,
     ));
     assert!(
@@ -742,13 +745,13 @@ fn the_error_line_is_highlighted_in_the_editor() {
     app.editor
         .move_cursor(ratatui_textarea::CursorMove::Jump(0, 0));
     let buffer = draw(&mut app, 120, 40);
-    // Línea 3 en la fila 3 de la pantalla (borde + 2), en todo su ancho
-    // dentro del editor; ninguna otra.
-    assert_eq!(error_rows(&buffer, 5), vec![3]);
+    // Línea 3 en la fila 5 de la pantalla (cabecera, regla, borde y 2),
+    // en todo su ancho dentro del editor; ninguna otra.
+    assert_eq!(error_rows(&buffer, 5), vec![5]);
     let (x, _) = find(&buffer, "track(\"drums\"").unwrap();
-    assert_eq!(buffer[(x, 3)].bg, ui::error_line());
-    assert_eq!(buffer[(x, 3)].symbol(), "t");
-    assert_ne!(buffer[(70, 3)].bg, ui::error_line(), "fuera del editor");
+    assert_eq!(buffer[(x, 5)].bg, ui::error_line());
+    assert_eq!(buffer[(x, 5)].symbol(), "t");
+    assert_ne!(buffer[(70, 5)].bg, ui::error_line(), "fuera del editor");
 
     // Sin error, sin resaltado.
     replace_all(&mut app, SONG);
@@ -2544,6 +2547,7 @@ mod record;
 mod resample;
 mod roll;
 mod sample_key;
+mod screen;
 mod sections;
 mod sends;
 mod shapes;

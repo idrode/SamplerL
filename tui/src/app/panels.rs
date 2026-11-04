@@ -35,9 +35,10 @@ pub struct PanelAreas {
     pub tracker: Option<TrackerLayout>,
     pub occupancy: Option<OccupancyLayout>,
     pub mixer: Option<MixerLayout>,
-    /// Lo que se dibuja encima (visualizaciones, sidechain, lanes): ahí el
-    /// ratón no llega a los paneles de debajo.
-    pub covers: Vec<Rect>,
+    /// Dónde quedó cada panel (para darle el foco con un clic).
+    pub focus: Vec<(Rect, crate::focus::Panel)>,
+    /// Las pestañas del dock.
+    pub tabs: Vec<(Rect, crate::layout::Tab)>,
 }
 
 impl App {
@@ -49,9 +50,6 @@ impl App {
             return false;
         }
         let at = Position::new(x, y);
-        if self.panels.covers.iter().any(|r| r.contains(at)) {
-            return false;
-        }
         if let Some(hit) = self.panels.occupancy.and_then(|l| l.hit(x, y)) {
             self.occupancy_mouse(action, hit);
             return true;

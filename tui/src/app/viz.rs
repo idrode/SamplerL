@@ -22,7 +22,7 @@ impl App {
                 self.viz_sent = flags;
             }
         }
-        self.viz = specs;
+        self.set_specs(specs);
     }
 
     /// Tras una carga buena, las visualizaciones de su modelo: el lote de
@@ -46,6 +46,16 @@ impl App {
                 .collect()
         });
         self.viz_sent = self.viz_flags(&specs);
+        self.set_specs(specs);
+    }
+
+    /// Pone las visualizaciones; si aparecen las primeras de panel (no
+    /// junto al código), elige su pestaña.
+    fn set_specs(&mut self, specs: Vec<VizSpec>) {
+        let panel = |specs: &[VizSpec]| specs.iter().any(|s| s.inline.is_none());
+        if panel(&specs) && !panel(&self.viz) {
+            self.show_tab(crate::layout::Tab::Viz);
+        }
         self.viz = specs;
     }
 

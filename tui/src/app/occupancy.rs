@@ -90,6 +90,9 @@ impl App {
     /// el cursor y las sugerencias).
     pub fn set_occupancy(&mut self, visible: bool) {
         self.occupancy.visible = visible;
+        if visible {
+            self.show_tab(crate::layout::Tab::Panel(crate::focus::Panel::Occupancy));
+        }
         if !visible {
             self.occupancy.cursor = None;
             self.occupancy.pending = None;

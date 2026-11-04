@@ -27,48 +27,39 @@ fn tracker_rows(screen: &str) -> Vec<usize> {
         .collect()
 }
 
-/// Alto del panel del sample (con sus bordes) en una sola ventana.
+/// Alto del panel del sample (con sus bordes).
 fn sample_height(screen: &str) -> usize {
     let lines: Vec<&str> = screen.lines().collect();
     let top = lines.iter().position(|l| l.contains("┌ sample")).unwrap();
-    let bottom = lines.iter().position(|l| l.contains("┌ tracker")).unwrap();
-    bottom - top
+    lines[top + 1..]
+        .iter()
+        .position(|l| l.contains('└'))
+        .map_or(0, |n| n + 2)
 }
 
 #[test]
-fn a_single_window_shows_the_16_rows_as_soon_as_they_fit() {
-    let (_, mut app, _engine) = open("tracker_rows_single", Some(SONG));
-    let all: Vec<usize> = (0..16).collect();
-    // Con sitio de sobra, o quitándole al sample hasta dejarle 4 filas.
-    for height in [40u16, 42, 44, 50] {
-        let screen = text(&draw(&mut app, 120, height));
-        assert_eq!(tracker_rows(&screen), all, "alto {height}\n{screen}");
-        assert!(sample_height(&screen) >= 4, "alto {height}");
-    }
-    assert_eq!(sample_height(&text(&draw(&mut app, 120, 40))), 5);
-    // Sin sitio ni así: el sample conserva sus 6 filas y el tracker se
-    // desplaza, como siempre.
-    for height in [30u16, 34, 38] {
-        let screen = text(&draw(&mut app, 120, height));
-        let rows = tracker_rows(&screen);
-        assert!(rows.len() < 16 && rows[0] == 0, "alto {height}: {rows:?}");
-        assert_eq!(sample_height(&screen), 6, "alto {height}");
-    }
-}
-
-#[test]
-fn the_main_window_shows_the_16_rows_as_soon_as_they_fit() {
+fn the_16_rows_show_as_soon_as_they_fit_in_both_windows() {
     let path = fixture("tracker_rows_main", Some(SONG));
     let (mut main, _engine) = main_window(&path, None);
     let (mut editor, _idle) = editor_window(&path);
     pump(&mut main, &mut editor);
+    let (_, mut single, _engine) = open("tracker_rows_single", Some(SONG));
     let all: Vec<usize> = (0..16).collect();
-    for height in [36u16, 38, 40, 50] {
-        let screen = text(&draw(&mut main, 120, height));
-        assert_eq!(tracker_rows(&screen), all, "alto {height}\n{screen}");
-    }
-    for height in [28u16, 32, 34] {
-        let rows = tracker_rows(&text(&draw(&mut main, 120, height)));
-        assert!(rows.len() < 16, "alto {height}: {rows:?}");
+    for app in [&mut main, &mut single] {
+        // Mediano y ancho con sitio: las 16 filas y al sample lo suyo.
+        for (width, height) in [(120u16, 40u16), (120, 44), (180, 50), (250, 60)] {
+            let screen = text(&draw(app, width, height));
+            assert_eq!(tracker_rows(&screen), all, "{width}×{height}\n{screen}");
+            assert!(sample_height(&screen) >= 6, "{width}×{height}\n{screen}");
+        }
+        // Mediano sin alto: se desplaza (parado, desde la primera fila).
+        let screen = text(&draw(app, 100, 30));
+        let rows = tracker_rows(&screen);
+        assert!(!rows.is_empty() && rows.len() < 16 && rows[0] == 0, "{rows:?}\n{screen}");
+        // Pequeño: el tracker es la primera pestaña, y se desplaza.
+        let screen = text(&draw(app, 80, 24));
+        let rows = tracker_rows(&screen);
+        assert!(!rows.is_empty() && rows.len() < 16, "{rows:?}\n{screen}");
     }
 }
+

@@ -27,9 +27,12 @@ fn play(app: &mut App, engine: &mut Engine, steps: usize) {
 fn the_palette_opens_and_closes_it_with_the_lanes_of_the_track() {
     let (_, mut app, mut engine) = open("lanes_panel", Some(SONG_LANES));
     assert!(app.view().error.is_none(), "{:?}", app.view().error);
-    assert!(app.view().lanes.is_none());
+    let lanes = crate::layout::Tab::Panel(crate::focus::Panel::Lanes);
+    assert_ne!(app.view().dock_tab, lanes);
     palette(&mut app, "lanes de automatización");
-    let view = app.view().lanes.expect("abierto");
+    // Su pestaña, elegida.
+    assert_eq!(app.view().dock_tab, lanes);
+    let view = app.view().lanes.expect("las de la pista");
     assert_eq!(view.track, "drums");
     let titles: Vec<String> = view.lanes.iter().map(|l| l.title()).collect();
     assert_eq!(
@@ -51,9 +54,10 @@ fn the_palette_opens_and_closes_it_with_the_lanes_of_the_track() {
         "{screen}"
     );
     assert!(screen.contains('●'), "{screen}");
-    // Otra vez, se cierra.
+    // Otra vez, se vuelve a la primera pestaña.
     palette(&mut app, "lanes de automatización");
-    assert!(app.view().lanes.is_none());
+    assert_ne!(app.view().dock_tab, lanes);
+    assert!(!text(&draw(&mut app, 140, 40)).contains("lanes · drums"));
 }
 
 #[test]

@@ -1257,6 +1257,9 @@ paleta de 256.
 | `roll_variacion` | piano roll: variaciones de `every`, `chance` y `fill` (en cursiva) |
 | `roll_generado` | piano roll: lo generado (`euclid`, `rotate`, `mutate`, `shuffle`...), que no se edita |
 | `roll_seleccion` | piano roll: fondo de la selección |
+| `borde` | bordes de los paneles sin el foco |
+| `borde_foco` | borde y título del panel con el foco |
+| `cabecera` | fondo de la cabecera y de la barra de menús |
 
 | En `[resaltado]` | Para | Por defecto |
 | --- | --- | --- |

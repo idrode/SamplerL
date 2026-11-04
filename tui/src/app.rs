@@ -289,7 +289,7 @@ pub struct App {
     sidechain: Option<crate::sidechain::Sidechain>,
     /// Panel de las lanes de automatización abierto, dónde se dibujó, el
     /// punto elegido y el que se arrastra.
-    lanes_open: bool,
+
     lanes_area: Option<ratatui::layout::Rect>,
     lanes_focus: Option<lanes::LaneFocus>,
     lane_drag: Option<lanes::LaneDrag>,
@@ -376,6 +376,13 @@ pub struct App {
     /// Cursor del tracker para editar los efectos de los pasos, y el paso
     /// que se edita en la línea de órdenes (ver `tracker_edit`).
     tracker_edit: Option<tracker_edit::TrackerCursor>,
+    /// El foco puesto a mano en un panel sin cursor propio (mezcla,
+    /// efectos, visualizaciones del master); ver [`crate::focus`].
+    chosen_focus: Option<crate::focus::Panel>,
+    /// La pestaña elegida del dock (`None`: la primera).
+    dock_tab: crate::layout::Tab,
+    /// La rejilla del último dibujo.
+    grid: Option<crate::layout::Grid>,
     pending_edit: Option<tracker_edit::PendingEdit>,
     /// Grabación de lo tocado en curso.
     recording: Option<crate::record::Recording>,
@@ -491,7 +498,6 @@ impl App {
             macro_panel: None,
             key_panel: None,
             sidechain: None,
-            lanes_open: false,
             lanes_area: None,
             lanes_focus: None,
             lane_drag: None,
@@ -537,6 +543,9 @@ impl App {
             socket_dir: None,
             browser: None,
             tracker_edit: None,
+            chosen_focus: None,
+            dock_tab: crate::layout::Tab::None,
+            grid: None,
             pending_edit: None,
             tapping: None,
             recording: None,
@@ -3020,6 +3029,7 @@ impl App {
         };
         let clashes = report.clashes();
         self.last_masking = Some((report.clone(), self.loads));
+        self.show_tab(crate::layout::Tab::Clash);
         if clashes.is_empty() {
             self.message = format!(
                 "sin choques de frecuencia entre {} pistas en {}{note}",
@@ -3753,6 +3763,7 @@ impl App {
             return;
         }
         self.sidechain = Some(crate::sidechain::Sidechain::default());
+        self.show_tab(crate::layout::Tab::Sidechain);
         let count = self
             .sidechain
             .as_ref()
@@ -3772,11 +3783,14 @@ impl App {
     /// «Lanes de automatización»: enseña o quita el panel con las lanes de
     /// la pista seleccionada.
     pub fn toggle_lanes(&mut self) {
-        self.lanes_open = !self.lanes_open;
-        if !self.lanes_open {
+        let lanes = crate::layout::Tab::Panel(crate::focus::Panel::Lanes);
+        if self.dock_tab == lanes {
+            self.lanes_focus = None;
+            self.show_tab(crate::layout::Tab::None);
             self.message = "lanes cerradas".into();
             return;
         }
+        self.show_tab(lanes);
         let view = self.lanes_view();
         self.message = match view {
             Some(v) if v.lanes.is_empty() => format!(
@@ -4256,6 +4270,36 @@ impl App {
     }
 
     /// Lee el estado del motor, actualiza medidores y recoge la basura.
+    /// El panel con el foco (ver [`crate::focus`]).
+    pub fn focus(&self) -> crate::focus::Panel {
+        crate::focus::derive(crate::focus::Inputs {
+            playing_mode: self.mode == Mode::Play,
+            tracker_cursor: self.tracker_edit.is_some(),
+            roll_cursor: self.roll.cursor.is_some(),
+            occupancy_cursor: self.occupancy.cursor.is_some(),
+            lane_point: self.lanes_focus.is_some(),
+            chosen: self.chosen_focus,
+        })
+    }
+
+    /// Elige la pestaña `tab` del dock (se ve si está en él; si el foco
+    /// está en otro panel del dock, el foco vuelve a su sitio de antes).
+    pub fn show_tab(&mut self, tab: crate::layout::Tab) {
+        self.dock_tab = tab;
+        if self
+            .chosen_focus
+            .is_some_and(|p| crate::layout::Tab::Panel(p) != tab)
+        {
+            self.chosen_focus = None;
+        }
+    }
+
+    /// La rejilla con la que se dibujó el último cuadro (la pone el
+    /// dibujo).
+    pub fn set_grid(&mut self, grid: crate::layout::Grid) {
+        self.grid = Some(grid);
+    }
+
     /// Un cuadro no se pudo dibujar (pánico de un widget o error de la
     /// terminal): se dice en la línea de mensajes y todo sigue.
     pub fn draw_failed(&mut self, what: &str) {
@@ -4516,7 +4560,7 @@ impl App {
                 .sidechain
                 .as_ref()
                 .map(|s| s.view(self.host.song())),
-            lanes: self.lanes_open.then(|| self.lanes_view()).flatten(),
+            lanes: self.lanes_view(),
             viz: self.viz_views(),
             devices: self.devices_popup(),
             vim: self.vim.as_ref().map(vim::Vim::label),
@@ -4542,6 +4586,11 @@ impl App {
             file: name,
             dirty: self.dirty(),
             playing_mode: self.mode == Mode::Play,
+            focus: self.focus(),
+            dock_tab: self.dock_tab,
+            menu_bar: false,
+            master_viz: false,
+            master_views: Vec::new(),
             palette: self.palette.as_ref().map(|p| {
                 let matches = self.palette_matches();
                 PaletteView {

@@ -32,17 +32,18 @@ fn with_the_editor_outside_the_views_take_the_whole_window() {
             .contains("song.lua · ⇄ editor en su ventana")
     );
     assert!(!screen.contains("bpm(120)"), "{screen}");
-    // El sample, de lado a lado.
-    assert_eq!(find(&buffer, "┌ sample · drums"), Some((0, 1)), "{screen}");
-    assert_eq!(buffer[(119, 1)].symbol(), "┐");
+    // El sample, de lado a lado, bajo la cabecera y la regla.
+    assert_eq!(find(&buffer, "┌ sample · drums"), Some((0, 2)), "{screen}");
+    assert_eq!(buffer[(119, 2)].symbol(), "┐");
 
-    // Con una sola ventana, el layout de siempre: el editor a la izquierda
-    // y el sample a la derecha.
+    // Con una sola ventana, el editor a la izquierda (la mitad) y el
+    // sample a la derecha.
     let (_, mut single, _engine) = open("main_window_single", Some(SONG));
-    let screen = text(&draw(&mut single, 120, 40));
-    assert!(screen.starts_with("┌ song.lua"), "{screen}");
+    let buffer = draw(&mut single, 120, 40);
+    let screen = text(&buffer);
+    assert_eq!(find(&buffer, "┌ song.lua"), Some((0, 2)), "{screen}");
     assert!(screen.contains("bpm(120)"), "{screen}");
-    let at = find(&draw(&mut single, 120, 40), "┌ sample · drums").unwrap();
+    let at = find(&buffer, "┌ sample · drums").unwrap();
     assert_eq!(at.0, 60);
 }
 
@@ -116,7 +117,7 @@ fn the_full_tracker_fits_every_track_widening_or_narrowing_the_columns() {
     let buffer = draw_widget(ui::FullTrackerPanel(&view), 72, 20);
     let screen = text(&buffer);
     assert!(
-        screen.contains("tracker · compás 3 · 8 pistas "),
+        screen.contains("tracker · compás 3 "),
         "{screen}"
     );
     // Las ocho cabeceras, cada una en su columna de 8 (tras los 3 del
@@ -148,14 +149,6 @@ fn the_full_tracker_fits_every_track_widening_or_narrowing_the_columns() {
         6,
         "{screen}"
     );
-
-    // El tracker de una sola ventana no cambia: columnas de 11.
-    let buffer = draw_widget(ui::TrackerPanel(&tracker_view(None, false)), 40, 20);
-    let header = text(&buffer).lines().nth(1).unwrap().to_string();
-    assert_eq!(
-        header.chars().skip(4 + 11).take(4).collect::<String>(),
-        "kick"
-    );
 }
 
 /// La línea que empieza (tras el borde) por `prefix`.
@@ -174,11 +167,11 @@ fn the_main_window_shows_the_full_tracker() {
     let (mut editor, _idle) = editor_window(&path);
     pump(&mut main, &mut editor);
     let screen = text(&draw(&mut main, 120, 40));
-    assert!(screen.contains("tracker · compás 0 · 2 pistas"), "{screen}");
-    // En una sola ventana, el título de siempre.
+    assert!(screen.contains("tracker · compás 0 · drums"), "{screen}");
+    // En una sola ventana, el mismo tracker (todas las pistas que quepan).
     let (_, mut single, _engine) = open("main_window_tracker_single", Some(SONG));
     let screen = text(&draw(&mut single, 120, 40));
-    assert!(screen.contains("tracker · compás 0 ─"), "{screen}");
+    assert!(screen.contains("tracker · compás 0 · drums"), "{screen}");
 }
 
 #[test]
@@ -261,30 +254,28 @@ fn the_mixer_has_a_strip_per_track_and_the_master() {
 }
 
 #[test]
-fn the_main_window_has_the_mixer_and_a_single_window_the_engine_panel() {
+fn the_mixer_goes_beside_the_tracker_with_or_without_the_editor() {
     let path = fixture("main_window_mixer", Some(SONG));
     let (mut main, _engine) = main_window(&path, None);
     let (mut editor, _idle) = editor_window(&path);
     pump(&mut main, &mut editor);
-    let buffer = draw(&mut main, 120, 40);
-    let screen = text(&buffer);
-    let (x, y) = find(&buffer, "┌ mezclador").expect(&screen);
-    assert_eq!(x, 0);
-    assert!(
-        find(&buffer, "drums    kick     master").is_some_and(|p| p.1 == y + 1),
-        "{screen}"
-    );
-    assert!(!screen.contains("┌ motor"), "{screen}");
-    // El tracker, a su derecha.
-    assert!(
-        find(&buffer, "┌ tracker").is_some_and(|p| p.0 == 29 && p.1 == y),
-        "{screen}"
-    );
-
     let (_, mut single, _engine) = open("main_window_mixer_single", Some(SONG));
-    let screen = text(&draw(&mut single, 120, 40));
-    assert!(screen.contains("┌ motor"), "{screen}");
-    assert!(!screen.contains("mezclador"), "{screen}");
+    for app in [&mut main, &mut single] {
+        let buffer = draw(app, 120, 40);
+        let screen = text(&buffer);
+        let (x, y) = find(&buffer, "┌ mezclador").expect(&screen);
+        assert!(
+            find(&buffer, "drums    kick     master").is_some_and(|p| p.1 == y + 1),
+            "{screen}"
+        );
+        assert!(!screen.contains("┌ motor"), "{screen}");
+        // El tracker, a su izquierda en la misma fila, hasta el borde
+        // del mezclador.
+        let (tx, ty) = find(&buffer, "┌ tracker").expect(&screen);
+        assert_eq!(ty, y, "{screen}");
+        assert!(tx < x, "{screen}");
+        assert_eq!(buffer[(x - 1, y)].symbol(), "┐", "{screen}");
+    }
 }
 
 /// La última línea de la pantalla: la de ayuda.
@@ -349,16 +340,6 @@ fn clash_view() -> crate::model::ViewModel {
 #[test]
 fn the_clash_panel_draws_the_pair_by_band_table() {
     let view = clash_view();
-    let table = view.clash_table.as_ref().unwrap();
-    // Tabla: «drums × kick» (12) y tres columnas de 6, con el borde: 32;
-    // en 100 de ancho caben dos quintos (40).
-    assert_eq!(ui::ClashPanel::width(table, 100), 32);
-    // Sin sitio para la tabla, la lista (pareja, banda y puntuación): 31,
-    // y nunca menos que el mínimo ni más de dos quintos.
-    assert_eq!(ui::ClashPanel::width(table, 75), 30);
-    // Sin sitio para el panel y el sample, nada.
-    assert_eq!(ui::ClashPanel::width(table, 60), 0);
-
     let buffer = draw_widget(ui::ClashPanel(&view), 32, 6);
     let screen = text(&buffer);
     let line = |y: usize| screen.lines().nth(y).unwrap().to_string();
@@ -426,7 +407,7 @@ fn the_clash_panel_warns_when_stale_and_says_when_there_are_none() {
 }
 
 #[test]
-fn the_main_window_shows_the_last_clash_analysis_beside_the_sample() {
+fn the_last_clash_analysis_goes_to_its_tab_in_both_windows() {
     let path = fixture("main_window_clashes", Some(&two(300, 300)));
     write_sines(path.parent().unwrap());
     let (mut main, _engine) = main_window(&path, None);
@@ -437,7 +418,7 @@ fn the_main_window_shows_the_last_clash_analysis_beside_the_sample() {
     let screen = text(&draw(&mut main, 120, 40));
     assert!(!screen.contains("choques"), "{screen}");
     // Se analiza desde la paleta y se cierra el informe: la tabla se queda
-    // a la derecha del sample.
+    // en su pestaña del dock, elegida, bajo el tracker.
     main.handle(f(1));
     type_query(&mut main, "choques");
     main.handle(super::special(ratatui_textarea::Key::Enter));
@@ -445,14 +426,10 @@ fn the_main_window_shows_the_last_clash_analysis_beside_the_sample() {
     main.handle(esc());
     let buffer = draw(&mut main, 120, 40);
     let screen = text(&buffer);
-    let (x, y) = find(&buffer, "┌ choques · ").expect(&screen);
-    assert_eq!(y, 1, "{screen}");
-    assert!(x > 60, "{screen}");
-    assert_eq!(
-        buffer[(x - 1, 1)].symbol(),
-        "┐",
-        "el sample, a su izquierda"
-    );
+    let (_, y) = find(&buffer, "┌ choques · ").expect(&screen);
+    let (_, tracker) = find(&buffer, "┌ tracker").expect(&screen);
+    assert!(y > tracker, "{screen}");
+    assert!(screen.contains(" choques "), "la pestaña: {screen}");
     assert!(screen.contains("a × b"), "{screen}");
     assert!(!screen.contains("de una carga anterior"), "{screen}");
     // Otra carga: la tabla sigue, pero avisa de que es de antes.
@@ -460,7 +437,7 @@ fn the_main_window_shows_the_last_clash_analysis_beside_the_sample() {
     let screen = text(&draw(&mut main, 120, 40));
     assert!(screen.contains("de una carga anterior"), "{screen}");
 
-    // Con una sola ventana, el layout de siempre (el informe, en su popup).
+    // Con una sola ventana, lo mismo.
     let (path, mut single, _engine) = open("main_window_clashes_single", Some(&two(300, 300)));
     write_sines(path.parent().unwrap());
     single.load();
@@ -468,5 +445,5 @@ fn the_main_window_shows_the_last_clash_analysis_beside_the_sample() {
     single.handle(esc());
     assert!(single.view().clash_table.is_some());
     let screen = text(&draw(&mut single, 120, 40));
-    assert!(!screen.contains("┌ choques"), "{screen}");
+    assert!(screen.contains("┌ choques · "), "{screen}");
 }

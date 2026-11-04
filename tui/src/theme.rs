@@ -50,6 +50,11 @@ pub struct Theme {
     pub roll_variation: Color,
     pub roll_generated: Color,
     pub roll_selection: Color,
+    /// Bordes de los paneles sin el foco, el del panel con el foco y la
+    /// cabecera de arriba (transporte, menús).
+    pub border: Color,
+    pub border_focus: Color,
+    pub header: Color,
 }
 
 /// Cómo se marca en el código lo que suena.
@@ -114,6 +119,9 @@ impl Default for Theme {
             roll_variation: Color::Indexed(180),
             roll_generated: Color::Indexed(245),
             roll_selection: Color::Indexed(24),
+            border: Color::Indexed(240),
+            border_focus: Color::Cyan,
+            header: Color::Indexed(236),
         }
     }
 }
@@ -138,6 +146,9 @@ pub const NAMES: &[&str] = &[
     "roll_variacion",
     "roll_generado",
     "roll_seleccion",
+    "borde",
+    "borde_foco",
+    "cabecera",
 ];
 
 /// Qué pinta cada color de [`NAMES`] (para la guía).
@@ -161,6 +172,9 @@ pub const DESCRIPTIONS: &[&str] = &[
     "piano roll: variaciones de `every`, `chance` y `fill` (en cursiva)",
     "piano roll: lo generado (`euclid`, `rotate`, `mutate`, `shuffle`...), que no se edita",
     "piano roll: fondo de la selección",
+    "bordes de los paneles sin el foco",
+    "borde y título del panel con el foco",
+    "fondo de la cabecera y de la barra de menús",
 ];
 
 impl Theme {
@@ -184,6 +198,9 @@ impl Theme {
             "roll_variacion" => &mut self.roll_variation,
             "roll_generado" => &mut self.roll_generated,
             "roll_seleccion" => &mut self.roll_selection,
+            "borde" => &mut self.border,
+            "borde_foco" => &mut self.border_focus,
+            "cabecera" => &mut self.header,
             _ => return false,
         };
         *slot = color;

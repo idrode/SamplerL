@@ -23,11 +23,13 @@ fn the_tracker_follows_each_track_at_its_own_length() {
     assert_eq!(positions, [Some(2), Some(6), Some(18)]);
     assert_eq!(view.tracks[1].length, 12);
 
-    let screen = text(&draw(&mut app, 130, 50));
-    assert!(screen.contains("12 pasos"), "{screen}");
-    assert!(screen.contains("32 pasos"), "{screen}");
+    // El resumen de cada pista dice su longitud si no es la del compás.
+    let summaries: Vec<String> = view.tracks.iter().map(ui::track_summary).collect();
+    assert!(!summaries[0].contains("pasos"), "{summaries:?}");
+    assert!(summaries[1].contains("12 pasos"), "{summaries:?}");
+    assert!(summaries[2].contains("32 pasos"), "{summaries:?}");
     // El tracker entero (en la interfaz se desplaza: tiene 16 filas).
-    let buffer = draw_widget(ui::TrackerPanel(&view), 40, 40);
+    let buffer = draw_widget(ui::FullTrackerPanel(&view), 38, 40);
     let screen = text(&buffer);
     // 32 filas: la pista de 16 y la de 12 dejan en blanco las que no tienen.
     assert!(screen.contains("31                       01"), "{screen}");
