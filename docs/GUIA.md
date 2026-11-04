@@ -4584,6 +4584,16 @@ tabla de su `auto()`, en un paso de deshacer. Solo si la tabla está
 escrita tal cual en la llamada: una que sale de una variable se ve
 («solo lectura») y el panel dice cómo pasarla a literal.
 
+**Lo que vale ahora.** Con una lane, el panel de efectos pone junto a su
+parámetro lo que suena en este momento, con su unidad y una barra:
+`› LP 3000 Hz q0.71 ∿cutoff ▸631 Hz ██░░░`. Lo de `▸`, en el color de
+acento, es el valor en vivo (lo que calcula el motor, unas 33 veces por
+segundo); lo de delante (`LP 3000 Hz`) es lo escrito, que no cambia. Igual
+el volumen (`vol ▸0.30∿`), el pan (`pan ▸+0.30`) y los envíos (`→
+d▸0.30`). Un `∿` sin `▸` es un `ramp()` o un `lfo()`. El texto del código
+no se toca nunca por esto, y el redondeo de lo que se ve no cambia lo que
+suena.
+
 **5. Grabarla tocando.** F1 «Grabar lanes (touch)» la arma: con el
 transporte en marcha, un mando MIDI asignado con MIDI learn a un
 parámetro con lane (se oye mientras se mueve) o arrastrar en vertical

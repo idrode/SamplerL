@@ -2398,6 +2398,9 @@ valor: el par nunca se lee de trozos distintos.
   ▸0.30∿`; sin lanes, nada; el `envmod` de un acid en sus unidades de Lua,
   en la vista y en los puntos del panel).
 
+- **Guía**: «Lo que vale ahora» en «Automatizar con lanes»: cómo leer
+  `▸` (en vivo) frente a lo escrito y frente a `∿` sin `▸` (`ramp`/`lfo`).
+
 ## Audio de prueba y problemas conocidos
 
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`
