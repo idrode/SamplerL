@@ -67,14 +67,14 @@ pub mod masking;
 pub mod patterns;
 pub mod project;
 pub mod step_fx;
-pub use lanes::LaneDef;
+pub use lanes::{LaneDef, number_text, parse_points, points_text};
 mod watch;
 mod written;
 
 use patterns::Rng;
 pub use project::{Cut, EditKind, Project, SliceEdit, SliceLabel, SlicePosition};
 pub use watch::{ScriptWatcher, WatchEvent};
-pub use written::TokenSpan;
+pub use written::{TableSpan, TokenSpan};
 
 use mlua::{
     AnyUserData, Function, HookTriggers, Lua, LuaOptions, StdLib, Table, UserData, UserDataMethods,

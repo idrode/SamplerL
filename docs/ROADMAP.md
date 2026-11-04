@@ -815,6 +815,6 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
     4. ✅ **Panel de solo lectura** con el cursor en vivo.
     4b. ✅ **Lectura en vivo del valor** en el mismo panel: número, barra y
        un punto sobre la curva.
-    5. **Edición con el ratón** y sincronización con el código.
+    5. ✅ **Edición con el ratón** y sincronización con el código.
     6. **Grabación en vivo** (opcional).
     7. **Documentación**: recetas, tutorial en la guía.

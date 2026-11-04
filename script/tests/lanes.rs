@@ -274,3 +274,69 @@ fn freezing_knows_how_long_a_lane_takes_to_repeat() {
         frozen.warnings
     );
 }
+
+#[test]
+fn where_the_points_are_written_or_why_not() {
+    // En una línea, y en una cadena de métodos con la tabla en varias.
+    let song = song(
+        "t:fx(\"lowpass\", { cutoff = 3000 })\n\
+         t:auto(\"cutoff\", { {0, 200, \"exp\"}, {2, 8000} }, { len = 4 })\n\
+         track(\"u\", b):steps(\"1 . . .  . . . .  . . . .  . . . .\")\n  \
+           :auto(\"gain\", {\n    {0, 0.2},\n    {1, 1, \"step\"},\n  })\n\
+         local p = { {0, 0}, {1, 1} }\n\
+         t:auto(\"pan\", p)\n\
+         t:auto(\"pitch\", { {0, 1 + 1} })",
+    )
+    .unwrap();
+    let span = |i: usize| song.lanes[i].as_ref().unwrap().written.clone();
+    let cutoff = span(0).unwrap();
+    // Fila 4 (desde 0) del texto, con las tres líneas de cabecera.
+    assert_eq!(cutoff.start.0, 4);
+    let gain = span(1).unwrap();
+    assert_eq!((gain.start.0, gain.end.0), (6, 9));
+    let pan = span(2).unwrap_err();
+    assert!(
+        pan.contains("no se encuentra la llamada escrita") || pan.contains("no es literal"),
+        "{pan}"
+    );
+    assert!(
+        pan.contains("escríbela tal cual dentro de la llamada"),
+        "{pan}"
+    );
+    let pitch = span(3).unwrap_err();
+    assert!(
+        pitch.contains("no es literal (lleva variables, cuentas o comentarios)"),
+        "{pitch}"
+    );
+}
+
+#[test]
+fn reading_and_writing_a_points_table() {
+    let text = "{ {0, 200, \"exp\"}, {2.5, 8000}, {4, 0.125, 'step'}, }";
+    let points = script::parse_points(text).unwrap();
+    assert_eq!(
+        points,
+        [
+            (0.0, 200.0, LaneCurve::Exp),
+            (2.5, 8000.0, LaneCurve::Linear),
+            (4.0, 0.125, LaneCurve::Step)
+        ]
+    );
+    assert_eq!(
+        script::points_text(&points, text),
+        "{ {0, 200, \"exp\"}, {2.5, 8000}, {4, 0.125, \"step\"} }"
+    );
+    // En varias líneas, con su sangría.
+    let multi = "{\n      {0, 1},\n      {1, 2, \"smooth\"},\n    }";
+    let points = script::parse_points(multi).unwrap();
+    assert_eq!(
+        script::points_text(&points, multi),
+        "{\n      {0, 1},\n      {1, 2, \"smooth\"},\n    }"
+    );
+    assert!(script::parse_points("{ {0, x} }").is_none());
+    assert!(script::parse_points("{ {0, 1} } -- y más").is_none());
+    assert!(script::parse_points("{ }").is_none());
+    assert_eq!(script::number_text(0.0625), "0.0625");
+    assert_eq!(script::number_text(2.0), "2");
+    assert_eq!(script::number_text(-0.00001), "0");
+}

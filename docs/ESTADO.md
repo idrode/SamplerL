@@ -2257,6 +2257,54 @@ Test en `tui/src/tests/lanes.rs` (el valor de la lane del gain a mitad de
 su segundo compás, su texto, la barra llena, el rombo en la columna del
 cursor, «fijo» y el formato de los números).
 
+### Parte 5: editar con el ratón y escribir en el código
+
+- **Dónde está escrita la tabla** (`script/src/written.rs`:
+  `call_table`, `TableSpan`, `span_text`): al llamar a `auto("param",
+  puntos, ...)`, en la línea de la llamada (o en las de alrededor, para una
+  cadena de métodos) se busca `auto(` seguido de esa cadena, una coma y una
+  `{`, y su `}` (también en varias líneas, saltando lo de dentro de las
+  cadenas). `lanes::written_table` exige que el texto sea literal
+  (`script::parse_points`: solo `{posición, valor [, "curva"]}`, espacios,
+  saltos de línea y una coma final; nada de variables, cuentas ni
+  comentarios) y que diga lo mismo que se leyó; si no, `LaneDef::written`
+  guarda el motivo y cómo pasarla a literal. `script::points_text` la
+  vuelve a escribir con su forma: en una línea si estaba en una, o un
+  punto por línea con la sangría que tenía; `number_text`, lo más corto
+  (hasta 4 decimales).
+- **La escala de la vista** (`LaneDef::scale`): la de `range` o la del
+  parámetro, logarítmica en las frecuencias (las del registro de efectos);
+  el panel dibuja y edita con ella (`LaneRow::level`, `value_at`).
+- **La edición, pura** (`tui/src/lanes_edit.rs`): `LaneEdit::{Add, Move,
+  Delete, Cycle, Nudge}` sobre una lane da los puntos tal como se escriben
+  (compases y, con `range`, de 0 a 1) y el elegido. Las posiciones van por
+  pasos enteros, crecientes y sin repetir (mover se queda entre sus
+  vecinos), los valores dentro de la escala, y una lane se queda con al
+  menos un punto (para quitarla, `auto_clear`). `Cycle`: recta → exp →
+  suave → salto → recta. `Nudge`: un paso y un cuarentavo de la escala.
+- **En la interfaz** (`tui/src/app/lanes.rs`): clic en un hueco de la
+  curva añade un punto (en el paso y el valor del centro de esa celda);
+  clic sobre un punto (a una columna) lo elige y arrastrarlo lo mueve (la
+  vista lo enseña mientras, y se escribe al soltar); clic derecho lo
+  borra. Con un punto elegido: `c` cambia su curva, Supr o Retroceso lo
+  borra, ← → un paso, ↑ ↓ un cuarentavo, Tab el siguiente y Esc lo suelta;
+  un clic fuera del panel también. Cada edición reescribe la tabla de su
+  `auto()` en el texto (`replace_text`: un paso de deshacer), carga y deja
+  elegido el punto. No toca nada, y dice por qué, si la tabla no es
+  literal (el título lo marca, «solo lectura»), si el texto ha cambiado
+  desde la última carga o si esa carga falló. Del código al panel no hace
+  falta nada: el panel lee el modelo que sale de cada carga. Con el editor
+  en su ventana, la principal guarda el texto y le manda el cambio, como
+  con el piano roll.
+- **Tests**: `script/tests/lanes.rs` (dónde está escrita en una línea y en
+  varias, por qué no con una variable y con una cuenta; leer y escribir la
+  tabla), `tui/src/lanes_edit.rs` (añadir en orden y en su paso, mover
+  entre vecinos, borrar, un punto como mínimo, cambiar la curva, afinar,
+  con `range` de 0 a 1) y `tui/src/tests/lanes.rs` (un clic añade y Ctrl-Z
+  lo quita; arrastrar no escribe hasta soltar y la vista lo enseña; `c`,
+  flechas, Supr y clic derecho; solo lectura con su motivo; el texto
+  cambiado espera a cargar; una tabla en varias líneas conserva su forma).
+
 ## Audio de prueba y problemas conocidos
 
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`

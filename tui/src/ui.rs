@@ -65,9 +65,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     if view.editor_outside {
         // Sin editor aquí, el ratón no tiene dónde escribir.
         app.editor_area = None;
-        let (sample_area, roll_area) = draw_main_window(frame, &view);
+        let (sample_area, roll_area, lanes_area) = draw_main_window(frame, &view);
         app.sample_area = sample_area.map(|a| Block::bordered().inner(a));
         app.set_roll_area(roll_area);
+        app.set_lanes_area(lanes_area);
         return;
     }
     let [main, fx, help] = Layout::vertical([
@@ -146,12 +147,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         frame.render_widget(crate::sidechain::SidechainPanel(sidechain), area);
     }
     // Las lanes de la pista seleccionada, abajo del sample y el tracker.
+    let mut lanes_area = None;
     if let Some(lanes) = &view.lanes {
-        frame.render_widget(
-            crate::lanes_panel::LanesPanel(lanes),
-            bottom_part(rest_area, lanes.height()),
-        );
+        let area = bottom_part(rest_area, lanes.height());
+        frame.render_widget(crate::lanes_panel::LanesPanel(lanes), area);
+        lanes_area = Some(area);
     }
+    app.set_lanes_area(lanes_area);
     frame.render_widget(FxPanel(&view), fx);
     frame.render_widget(HelpLine(&view), help);
     draw_popups(frame, &view, popup);
@@ -184,7 +186,10 @@ fn tracker_first(height: u16, normal: u16, squeezed: u16) -> u16 {
 /// onda grande; debajo, el mezclador y el tracker; abajo, los efectos.
 /// Devuelve dónde quedaron el panel del sample y el piano roll (que va en
 /// el sitio de la onda grande).
-fn draw_main_window(frame: &mut Frame, view: &ViewModel) -> (Option<Rect>, Option<Rect>) {
+fn draw_main_window(
+    frame: &mut Frame,
+    view: &ViewModel,
+) -> (Option<Rect>, Option<Rect>, Option<Rect>) {
     let [top, body, fx, help] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Min(8),
@@ -242,11 +247,11 @@ fn draw_main_window(frame: &mut Frame, view: &ViewModel) -> (Option<Rect>, Optio
         frame.render_widget(crate::sidechain::SidechainPanel(sidechain), sidechain_area);
     }
     // Las lanes de la pista seleccionada, abajo de la forma de onda.
+    let mut lanes_area = None;
     if let Some(lanes) = view.lanes.as_ref().filter(|_| roll_area.is_none()) {
-        frame.render_widget(
-            crate::lanes_panel::LanesPanel(lanes),
-            bottom_part(sample_area, lanes.height()),
-        );
+        let area = bottom_part(sample_area, lanes.height());
+        frame.render_widget(crate::lanes_panel::LanesPanel(lanes), area);
+        lanes_area = Some(area);
     }
     // Con un análisis de choques hecho, su tabla a la derecha del sample.
     let width = view
@@ -271,7 +276,11 @@ fn draw_main_window(frame: &mut Frame, view: &ViewModel) -> (Option<Rect>, Optio
     frame.render_widget(FxPanel(view), fx);
     frame.render_widget(HelpLine(view), help);
     draw_popups(frame, view, None);
-    (roll_area.is_none().then_some(sample_area), roll_area)
+    (
+        roll_area.is_none().then_some(sample_area),
+        roll_area,
+        lanes_area,
+    )
 }
 
 /// Ancho de la vista del sidechain en la ventana principal sin editor.

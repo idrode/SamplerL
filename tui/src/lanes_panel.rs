@@ -37,6 +37,17 @@ pub struct LaneRow {
     /// Lo que publica el motor ahora (`None`: parado antes de la primera
     /// mezcla o aún no ha entrado).
     pub live: Option<LaneLive>,
+    /// La escala de la vista y de la edición: mínimo, máximo y si es
+    /// logarítmica (la del parámetro o la de `range`).
+    pub scale: (f32, f32, bool),
+    /// Con `range`, los valores escritos van de 0 a 1 (y si en log).
+    pub range: Option<(f32, f32)>,
+    pub range_log: bool,
+    /// Si se puede editar desde el panel (la tabla de puntos está escrita
+    /// tal cual) o por qué no.
+    pub editable: Result<script::TableSpan, String>,
+    /// El punto elegido para editarlo.
+    pub selected: Option<usize>,
 }
 
 impl LaneRow {
@@ -71,18 +82,28 @@ impl LaneRow {
         format!("{} · {length} · {mode}{offset}", self.param)
     }
 
-    /// Lo alto que va `value` en la franja (0 abajo, 1 arriba), entre el
-    /// valor más bajo y el más alto de la lane (en escala log si la lane lo
-    /// es).
+    /// Lo alto que va `value` en la franja (0 abajo, 1 arriba), en la
+    /// escala de la vista (logarítmica en las frecuencias).
     pub fn level(&self, value: f32) -> f32 {
-        let (lo, hi) = self.lane.bounds();
+        let (lo, hi, log) = self.scale;
         if hi <= lo {
             return 0.5;
         }
-        if self.lane.is_log() && lo > 0.0 {
+        if log && lo > 0.0 {
             ((value.max(lo).ln() - lo.ln()) / (hi.ln() - lo.ln())).clamp(0.0, 1.0)
         } else {
             ((value - lo) / (hi - lo)).clamp(0.0, 1.0)
+        }
+    }
+
+    /// El valor que va a la altura `level` (de 0 a 1) de la franja.
+    pub fn value_at(&self, level: f32) -> f32 {
+        let (lo, hi, log) = self.scale;
+        let level = level.clamp(0.0, 1.0);
+        if log && lo > 0.0 {
+            (lo.ln() + level * (hi.ln() - lo.ln())).exp()
+        } else {
+            lo + level * (hi - lo)
         }
     }
 
@@ -121,6 +142,11 @@ impl LanesView {
                     lane: lane_def.lane,
                     bar_steps: lane_def.bar_steps,
                     live: status.and_then(|s| s.lanes.get(*index).copied().flatten()),
+                    scale: lane_def.scale,
+                    range: lane_def.range,
+                    range_log: lane_def.range_log,
+                    editable: lane_def.written.clone(),
+                    selected: None,
                 })
             })
             .collect();
@@ -181,7 +207,10 @@ impl Widget for LanesPanel<'_> {
                 ..inner
             };
             // El título y, a la derecha, lo que se lee: el valor y su barra.
-            let head = row.title();
+            let head = match &row.editable {
+                Ok(_) => row.title(),
+                Err(_) => format!("{} · solo lectura", row.title()),
+            };
             let mut spans = vec![Span::from(head.clone()).bold()];
             if let Some(reading) = row.reading() {
                 let level = row.live.map_or(0.0, |l| row.level(l.value));
@@ -244,13 +273,18 @@ fn draw_curve(row: &LaneRow, area: Rect, buf: &mut Buffer) {
                 .set_fg(if here { accent() } else { dim() });
         }
     }
-    // Los puntos, encima, en la fila de su valor.
-    for point in row.lane.points() {
+    // Los puntos, encima, en la fila de su valor (el elegido, `◉` y en
+    // negrita).
+    for (i, point) in row.lane.points().iter().enumerate() {
         let x = row.column(point.at, width);
         let level = (row.level(point.value) * (height as f32 - 1.0)).round() as u16;
-        buf[(area.x + x, area.bottom() - 1 - level)]
-            .set_char('●')
+        let chosen = row.selected == Some(i);
+        let cell = buf[(area.x + x, area.bottom() - 1 - level)]
+            .set_char(if chosen { '◉' } else { '●' })
             .set_fg(accent());
+        if chosen {
+            cell.modifier.insert(ratatui::style::Modifier::BOLD);
+        }
     }
     // Lo que suena: un rombo sobre la curva, en la columna del cursor y a
     // la altura del valor que publica el motor.

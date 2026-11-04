@@ -36,6 +36,14 @@ pub struct LaneDef {
     pub range: Option<(f32, f32)>,
     /// Lo que mide el parámetro (para la vista): su rango.
     pub bounds: (f32, f32),
+    /// La escala en que se dibuja y se edita: el rango de `range` o el del
+    /// parámetro, y si es logarítmica (las frecuencias).
+    pub scale: (f32, f32, bool),
+    /// Con `range`, los valores escritos van de 0 a 1 en escala log.
+    pub range_log: bool,
+    /// Dónde está escrita la tabla de puntos (para editarla desde la
+    /// interfaz), o por qué no se puede.
+    pub written: Result<super::TableSpan, String>,
     /// Dónde se llamó (`song.lua:12: `).
     pub location: String,
 }
@@ -76,9 +84,10 @@ struct Candidate {
     /// aviso.
     bare: String,
     target: AutoTarget,
-    /// Rango del parámetro, su valor fijo y cuánto se escala (el
-    /// sintetizador, a las unidades de su núcleo).
+    /// Rango del parámetro (y si es logarítmico), su valor fijo y cuánto se
+    /// escala (el sintetizador, a las unidades de su núcleo).
     range: (f32, f32),
+    log: bool,
     rest: f32,
     scale: f32,
 }
@@ -128,7 +137,7 @@ fn candidates(def: &TrackDef) -> Vec<Candidate> {
     for (slot, fx) in def.fx.iter().enumerate() {
         let names = effect_names(fx);
         for (p, param) in fx.params().iter().enumerate() {
-            let Some((lo, hi, _)) = fx.param_range(p) else {
+            let Some((lo, hi, log)) = fx.param_range(p) else {
                 continue;
             };
             // Lo que el registro dice que no se mueve, fuera.
@@ -147,6 +156,7 @@ fn candidates(def: &TrackDef) -> Vec<Candidate> {
                 bare: param.to_string(),
                 target: AutoTarget::Fx { slot, param: p },
                 range: (lo, hi),
+                log,
                 rest: fx.param_value(p).unwrap_or(lo),
                 scale: 1.0,
             });
@@ -158,6 +168,7 @@ fn candidates(def: &TrackDef) -> Vec<Candidate> {
         bare: bare.to_string(),
         target: AutoTarget::Mix(index),
         range,
+        log: false,
         rest,
         scale: 1.0,
     };
@@ -189,6 +200,7 @@ fn candidates(def: &TrackDef) -> Vec<Candidate> {
         bare: "pitch".into(),
         target: AutoTarget::Pitch,
         range: (-semitones, semitones),
+        log: false,
         rest: def.pitch,
         scale: 1.0,
     });
@@ -199,6 +211,7 @@ fn candidates(def: &TrackDef) -> Vec<Candidate> {
         bare: "formant".into(),
         target: AutoTarget::Formant,
         range: (-formant, formant),
+        log: false,
         rest: def.formant.unwrap_or(0.0),
         scale: 1.0,
     });
@@ -221,6 +234,7 @@ fn candidates(def: &TrackDef) -> Vec<Candidate> {
                 bare: param.name.to_string(),
                 target: AutoTarget::Synth(param.name),
                 range: (p.min, p.max),
+                log: false,
                 rest: p.get(&synth.patch),
                 scale: p.scale,
             });
@@ -246,6 +260,7 @@ fn candidates(def: &TrackDef) -> Vec<Candidate> {
                 bare: name.to_string(),
                 target: AutoTarget::Shape(index),
                 range: (lo, hi),
+                log: false,
                 rest,
                 scale: 1.0,
             });
@@ -652,6 +667,11 @@ pub(crate) fn auto(
         target.scale,
     )?;
     let (lo, hi) = lane.bounds();
+    let source = written_table(lua, param, &written);
+    let scale = match opts.range {
+        Some((a, b)) => (a, b, opts.log),
+        None => (target.range.0, target.range.1, target.log),
+    };
     let def = LaneDef {
         track: Some(name.to_string()),
         param: target.full.clone(),
@@ -660,6 +680,9 @@ pub(crate) fn auto(
         bar_steps: builder.meter.map_or(engine::STEPS, |m| m.steps),
         range: opts.range,
         bounds: target.range,
+        scale,
+        range_log: opts.log,
+        written: source,
         location: location(lua),
     };
     let index = place(builder, slot, def).map_err(|e| fail(lua, format!("{who}: {e}")))?;
@@ -791,6 +814,11 @@ pub(crate) fn lane(
         bar_steps: builder.meter.map_or(engine::STEPS, |m| m.steps),
         range: opts.range,
         bounds: (lo, hi),
+        scale: opts
+            .range
+            .map_or((lo, hi, opts.log), |(a, b)| (a, b, opts.log)),
+        range_log: opts.log,
+        written: Err("una lane() suelta no tiene pista: edítala en el código".into()),
         location: location(lua),
     };
     let index = place(builder, None, def).map_err(|e| fail(lua, format!("{who}: {e}")))?;
@@ -799,4 +827,156 @@ pub(crate) fn lane(
         min: lo,
         max: hi,
     }))
+}
+
+/// Dónde está escrita la tabla de puntos de `auto("param", ...)` en la
+/// llamada en curso, si está tal cual (solo números, cadenas de curva y
+/// llaves) y dice lo mismo que se leyó; si no, por qué y cómo arreglarlo.
+fn written_table(
+    lua: &Lua,
+    param: &str,
+    points: &[(f64, f32, LaneCurve)],
+) -> Result<super::TableSpan, String> {
+    let how = format!(
+        "para editarla desde el panel, escríbela tal cual dentro de la llamada: \
+         auto(\"{param}\", {{ {{0, 200}}, {{1, 2000, \"exp\"}} }})"
+    );
+    let span = super::written::call_table(lua, "auto", param)
+        .map_err(|why| format!("auto(\"{param}\"): {why}; {how}"))?;
+    let text = super::written::span_text(lua, span).unwrap_or_default();
+    match parse_points(&text) {
+        Some(read)
+            if read.len() == points.len()
+                && read
+                    .iter()
+                    .zip(points)
+                    .all(|(a, b)| a.0 == b.0 && a.1 == b.1 && a.2 == b.2) =>
+        {
+            Ok(span)
+        }
+        Some(_) => Err(format!(
+            "auto(\"{param}\"): la tabla escrita no es la que llega (¿otra llamada igual en la misma línea?); {how}"
+        )),
+        None => Err(format!(
+            "auto(\"{param}\"): la tabla de puntos no es literal (lleva variables, cuentas o comentarios); {how}"
+        )),
+    }
+}
+
+/// Lee una tabla de puntos escrita tal cual: `{ {0, 200}, {1, 2000, "exp"} }`
+/// (con espacios, saltos de línea y una coma final), o nada si lleva otra
+/// cosa.
+pub fn parse_points(text: &str) -> Option<Vec<(f64, f32, LaneCurve)>> {
+    let mut chars = text.trim().chars().peekable();
+    let skip = |c: &mut std::iter::Peekable<std::str::Chars>| {
+        while c.peek().is_some_and(|ch| ch.is_whitespace()) {
+            c.next();
+        }
+    };
+    let number = |c: &mut std::iter::Peekable<std::str::Chars>| -> Option<f64> {
+        skip(c);
+        let mut text = String::new();
+        while let Some(&ch) = c.peek() {
+            if ch.is_ascii_digit() || matches!(ch, '-' | '+' | '.' | 'e' | 'E') {
+                text.push(ch);
+                c.next();
+            } else {
+                break;
+            }
+        }
+        text.parse().ok()
+    };
+    if chars.next()? != '{' {
+        return None;
+    }
+    let mut out = Vec::new();
+    loop {
+        skip(&mut chars);
+        match chars.next()? {
+            '}' => break,
+            '{' => {}
+            _ => return None,
+        }
+        let at = number(&mut chars)?;
+        skip(&mut chars);
+        if chars.next()? != ',' {
+            return None;
+        }
+        let value = number(&mut chars)? as f32;
+        skip(&mut chars);
+        let curve = match chars.next()? {
+            '}' => LaneCurve::Linear,
+            ',' => {
+                skip(&mut chars);
+                let quote = chars.next()?;
+                if quote != '"' && quote != '\'' {
+                    return None;
+                }
+                let name: String = chars.by_ref().take_while(|&ch| ch != quote).collect();
+                skip(&mut chars);
+                if chars.next()? != '}' {
+                    return None;
+                }
+                curve_name(&name)?
+            }
+            _ => return None,
+        };
+        out.push((at, value, curve));
+        skip(&mut chars);
+        if chars.peek() == Some(&',') {
+            chars.next();
+        }
+    }
+    skip(&mut chars);
+    (chars.next().is_none() && !out.is_empty()).then_some(out)
+}
+
+/// Un número como se escribe en una tabla de puntos: lo más corto que lo
+/// dice (hasta 4 decimales).
+pub fn number_text(value: f64) -> String {
+    let text = format!("{value:.4}");
+    let text = text.trim_end_matches('0').trim_end_matches('.');
+    if text == "-0" {
+        "0".into()
+    } else {
+        text.to_string()
+    }
+}
+
+/// La tabla de puntos escrita otra vez, con la forma de `original`: en una
+/// línea si estaba en una, o un punto por línea con la sangría que tenía.
+pub fn points_text(points: &[(f64, f32, LaneCurve)], original: &str) -> String {
+    let point = |&(at, value, curve): &(f64, f32, LaneCurve)| {
+        let curve = match curve {
+            LaneCurve::Linear => String::new(),
+            LaneCurve::Exp => ", \"exp\"".into(),
+            LaneCurve::Smooth => ", \"smooth\"".into(),
+            LaneCurve::Step => ", \"step\"".into(),
+        };
+        format!(
+            "{{{}, {}{curve}}}",
+            number_text(at),
+            number_text(value as f64)
+        )
+    };
+    let items: Vec<String> = points.iter().map(point).collect();
+    let lines: Vec<&str> = original.lines().collect();
+    if lines.len() <= 1 {
+        return format!("{{ {} }}", items.join(", "));
+    }
+    // La sangría de la segunda línea (la del primer punto) y la de la
+    // última (la de la llave que cierra).
+    let indent = |line: &str| {
+        line.chars()
+            .take_while(|c| c.is_whitespace())
+            .collect::<String>()
+    };
+    let inner = indent(lines[1]);
+    let outer = indent(lines[lines.len() - 1]);
+    let mut out = String::from("{\n");
+    for item in &items {
+        out.push_str(&format!("{inner}{item},\n"));
+    }
+    out.push_str(&format!("{outer}}}"));
+    out
 }

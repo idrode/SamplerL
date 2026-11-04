@@ -86,6 +86,11 @@ impl App {
         {
             return;
         }
+        // El panel de las lanes, si se ve y el ratón está encima (o arrastra
+        // un punto).
+        if self.lanes_mouse(action, column, row) {
+            return;
+        }
         if self.slice_drag.is_some() || self.on_sample(action, column, row) {
             self.mouse_sample(action, column);
             return;

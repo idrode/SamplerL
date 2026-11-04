@@ -4,6 +4,7 @@
 //! dos disposiciones.
 
 use super::*;
+use crate::app::MouseAction;
 
 const SONG_LANES: &str = r#"bpm(120)
 local amen = sample("break.wav"):slice(2)
@@ -60,12 +61,15 @@ fn the_curve_its_points_and_the_cursor_are_where_they_should_be() {
     let (_, mut app, _) = open("lanes_curve", Some(SONG_LANES));
     palette(&mut app, "lanes de automatización");
     let mut view = app.view().lanes.unwrap();
-    // El gain: 0.3 la primera mitad y 1 la segunda (escalones).
+    // El gain: 0.3 la primera mitad y 1 la segunda (escalones), en la
+    // escala del volumen (de 0 a 4).
     let row = &mut view.lanes[1];
     row.live = Some(engine::LaneLive {
         value: 1.0,
         phase: Some(24.0),
     });
+    // Para ver la curva entera en cuatro filas, la escala de sus puntos.
+    row.scale = (0.3, 1.0, false);
     assert_eq!(row.level(0.3), 0.0);
     assert_eq!(row.level(1.0), 1.0);
     assert_eq!(row.column(24.0, 32), 24);
@@ -108,11 +112,12 @@ fn the_live_reading_shows_the_value_its_bar_and_a_mark_on_the_curve() {
     };
     let buffer = draw_widget(crate::lanes_panel::LanesPanel(&single), 60, 7);
     let lines: Vec<String> = text(&buffer).lines().map(str::to_string).collect();
-    // El título lleva la lectura y su barra llena (1 es el máximo).
-    assert!(lines[1].contains("▸ 1.00 ████████████"), "{}", lines[1]);
-    // El rombo, arriba (el valor más alto), en la columna del cursor.
+    // El título lleva la lectura y su barra (1 de 0 a 4: un cuarto).
+    assert!(lines[1].contains("▸ 1.00 ███░░░░░░░░░"), "{}", lines[1]);
+    // El rombo, a un cuarto de la altura (la fila de abajo de las cuatro,
+    // redondeado), en la columna del cursor.
     let x = gain.column(live.phase.unwrap() as f64, 58) as usize + 1;
-    assert_eq!(lines[2].chars().nth(x), Some('◆'), "{}", lines[2]);
+    assert_eq!(lines[4].chars().nth(x), Some('◆'), "{}", lines[4]);
     // Fuera del tramo de una once: el valor fijo, sin cursor.
     let mut once = gain.clone();
     once.live = Some(engine::LaneLive {
@@ -122,6 +127,205 @@ fn the_live_reading_shows_the_value_its_bar_and_a_mark_on_the_curve() {
     assert_eq!(once.reading().as_deref(), Some("0.80 fijo"));
     assert_eq!(crate::lanes_panel::number(2345.6), "2346");
     assert_eq!(crate::lanes_panel::number(12.34), "12.3");
+}
+
+/// Una canción con una lane escrita tal cual y otra que no.
+const SONG_EDIT: &str = r#"bpm(120)
+local amen = sample("break.wav"):slice(2)
+local p = { {0, 0}, {1, 1} }
+track("drums", amen):steps("1 . 2 .  1 . 2 .  1 . 2 .  1 . 2 .")
+  :auto("gain", { {0, 0.5}, {2, 2} }, { len = 4 })
+  :auto("pan", p)
+"#;
+
+/// El panel abierto y dibujado, con su área.
+fn open_edit(test: &str) -> (App, Engine, ratatui::layout::Rect) {
+    let (_, mut app, engine) = open(test, Some(SONG_EDIT));
+    assert!(app.view().error.is_none(), "{:?}", app.view().error);
+    palette(&mut app, "lanes de automatización");
+    draw(&mut app, 140, 40);
+    let area = app.lanes_area_for_test().expect("dibujado");
+    (app, engine, area)
+}
+
+/// La celda de la curva de la lane `lane` en la columna `x` (desde su
+/// izquierda) y la fila `y` (desde arriba, de 0 a 3).
+fn cell(area: ratatui::layout::Rect, lane: u16, x: u16, y: u16) -> (u16, u16) {
+    (area.x + 1 + x, area.y + 1 + lane * 5 + 1 + y)
+}
+
+fn auto_line(app: &App, param: &str) -> String {
+    app.editor
+        .lines()
+        .join("\n")
+        .lines()
+        .find(|l| l.contains(&format!("auto(\"{param}\"")))
+        .unwrap_or_default()
+        .to_string()
+}
+
+#[test]
+fn a_click_adds_a_point_and_undo_takes_it_away() {
+    let (mut app, _engine, area) = open_edit("lanes_add");
+    let width = area.width - 2;
+    // A tres cuartos de la lane (3 compases de 4), arriba del todo (4, el
+    // máximo del volumen): el paso del centro de esa columna.
+    let column = width * 3 / 4;
+    let (x, y) = cell(area, 0, column, 0);
+    app.mouse(MouseAction::Down, x, y);
+    let at = ((column as f64 + 0.5) / width as f64 * 64.0).round() / 16.0;
+    assert_eq!(
+        auto_line(&app, "gain").trim(),
+        format!(
+            ":auto(\"gain\", {{ {{0, 0.5}}, {{2, 2}}, {{{}, 4}} }}, {{ len = 4 }})",
+            script::number_text(at)
+        ),
+        "{}",
+        app.view().message
+    );
+    assert!(app.view().error.is_none());
+    // Un paso de deshacer.
+    app.handle(ctrl('z'));
+    assert_eq!(
+        auto_line(&app, "gain").trim(),
+        ":auto(\"gain\", { {0, 0.5}, {2, 2} }, { len = 4 })"
+    );
+}
+
+#[test]
+fn dragging_moves_a_point_and_writes_it_on_release() {
+    let (mut app, _engine, area) = open_edit("lanes_drag");
+    let width = area.width - 2;
+    // El punto de 2 compases (la mitad), a 2 de 4: fila de en medio.
+    let column = (width as f64 * 0.5) as u16;
+    let (_, y) = cell(area, 0, 0, 1);
+    app.mouse(MouseAction::Down, area.x + 1 + column, y);
+    // Arrastrado a un cuarto de la lane (1 compás), abajo del todo (0).
+    let (x2, y2) = cell(area, 0, width / 4, 3);
+    app.mouse(MouseAction::Drag, x2, y2);
+    // Mientras se arrastra, el texto no cambia; la vista, sí.
+    assert!(auto_line(&app, "gain").contains("{2, 2}"));
+    let shown = app.view().lanes.unwrap();
+    assert_eq!(shown.lanes[0].lane.points()[1].value, 0.0);
+    app.mouse(MouseAction::Up, x2, y2);
+    assert_eq!(
+        auto_line(&app, "gain").trim(),
+        ":auto(\"gain\", { {0, 0.5}, {1, 0} }, { len = 4 })",
+        "{}",
+        app.view().message
+    );
+}
+
+#[test]
+fn right_click_deletes_and_keys_change_the_chosen_point() {
+    let (mut app, mut engine, area) = open_edit("lanes_keys");
+    let width = area.width - 2;
+    // Elegir el punto del medio con un clic (y soltar sin moverlo).
+    let column = (width as f64 * 0.5) as u16;
+    let (x, y) = cell(area, 0, column, 1);
+    app.mouse(MouseAction::Down, x, y);
+    app.mouse(MouseAction::Up, x, y);
+    // `c`: su curva pasa a exp. (Entre edición y edición, el motor vacía
+    // la cola de comandos, como en vivo.)
+    app.handle(key('c'));
+    offline::render(&mut engine, 1024, 2);
+    assert!(
+        auto_line(&app, "gain").contains("{2, 2, \"exp\"}"),
+        "{}",
+        auto_line(&app, "gain")
+    );
+    // → un paso a la derecha; ↑ un cuarentavo de la escala (0.1).
+    app.handle(Input {
+        key: Key::Right,
+        ..Input::default()
+    });
+    offline::render(&mut engine, 1024, 2);
+    app.handle(Input {
+        key: Key::Up,
+        ..Input::default()
+    });
+    offline::render(&mut engine, 1024, 2);
+    assert!(
+        auto_line(&app, "gain").contains("{2.0625, 2.1, \"exp\"}"),
+        "{}",
+        auto_line(&app, "gain")
+    );
+    // Supr lo borra; Esc suelta.
+    app.handle(Input {
+        key: Key::Delete,
+        ..Input::default()
+    });
+    offline::render(&mut engine, 1024, 2);
+    assert_eq!(
+        auto_line(&app, "gain").trim(),
+        ":auto(\"gain\", { {0, 0.5} }, { len = 4 })"
+    );
+    // Clic derecho sobre el que queda: una lane se queda con uno.
+    let (x0, y0) = cell(area, 0, 0, 2);
+    app.mouse(MouseAction::RightDown, x0, y0);
+    assert!(
+        app.view().message.contains("se queda con un punto"),
+        "{}",
+        app.view().message
+    );
+}
+
+#[test]
+fn a_table_that_is_not_literal_is_read_only_and_says_why() {
+    let (mut app, _engine, area) = open_edit("lanes_readonly");
+    let view = app.view().lanes.unwrap();
+    assert!(view.lanes[1].editable.is_err());
+    let screen = text(&draw(&mut app, 140, 40));
+    assert!(
+        screen.contains("pan · 1 compás · loop · solo lectura"),
+        "{screen}"
+    );
+    let before = app.editor.lines().join("\n");
+    let (x, y) = cell(area, 1, 10, 1);
+    app.mouse(MouseAction::Down, x, y);
+    assert_eq!(app.editor.lines().join("\n"), before);
+    let message = app.view().message;
+    assert!(message.contains("no se puede editar"), "{message}");
+    assert!(
+        message.contains("escríbela tal cual dentro de la llamada"),
+        "{message}"
+    );
+}
+
+#[test]
+fn after_typing_it_waits_for_a_load() {
+    let (mut app, _engine, area) = open_edit("lanes_stale");
+    // Se escribe algo al final sin cargar.
+    app.editor.move_cursor(ratatui_textarea::CursorMove::Bottom);
+    type_text(&mut app, "-- nada");
+    let before = app.editor.lines().join("\n");
+    let (x, y) = cell(area, 0, 5, 0);
+    app.mouse(MouseAction::Down, x, y);
+    assert_eq!(app.editor.lines().join("\n"), before);
+    assert!(
+        app.view().message.contains("carga antes"),
+        "{}",
+        app.view().message
+    );
+}
+
+#[test]
+fn a_table_in_several_lines_keeps_its_shape() {
+    let song = "bpm(120)\nlocal amen = sample(\"break.wav\"):slice(2)\n\
+                track(\"drums\", amen):steps(\"1 . 2 .  1 . 2 .  1 . 2 .  1 . 2 .\")\n  \
+                :auto(\"gain\", {\n    {0, 0.5},\n    {2, 2},\n  }, { len = 4 })\n";
+    let (_, mut app, _engine) = open("lanes_multi", Some(song));
+    palette(&mut app, "lanes de automatización");
+    draw(&mut app, 140, 40);
+    let area = app.lanes_area_for_test().unwrap();
+    // El primer punto está en la columna 0.
+    let (x, y) = cell(area, 0, 0, 3);
+    app.mouse(MouseAction::RightDown, x, y);
+    let text = app.editor.lines().join("\n");
+    assert!(
+        text.contains("  :auto(\"gain\", {\n    {2, 2},\n  }, { len = 4 })"),
+        "{text}"
+    );
 }
 
 /// Para ver el panel sin terminal: `cargo test -p tui pantalla_lanes --

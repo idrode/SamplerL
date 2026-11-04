@@ -39,6 +39,7 @@ pub use vim::DEFAULT_EXIT as VIM_EXIT;
 mod split;
 #[cfg(test)]
 pub use split::editor_command;
+mod lanes;
 mod occupancy;
 mod roll;
 mod tracker_edit;
@@ -280,8 +281,12 @@ pub struct App {
     key_panel: Option<key::KeyPanel>,
     /// Vista del sidechain abierta, con su historial.
     sidechain: Option<crate::sidechain::Sidechain>,
-    /// Panel de las lanes de automatización abierto.
+    /// Panel de las lanes de automatización abierto, dónde se dibujó, el
+    /// punto elegido y el que se arrastra.
     lanes_open: bool,
+    lanes_area: Option<ratatui::layout::Rect>,
+    lanes_focus: Option<lanes::LaneFocus>,
+    lane_drag: Option<lanes::LaneDrag>,
     /// Mandos MIDI asignados (los del proyecto o, sin ellos, los de la
     /// configuración), la lista para asignar uno, el que espera su CC, la
     /// lista de mandos abierta y el último CC que llegó.
@@ -466,6 +471,9 @@ impl App {
             key_panel: None,
             sidechain: None,
             lanes_open: false,
+            lanes_area: None,
+            lanes_focus: None,
+            lane_drag: None,
             learned: Vec::new(),
             knob_picker: None,
             learning: None,
@@ -3738,11 +3746,6 @@ impl App {
         };
     }
 
-    /// Las lanes de la pista seleccionada, con lo que publica el motor.
-    fn lanes_view(&self) -> Option<crate::lanes_panel::LanesView> {
-        crate::lanes_panel::LanesView::new(self.host.song(), self.selected, self.status.as_ref())
-    }
-
     /// Vacía los medidores y los avisos de saturación.
     pub fn reset_meters(&mut self) {
         self.meters = [0.0; MAX_TRACKS];
@@ -3981,6 +3984,10 @@ impl App {
             )
         {
             return self.handle_occupancy_cursor(input);
+        }
+        // Con un punto de una lane elegido, sus teclas.
+        if let Some(flow) = self.lanes_key(&input) {
+            return flow;
         }
         // Y con el piano roll al mando.
         if self.roll.cursor.is_some()

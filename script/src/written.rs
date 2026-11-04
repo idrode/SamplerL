@@ -57,6 +57,142 @@ pub(crate) fn spans(lua: &Lua, text: &str, length: usize) -> Vec<Option<TokenSpa
     found.unwrap_or_else(|| vec![None; length])
 }
 
+/// Dónde está escrita una tabla en el texto: desde su `{` hasta su `}`
+/// (filas desde 0 y columnas en caracteres; el final, después de la `}`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TableSpan {
+    pub start: (usize, usize),
+    pub end: (usize, usize),
+}
+
+/// Dónde está la tabla que va detrás de `name("first", ` en la llamada en
+/// curso (en su línea o en las de alrededor: una cadena de métodos va en
+/// varias), o por qué no se encuentra.
+pub(crate) fn call_table(lua: &Lua, name: &str, first: &str) -> Result<TableSpan, &'static str> {
+    let script = lua
+        .app_data_ref::<ScriptText>()
+        .ok_or("no hay texto del script")?;
+    let line = calling_line(lua, &script.chunk).ok_or("la llamada no está en el script")?;
+    let row = line
+        .checked_sub(1)
+        .ok_or("la llamada no está en el script")?;
+    let lines = &script.lines;
+    let opening: Vec<char> = format!("{name}(").chars().collect();
+    // La fila de la llamada, y unas pocas de alrededor.
+    let rows = (row.saturating_sub(3)..lines.len().min(row + 4)).collect::<Vec<_>>();
+    let mut rows = rows;
+    rows.sort_by_key(|&r| r.abs_diff(row));
+    for r in rows {
+        let text = &lines[r];
+        let mut i = 0;
+        while i + opening.len() <= text.len() {
+            if text[i..i + opening.len()] == opening[..]
+                && (i == 0 || !(text[i - 1].is_alphanumeric() || text[i - 1] == '_'))
+                && let Some(span) = table_after(lines, (r, i + opening.len()), first)
+            {
+                return Ok(span);
+            }
+            i += 1;
+        }
+    }
+    Err("no se encuentra la llamada escrita con el nombre del parámetro entre comillas")
+}
+
+/// Tras `(`, la cadena `first`, una coma y una tabla: dónde está la tabla.
+fn table_after(lines: &[Vec<char>], (row, col): (usize, usize), first: &str) -> Option<TableSpan> {
+    let mut at = skip_space(lines, (row, col))?;
+    let quote = *lines[at.0].get(at.1)?;
+    if quote != '"' && quote != '\'' {
+        return None;
+    }
+    let content: Vec<char> = first.chars().collect();
+    let line = &lines[at.0];
+    let end = at.1 + 1 + content.len();
+    if line.get(at.1 + 1..end) != Some(&content[..]) || line.get(end) != Some(&quote) {
+        return None;
+    }
+    at = skip_space(lines, (at.0, end + 1))?;
+    if lines[at.0].get(at.1) != Some(&',') {
+        return None;
+    }
+    at = skip_space(lines, (at.0, at.1 + 1))?;
+    if lines[at.0].get(at.1) != Some(&'{') {
+        return None;
+    }
+    let close = matching_brace(lines, at)?;
+    Some(TableSpan {
+        start: at,
+        end: (close.0, close.1 + 1),
+    })
+}
+
+/// La siguiente posición que no es un espacio (pasando de línea).
+fn skip_space(lines: &[Vec<char>], (mut row, mut col): (usize, usize)) -> Option<(usize, usize)> {
+    loop {
+        let line = lines.get(row)?;
+        while col < line.len() && line[col].is_whitespace() {
+            col += 1;
+        }
+        if col < line.len() {
+            return Some((row, col));
+        }
+        row += 1;
+        col = 0;
+    }
+}
+
+/// La `}` que cierra la `{` de `open` (sin contar las de dentro de las
+/// cadenas).
+fn matching_brace(lines: &[Vec<char>], open: (usize, usize)) -> Option<(usize, usize)> {
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    for (r, line) in lines.iter().enumerate().skip(open.0) {
+        let from = if r == open.0 { open.1 } else { 0 };
+        let mut c = from;
+        while c < line.len() {
+            let ch = line[c];
+            match quote {
+                Some(q) if ch == q => quote = None,
+                Some(_) if ch == '\\' => c += 1,
+                Some(_) => {}
+                None => match ch {
+                    '"' | '\'' => quote = Some(ch),
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            return Some((r, c));
+                        }
+                    }
+                    _ => {}
+                },
+            }
+            c += 1;
+        }
+    }
+    None
+}
+
+/// El texto de `span` (con sus saltos de línea).
+pub(crate) fn span_text(lua: &Lua, span: TableSpan) -> Option<String> {
+    let script = lua.app_data_ref::<ScriptText>()?;
+    let mut out = String::new();
+    for r in span.start.0..=span.end.0 {
+        let line = script.lines.get(r)?;
+        let from = if r == span.start.0 { span.start.1 } else { 0 };
+        let to = if r == span.end.0 {
+            span.end.1
+        } else {
+            line.len()
+        };
+        out.extend(line.get(from..to)?);
+        if r != span.end.0 {
+            out.push('\n');
+        }
+    }
+    Some(out)
+}
+
 /// Línea (desde 1) de la llamada de Lua en curso, si es del trozo del
 /// script.
 fn calling_line(lua: &Lua, chunk: &str) -> Option<usize> {
