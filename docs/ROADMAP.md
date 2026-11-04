@@ -779,3 +779,19 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
     de corte) sin tocar el secuenciador; Shift-F12 además no deja sonar
     nada nuevo hasta volver a pulsarla. Límite de voces entre pistas
     (`[voces] limite`, 64 por defecto) que roba la más antigua.
+14. **Edición de cortes: duraciones, el corte como instrumento y
+    deformaciones** (pedida por el usuario; sigue la línea de los cortes,
+    el pitch sin cambio de duración, los granos y los efectos por corte y
+    por paso). Detalle en «Edición de cortes» de
+    [docs/ESTADO.md](ESTADO.md).
+    1. ✅ **Variantes de duración**: `dur` (ms, figura `"1/8"` o
+       `"2 compases"`) y `fit` (`"trim"`, `"stretch"`, `"loop"` con
+       `loop_start`/`loop_end`) en `cortes:set` y en las llaves de un paso
+       (`3{dur=1/8,fit=loop}`), sin copiar el audio.
+    2. **El corte como instrumento**: `cortes:slice_at(i):instrument{...}`
+       con la raíz de YIN y sus cents corregidos; `keep` para no cambiar
+       la duración.
+    3. **Deformaciones en tiempo real**: `bend`/`bend_time` y `rev`.
+    4. **Deformaciones precalculadas**: `warp` y `smear` al cargar, con
+       caché; `formant` por corte y por paso sobre el de siempre.
+    5. **Documentación**: presets, tutorial en la guía, limitaciones.

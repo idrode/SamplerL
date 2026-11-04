@@ -298,6 +298,104 @@ pub struct SliceShape {
     /// `crossfade` (índices [`SHAPE_ATTACK`]...): cada golpe toma su valor
     /// en el momento en que suena (la voz los lee al nacer).
     pub curves: ShapeCurves,
+    /// Duración del golpe (`dur`): sin ella, lo que dure el corte (o su
+    /// `length`). Se pasa a frames al sonar, con el tempo y el compás de
+    /// ese momento ([`Dur::frames`]).
+    pub dur: Option<Dur>,
+    /// Cómo llega el corte a `dur` (ver [`Fit`]).
+    pub fit: Fit,
+    /// Con `fit = Loop`, el tramo que se repite, en ms desde el inicio del
+    /// corte (en el sentido de lectura); sin ellos, la mitad central (de un
+    /// cuarto a tres cuartos del corte).
+    pub loop_start_ms: Option<f32>,
+    pub loop_end_ms: Option<f32>,
+}
+
+/// Duración de un golpe: en ms, en figuras (fracción de redonda, que son
+/// 16 pasos: `"1/8"` es una corchea, 2 pasos, sea cual sea el compás) o en
+/// compases (los del compás que suena).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Dur {
+    Ms(f32),
+    Note { num: u16, den: u16 },
+    Bars(u16),
+}
+
+/// Duración máxima de un golpe en ms, en compases y numerador y
+/// denominador máximos de una figura.
+pub const MAX_DUR_MS: f32 = 60_000.0;
+pub const MAX_DUR_BARS: u16 = 16;
+pub const MAX_DUR_NOTE: u16 = 256;
+
+impl Dur {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        match *self {
+            Dur::Ms(ms) if !(ms > 0.0 && ms <= MAX_DUR_MS) => {
+                Err("dur fuera de rango (más de 0 y hasta 60000 ms)")
+            }
+            Dur::Note { num, den }
+                if !(1..=MAX_DUR_NOTE).contains(&num) || !(1..=MAX_DUR_NOTE).contains(&den) =>
+            {
+                Err("dur: la figura es n/d con n y d de 1 a 256 (\"1/8\")")
+            }
+            Dur::Note { num, den } if num as u32 * 16 > den as u32 * 16 * MAX_DUR_BARS as u32 => {
+                Err("dur: como mucho 16 redondas")
+            }
+            Dur::Bars(n) if !(1..=MAX_DUR_BARS).contains(&n) => {
+                Err("dur fuera de rango (1 a 16 compases)")
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// Frames que dura (al menos 1) a `bpm` con compases de `bar_steps`
+    /// pasos: se calcula de una vez desde el reloj de pasos (frames por
+    /// paso por pasos, redondeado como el transporte), sin acumular nada,
+    /// así que no deriva.
+    pub fn frames(&self, bpm: f64, bar_steps: usize, sample_rate: u32) -> usize {
+        let step = crate::sequencer::frames_per_step(bpm, sample_rate);
+        let frames = match *self {
+            Dur::Ms(ms) => ms as f64 / 1000.0 * sample_rate as f64,
+            Dur::Note { num, den } => {
+                (crate::sequencer::STEPS as u64 * num as u64) as f64 * step / den as f64
+            }
+            Dur::Bars(n) => (bar_steps as u64 * n as u64) as f64 * step,
+        };
+        (frames.round() as usize).max(1)
+    }
+}
+
+/// Cómo llega un corte a su duración (`dur`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Fit {
+    /// Suena hasta `dur` (o hasta su final, si acaba antes) y se apaga con
+    /// su cola (`release`, al menos el fundido mínimo): sin clics.
+    #[default]
+    Trim,
+    /// Dura exactamente `dur` sin cambiar el tono: los granos alineados
+    /// del pitch sin cambio de duración ([`crate::shift`]) recorren el
+    /// corte más deprisa o más despacio.
+    Stretch,
+    /// Dura `dur` repitiendo un tramo del corte (`loop_start`..`loop_end`)
+    /// con un fundido cruzado (`crossfade`) en la unión, como el bucle
+    /// sostenido de un instrumento.
+    Loop,
+}
+
+/// Lo que un paso cambia de la forma de su corte (`3{dur=1/8,fit=loop}`):
+/// cada valor, si está, manda sobre el del corte.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct HitShape {
+    pub dur: Option<Dur>,
+    pub fit: Option<Fit>,
+    pub loop_start_ms: Option<f32>,
+    pub loop_end_ms: Option<f32>,
+}
+
+impl HitShape {
+    pub fn is_empty(&self) -> bool {
+        *self == HitShape::default()
+    }
 }
 
 /// Parámetros de la forma de un corte que pueden seguir una curva, por
@@ -321,7 +419,41 @@ impl SliceShape {
         play: PlayMode::Once,
         crossfade_ms: 0.0,
         curves: [None; SHAPE_PARAMS],
+        dur: None,
+        fit: Fit::Trim,
+        loop_start_ms: None,
+        loop_end_ms: None,
     };
+
+    /// La forma con lo que cambia el paso (manda el paso).
+    pub fn with_hit(mut self, hit: &HitShape) -> SliceShape {
+        if hit.dur.is_some() {
+            self.dur = hit.dur;
+        }
+        if let Some(fit) = hit.fit {
+            self.fit = fit;
+        }
+        if hit.loop_start_ms.is_some() {
+            self.loop_start_ms = hit.loop_start_ms;
+        }
+        if hit.loop_end_ms.is_some() {
+            self.loop_end_ms = hit.loop_end_ms;
+        }
+        self
+    }
+
+    /// El tramo que repite `fit = Loop` en un corte de `span` frames a
+    /// `rate` Hz: desplazamientos desde el inicio (en el sentido de
+    /// lectura), dentro del corte y de al menos 2 frames.
+    pub(crate) fn loop_span(&self, span: usize, rate: u32) -> Option<(usize, usize)> {
+        if span < 4 {
+            return None;
+        }
+        let ms = |ms: f32| (ms as f64 / 1000.0 * rate as f64).round() as usize;
+        let start = self.loop_start_ms.map_or(span / 4, ms).min(span - 2);
+        let end = self.loop_end_ms.map_or(span * 3 / 4, ms).min(span);
+        (end >= start + 2).then_some((start, end))
+    }
 
     /// Rango de cada parámetro con curva.
     fn curve_range(param: usize) -> (f32, f32) {
@@ -383,6 +515,21 @@ impl SliceShape {
         if !(0.0..=MAX_CROSSFADE_MS).contains(&self.crossfade_ms) {
             return Err("crossfade fuera de rango (0 a 1000 ms)");
         }
+        if let Some(dur) = &self.dur {
+            dur.validate()?;
+            if self.play != PlayMode::Once {
+                return Err("dur va con play = \"normal\" (para sostenerlo, fit = \"loop\")");
+            }
+        }
+        let point = |ms: Option<f32>| ms.is_none_or(|ms| (0.0..=MAX_DUR_MS).contains(&ms));
+        if !point(self.loop_start_ms) || !point(self.loop_end_ms) {
+            return Err("loop_start y loop_end van en ms desde el inicio del corte (0 o más)");
+        }
+        if let (Some(a), Some(b)) = (self.loop_start_ms, self.loop_end_ms)
+            && b <= a
+        {
+            return Err("loop_end tiene que ir después de loop_start");
+        }
         Ok(())
     }
 
@@ -409,6 +556,9 @@ pub const MAX_CROSSFADE_MS: f32 = 1000.0;
 pub const MAX_RELEASE_MS: f32 = 5000.0;
 /// Grupos de choke: de 1 a este.
 pub const MAX_CHOKE: u8 = 16;
+/// Lo que más acelera o frena un corte `fit = Stretch` (la proporción
+/// entre su duración y `dur`; más allá, se queda en este).
+pub const MAX_FIT_STRETCH: f64 = 16.0;
 
 struct Voice {
     sample: Arc<Sample>,
@@ -434,9 +584,44 @@ struct Voice {
     fx: Option<VoiceFx>,
     /// En bucle: el fundido del salto (ver [`Voice::new`]).
     seam: Option<Seam>,
+    /// Con `fit = Loop`: el tramo que se repite hasta `dur`.
+    sustain: Option<Sustain>,
     /// Sin rampas de entrada ni de salida (una pista congelada); el
     /// fundido de interrumpirla, sí.
     raw: bool,
+}
+
+/// El tramo que repite un corte con `fit = Loop`, como desplazamientos
+/// desde el inicio de la voz (en frames del sample y en su sentido de
+/// lectura), y el fundido cruzado de la unión: los últimos `fade` frames
+/// antes de `end` se funden con los de antes de `start`, así al saltar ya
+/// suena lo que sigue (como el bucle sostenido de un instrumento).
+#[derive(Clone, Copy)]
+struct Sustain {
+    start: f64,
+    end: f64,
+    fade: f64,
+}
+
+impl Sustain {
+    /// Dónde se lee el desplazamiento `offset` y, en el fundido, dónde se
+    /// lee lo que entra y cuánto pesa.
+    #[inline]
+    fn fold(&self, offset: f64) -> (f64, Option<(f64, f32)>) {
+        let span = self.end - self.start;
+        let q = if offset < self.end {
+            offset
+        } else {
+            self.start + (offset - self.start).rem_euclid(span)
+        };
+        let from = self.end - self.fade;
+        if self.fade > 0.0 && q >= from {
+            let t = ((q - from) / self.fade) as f32;
+            (q, Some((q - span, t)))
+        } else {
+            (q, None)
+        }
+    }
 }
 
 /// Fundido cruzado en el salto de un bucle de corte: `frames` frames del
@@ -496,19 +681,71 @@ pub fn loop_seam_room(start: usize, end: usize, frames: usize) -> usize {
 
 impl Voice {
     fn new(sample: Arc<Sample>, start: usize, end: usize, playback: Playback) -> Self {
+        Self::lasting(sample, start, end, playback, None)
+    }
+
+    /// Como [`Voice::new`], con la duración `dur` en frames de salida (la
+    /// de `SliceShape::dur` ya resuelta) según su `fit`; sin ella, la de
+    /// siempre.
+    fn lasting(
+        sample: Arc<Sample>,
+        start: usize,
+        end: usize,
+        playback: Playback,
+        dur: Option<usize>,
+    ) -> Self {
         let rate = sample.sample_rate() as f32;
         let fade = ((FADE_SECONDS * rate) as usize).max(1);
         let ms = |ms: f32| (ms / 1000.0 * rate) as usize;
-        let shift = (playback.keep && Shift::needed(playback.rate, playback.formant))
-            .then(|| Shift::new(playback.rate, sample.sample_rate(), playback.formant));
+        let frames = end - start;
+        let fit = dur.map(|d| (d, playback.shape.fit));
+        let shift = match fit {
+            // Estirado: los granos recorren el corte en `dur` frames y leen
+            // al pitch del golpe (el tono no cambia con la duración).
+            Some((d, Fit::Stretch)) if frames > 1 => {
+                let advance = (frames - 1) as f64 / d.max(2).saturating_sub(1) as f64;
+                Some(
+                    Shift::new(playback.rate, sample.sample_rate(), playback.formant)
+                        .with_advance(advance.clamp(1.0 / MAX_FIT_STRETCH, MAX_FIT_STRETCH)),
+                )
+            }
+            _ => (playback.keep && Shift::needed(playback.rate, playback.formant))
+                .then(|| Shift::new(playback.rate, sample.sample_rate(), playback.formant)),
+        };
         // Con los granos, la voz avanza por el sample a velocidad 1.
         let speed = if shift.is_some() { 1.0 } else { playback.rate };
         // Último frame de salida: el que lee el último frame del rango. En
         // bucle, la voz no acaba sola.
-        let length = match (end - start, playback.shape.play) {
+        let natural = match (frames, playback.shape.play) {
             (0, _) => 0,
             (_, PlayMode::Loop | PlayMode::PingPong) => usize::MAX,
             (frames, PlayMode::Once) => ((frames - 1) as f64 / speed).floor() as usize + 1,
+        };
+        let sustain = match fit {
+            Some((_, Fit::Loop)) => {
+                playback
+                    .shape
+                    .loop_span(frames, sample.sample_rate())
+                    .map(|(a, b)| Sustain {
+                        start: a as f64,
+                        end: b as f64,
+                        // Como mucho lo que hay antes del inicio y el tramo.
+                        fade: ms(playback.shape.crossfade_ms).min(a).min(b - a) as f64,
+                    })
+            }
+            _ => None,
+        };
+        let length = match fit {
+            None | Some((_, Fit::Trim)) => dur.map_or(natural, |d| d.min(natural)),
+            Some((d, Fit::Stretch)) => d,
+            // Sin tramo que repetir (un corte de muy pocos frames), recorta.
+            Some((d, Fit::Loop)) => {
+                if sustain.is_some() {
+                    d
+                } else {
+                    d.min(natural)
+                }
+            }
         };
         let seam = Seam::new(&sample, start, end, &playback);
         Voice {
@@ -526,6 +763,7 @@ impl Voice {
             shift,
             fx: None,
             seam,
+            sustain,
             raw: false,
         }
     }
@@ -625,8 +863,9 @@ impl Voice {
     /// (con la corrección de formantes, si la hay).
     fn read(&mut self) -> (f32, f32) {
         let (start, end, playback, seam) = (self.start, self.end, self.playback, self.seam);
+        let sustain = self.sustain;
         let sample = &self.sample;
-        let read_at = |offset: f64| {
+        let plain = |offset: f64| {
             let pos = voice_position(start, end, &playback, offset);
             let main = crate::interp::read(sample, pos, start, end, playback.rate);
             match seam {
@@ -634,16 +873,31 @@ impl Voice {
                 None => main,
             }
         };
+        let read_at = |offset: f64| match sustain {
+            None => plain(offset),
+            Some(s) => {
+                let (q, fade) = s.fold(offset);
+                let main = plain(q);
+                let Some((from, t)) = fade else { return main };
+                let (fl, fr) = plain(from);
+                (main.0 + t * (fl - main.0), main.1 + t * (fr - main.1))
+            }
+        };
+        let axis = |offset: f64| match sustain {
+            None => offset,
+            Some(s) => s.fold(offset).0,
+        };
         let Some(shift) = self.shift.as_mut() else {
             return read_at(self.rendered as f64 * playback.rate);
         };
         let span = (end - start) as f64;
         // Sin bucle, ningún grano pasa del final del corte.
-        let fit = (playback.shape.play == PlayMode::Once).then(|| span - 1.0 - shift.reach());
+        let fit = (playback.shape.play == PlayMode::Once && sustain.is_none())
+            .then(|| span - 1.0 - shift.reach());
         let grains = shift.grains(self.rendered as u64, fit, |offset| {
             crate::shift::mono_at(
                 sample,
-                voice_position(start, end, &playback, offset),
+                voice_position(start, end, &playback, axis(offset)),
                 start,
                 end,
             )
@@ -2131,7 +2385,8 @@ impl Engine {
                     .filter(|p| Arc::ptr_eq(&p.sample, &sample) && p.instrument.is_none())
                     .and_then(|p| slice.and_then(|i| p.slice_fx(i)))
                     .map(|chain| VoiceFx::new(chain, self.sample_rate, origin));
-                let voice = Voice::new(sample, start, end, playback).with_fx(fx);
+                let dur = self.dur_frames(&playback.shape);
+                let voice = Voice::lasting(sample, start, end, playback, dur).with_fx(fx);
                 self.trigger(track, Some(voice));
                 self.choke(track);
             }
@@ -2603,8 +2858,9 @@ impl Engine {
         let fx = pattern
             .hit_fx(&hit)
             .map(|chain| VoiceFx::new(chain, self.sample_rate, hit.origin));
+        let dur = self.dur_frames(&playback.shape);
         let mut voice =
-            Voice::new(pattern.sample.clone(), hit.start, hit.end, playback).with_fx(fx);
+            Voice::lasting(pattern.sample.clone(), hit.start, hit.end, playback, dur).with_fx(fx);
         if pattern.gate {
             voice = voice.with_gate(gate);
         }
@@ -2619,6 +2875,15 @@ impl Engine {
         if let Some((channel, base)) = midi {
             self.midi_note_on(t, channel, base, hit, gate);
         }
+    }
+
+    /// La duración de un golpe con esa forma (`dur`), en frames, con el
+    /// tempo y el compás que suenan ahora.
+    fn dur_frames(&self, shape: &SliceShape) -> Option<usize> {
+        let steps = self.transport.meter().steps;
+        shape
+            .dur
+            .map(|d| d.frames(self.transport.bpm(), steps, self.sample_rate))
     }
 
     /// Posición de la canción ahora (pasos y segundos, desde el inicio de

@@ -2673,7 +2673,9 @@ track("drums", amen)
 | `fx("dyneq")` | `sidechain` | es una pista, no un número |
 | `bus("delay")` | `time` | es una figura ("1/8"), no un número; además, mover el retardo de una línea con repeticiones dentro suena a cambio de pitch |
 | `slice` | `zero_cross` | se aplica al cargar, en el hilo de control (el sample o el bucle se preparan una vez): no suena en el tiempo |
-| `cortes:set` | `play` | elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer |
+| `cortes:set` | `play`, `fit` | elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer |
+| `cortes:set` | `dur` | es una duración que puede ser una figura ("1/8") o compases, no solo ms; para cambiarla golpe a golpe, en las llaves del paso (`3{dur=1/16}`) |
+| `cortes:set` | `loop_start`, `loop_end` | son los puntos del tramo que se repite y cada golpe los lee al nacer; para cambiarlos golpe a golpe, en las llaves del paso (`3{loop_start=40}`) |
 | `:grains` | `seed` | es la semilla del azar: entre dos semillas no hay nada continuo |
 | `instrument` | `root`, `adsr`, `formant` | cada nota lo lee al nacer y el instrumento se valida entero al cargar; para cambiar la nota, la del paso (`^`) |
 | `instrument` | `loop`, `crossfade` | se aplica al cargar, en el hilo de control (el sample o el bucle se preparan una vez): no suena en el tiempo |
@@ -3100,7 +3102,11 @@ Forma de un corte (o de todos, sin i): ataque, cola, pan, parte que suena y bucl
 | `pan` | panorama: -1 izquierda, 0 centro, 1 derecha (el lado contrario baja) | `0` | -1–1 |
 | `length` | parte del corte que suena, desde su inicio (0.5: la primera mitad) | `1` | 0.01–1 |
 | `play` | cómo se lee: una vez, en bucle o de ida y vuelta (los bucles suenan hasta el siguiente golpe, la puerta o el choke) | `"normal"` | `"normal"`, `"loop"` o `"pingpong"` |
-| `crossfade` | con play = "loop", fundido en el salto del bucle en ms (0: salto seco); funde con lo que suena justo antes del corte o, si no hay, con lo que sigue tras él, y el bucle dura lo mismo | `10` | 0–1000 |
+| `crossfade` | con play = "loop", fundido en el salto del bucle en ms (0: salto seco); funde con lo que suena justo antes del corte o, si no hay, con lo que sigue tras él, y el bucle dura lo mismo; con fit = "loop", el de la unión del tramo | `10` | 0–1000 |
+| `dur` | cuánto dura cada golpe, sin copiar el audio: ms (un número), una figura ("1/8" es una corchea, sea cual sea el compás) o compases ("2 compases"); se calcula al sonar con el tempo de ese momento. Cómo llega a esa duración lo dice fit; sin dur, lo que dure el corte | obligatorio | más de 0 y hasta 60000 ms, `"n/d"` (hasta 16 redondas) o `"n compases"` (1–16) |
+| `fit` | cómo llega el corte a dur: "trim" lo recorta (con su cola, release, sin clics; si el corte acaba antes, acaba antes), "stretch" lo estira o encoge sin cambiar el tono (los granos del pitch sin cambio de duración) y "loop" repite un tramo central (loop_start a loop_end) con un fundido en la unión (crossfade) | `"trim"` | `"trim"`, `"stretch"` o `"loop"` |
+| `loop_start` | con fit = "loop", dónde empieza el tramo que se repite, en ms desde el inicio del corte (por defecto, a un cuarto del corte) | obligatorio | 0 o más, antes de loop_end |
+| `loop_end` | con fit = "loop", dónde acaba el tramo que se repite, en ms desde el inicio del corte (por defecto, a tres cuartos) | obligatorio | después de loop_start, dentro del corte |
 
 ```lua
 local amen = sample("amen.wav"):slice(8)

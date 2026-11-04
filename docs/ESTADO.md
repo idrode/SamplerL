@@ -1720,6 +1720,7 @@ Todo está probado con `TestBackend` y el ratón simulado; nada en una terminal 
 - **Cada ajuste de corte conserva su posición** (`engine::Slices::with_starts`, `script::cut_sample`, `App::place_slice`). Causa: los ajustes del proyecto (`corte = ...`) se aplicaban uno a uno en el orden de la lista, que `ScriptHost::set_position` deja con el último tocado al final, y cada uno se comparaba con los vecinos tal como estaban en ese momento, a menudo todavía los del detector. Un ajuste que solo cabía con su vecino ya movido (el 2 más allá de donde el detector ponía el 3, con el 3 movido a la derecha) se rechazaba en cuanto se tocaba otra vez el vecino y quedaba detrás en la lista: el corte volvía a su sitio original con un aviso que `place_slice` no miraba (solo buscaba el del corte que se movía). Ahora `with_starts` pone todos los inicios a la vez y solo después busca choques (dos inicios a 1 ms o menos, o el último pasado el final): de cada pareja que choca deshace el ajuste de la derecha (o el otro, si ese no está ajustado) y repite hasta que todo cabe; los deshechos se avisan como antes, con el sitio que tendrían con los demás puestos. En la interfaz, `,` `.` `<` `>` y soltar una marca ya no se niegan a moverse al llegar a un vecino: se quedan a 1,2 ms de él (como el arrastre) y el mensaje lo dice («tope: el corte N»); nunca mueven ni reinician a los demás. El proyecto ya guardaba cada ajuste como posición absoluta y lo lee tal cual. Tests: `script/tests/mixer.rs` (`slice_adjustments_do_not_depend_on_their_order`: tres órdenes dan los mismos cortes; dos que chocan, el de la derecha avisa y el otro se aplica) y `tui/src/tests.rs` (`each_adjusted_slice_keeps_its_place`: el 3, el 1 y el 2 en ese orden, otro cambio en el 3, los topes a los dos lados, el proyecto y al reabrirlo; con el código anterior el 2 volvía a su sitio).
 - **Mover un corte no suena** (`App::place_slice`, `App::browse_slice`, `tui/src/app/mouse.rs`). Causa: `place_slice`, por donde pasan `,` `.` `<` `>`, «Quitar el ajuste» y soltar una marca arrastrada, terminaba con `preview_selected()`, que manda `Controller::preview_slice` (la voz de preescucha); y ← → (`browse_slice`) también preescuchaban cada corte al elegirlo. Ahora mover, quitar el ajuste y elegir con ← → solo cambian la posición o la selección. Suena: la tecla del corte en el modo tocar (el pad, con el volumen, los efectos y el choke de la pista), espacio y «Preescuchar el corte seleccionado» (la preescucha, pedida a propósito) y un clic sin arrastrar en la onda: lejos de las marcas, al pulsar (selecciona y preescucha el corte de ahí); sobre una marca, al soltar sin haberla movido (al pulsar todavía puede ser un arrastre). Sin ratón en la terminal, ← → y espacio. Las líneas de ayuda del modo tocar lo dicen. Tests: `moving_a_slice_is_silent_and_its_key_plays_it` (parado: `,` `.` `<` `>` y quitar el ajuste dejan el render a cero; la tecla `2` y espacio, no), `arrows_in_play_mode_browse_and_space_previews_slices` y `mouse::a_click_on_the_wave_selects_and_plays_the_slice_there` (el clic suena; agarrar sin soltar no; arrastrar la marca no). Sin probar en una terminal de verdad: el clic depende de que la terminal mande los eventos del ratón (`[editor] raton`, y dentro de tmux `set -g mouse on`).
 - **Botón de pánico y límite de voces** (`engine/src/engine.rs`: `Command::Panic { hold }`, `Command::Resume`, `Command::SetVoiceLimit`, `Engine::panic`, `steal_oldest`, `make_room_for_synth`; `engine::synth::Synth::stamp`; `tui/src/app.rs`: `App::panic`; `[voces]` en `config.rs`). No había forma de callar lo que suena sin parar el secuenciador (Stop lo paraba todo) ni límite de voces entre pistas: solo el de cada pista (`voices` del instrumento, 1-16, y del sintetizador; los granos, `MAX_GRAINS` = 32 por pista), con robo de la más antigua dentro de la pista. Pánico: por la cola de comandos lock-free de siempre, inmediato (no espera al compás). Para cada pista hace lo de `Stop` sin parar el transporte (quita el retrigger pendiente, la voz pasa a su fundido de 1,5 ms, `kill_notes` corta notas, sintetizador y nube, y sus notas MIDI se apagan) y además `Voice::hush` gasta la cola de los efectos de corte (`VoiceFx::spend_tail`; sin eso, hasta 100 ms); la preescucha también. Los buses de envío y los efectos de pista siguen (su cola es de la pista, no de la voz). Con `hold`, `Engine::hushed`: `play_hit` vuelve sin disparar (el secuenciador sigue contando, también `every`, las curvas y la línea de tiempo) y `Play`, `NoteOn`, `GrainOn` y `Preview` sueltan su sample a la cola de basura sin sonar (`SynthOn`, que no lleva nada en el heap, se ignora) hasta `Resume`; el metrónomo sigue. Un pánico sin `hold` no quita la pausa. Se publica en `Status::hushed` (un atómico) y la barra de transporte dice `PÁNICO: pausa`. Límite de voces: `DEFAULT_VOICE_LIMIT` = 64 (hasta `MAX_VOICE_LIMIT` = 256) notas de instrumento y voces de sintetizador que cuentan, entre todas las pistas. Antes de abrir una nota (si su pista no está ya llena, que entonces roba la suya como siempre) o una voz de sintetizador que ocupe una más (no la de un monofónico que ya suena), mientras se llegue al límite se roba la más antigua de todas: las notas llevan como `born` un contador global del motor (`Engine::stamp`; antes uno por pista, solo se usaba para ordenar y casar las notas MIDI) y las voces del sintetizador un `stamp` aparte (su `born` siembra las fases y no se toca: el sonido no cambia). Bajar el límite roba ya lo que sobra. La voz de cortes de cada pista (una) y los granos no cuentan. Interfaz: F12 (`panico`) y Shift-F12 (`pausa_panico`, pone y quita la pausa) en `[teclas]` y en la paleta; se miran al principio de `App::handle`, antes que la paleta, el explorador, los cursores o el modo vim, y desde la ventana del editor van a la principal como las demás acciones del motor. Sueltan antes las notas de los pads. `[voces] limite` se manda al motor en `set_config`; el render offline usa el de por defecto. Tests: `engine/tests/panic.rs` (todo a la vez: secuenciador, pad, nota, sintetizador y preescucha; tras el pánico, ninguna voz y el render a cero en 200 ms tras el fundido, la posición intacta, un pad y el compás siguiente vuelven a sonar; la cola de un efecto de corte se corta; en pausa no entra nada en un compás entero y el secuenciador cuenta, un pánico puntual no la quita y reanudar vuelve a sonar; el límite roba la nota más antigua de otra pista y bajar el límite roba ya), `no_alloc.rs` (límite con robo entre pistas, pánico puntual y en pausa con todo lo que no entra, reanudar), `tui/src/tests/panic.rs` (F12 con la paleta abierta, Shift-F12 dos veces con la barra de estado, F12 en pausa, teclas y `[voces]` desde la configuración con sus avisos) y `split::the_panic_keys_from_the_editor_window_reach_the_main_one`. `golden.rs`, idéntico. Sin probar en una terminal de verdad: que F12 y Shift-F12 lleguen (dentro de tmux y por SSH, y en terminales desplegables que usan F12).
+- **Edición de cortes**: duraciones (`dur`, `fit`), el corte como instrumento y deformaciones; tiene su propia sección, «Edición de cortes», más abajo.
 
 ### Decisiones
 
@@ -1785,6 +1786,89 @@ Sin tocar el código ni la funcionalidad. `docs/GUIA.md` es la referencia (secci
 - **Enlaces de ida**: cada paso empieza con una línea `> **Referencia:**` con enlaces con ancla a los apartados de la guía que usa (funciones de Lua, atajos, recetas...); los `[sección N](#...)` que ya había en el texto ahora llevan `GUIA.md#...`.
 - **Enlaces de vuelta**: al final de cada apartado de la guía que usa el tutorial, `> **Usado en el tutorial:**` con los pasos. Los apartados de la API generada por el registro no llevan el suyo (se reescribirían al regenerar): hay uno solo después de `api:fin` con los pasos y las funciones que usan.
 - **Tests** (`script/tests/guide.rs`): los bloques de Lua de los dos archivos se ejecutan y las recetas de `scripts/ejemplos/` coinciden con alguno; el tutorial se reconstruye paso a paso desde `PRIMERA-CANCION.md`; `every_internal_link_points_to_an_existing_anchor` comprueba que todo enlace interno (dentro de cada archivo y entre los dos, y a otros archivos de `docs/`) apunta a un archivo y un ancla que existen (anclas al estilo de GitHub, con `-1` en los títulos repetidos), y `every_tutorial_step_links_to_the_guide_and_back` que cada paso tiene su línea de referencia y la guía enlaza de vuelta a cada paso. `tui/src/palette.rs` (`the_tutorial_names_real_actions`) lee el tutorial. Las tablas generadas de la paleta y la configuración siguen en `GUIA.md`.
+
+## Edición de cortes
+
+Pedida por el usuario, sin fase propia: lo que se puede hacer con un corte
+sin copiar su audio (duraciones), tocarlo como instrumento y deformarlo.
+Sigue la línea de las formas por corte (`SliceShape`), el pitch sin
+cambio de duración (`Shift`), los granos y los efectos por corte y por
+paso. Antes de empezar se comparó lo pedido con lo que ya había y se
+decidió con el usuario: la sintaxis va en `cortes:set` y en las llaves de
+un paso (no `corte[3]:len()`), el modo «pitch» del instrumento es el
+`keep` de siempre (no un `mode` nuevo), `stutter` se queda fuera (ya lo
+hacen `r4` y `chance("stutter")`), `rev` existía como `'`, el `formant`
+precalculado no se hace (ya está en tiempo real) y lo precalculado se
+calcula al cargar, con caché, como `stretch`.
+
+### Parte 1: variantes de duración
+
+- **Motor** (`engine/src/engine.rs`): `SliceShape` suma `dur:
+  Option<Dur>`, `fit: Fit` y `loop_start_ms`/`loop_end_ms`. `Dur::{Ms,
+  Note { num, den }, Bars}`: una figura es fracción de redonda (16 pasos:
+  `"1/8"` son 2 pasos en cualquier compás) y los compases son los del
+  compás que suena; `Dur::frames(bpm, pasos del compás, frecuencia)` la
+  pasa a frames de una vez desde los frames por paso del transporte
+  (redondeo único, nada acumulado: sin deriva), al sonar cada golpe
+  (`Engine::dur_frames`, en `play_hit` y en los pads), con el tempo de ese
+  momento (también en una rampa de BPM). `Voice::lasting` (lo que era
+  `Voice::new`, que sigue con `dur = None`): con `Fit::Trim` la voz dura
+  `min(dur, lo del corte)` y su rampa de salida (`release`, al menos el
+  fundido mínimo de 1,5 ms) cae al final; con `Fit::Stretch`, un `Shift`
+  con `advance` = (frames del corte − 1)/(dur − 1) (acotado a ×16 y
+  ÷16, `MAX_FIT_STRETCH`): los granos alineados de `%` recorren el corte
+  a esa velocidad y leen al pitch del golpe, así que el tono no cambia (y
+  `^` lo mueve sin tocar la duración); con `Fit::Loop`, `Sustain { start,
+  end, fade }` dobla los desplazamientos de la voz al tramo
+  (`Sustain::fold`) hasta `dur` y funde en lineal los últimos `fade`
+  frames antes de `end` con los de antes de `start` (como el bucle de un
+  instrumento; `fade` = `crossfade`, como mucho lo que hay antes del
+  inicio y el tramo). Sin puntos, el tramo es la mitad central
+  (`SliceShape::loop_span`: de un cuarto a tres cuartos). Va en el eje de
+  la voz, así que vale con `'`, `^` y `%`. `Shift::with_advance` (con 1,
+  la multiplicación es exacta: lo de siempre bit a bit). `dur` con `play`
+  distinto de `"normal"` es un error (el bucle ya no acaba solo).
+- **Por paso** (`engine::HitShape`, `Step::hit`, `Trigger::hit`): lo que
+  el paso dice manda sobre la forma de su corte (`SliceShape::with_hit`,
+  en `resolve_bar` y `with_shapes`, con la validación y el número del
+  paso). En un instrumento, un sintetizador o una pista con granos, error
+  (`Pattern::no_hit_shapes`). Notación: un valor `n/d` en las llaves
+  (`FxValue::Fraction`) y `StepBraces::Hit { fx, hit }`; las llaves cuyas
+  claves son de la forma (`api::STEP_SHAPE_KEYS`: `dur`, `fit`,
+  `loop_start`, `loop_end`) van aparte de las de efectos
+  (`step_fx::hit_shape`), así que `3{dur=1/8}{lp=800}` lleva las dos
+  cosas y `{dur=1/8,lp=800}` es un error.
+- **Lua**: `cortes:set(i, { dur = 250 | "1/8" | "2 compases", fit =
+  "stretch", loop_start = 40, loop_end = 120 })` (`step_fx::dur_text`
+  acepta `"n/d"`, `"n compases"`, `"1 compás"`, `"n bars"` y `"2bars"`;
+  en las llaves, `dur=250`, `dur=1/8` o `dur=2bars`). Registro: cuatro
+  claves más en `api::SLICE_PARAMS` (autocompletado, ayuda y guía; no
+  admiten curvas, y la tabla de la guía dice por qué).
+- **Tests**: `engine/tests/slice_dur.rs` (la duración en ms, figuras y
+  compases a 120 y 170 BPM, a ±1 frame; recortar más que el corte; la
+  cola de `release`; el bucle se sostiene sin saltar más que el propio
+  seno y sin fundido sí salta; el tramo central por defecto, muestra a
+  muestra; estirar ×2, ÷2 y ×3 a ±1 frame con el tono a menos de 0,5 %
+  por YIN, también con `^7`; el paso sobre el corte; sin `dur`, igual
+  bit a bit; rangos), `no_alloc.rs` (las tres variantes con `^`, `%`,
+  reverse, retrigger, gate, lo del paso y un pad), `script/tests/
+  slice_dur.rs` (ms, figuras y compases desde Lua; suena como el motor;
+  llaves; errores con línea), `script/tests/registry.rs` (las claves por
+  paso son de `SLICE_PARAMS`) y los de siempre: `golden.rs` sin cambios.
+
+### Decisiones
+
+- **Figuras de redonda, no del compás**: `"1/8"` es una corchea también
+  en 7/8 (en 4/4 es lo mismo que «un octavo del compás»); para «el compás
+  entero» está `"1 compás"`.
+- **La duración se calcula al sonar**, no al cargar: con una rampa de
+  tempo cada golpe dura lo que toca en su momento.
+- **`trim` más largo que el corte acaba con el corte**: no se rellena con
+  silencio ni se repite (para eso, `fit = "loop"`).
+- **`stretch` con los granos del pitch sin cambio de duración**, no con
+  la nube de granos (`Cloud`, que hace texturas) ni con el WSOLA de
+  `sample:stretch()` al cargar: en tiempo real, sin copias, y la misma
+  calidad medida en la fase K.
 
 ## Audio de prueba y problemas conocidos
 

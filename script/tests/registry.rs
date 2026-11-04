@@ -541,3 +541,13 @@ fn every_sound_parameter_takes_a_curve_or_says_why_not() {
     }
     assert!(checked > 50, "{checked}");
 }
+
+#[test]
+fn step_shape_keys_are_slice_params() {
+    for key in script::api::STEP_SHAPE_KEYS {
+        assert!(
+            script::api::SLICE_PARAMS.iter().any(|p| p.name == *key),
+            "{key} no está en SLICE_PARAMS"
+        );
+    }
+}

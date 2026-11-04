@@ -10,7 +10,7 @@
 use std::sync::Arc;
 
 use crate::automation::{Automation, MAX_AUTOMATIONS, MIX_PARAMS, MixCurves};
-use crate::engine::{MAX_CHOKE, Playback, SendError, SliceShape};
+use crate::engine::{HitShape, MAX_CHOKE, Playback, SendError, SliceShape};
 use crate::fx::{Fx, MAX_FX};
 use crate::grain::Granular;
 use crate::instrument::Instrument;
@@ -87,6 +87,8 @@ pub struct Step {
     /// Lo que cambia del sub de su nota (`1{sub=0.5,sub_div=3}`; solo en
     /// un sintetizador).
     pub sub: Option<SubNote>,
+    /// Lo que cambia de la forma de su corte (`3{dur=1/8,fit=loop}`).
+    pub hit: HitShape,
 }
 
 impl Step {
@@ -106,7 +108,18 @@ impl Step {
             accent: false,
             slide: false,
             sub: None,
+            hit: HitShape {
+                dur: None,
+                fit: None,
+                loop_start_ms: None,
+                loop_end_ms: None,
+            },
         }
+    }
+
+    /// Con lo que cambia de la forma de su corte.
+    pub fn with_hit(self, hit: HitShape) -> Self {
+        Step { hit, ..self }
     }
 
     /// Con accent (`1!`).
@@ -221,6 +234,8 @@ pub(crate) struct Trigger {
     pub accent: bool,
     pub slide: bool,
     pub sub: Option<SubNote>,
+    /// Lo que el paso cambia de la forma de su corte.
+    pub hit: HitShape,
 }
 
 /// Patrón de una pista. Los pasos se resuelven a rangos de frames y
@@ -364,6 +379,21 @@ impl Pattern {
         })
     }
 
+    /// Error si algún paso cambia la forma de su corte (`{dur=...}`).
+    fn no_hit_shapes(&self, reason: &'static str) -> Result<(), SendError> {
+        match self
+            .steps
+            .iter()
+            .position(|t| t.is_some_and(|t| !t.hit.is_empty()))
+        {
+            Some(i) => Err(SendError::InvalidStep {
+                step: i % self.length,
+                reason,
+            }),
+            None => Ok(()),
+        }
+    }
+
     /// Toca los golpes como notas de un instrumento (ver
     /// [`crate::instrument`]): cada uno abre una voz sin cortar las demás y
     /// dura su paso (más sus `_`) y su release.
@@ -391,6 +421,9 @@ impl Pattern {
                     "un instrumento no tiene efectos por paso (usa los de la pista)",
                 ));
             }
+            self.no_hit_shapes(
+                "un instrumento no tiene forma por paso (dur, fit...: la nota dura su paso y sus _)",
+            )?;
         }
         Ok(Pattern { instrument, ..self })
     }
@@ -424,6 +457,7 @@ impl Pattern {
                 "un sintetizador no tiene efectos por corte ni por paso (usa los de la pista)",
             ));
         }
+        self.no_hit_shapes("un sintetizador no tiene forma por paso (dur, fit...)")?;
         if p.mono
             && let Some(i) = self
                 .steps
@@ -534,6 +568,9 @@ impl Pattern {
                     "una pista con granos no tiene efectos por paso (los granos no son voces)",
                 ));
             }
+            self.no_hit_shapes(
+                "una pista con granos no tiene forma por paso (los granos no son voces)",
+            )?;
         }
         Ok(Pattern { granular, ..self })
     }
@@ -581,9 +618,17 @@ impl Pattern {
                 .validate()
                 .map_err(|reason| SendError::InvalidStep { step: i, reason })?;
         }
-        for hit in self.steps.iter_mut().flatten() {
+        let length = self.length;
+        for (i, hit) in self.steps.iter_mut().enumerate() {
+            let Some(hit) = hit else { continue };
             if let Some(shape) = shapes.get(hit.slice) {
-                hit.playback.shape = *shape;
+                // Lo del paso manda sobre lo del corte.
+                let shape = shape.with_hit(&hit.hit);
+                shape.validate().map_err(|reason| SendError::InvalidStep {
+                    step: i % length,
+                    reason,
+                })?;
+                hit.playback.shape = shape;
                 let range = shape.range(hit.start..hit.end);
                 hit.end = range.end;
             }
@@ -816,6 +861,10 @@ fn resolve_bar(
         if let Some(sub) = &step.sub {
             sub.validate().map_err(invalid)?;
         }
+        SliceShape::DEFAULT
+            .with_hit(&step.hit)
+            .validate()
+            .map_err(invalid)?;
         if step.hold as usize >= MAX_STEPS {
             return Err(invalid("golpe alargado (_) más que el patrón más largo"));
         }
@@ -846,7 +895,7 @@ fn resolve_bar(
                 keep: step.keep,
                 formant: None,
                 reverse: step.reverse,
-                shape: SliceShape::DEFAULT,
+                shape: SliceShape::DEFAULT.with_hit(&step.hit),
             },
             retrig: step.retrig,
             delay: step.delay,
@@ -858,6 +907,7 @@ fn resolve_bar(
             accent: step.accent,
             slide: step.slide,
             sub: step.sub,
+            hit: step.hit,
         }));
     }
     Ok(())

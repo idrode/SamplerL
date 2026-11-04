@@ -93,6 +93,10 @@ const ORDER: usize = 32;
 pub(crate) struct Shift {
     /// Velocidad de lectura de cada grano (2 = una octava arriba).
     pub rate: f64,
+    /// Cuánto avanza el ancla de los granos por frame de salida: 1 conserva
+    /// la duración; 2 recorre el corte en la mitad de tiempo (time-stretch,
+    /// `fit = "stretch"`).
+    advance: f64,
     /// Medio grano, en frames de salida.
     hop: u64,
     search: u64,
@@ -260,6 +264,7 @@ impl Shift {
             .filter(|&f| (f - rate).abs() > 1e-9);
         Shift {
             rate,
+            advance: 1.0,
             hop,
             search: ((SEARCH_SECONDS * sample_rate as f64) as u64).max(1),
             grain: 0,
@@ -277,6 +282,14 @@ impl Shift {
             stale: 0,
             ready: false,
         }
+    }
+
+    /// Los granos avanzan `advance` frames del sample por frame de salida
+    /// (en vez de 1): la voz dura `1/advance` veces lo de siempre con el
+    /// mismo tono.
+    pub fn with_advance(mut self, advance: f64) -> Self {
+        self.advance = advance;
+        self
     }
 
     /// Hace falta un desplazador: el pitch cambia o los formantes se
@@ -381,7 +394,7 @@ impl Shift {
         let k = self.grain + 1;
         let hop = self.hop as f64;
         let top = fit.map_or(f64::MAX, |f| f.max(0.0));
-        let nominal = (k as f64 * hop).min(top);
+        let nominal = (k as f64 * hop * self.advance).min(top);
         let natural = self.anchor + self.rate * hop;
         let rate = self.rate;
         // Lo que seguiría leyendo el grano anterior, una vez (en la pila).

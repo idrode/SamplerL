@@ -25,7 +25,7 @@
 //!   corte y en cualquier orden con los sufijos: `3{lp=800,q=4}{crush=6}`.
 //!   Dentro, el efecto, `=` y el valor de su parámetro principal y, tras
 //!   comas, otros parámetros `clave=valor`. Un valor puede ser un número,
-//!   una palabra (`type=highpass`) o una rampa del golpe: `200>4000` va de
+//!   una palabra (`type=highpass`), una figura (`dur=1/8`) o una rampa del golpe: `200>4000` va de
 //!   200 a 4000 durante el paso y `200>4000:4` durante 4 pasos. Las llaves
 //!   pueden llevar espacios dentro (el paso sigue siendo uno). Qué efectos
 //!   y parámetros hay lo sabe el script (el registro de la API): aquí solo
@@ -63,6 +63,8 @@ pub enum FxValue {
     },
     /// Una palabra (`highpass`).
     Word(String),
+    /// Una figura, `n/d` (`dur=1/8`; `2/1` son dos redondas).
+    Fraction(u16, u16),
 }
 
 /// Lo que dicen las llaves de un paso: efectos (en una pista de cortes) o
@@ -75,6 +77,12 @@ pub enum FxValue {
 pub enum StepBraces {
     Fx(SliceFx),
     Sub(SubNote),
+    /// Lo que cambia de la forma del corte (`{dur=1/8,fit=loop}`) y,
+    /// si hay, los efectos de las demás llaves.
+    Hit {
+        fx: Option<SliceFx>,
+        hit: crate::engine::HitShape,
+    },
 }
 
 /// Quien sabe convertir lo escrito entre las llaves de un paso (el script,
@@ -444,6 +452,10 @@ pub fn parse_step_with(
         match resolve(&written)? {
             StepBraces::Fx(chain) => step.fx = Some(chain),
             StepBraces::Sub(sub) => step.sub = Some(sub),
+            StepBraces::Hit { fx, hit } => {
+                step.fx = fx;
+                step.hit = hit;
+            }
         }
     }
     Ok(Some(step))
@@ -524,6 +536,15 @@ fn fx_value(key: &str, text: &str) -> Result<FxValue, String> {
             },
         };
         return Ok(FxValue::Ramp { from, to, steps });
+    }
+    if let Some((n, d)) = text.split_once('/') {
+        let int = |t: &str| t.trim().parse::<u16>().ok().filter(|&v| v > 0);
+        return match (int(n), int(d)) {
+            (Some(n), Some(d)) => Ok(FxValue::Fraction(n, d)),
+            _ => Err(format!(
+                "{key}={text}: una figura es n/d con enteros de 1 a 65535 (1/8)"
+            )),
+        };
     }
     match number(text, true) {
         Some((v, "")) => Ok(FxValue::Number(v)),

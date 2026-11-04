@@ -150,6 +150,8 @@ const SUB_DIVIDER: &str =
     "es un divisor entero: entre dividir por 2 y por 3 no hay nada que recorrer";
 const LAYER: &str = "es una capa del subharm: sus divisores son enteros y su nivel y su pan entran con el patrón al compás";
 const ENVELOPE: &str = "la envolvente se fija con el sintetizador al cargar; para mover el volumen en el tiempo, el de la pista (`:gain()` con `ramp()` o `lfo()`)";
+const DUR: &str = "es una duración que puede ser una figura (\"1/8\") o compases, no solo ms; para cambiarla golpe a golpe, en las llaves del paso (`3{dur=1/16}`)";
+const LOOP_POINTS: &str = "son los puntos del tramo que se repite y cada golpe los lee al nacer; para cambiarlos golpe a golpe, en las llaves del paso (`3{loop_start=40}`)";
 const DELAY_TIME: &str = "es una figura (\"1/8\"), no un número; además, mover el retardo de una línea con repeticiones dentro suena a cambio de pitch";
 
 /// Efecto de pista para `:fx(nombre, parámetros)`.
@@ -2928,14 +2930,55 @@ pub const SLICE_PARAMS: &[FxParam] = &[
     },
     FxParam {
         name: "crossfade",
-        description: "con play = \"loop\", fundido en el salto del bucle en ms (0: salto seco); funde con lo que suena justo antes del corte o, si no hay, con lo que sigue tras él, y el bucle dura lo mismo",
+        description: "con play = \"loop\", fundido en el salto del bucle en ms (0: salto seco); funde con lo que suena justo antes del corte o, si no hay, con lo que sigue tras él, y el bucle dura lo mismo; con fit = \"loop\", el de la unión del tramo",
         default: Some("10"),
         valid: "0–1000",
         values: &[],
         template: "crossfade = ${10}",
         automate: Auto::PerHit,
     },
+    FxParam {
+        name: "dur",
+        description: "cuánto dura cada golpe, sin copiar el audio: ms (un número), una figura (\"1/8\" es una corchea, sea cual sea el compás) o compases (\"2 compases\"); se calcula al sonar con el tempo de ese momento. Cómo llega a esa duración lo dice fit; sin dur, lo que dure el corte",
+        default: None,
+        valid: "más de 0 y hasta 60000 ms, `\"n/d\"` (hasta 16 redondas) o `\"n compases\"` (1–16)",
+        values: &[],
+        template: "dur = \"${1/8}\"",
+        automate: Auto::No(DUR),
+    },
+    FxParam {
+        name: "fit",
+        description: "cómo llega el corte a dur: \"trim\" lo recorta (con su cola, release, sin clics; si el corte acaba antes, acaba antes), \"stretch\" lo estira o encoge sin cambiar el tono (los granos del pitch sin cambio de duración) y \"loop\" repite un tramo central (loop_start a loop_end) con un fundido en la unión (crossfade)",
+        default: Some("\"trim\""),
+        valid: "`\"trim\"`, `\"stretch\"` o `\"loop\"`",
+        values: &["trim", "stretch", "loop"],
+        template: "fit = \"${stretch}\"",
+        automate: Auto::No(DISCRETE),
+    },
+    FxParam {
+        name: "loop_start",
+        description: "con fit = \"loop\", dónde empieza el tramo que se repite, en ms desde el inicio del corte (por defecto, a un cuarto del corte)",
+        default: None,
+        valid: "0 o más, antes de loop_end",
+        values: &[],
+        template: "loop_start = ${40}",
+        automate: Auto::No(LOOP_POINTS),
+    },
+    FxParam {
+        name: "loop_end",
+        description: "con fit = \"loop\", dónde acaba el tramo que se repite, en ms desde el inicio del corte (por defecto, a tres cuartos)",
+        default: None,
+        valid: "después de loop_start, dentro del corte",
+        values: &[],
+        template: "loop_end = ${120}",
+        automate: Auto::No(LOOP_POINTS),
+    },
 ];
+
+/// Las claves de la forma de un corte (de [`SLICE_PARAMS`]) que también
+/// valen en las llaves de un paso (`3{dur=1/8,fit=loop}`): mandan sobre
+/// las del corte en ese golpe.
+pub const STEP_SHAPE_KEYS: &[&str] = &["dur", "fit", "loop_start", "loop_end"];
 
 /// Opciones de `sample(ruta, { ... })`: cómo se prepara el sample al
 /// importarlo.

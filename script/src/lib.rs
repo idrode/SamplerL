@@ -4949,6 +4949,51 @@ fn apply_slice_table(
             "pan" => shape.pan = number(&value, engine::SHAPE_PAN)?,
             "length" => shape.length = number(&value, engine::SHAPE_LENGTH)?,
             "crossfade" => shape.crossfade_ms = number(&value, engine::SHAPE_CROSSFADE)?,
+            "dur" => {
+                let dur = match &value {
+                    Value::Integer(i) => engine::Dur::Ms(*i as f32),
+                    Value::Number(n) => engine::Dur::Ms(*n as f32),
+                    Value::String(s) => step_fx::dur_text(&s.to_str()?)
+                        .map_err(|e| fail(lua, format!("{who}: {e}")))?,
+                    _ => {
+                        return Err(fail(
+                            lua,
+                            format!(
+                                "{who}: dur es ms (un número), una figura (\"1/8\") o compases (\"2 compases\")"
+                            ),
+                        ));
+                    }
+                };
+                shape.dur = Some(dur);
+            }
+            "fit" => {
+                let text = match &value {
+                    Value::String(s) => s.to_str()?.to_string(),
+                    _ => String::new(),
+                };
+                shape.fit = step_fx::fit_word(&text).ok_or_else(|| {
+                    fail(
+                        lua,
+                        format!(
+                            "{who}: fit = \"{text}\" no existe (\"trim\", \"stretch\" o \"loop\")"
+                        ),
+                    )
+                })?;
+            }
+            "loop_start" | "loop_end" => {
+                let ms = match &value {
+                    Value::Integer(i) => *i as f32,
+                    Value::Number(n) => *n as f32,
+                    _ => {
+                        return Err(fail(lua, format!("{who}: {key} es un número (ms)")));
+                    }
+                };
+                if key == "loop_start" {
+                    shape.loop_start_ms = Some(ms);
+                } else {
+                    shape.loop_end_ms = Some(ms);
+                }
+            }
             "play" => {
                 let text = match &value {
                     Value::String(s) => s.to_str()?.to_string(),

@@ -40,10 +40,11 @@ pub use device::{
     AudioBackend, AudioDeviceInfo, AudioEvent, AudioOutput, CpalBackend, NULL_NAME, OutputInfo,
 };
 pub use engine::{
-    Batch, Controller, DEFAULT_VOICE_LIMIT, Engine, MAX_ATTACK_MS, MAX_BEND, MAX_CHOKE,
-    MAX_CROSSFADE_MS, MAX_RELEASE_MS, MAX_START_BAR, MAX_TRACKS, MAX_VOICE_LIMIT, MidiNote,
-    PlayMode, SHAPE_ATTACK, SHAPE_CROSSFADE, SHAPE_LENGTH, SHAPE_PAN, SHAPE_PARAMS, SHAPE_RELEASE,
-    SendError, ShapeCurves, SliceShape, loop_seam_room, new_engine,
+    Batch, Controller, DEFAULT_VOICE_LIMIT, Dur, Engine, Fit, HitShape, MAX_ATTACK_MS, MAX_BEND,
+    MAX_CHOKE, MAX_CROSSFADE_MS, MAX_DUR_BARS, MAX_DUR_MS, MAX_DUR_NOTE, MAX_FIT_STRETCH,
+    MAX_RELEASE_MS, MAX_START_BAR, MAX_TRACKS, MAX_VOICE_LIMIT, MidiNote, PlayMode, SHAPE_ATTACK,
+    SHAPE_CROSSFADE, SHAPE_LENGTH, SHAPE_PAN, SHAPE_PARAMS, SHAPE_RELEASE, SendError, ShapeCurves,
+    SliceShape, loop_seam_room, new_engine,
 };
 pub use fx::{
     DEFAULT_Q, DynEqParams, EQ_BANDS, EQ_DEFAULT_FREQS, EQ_DEFAULT_Q, EQ_FREQ_RANGE, EQ_GAIN_RANGE,
@@ -56,7 +57,7 @@ pub use key::{KeyAnalysis, KeyGuess, LOW_CONFIDENCE, detect_key};
 pub use knob::{KnobCurve, KnobLive, KnobMap, KnobTarget, Knobs, MAX_KNOBS};
 pub use limiter::{LIMIT_THRESHOLD, soft_limit};
 pub use output::{NullOutput, Output, open_null_output, open_output};
-pub use pitch::{NoteGuess, detect_note, detect_notes, note_name};
+pub use pitch::{NoteGuess, detect_mono, detect_note, detect_notes, note_name};
 pub use sample::{ImportOptions, LoadError, Sample};
 pub use sequencer::{
     DEFAULT_BPM, MAX_BPM, MAX_CHORD, MAX_CYCLE_BARS, MAX_DELAY, MAX_GAIN, MAX_RETRIG,

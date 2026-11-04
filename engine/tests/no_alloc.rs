@@ -1,7 +1,7 @@
 //! El callback de audio no reserva memoria (regla 1 de CLAUDE.md): un
 //! asignador global cuenta las reservas que hace este hilo mientras corre
 //! `Engine::process`, con retrasos (swing, humanize), retrigger, pitch,
-//! instrumentos (polifonía, ADSR, bucles), el EQ (suavizado y automatizado),
+//! instrumentos (polifonía, ADSR, bucles), variantes de duración de los cortes (recortar, estirar y sostener), el EQ (suavizado y automatizado),
 //! el EQ dinámico con sidechain (y la reducción que publica para su vista),
 //! el límite de voces entre pistas y el pánico (puntual y en pausa), efectos por corte (con sus colas), bucles de corte con fundido, nubes de granos en vivo, sintetizadores (mono con accent, slide y el sub de cada nota, polifónicos con unison y sub abierto, un subharm de 8 voces con sus seis capas, un sh101 con legato, curvas y notas en vivo), grupos con sus efectos y macros que se mueven en vivo, mandos MIDI en todos sus destinos (moviéndose y soltándose), cambios de
 //! patrón al compás, un patrón que se suelta a la cola de basura y el paso
@@ -353,6 +353,7 @@ fn the_audio_thread_never_allocates() {
                     play: engine::PlayMode::Loop,
                     crossfade_ms: 0.0,
                     curves: [None; engine::SHAPE_PARAMS],
+                    ..engine::SliceShape::DEFAULT
                 },
                 engine::SliceShape {
                     pan: 0.7,
@@ -1617,6 +1618,84 @@ fn the_audio_thread_never_allocates() {
         }
     });
     assert_eq!(n, 0, "reservas al reanudar");
+
+    // Variantes de duración: recortar en ms y en figuras, estirar (con
+    // `^` y con `%`), sostener con el tramo en bucle (también al revés y con
+    // retrigger), lo del paso sobre lo del corte, modo gate y un pad.
+    let long: Vec<f32> = (0..24_000).map(|i| (i as f32 * 0.03).sin() * 0.3).collect();
+    let long = Arc::new(Sample::from_interleaved(&long, 1, RATE, RATE).unwrap());
+    let thirds = Slices::grid(&long, 3);
+    let lasting = |gate: bool| {
+        let mut steps = [None; STEPS];
+        for (k, slot) in steps.iter_mut().enumerate() {
+            let step = match k % 4 {
+                0 => Step::new(0),
+                1 => Step::new(1).with_pitch(5.0),
+                2 => Step::new(2).with_kept_pitch(-3.0).reversed(),
+                _ => Step::new(k % 3).with_retrig(2).with_hit(engine::HitShape {
+                    dur: Some(engine::Dur::Note { num: 1, den: 32 }),
+                    fit: Some(engine::Fit::Stretch),
+                    ..engine::HitShape::default()
+                }),
+            };
+            *slot = Some(step);
+        }
+        Pattern::from_steps(long.clone(), &thirds, steps)
+            .unwrap()
+            .with_gate(gate)
+            .with_shapes(&[
+                engine::SliceShape {
+                    dur: Some(engine::Dur::Note { num: 1, den: 8 }),
+                    release_ms: 20.0,
+                    ..engine::SliceShape::DEFAULT
+                },
+                engine::SliceShape {
+                    dur: Some(engine::Dur::Ms(300.0)),
+                    fit: engine::Fit::Stretch,
+                    ..engine::SliceShape::DEFAULT
+                },
+                engine::SliceShape {
+                    dur: Some(engine::Dur::Bars(1)),
+                    fit: engine::Fit::Loop,
+                    loop_start_ms: Some(20.0),
+                    loop_end_ms: Some(90.0),
+                    crossfade_ms: 10.0,
+                    ..engine::SliceShape::DEFAULT
+                },
+            ])
+            .unwrap()
+    };
+    controller
+        .set_track_pattern(4, Some(lasting(false)))
+        .unwrap();
+    controller
+        .set_track_pattern(5, Some(lasting(true)))
+        .unwrap();
+    let n = counted(|| {
+        for _ in 0..600 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas con variantes de duración");
+    controller
+        .play_slice_shaped(
+            4,
+            &long,
+            &thirds,
+            2,
+            engine::SliceShape {
+                dur: Some(engine::Dur::Ms(500.0)),
+                fit: engine::Fit::Loop,
+                ..engine::SliceShape::DEFAULT
+            },
+        )
+        .unwrap();
+    let n = counted(|| {
+        for _ in 0..100 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas con un pad con duración");
     controller.collect_garbage();
 }
 

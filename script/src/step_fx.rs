@@ -6,7 +6,7 @@
 
 use engine::notation::{FxValue, StepBraces, WrittenFx};
 use engine::synth::SubNote;
-use engine::{Automation, Curve, SliceFx};
+use engine::{Automation, Curve, HitShape, SliceFx};
 
 use crate::api;
 use crate::{FxArg, build_fx};
@@ -17,6 +17,26 @@ use crate::{FxArg, build_fx};
 /// (de un sintetizador; [`sub_note`]); si no, una cadena de efectos
 /// ([`effects`]). Qué vale en cada pista lo dice la carga.
 pub fn resolve(written: &[WrittenFx]) -> Result<StepBraces, String> {
+    let is_hit = |k: &str| api::STEP_SHAPE_KEYS.contains(&k);
+    if written.iter().any(|w| is_hit(&w.name)) {
+        let (shape, others): (Vec<&WrittenFx>, Vec<&WrittenFx>) =
+            written.iter().partition(|w| is_hit(&w.name));
+        let hit = hit_shape(&shape)?;
+        let others: Vec<WrittenFx> = others.into_iter().cloned().collect();
+        let fx = if others.is_empty() {
+            None
+        } else {
+            match resolve(&others)? {
+                StepBraces::Fx(chain) => Some(chain),
+                _ => {
+                    return Err(
+                        "el sub de la nota no va con la forma del corte (dur, fit...)".into(),
+                    );
+                }
+            }
+        };
+        return Ok(StepBraces::Hit { fx, hit });
+    }
     let keys = || {
         written.iter().flat_map(|w| {
             std::iter::once(w.name.as_str()).chain(w.params.iter().map(|(k, _)| k.as_str()))
@@ -32,6 +52,108 @@ pub fn resolve(written: &[WrittenFx]) -> Result<StepBraces, String> {
         ));
     }
     effects(written).map(StepBraces::Fx)
+}
+
+/// Lo que cambia de la forma del corte en las llaves de un paso
+/// (`{dur=1/8,fit=loop}`, `{loop_start=40,loop_end=120}`): las claves de
+/// [`api::STEP_SHAPE_KEYS`], con los rangos del motor.
+pub fn hit_shape(written: &[&WrittenFx]) -> Result<HitShape, String> {
+    let mut hit = HitShape::default();
+    let mut seen: Vec<&str> = Vec::new();
+    for w in written {
+        let Some(main) = &w.main else {
+            return Err(format!("{{{}}}: falta el valor ({}=...)", w.name, w.name));
+        };
+        let values = std::iter::once((w.name.as_str(), main))
+            .chain(w.params.iter().map(|(k, v)| (k.as_str(), v)));
+        for (key, value) in values {
+            let who = format!("{{{key}}}");
+            if !api::STEP_SHAPE_KEYS.contains(&key) {
+                return Err(format!(
+                    "{who}: la forma del corte va en sus propias llaves, sin efectos (admite: {})",
+                    api::STEP_SHAPE_KEYS.join(", ")
+                ));
+            }
+            if seen.contains(&key) {
+                return Err(format!("{who}: {key} repetido"));
+            }
+            seen.push(key);
+            let ms = || match value {
+                FxValue::Number(n) => Ok(*n),
+                FxValue::Ramp { .. } => Err(format!(
+                    "{who}: {key} no admite rampas: cada golpe lo lee al nacer"
+                )),
+                _ => Err(format!("{who}: {key} es un número (ms)")),
+            };
+            match key {
+                "dur" => {
+                    let dur = match value {
+                        FxValue::Number(ms) => engine::Dur::Ms(*ms),
+                        FxValue::Fraction(n, d) => engine::Dur::Note { num: *n, den: *d },
+                        FxValue::Word(w) => dur_text(w).map_err(|e| format!("{who}: {e}"))?,
+                        FxValue::Ramp { .. } => {
+                            return Err(format!("{who}: dur no admite rampas"));
+                        }
+                    };
+                    dur.validate().map_err(|e| format!("{who}: {e}"))?;
+                    hit.dur = Some(dur);
+                }
+                "fit" => {
+                    let FxValue::Word(word) = value else {
+                        return Err(format!("{who}: fit es trim, stretch o loop"));
+                    };
+                    hit.fit = Some(
+                        fit_word(word)
+                            .ok_or_else(|| format!("{who}: fit es trim, stretch o loop"))?,
+                    );
+                }
+                "loop_start" => hit.loop_start_ms = Some(ms()?),
+                "loop_end" => hit.loop_end_ms = Some(ms()?),
+                _ => unreachable!("solo claves de la forma"),
+            }
+        }
+    }
+    engine::SliceShape::DEFAULT
+        .with_hit(&hit)
+        .validate()
+        .map_err(|e| format!("{{{}}}: {e}", written[0].name))?;
+    Ok(hit)
+}
+
+/// `fit`: `trim`, `stretch` o `loop`.
+pub fn fit_word(word: &str) -> Option<engine::Fit> {
+    match word {
+        "trim" => Some(engine::Fit::Trim),
+        "stretch" => Some(engine::Fit::Stretch),
+        "loop" => Some(engine::Fit::Loop),
+        _ => None,
+    }
+}
+
+/// Una duración escrita: `"1/8"` (figura: fracción de redonda), `"2
+/// compases"`, `"1 compás"`, `"2 bars"` o `"2bars"` (compases del compás
+/// que suena).
+pub fn dur_text(text: &str) -> Result<engine::Dur, String> {
+    let text = text.trim();
+    let wrong = || {
+        format!(
+            "dur = \"{text}\": una duración es ms (un número), una figura (\"1/8\") o compases (\"2 compases\")"
+        )
+    };
+    if let Some((n, d)) = text.split_once('/') {
+        let int = |t: &str| t.trim().parse::<u16>().ok();
+        return match (int(n), int(d)) {
+            (Some(num), Some(den)) => Ok(engine::Dur::Note { num, den }),
+            _ => Err(wrong()),
+        };
+    }
+    let digits = text.len() - text.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+    let unit = text[digits..].trim();
+    let n: u16 = text[..digits].parse().map_err(|_| wrong())?;
+    match unit {
+        "compases" | "compás" | "compas" | "bars" | "bar" => Ok(engine::Dur::Bars(n)),
+        _ => Err(wrong()),
+    }
 }
 
 /// Lo que cambia del sub de una nota (`{sub=0.5,sub_div=3}`), con los
@@ -57,6 +179,7 @@ pub fn sub_note(written: &[WrittenFx]) -> Result<SubNote, String> {
                     "{who}: {key} no admite rampas: cada nota lo lee al nacer"
                 )),
                 FxValue::Word(w) => Err(format!("{who}: {key} es un número, no \"{w}\"")),
+                FxValue::Fraction(n, d) => Err(format!("{who}: {key} es un número, no {n}/{d}")),
             };
             match key {
                 "sub" => sub.level = Some(number()?),
@@ -157,6 +280,7 @@ pub fn effects(written: &[WrittenFx]) -> Result<SliceFx, String> {
                 .map(|(_, v)| match v {
                     FxValue::Number(n) => FxArg::Number(*n),
                     FxValue::Word(w) => FxArg::Text(w.clone()),
+                    FxValue::Fraction(n, d) => FxArg::Text(format!("{n}/{d}")),
                     FxValue::Ramp { from, to, steps } => FxArg::Curve(Curve::Hit {
                         from: *from,
                         to: *to,
