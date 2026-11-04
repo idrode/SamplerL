@@ -305,6 +305,8 @@ pub struct App {
     viz_scratch: Vec<f32>,
     /// Lo que enseña cada `spectrum` (con su caída), por su índice.
     viz_spectra: Vec<Vec<f32>>,
+    /// El espectro del master de su panel (con su caída).
+    master_spectrum: Vec<f32>,
     /// Cuadros por segundo (`[interfaz] refresco`).
     refresh_hz: u32,
     /// Mandos MIDI asignados (los del proyecto o, sin ellos, los de la
@@ -509,6 +511,7 @@ impl App {
             viz_history: std::array::from_fn(|_| std::collections::VecDeque::new()),
             viz_scratch: Vec::new(),
             viz_spectra: Vec::new(),
+            master_spectrum: Vec::new(),
             refresh_hz: crate::config::DEFAULT_REFRESH,
             learned: Vec::new(),
             knob_picker: None,
@@ -4330,6 +4333,7 @@ impl App {
         self.tick_roll();
         self.tick_touch();
         self.tick_viz();
+        self.sync_ui_viz();
         self.watch_recording();
         let status = self.controller.status();
         self.cursors.observe(&status);
@@ -4598,8 +4602,8 @@ impl App {
             dock_tab: self.dock_tab,
             menu_bar: !self.editor_window(),
             menu: self.menu_view(),
-            master_viz: false,
-            master_views: Vec::new(),
+            master_viz: !self.editor_window(),
+            master_views: self.master_views(),
             palette: self.palette.as_ref().map(|p| {
                 let matches = self.palette_matches();
                 PaletteView {

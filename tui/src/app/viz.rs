@@ -8,6 +8,9 @@ use crate::viz::{Placed, VizKind, VizSource, VizSpec, VizView, grid};
 
 use super::App;
 
+/// Bandas del espectro del master de su panel.
+const MASTER_BANDS: usize = 32;
+
 impl App {
     /// Pone las visualizaciones `specs` y enciende en el motor las colas de
     /// las fuentes de audio que piden (entran al compás, con un lote). Para
@@ -175,6 +178,68 @@ impl App {
         }
     }
 
+    /// Las fuentes que pide la interfaz por su cuenta: el master, para el
+    /// scope y el espectro de sus paneles (no en la ventana del editor,
+    /// que no tiene motor).
+    fn ui_viz(&self) -> [bool; engine::VIZ_SOURCES] {
+        let mut on = [false; engine::VIZ_SOURCES];
+        on[engine::VIZ_MASTER] = !self.editor_window();
+        on
+    }
+
+    /// Enciende en el motor lo que piden el script y la interfaz juntos, si
+    /// no es lo que ya tiene (tras cada carga, el lote del script deja solo
+    /// lo suyo). Entra al compás, como cualquier lote; no cambia el audio:
+    /// el motor solo copia a sus colas.
+    pub(super) fn sync_ui_viz(&mut self) {
+        let script = self.viz_flags(&self.viz);
+        let ui = self.ui_viz();
+        let wanted: [bool; engine::VIZ_SOURCES] = std::array::from_fn(|i| script[i] || ui[i]);
+        if wanted == self.viz_sent {
+            return;
+        }
+        let mut batch = engine::Batch::new();
+        batch.set_viz(wanted);
+        if self.controller.apply(batch).is_ok() {
+            self.viz_sent = wanted;
+        }
+    }
+
+    /// El scope y el espectro del master para sus paneles (vacío hasta que
+    /// llega audio).
+    pub(super) fn master_views(&self) -> Vec<VizView> {
+        let Some(history) = self
+            .viz_history
+            .get(engine::VIZ_MASTER)
+            .filter(|h| !h.is_empty())
+        else {
+            return Vec::new();
+        };
+        let (a, b) = history.as_slices();
+        let samples: Vec<f32> = a.iter().chain(b).copied().collect();
+        // Nivel eficaz de lo último (mono, tras el limitador): sin
+        // ponderación, así que no es sonoridad (LUFS), solo una idea.
+        let recent = &samples[samples.len().saturating_sub(self.sample_rate as usize / 3)..];
+        let rms = (recent.iter().map(|s| s * s).sum::<f32>() / recent.len().max(1) as f32).sqrt();
+        let rms = if rms > 0.0 {
+            format!("RMS {:+.1} dB", 20.0 * rms.log10())
+        } else {
+            "RMS -∞".into()
+        };
+        vec![
+            VizView::Scope(crate::viz::scope::build(
+                &samples,
+                format!("7 scope · master · {rms}"),
+                4,
+            )),
+            VizView::Spectrum(crate::viz::spectrum::SpectrumView {
+                title: "8 espectro · master".into(),
+                size: 4,
+                levels: self.master_spectrum.clone(),
+            }),
+        ]
+    }
+
     /// Lo último que ha llegado de la fuente de `source`.
     fn viz_history(&self, source: &VizSource) -> Option<&std::collections::VecDeque<f32>> {
         let slot = match source {
@@ -200,6 +265,16 @@ impl App {
             history.drain(..extra);
         }
         self.viz_scratch = fresh;
+        // El del master de su panel.
+        if self.viz_sent[engine::VIZ_MASTER] {
+            let history = &self.viz_history[engine::VIZ_MASTER];
+            if !history.is_empty() {
+                let (a, b) = history.as_slices();
+                let samples: Vec<f32> = a.iter().chain(b).copied().collect();
+                let fresh = crate::viz::spectrum::analyze(&samples, self.sample_rate, MASTER_BANDS);
+                crate::viz::spectrum::fall(&mut self.master_spectrum, &fresh);
+            }
+        }
         // Los espectros, con su caída (un cuadro por `tick`).
         self.viz_spectra.resize(self.viz.len(), Vec::new());
         for i in 0..self.viz.len() {

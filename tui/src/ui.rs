@@ -1756,12 +1756,25 @@ impl Widget for FullTrackerPanel<'_> {
             .selected
             .and_then(|i| view.tracks.get(i))
             .map_or(String::new(), |t| format!(" · {}", track_summary(t)));
-        let block = panel_block(view, crate::focus::Panel::Tracker).title(format!(
+        let layout = TrackerLayout::new(view, area);
+        let mut block = panel_block(view, crate::focus::Panel::Tracker).title(format!(
             " tracker · compás {}{tracks}{summary} ",
             view.transport.bar
         ));
+        // Desplazado: cuántas filas quedan arriba y abajo.
+        let below = layout.rows.saturating_sub(layout.first + layout.visible());
+        if layout.first > 0 || below > 0 {
+            let mut marks = Vec::new();
+            if layout.first > 0 {
+                marks.push(format!("▲{}", layout.first));
+            }
+            if below > 0 {
+                marks.push(format!("▼{below}"));
+            }
+            block = block.title_bottom(Line::from(format!(" {} ", marks.join(" "))).fg(dim()));
+        }
         block.render(area, buf);
-        render_tracker(view, buf, &TrackerLayout::new(view, area));
+        render_tracker(view, buf, &layout);
     }
 }
 

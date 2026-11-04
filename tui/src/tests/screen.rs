@@ -24,7 +24,7 @@ fn small_has_the_wave_on_top_and_the_rest_in_tabs() {
     assert_eq!(find(&buffer, "┌ song.lua"), Some((0, 2)), "{screen}");
     assert_eq!(find(&buffer, "┌ sample").map(|p| p.0), Some(40), "{screen}");
     let (_, strip) = find(&buffer, " 3 trk ").expect(&screen);
-    let (x, _) = find(&buffer, " 4 mezcla ").expect(&screen);
+    let (x, _) = find(&buffer, " 4 mez").expect(&screen);
     assert_eq!(buffer[(x + 1, strip)].fg, theme::get().dim);
     let (tx, ty) = find(&buffer, "┌ tracker").expect(&screen);
     assert_eq!((tx, ty), (40, strip + 1), "{screen}");
@@ -126,4 +126,68 @@ fn pantalla_tamanos() {
     for (w, h) in [(80, 24), (120, 40), (180, 50), (60, 16)] {
         println!("{w}×{h}\n{}\n", text(&draw(&mut app, w, h)));
     }
+}
+
+/// Mueve el motor `steps` pasos de 1/8 en 1/8, con un `tick` en cada uno.
+fn play(app: &mut App, engine: &mut Engine, steps: usize) {
+    for _ in 0..8 * steps {
+        offline::render(engine, STEP / 8, 2);
+        app.tick();
+    }
+}
+
+#[test]
+fn the_master_scope_and_spectrum_need_nothing_in_the_script() {
+    let (_, mut app, mut engine) = open("screen_master_viz", Some(SONG));
+    assert!(app.view().viz.is_empty(), "el script no pide ninguna");
+    assert!(app.view().master_views.is_empty());
+    // La interfaz enciende la cola del master: entra al compás.
+    play(&mut app, &mut engine, 20);
+    let views = app.view().master_views;
+    assert_eq!(views.len(), 2, "scope y espectro");
+    let screen = text(&draw(&mut app, 180, 50));
+    assert!(screen.contains("7 scope · master · RMS"), "{screen}");
+    assert!(screen.contains("8 espectro · master"), "{screen}");
+    assert!(
+        screen
+            .chars()
+            .any(|c| ('\u{2801}'..='\u{28ff}').contains(&c)),
+        "el scope en Braille: {screen}"
+    );
+    // En el tamaño mediano, en sus pestañas.
+    let screen = text(&draw(&mut app, 120, 40));
+    assert!(
+        screen.contains(" 7 scope ") && screen.contains(" 8 espectro "),
+        "{screen}"
+    );
+}
+
+#[test]
+fn a_reload_keeps_the_master_for_its_panels() {
+    let (_, mut app, mut engine) = open("screen_master_reload", Some(SONG));
+    play(&mut app, &mut engine, 20);
+    // Otra carga con una visualización de pista: el lote del script solo
+    // trae la suya; la interfaz vuelve a pedir la del master.
+    let song = format!("{SONG}\ntrack(\"drums\"):scope()\n");
+    replace_all(&mut app, &song);
+    app.load();
+    assert!(app.view().error.is_none(), "{:?}", app.view().error);
+    play(&mut app, &mut engine, 20);
+    // El patrón se repite cada 4 pasos: un paso después, otra ventana.
+    let before = app.view().master_views;
+    play(&mut app, &mut engine, 1);
+    let after = app.view().master_views;
+    assert_eq!(after.len(), 2);
+    assert!(before != after, "el scope del master sigue moviéndose");
+}
+
+#[test]
+fn a_scrolled_tracker_says_how_many_rows_are_hidden() {
+    let screen = text(&draw_widget(
+        ui::FullTrackerPanel(&tracker_view(Some(8), true)),
+        40,
+        8,
+    ));
+    let bottom = screen.lines().last().unwrap().to_string();
+    assert!(bottom.contains('▲') && bottom.contains('▼'), "{screen}");
 }

@@ -271,8 +271,24 @@ fn draw_panel(
             None => empty(view, panel, "sin pistas", area, buf),
         },
         Panel::Scope | Panel::Spectrum => match master_viz(view, panel) {
-            Some(viz) => crate::viz::VizPanels(std::slice::from_ref(viz)).render(area, buf),
-            None => empty(view, panel, "esperando audio del master", area, buf),
+            // Tan alto como su sitio.
+            Some(viz) => {
+                let mut viz = viz.clone();
+                let rows = area.height.saturating_sub(2);
+                match &mut viz {
+                    crate::viz::VizView::Scope(s) => s.size = rows,
+                    crate::viz::VizView::Spectrum(s) => s.size = rows,
+                    _ => {}
+                }
+                crate::viz::VizPanels(std::slice::from_ref(&viz)).render(area, buf);
+            }
+            None => empty(
+                view,
+                panel,
+                "esperando audio del master (suena al dar marcha)",
+                area,
+                buf,
+            ),
         },
         Panel::Occupancy => {
             ui::OccupancyPanel(view).render(area, buf);
@@ -291,7 +307,7 @@ fn master_viz(view: &ViewModel, panel: Panel) -> Option<&crate::viz::VizView> {
 /// Un panel sin nada que enseñar: su borde y por qué.
 fn empty(view: &ViewModel, panel: Panel, why: &str, area: Rect, buf: &mut Buffer) {
     Paragraph::new(Line::from(why.to_string()).fg(dim()))
-        .block(ui::panel_block(view, panel).title(format!(" {} ", panel.name())))
+        .block(ui::panel_block(view, panel).title(format!(" {} ", panel.title())))
         .render(area, buf);
 }
 
