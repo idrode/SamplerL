@@ -205,9 +205,58 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         frame.render_widget(crate::menu::Dropdown(menu), area);
     }
     app.set_grid(grid);
+    if crate::theme::ascii() {
+        to_ascii(frame.buffer_mut());
+    }
 }
 
-/// La barra de menús en `area`.
+/// El dibujo de cajas, los bloques y los símbolos, en ASCII (para una
+/// terminal sin Unicode: `[interfaz] ascii` o un `LANG` sin UTF-8). Lo que
+/// no está en la tabla (las letras con tilde del texto) se queda.
+pub fn to_ascii(buf: &mut Buffer) {
+    for cell in buf.content.iter_mut() {
+        let mut chars = cell.symbol().chars();
+        let (Some(c), None) = (chars.next(), chars.next()) else {
+            continue;
+        };
+        if c.is_ascii() {
+            continue;
+        }
+        if let Some(plain) = ascii_of(c) {
+            cell.set_char(plain);
+        }
+    }
+}
+
+/// El equivalente en ASCII de un símbolo de la interfaz.
+fn ascii_of(c: char) -> Option<char> {
+    Some(match c {
+        '┌' | '┐' | '└' | '┘' | '├' | '┤' | '┬' | '┴' | '┼' | '╭' | '╮' | '╯' | '╰' => {
+            '+'
+        }
+        '─' | '━' | '╌' | '┄' | '−' | '–' => '-',
+        '│' | '┃' | '┊' | '┆' | '╎' => '|',
+        '█' | '▇' | '▆' | '▓' | '■' | '▰' | '▙' | '▛' | '▜' | '▟' => '#',
+        '▅' | '▄' | '▃' | '▒' | '▌' | '▐' | '▚' | '▞' => '=',
+        '▂' | '▁' | '░' | '▱' | '▖' | '▗' | '▘' | '▝' => '.',
+        '▀' | '▔' => '\'',
+        '▶' | '▸' | '›' | '→' | '»' => '>',
+        '◀' | '‹' | '←' | '«' | '⏮' => '<',
+        '▲' | '↑' => '^',
+        '▼' | '↓' => 'v',
+        '·' | '•' | '●' | '◉' | '◇' | '◆' | '▣' => '*',
+        '✗' | '×' => 'x',
+        '⚠' => '!',
+        'ⓘ' => 'i',
+        '…' => '~',
+        '∿' | '⟳' => '~',
+        '±' => '+',
+        '÷' => '/',
+        '❄' => '*',
+        '♪' | '♩' => 'o',
+        _ => return None,
+    })
+}
 fn draw_menu_bar(view: &ViewModel, area: Rect, buf: &mut Buffer) {
     crate::menu::MenuBar {
         open: view.menu.as_ref().map(|m| m.open),

@@ -87,6 +87,11 @@ fn ascii_draws_the_ruler_and_the_tabs_without_unicode_blocks() {
     theme::set_ascii(false);
     assert!(line(&screen, 1).starts_with("----------------"), "{screen}");
     assert!(!screen.contains('▰') && !screen.contains('▱'), "{screen}");
+    // Ni cajas ni bloques ni flechas.
+    for c in ['┌', '─', '│', '█', '▶', '■', '·'] {
+        assert!(!screen.contains(c), "{c}: {screen}");
+    }
+    assert!(screen.starts_with("# parado"), "{screen}");
     // A 60 de ancho, en la mitad derecha, las pestañas van con el nombre
     // corto.
     assert!(screen.contains(" 3 trk "), "{screen}");
@@ -190,4 +195,19 @@ fn a_scrolled_tracker_says_how_many_rows_are_hidden() {
     ));
     let bottom = screen.lines().last().unwrap().to_string();
     assert!(bottom.contains('▲') && bottom.contains('▼'), "{screen}");
+}
+
+/// Para ver la degradación a ASCII:
+/// `cargo test -p tui pantalla_ascii -- --ignored --nocapture`.
+#[test]
+#[ignore = "solo para ver la pantalla"]
+fn pantalla_ascii() {
+    let (_, mut app, mut engine) = open("pantalla_ascii", Some(SONG));
+    offline::render(&mut engine, 5 * STEP + 100, 2);
+    app.tick();
+    theme::set_ascii(true);
+    for (w, h) in [(60, 20), (120, 40)] {
+        println!("{w}×{h}\n{}\n", text(&draw(&mut app, w, h)));
+    }
+    theme::set_ascii(false);
 }
