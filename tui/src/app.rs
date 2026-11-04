@@ -298,6 +298,8 @@ pub struct App {
     /// vaciar las colas sin reservar en cada `tick`.
     viz_history: [std::collections::VecDeque<f32>; engine::VIZ_SOURCES],
     viz_scratch: Vec<f32>,
+    /// Lo que enseña cada `spectrum` (con su caída), por su índice.
+    viz_spectra: Vec<Vec<f32>>,
     /// Mandos MIDI asignados (los del proyecto o, sin ellos, los de la
     /// configuración), la lista para asignar uno, el que espera su CC, la
     /// lista de mandos abierta y el último CC que llegó.
@@ -490,6 +492,7 @@ impl App {
             viz_sent: [false; engine::VIZ_SOURCES],
             viz_history: std::array::from_fn(|_| std::collections::VecDeque::new()),
             viz_scratch: Vec::new(),
+            viz_spectra: Vec::new(),
             learned: Vec::new(),
             knob_picker: None,
             learning: None,

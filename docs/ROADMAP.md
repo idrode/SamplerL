@@ -831,7 +831,7 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
        con su flag, por el lote al compás.
     2. ✅ **`punchcard` y `pianoroll`** desde el modelo del piano roll.
     3. ✅ **`scope`** con disparo por cruce por cero y Braille.
-    4. **`spectrum`** con FFT.
+    4. ✅ **`spectrum`** con FFT.
     5. **Registro, ayuda y guía.**
     6. **`pitchwheel`, `spiral` y degradación a ASCII.**
     7. **Inline y en la ventana del editor** (opcional).

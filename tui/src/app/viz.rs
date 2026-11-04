@@ -46,11 +46,12 @@ impl App {
     pub(super) fn viz_views(&self) -> Vec<VizView> {
         self.viz
             .iter()
-            .filter_map(|spec| self.viz_view(spec))
+            .enumerate()
+            .filter_map(|(i, spec)| self.viz_view(i, spec))
             .collect()
     }
 
-    fn viz_view(&self, spec: &VizSpec) -> Option<VizView> {
+    fn viz_view(&self, index: usize, spec: &VizSpec) -> Option<VizView> {
         match spec.kind {
             VizKind::Punchcard | VizKind::Pianoroll => {
                 let VizSource::Track(name) = &spec.source else {
@@ -84,6 +85,14 @@ impl App {
                     spec.size,
                 )))
             }
+            VizKind::Spectrum => {
+                self.viz_history(&spec.source)?;
+                Some(VizView::Spectrum(crate::viz::spectrum::SpectrumView {
+                    title: spec.title(),
+                    size: spec.size,
+                    levels: self.viz_spectra.get(index).cloned().unwrap_or_default(),
+                }))
+            }
             _ => None,
         }
     }
@@ -113,6 +122,21 @@ impl App {
             history.drain(..extra);
         }
         self.viz_scratch = fresh;
+        // Los espectros, con su caída (un cuadro por `tick`).
+        self.viz_spectra.resize(self.viz.len(), Vec::new());
+        for i in 0..self.viz.len() {
+            let spec = &self.viz[i];
+            if spec.kind != VizKind::Spectrum {
+                continue;
+            }
+            let Some(history) = self.viz_history(&spec.source) else {
+                continue;
+            };
+            let (a, b) = history.as_slices();
+            let samples: Vec<f32> = a.iter().chain(b).copied().collect();
+            let fresh = crate::viz::spectrum::analyze(&samples, self.sample_rate, spec.bands);
+            crate::viz::spectrum::fall(&mut self.viz_spectra[i], &fresh);
+        }
     }
 
     /// La columna del ciclo de `def` que se oye (como el cursor del piano

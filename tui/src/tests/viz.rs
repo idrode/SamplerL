@@ -140,6 +140,35 @@ fn scope_triggers_and_stays_still_frame_after_frame() {
     assert!(screen.contains('*'), "{screen}");
 }
 
+#[test]
+fn spectrum_peaks_where_the_tone_is_and_draws_bars() {
+    let (mut app, mut engine) = open_tone("viz_spectrum");
+    app.set_viz(vec![VizSpec {
+        bands: 24,
+        ..spec(VizKind::Spectrum, VizSource::Master, 5)
+    }]);
+    play(&mut app, &mut engine, 20);
+    let VizView::Spectrum(spectrum) = &app.view().viz[0] else {
+        panic!("spectrum")
+    };
+    assert_eq!(spectrum.levels.len(), 24);
+    let peak = spectrum
+        .levels
+        .iter()
+        .enumerate()
+        .max_by(|a, b| a.1.total_cmp(b.1))
+        .unwrap()
+        .0;
+    let edges = crate::viz::spectrum::edges(24, RATE);
+    assert!(
+        edges[peak] <= 220.0 && 220.0 < edges[peak + 1],
+        "banda {peak}"
+    );
+    let screen = text(&draw(&mut app, 140, 40));
+    assert!(screen.contains("spectrum · master"), "{screen}");
+    assert!(screen.contains('█'), "{screen}");
+}
+
 /// Para verlas sin terminal: `cargo test -p tui pantalla_viz -- --ignored
 /// --nocapture`.
 #[test]

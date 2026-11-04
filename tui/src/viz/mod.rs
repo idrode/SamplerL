@@ -10,6 +10,7 @@
 
 pub mod grid;
 pub mod scope;
+pub mod spectrum;
 
 /// Qué se enseña.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,6 +73,7 @@ impl VizSpec {
 pub enum VizView {
     Grid(grid::GridView),
     Scope(scope::ScopeView),
+    Spectrum(spectrum::SpectrumView),
 }
 
 impl VizView {
@@ -80,6 +82,7 @@ impl VizView {
         match self {
             VizView::Grid(g) => g.size + 2,
             VizView::Scope(s) => s.size + 2,
+            VizView::Spectrum(s) => s.size + 2,
         }
     }
 }
@@ -99,6 +102,7 @@ impl ratatui::widgets::Widget for VizPanels<'_> {
             match view {
                 VizView::Grid(g) => grid::GridPanel(g).render(rect, buf),
                 VizView::Scope(s) => scope::ScopePanel(s).render(rect, buf),
+                VizView::Spectrum(s) => spectrum::SpectrumPanel(s).render(rect, buf),
             }
             y += height;
         }

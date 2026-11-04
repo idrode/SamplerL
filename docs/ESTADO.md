@@ -2488,6 +2488,27 @@ por configuración y por `LANG`.
   bucle: el scope del master dispara, cinco cuadros seguidos con la misma
   fase, Braille en pantalla y `*` en ASCII).
 
+### Parte 4: `spectrum`
+
+- **`viz/spectrum.rs`**: FFT compleja radix-2 en el sitio, propia (Rust
+  puro, sin dependencias: `fft`), de `SIZE` = 2048 puntos con ventana de
+  Hann sobre lo último de la fuente; las bandas, `bands` en escala
+  logarítmica de 30 Hz a 20 kHz (o al Nyquist; `edges`); cada bin va a una
+  sola banda (la de su frecuencia central) y una banda más estrecha que un
+  bin (las graves, de 23,4 Hz a 48 kHz) toma el más cercano a su centro;
+  cada banda, lo más fuerte de sus bins en dB, de −90 (vacía) a 0 (llena).
+  `fall`: sube de golpe y baja `FALL` = 0,025 por cuadro (algo más de un
+  segundo de arriba abajo a 30 cuadros), para que no parpadee. Barras de
+  octavos de celda (`▁▂▃▄▅▆▇█`), cada banda en las columnas que le tocan;
+  en ASCII, `#`.
+- **En la interfaz**: el análisis y la caída se hacen en `App::tick_viz`
+  (un cuadro por `tick`), en `App::viz_spectra`; la vista solo los copia.
+- **Tests**: `viz/spectrum.rs` (un seno de 80, 440, 1000 y 5000 Hz tiene
+  su pico en la banda que lo contiene, fuerte, y lejos se queda bajo; un
+  impulso da un espectro plano; la caída) y `tui/src/tests/viz.rs` (el
+  spectrum del master de un seno de 220 Hz: el pico en su banda y barras en
+  pantalla).
+
 ## Audio de prueba y problemas conocidos
 
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`
