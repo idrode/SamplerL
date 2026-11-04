@@ -1068,6 +1068,30 @@ pub const FUNCTIONS: &[Function] = &[
         ),
     },
     Function {
+        name: "lane",
+        receiver: Receiver::Global,
+        signature: "lane(puntos [, opciones])",
+        returns: None,
+        summary: "Una lane de automatización suelta: se pone donde va un `ramp()` (en `:fx`, `:gain()`, `bus()`, `cortes:set`...).",
+        doc: "Los mismos puntos y opciones que `pista:auto()`, pero sin parámetro: \
+              sirve en cualquier sitio que admita curvas, también en un grupo o en \
+              los efectos de un corte. Con `mode = \"once\"`, fuera de la lane vale \
+              `rest` (por defecto, su primer punto). Ocupa un hueco de la tabla de \
+              lanes (hay 32).",
+        params: &[
+            Param {
+                name: "puntos",
+                description: "`{ {posición, valor [, curva]}, ... }` (posición en compases)",
+            },
+            Param {
+                name: "opciones",
+                description: "`len`, `mode`, `offset`, `range`, `scale` y `rest`",
+            },
+        ],
+        template: "lane({ {0, ${0}}, {${1}, ${1}, \"smooth\"} }, { len = \"${2 compases}\" })",
+        example: None,
+    },
+    Function {
         name: "lfo",
         receiver: Receiver::Global,
         signature: "lfo(frecuencia, mín, máx)",
@@ -2516,6 +2540,83 @@ pub const FUNCTIONS: &[Function] = &[
              :chance(0.2, \"retrig\", 4)\n  \
              :chance(0.1, \"mute\")\n",
         ),
+    },
+    Function {
+        name: "auto",
+        receiver: Receiver::Track,
+        signature: "pista:auto(parámetro, puntos [, opciones])",
+        returns: Some(Receiver::Track),
+        summary: "Una lane de automatización: una curva de puntos que lleva un parámetro a lo largo de la pista, con su propia duración.",
+        doc: "Cada punto es `{posición, valor [, curva]}`: la posición en compases \
+              desde el inicio de la lane, el valor en las unidades del parámetro \
+              (o de 0 a 1 con `range`) y cómo va hacia el siguiente punto: \
+              `\"linear\"` (por defecto), `\"exp\"` (exponencial: para barridos de \
+              frecuencia), `\"smooth\"` (suave al salir y al llegar) o `\"step\"` \
+              (se queda y salta). Antes del primer punto vale el primero y después \
+              del último, el último. La lane dura `len` (por defecto, hasta el \
+              último punto redondeado a compases), independiente de la longitud del \
+              patrón: una lane de 3 compases sobre un patrón de 4 hace polirritmo de \
+              automatización. El parámetro es cualquiera que admita curvas: los de \
+              los efectos de la pista (`\"cutoff\"`, o `\"lowpass.cutoff\"` y \
+              `\"2.cutoff\"` para elegir efecto), `\"gain\"`, `\"pan\"`, \
+              `\"send.reverb\"`, `\"pitch\"`, `\"formant\"`, los del sintetizador y \
+              los de la forma de los cortes (`\"bend\"`, `\"slice.pan\"`), que se leen \
+              al nacer cada golpe. Un nombre de varios sitios va al primero y lo \
+              avisa (también como segundo valor que devuelve). Entra con el patrón al \
+              empezar el compás y se suaviza como cualquier curva: los saltos no \
+              hacen clic. El `~` de un paso manda sobre la lane del primer filtro, y \
+              lo que dice un paso en sus llaves, sobre la de la forma de su corte. \
+              Caben 32 lanes en una canción.",
+        params: &[
+            Param {
+                name: "parámetro",
+                description: "el nombre del parámetro: `\"cutoff\"`, `\"lowpass.cutoff\"`, `\"2.q\"`, `\"gain\"`, `\"send.delay\"`, `\"bend\"`...",
+            },
+            Param {
+                name: "puntos",
+                description: "`{ {posición, valor [, curva]}, ... }`: posición en compases, de 1 a 64 puntos en orden",
+            },
+            Param {
+                name: "opciones",
+                description: "tabla con `len`, `mode`, `offset`, `range`, `scale` y `rest` (ver abajo)",
+            },
+        ],
+        template: "auto(\"${cutoff}\", { {0, ${200}}, {2, ${4000}, \"exp\"}, {4, ${200}} }, { len = \"${4 compases}\" })",
+        example: Some(
+            "bpm(170)\n\
+             local amen = sample(\"amen.wav\"):slice(8)\n\
+             track(\"drums\", amen)\n  \
+             :steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\")\n  \
+             :fx(\"lowpass\", { cutoff = 3000 })\n  \
+             -- Un barrido de 4 compases que se repite; el pan va y viene en 3.\n  \
+             :auto(\"cutoff\", { {0, 200, \"exp\"}, {2, 8000, \"exp\"}, {4, 200} }, { len = \"4 compases\" })\n  \
+             :auto(\"pan\", { {0, -0.6, \"smooth\"}, {1.5, 0.6, \"smooth\"}, {3, -0.6} }, { len = 3 })\n",
+        ),
+    },
+    Function {
+        name: "auto_clear",
+        receiver: Receiver::Track,
+        signature: "pista:auto_clear([parámetro])",
+        returns: Some(Receiver::Track),
+        summary: "Quita la lane de ese parámetro (o todas las de la pista): vuelve a su valor fijo.",
+        doc: "El hueco que deja en la tabla de lanes se puede volver a usar.",
+        params: &[Param {
+            name: "parámetro",
+            description: "el de `auto` (sin él, todas)",
+        }],
+        template: "auto_clear(\"${cutoff}\")",
+        example: None,
+    },
+    Function {
+        name: "auto_list",
+        receiver: Receiver::Track,
+        signature: "pista:auto_list()",
+        returns: None,
+        summary: "Las lanes de la pista: una tabla con `param`, `len` (compases), `mode` y `points` de cada una.",
+        doc: "Para mirarlas o copiarlas desde el script (`print`).",
+        params: &[],
+        template: "auto_list()",
+        example: None,
     },
     Function {
         name: "steps",
@@ -3967,6 +4068,74 @@ pub const INSTRUMENT_TABLE: Effect = Effect {
     summary: "Cómo se toca el sample como instrumento.",
     params: INSTRUMENT_PARAMS,
     template: "{ root = \"${C3}\", voices = ${4} }",
+};
+
+/// Opciones de `pista:auto()` y `lane()`.
+pub const LANE_PARAMS: &[FxParam] = &[
+    FxParam {
+        name: "len",
+        description: "lo que dura la lane: compases (un número), `\"N compases\"`, `\"N pasos\"`, una figura (`\"3/4\"`, fracción de redonda) o `\"N ms\"` (al tempo de la canción); por defecto, hasta el último punto redondeado a compases",
+        default: None,
+        valid: "más de 0 y hasta 64 compases",
+        values: &[],
+        template: "len = \"${4 compases}\"",
+        automate: Auto::No(AT_LOAD),
+    },
+    FxParam {
+        name: "mode",
+        description: "qué hace al acabar: `\"loop\"` vuelve a empezar; `\"once\"` suena una vez y el parámetro vuelve a su valor fijo; `\"hold\"` suena una vez y se queda en el último valor (antes de empezar, el primero)",
+        default: Some("\"loop\""),
+        valid: "`\"loop\"`, `\"once\"` o `\"hold\"`",
+        values: &["loop", "once", "hold"],
+        template: "mode = \"${once}\"",
+        automate: Auto::No(DISCRETE),
+    },
+    FxParam {
+        name: "offset",
+        description: "cuándo empieza la lane, en las mismas unidades que `len` (con `loop`, cuánto se corre su fase)",
+        default: Some("0"),
+        valid: "de -64 a 64 compases",
+        values: &[],
+        template: "offset = ${1}",
+        automate: Auto::No(AT_LOAD),
+    },
+    FxParam {
+        name: "range",
+        description: "`{mín, máx}`: los valores de los puntos van de 0 a 1 y se llevan a ese rango",
+        default: None,
+        valid: "dos números",
+        values: &[],
+        template: "range = { ${200}, ${8000} }",
+        automate: Auto::No(AT_LOAD),
+    },
+    FxParam {
+        name: "scale",
+        description: "con `\"log\"`, `range` y las rectas entre puntos van en escala logarítmica (frecuencias: la mitad del camino es una octava, no la mitad de los Hz)",
+        default: Some("\"lin\""),
+        valid: "`\"lin\"` o `\"log\"`",
+        values: &["lin", "log"],
+        template: "scale = \"${log}\"",
+        automate: Auto::No(DISCRETE),
+    },
+    FxParam {
+        name: "rest",
+        description: "con `mode = \"once\"`, el valor fuera de la lane (con `auto`, el valor fijo del parámetro; con `lane()`, su primer punto)",
+        default: None,
+        valid: "un número del rango del parámetro",
+        values: &[],
+        template: "rest = ${1000}",
+        automate: Auto::No(AT_LOAD),
+    },
+];
+
+/// La tabla de opciones de `auto()` y `lane()`, como un efecto (para el
+/// autocompletado y la ayuda de sus claves).
+pub const LANE_TABLE: Effect = Effect {
+    name: "lane",
+    aliases: &[],
+    summary: "Cómo dura y cómo acaba una lane de automatización.",
+    params: LANE_PARAMS,
+    template: "{ len = \"${4 compases}\" }",
 };
 
 /// Parámetros de `pista:grains()` y `pista:freeze()` (los rangos y los

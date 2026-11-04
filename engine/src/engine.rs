@@ -588,7 +588,7 @@ impl SliceShape {
     }
 
     /// Rango de cada parámetro con curva.
-    fn curve_range(param: usize) -> (f32, f32) {
+    pub fn curve_range(param: usize) -> (f32, f32) {
         match param {
             SHAPE_ATTACK => (0.0, MAX_ATTACK_MS),
             SHAPE_RELEASE => (0.0, MAX_RELEASE_MS),

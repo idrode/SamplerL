@@ -773,6 +773,7 @@ impl Scan {
             ("subharm", 0) => api::synth("subharm"),
             ("sh101", 0) => api::synth("sh101"),
             ("grains", 0) | ("freeze", 1) => Some(&api::GRAINS_TABLE),
+            ("auto", 2) | ("lane", 1) => Some(&api::LANE_TABLE),
             _ => None,
         }
     }
@@ -868,6 +869,8 @@ pub fn help_at(lines: &[String], row: usize, col: usize) -> Option<Help> {
             "sample:instrument({ ... })".to_string()
         } else if std::ptr::eq(effect, &api::GRAINS_TABLE) {
             "pista:grains({ ... })".to_string()
+        } else if std::ptr::eq(effect, &api::LANE_TABLE) {
+            "pista:auto(parámetro, puntos, { ... })".to_string()
         } else if api::bus(effect.name).is_some_and(|b| std::ptr::eq(b, effect)) {
             format!("bus(\"{}\", {{ ... }})", effect.name)
         } else if std::ptr::eq(effect, &api::LAYER_TABLE) {

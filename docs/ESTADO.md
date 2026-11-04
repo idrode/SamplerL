@@ -2165,6 +2165,54 @@ con `golden.rs` idéntico y `no_alloc.rs` en verde.
   en un paso gana a una lane de bend) y `no_alloc.rs` (los tres modos con
   `offset`).
 
+### Parte 3: la API de Lua
+
+- **`script/src/lanes.rs`**: `pista:auto(parámetro, puntos [, opciones])`,
+  `pista:auto_clear([parámetro])`, `pista:auto_list()` y `lane(puntos [,
+  opciones])`. Cada punto es `{posición en compases, valor [, curva]}`
+  (`"linear"`, `"exp"`, `"smooth"`, `"step"`); las opciones (`len`,
+  `mode`, `offset`, `range`, `scale`, `rest`, registro `api::LANE_PARAMS`
+  y `LANE_TABLE` para el autocompletado) aceptan compases (número),
+  `"N compases"`, `"N pasos"`, una figura (`"3/4"`) o `"N ms"` (al tempo
+  de la canción al cargar). Sin `len`, hasta el último punto redondeado a
+  compases. Los compases son los de `meter()` en ese momento.
+- **El destino** (`lanes::candidates`, `resolve`): todo lo que en la pista
+  admite curvas según el registro, en este orden: los parámetros de sus
+  efectos (`"lowpass.cutoff"`, también `"lp.cutoff"`, `"filter.cutoff"` y
+  `"2.cutoff"` por su posición), `"gain"`, `"pan"`, `"send.delay"` y
+  `"send.reverb"`, `"pitch"`, `"formant"`, los del sintetizador
+  (`"synth.cutoff"`) y los de la forma de los cortes (`"slice.bend"`...).
+  Un nombre suelto de varios sitios (`"cutoff"` con dos filtros, `"pan"`)
+  va al primero y avisa: en `Song::warnings` con la línea y como segundo
+  valor de `auto` (`local t, aviso = pista:auto(...)`; encadenar sigue
+  valiendo). Un nombre completo o un alias no es ambiguo. Lo que no admite
+  curvas, error con la lista de lo que sí.
+- **Dónde va la curva** (`lanes::assign`): en el sitio de siempre de las
+  curvas de ese parámetro, que sustituye: la automatización del efecto
+  (`TrackDef::automation`), `mix_curves`, `pitch_curve`, `formant_curve`,
+  las curvas del sintetizador (sus puntos, escalados a las unidades del
+  núcleo) o, para la forma de los cortes, `TrackBuild::shape_lanes`, que
+  se pone al acabar en la copia de las formas de esa pista (las de la
+  variable son de todas sus pistas). `once` toma como `rest` el valor fijo
+  del parámetro (el de su `fx`, su volumen...).
+- **La tabla**: `Song::lanes: Vec<Option<LaneDef>>` (el índice es el del
+  motor; `LaneDef` guarda la pista, el parámetro, la lane, los puntos tal
+  como se escribieron, el rango y dónde se llamó) y `TrackDef::lanes` (sus
+  parámetros e índices). Volver a poner el mismo parámetro reusa su hueco;
+  `auto_clear` lo libera. Con 32 llenos, error con la línea («no caben más
+  lanes») y la carga anterior sigue. `song_batch` manda la tabla entera si
+  hay lanes o las había (para quitarlas); sin lanes, ni se manda.
+- **Congelar**: una lane en `loop` se repite cada `len` (si son pasos
+  enteros); `once` y `hold` avisan de que la pista congelada no suena
+  igual.
+- **Registro**: funciones `auto`, `auto_clear` y `auto_list` (pista) y
+  `lane` (global); tabla de opciones con su autocompletado y su ayuda.
+- **Tests**: `script/tests/lanes.rs` (cada clase de destino; el aviso de
+  un nombre ambiguo y los nombres completos sin aviso; opciones; `lane()`
+  en `:fx` y en `:gain`; `auto_clear`, `auto_list` y la reutilización de
+  huecos; 12 errores con línea, más de 32 lanes, y el modelo de antes
+  sigue; congelar).
+
 ## Audio de prueba y problemas conocidos
 
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`

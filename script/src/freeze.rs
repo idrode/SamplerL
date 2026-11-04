@@ -62,11 +62,31 @@ impl Song {
         let bar = self.bar_steps() as u64;
         let mut steps = self.length_bars(1) * bar;
         for curve in curves(track) {
-            match period_steps(&curve) {
+            // Una lane: lo que dura, si se repite (está en la tabla).
+            let lane = match curve {
+                Curve::Lane { index, .. } => self
+                    .lanes
+                    .get(index as usize)
+                    .and_then(Option::as_ref)
+                    .map(|d| d.lane),
+                _ => None,
+            };
+            let period = match lane {
+                Some(lane) if lane.mode() == engine::LaneMode::Loop => {
+                    let length = lane.length();
+                    (length.fract() == 0.0 && lane.offset().fract() == 0.0).then_some(length as u64)
+                }
+                Some(_) => None,
+                None => period_steps(&curve),
+            };
+            match period {
                 Some(period) => steps = lcm(steps, period),
                 None => {
                     let what = match curve {
                         Curve::Macro { .. } => "una macro (se congela con su valor de al cargar)",
+                        Curve::Lane { .. } => {
+                            "una lane que no se repite (once, hold o una duración de medio paso)"
+                        }
                         _ => "un lfo en Hz (no se repite con los compases)",
                     };
                     let warning = format!("{name} lleva {what}: congelada no suena igual");
@@ -303,6 +323,7 @@ fn frozen_track(
         },
         stretch: None,
         rendered: Vec::new(),
+        lanes: Vec::new(),
         instrument: None,
         granular: None,
         formant: None,

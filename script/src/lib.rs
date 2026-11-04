@@ -59,6 +59,7 @@ fn one_bar_is_singular() {
 
 pub mod blocks;
 mod freeze;
+mod lanes;
 pub mod learn;
 pub use freeze::FreezeRender;
 use freeze::apply_frozen;
@@ -66,6 +67,7 @@ pub mod masking;
 pub mod patterns;
 pub mod project;
 pub mod step_fx;
+pub use lanes::LaneDef;
 mod watch;
 mod written;
 
@@ -171,6 +173,9 @@ pub struct Song {
     pub key: Option<SongKey>,
     /// Semitonos de `transpose()` (0 sin él).
     pub transpose: i32,
+    /// Lanes de automatización (`auto()`, `lane()`): el índice es el de la
+    /// tabla del motor; `None`, un hueco libre.
+    pub lanes: Vec<Option<LaneDef>>,
 }
 
 /// La tonalidad de la canción (`key("A", "minor")`): la usan `scale()`
@@ -329,6 +334,9 @@ pub struct TrackDef {
     /// Los cortes precalculados (`warp`, `smear`; ver `engine::deform`),
     /// con su clave: los calcula la carga y viajan en el patrón.
     pub rendered: Vec<(engine::RenderKey, Arc<Sample>)>,
+    /// Sus lanes de automatización (`auto()`): el parámetro y el índice en
+    /// `Song::lanes`.
+    pub lanes: Vec<(String, usize)>,
     /// Instrumento (`sample:instrument()`): sus golpes son notas, con
     /// polifonía, ADSR y bucle sostenido. Tiene un solo corte (el sample).
     pub instrument: Option<InstrumentDef>,
@@ -1147,6 +1155,8 @@ impl ScriptHost {
             transpose: None,
             key_used: None,
             frozen: Vec::new(),
+            lanes: Vec::new(),
+            warnings: warnings.clone(),
         }));
         // La caché pasa al estado de Lua durante la evaluación y vuelve después.
         let cache = Rc::new(RefCell::new(std::mem::take(&mut self.samples)));
@@ -1176,6 +1186,7 @@ impl ScriptHost {
         let priority = std::mem::take(&mut state.borrow_mut().priority);
         let groups = std::mem::take(&mut state.borrow_mut().groups);
         let macros = std::mem::take(&mut state.borrow_mut().macros);
+        let lanes = std::mem::take(&mut state.borrow_mut().lanes);
         let frozen = std::mem::take(&mut state.borrow_mut().frozen);
         let (key, transpose) = {
             let builder = state.borrow();
@@ -1361,6 +1372,7 @@ impl ScriptHost {
                 priority: priority.clone(),
                 groups: groups.clone(),
                 macros: macros.clone(),
+                lanes: lanes.clone(),
                 key,
                 transpose,
             });
@@ -2286,6 +2298,14 @@ impl ScriptHost {
             })?,
         )?;
 
+        let st = state.clone();
+        globals.set(
+            "lane",
+            lua.create_function(move |lua, (points, options): (Table, Option<Table>)| {
+                lanes::lane(lua, &mut st.borrow_mut(), &points, options.as_ref())
+            })?,
+        )?;
+
         globals.set(
             "ramp",
             lua.create_function(|lua, (from, to, duration): (f32, f32, String)| {
@@ -2485,6 +2505,18 @@ fn song_batch(
             *value = def.value;
         }
         batch.set_macros(macros);
+    }
+    // Las lanes, enteras (también para quitar las que había).
+    if !song.lanes.is_empty() || before.is_some_and(|b| !b.lanes.is_empty()) {
+        let mut table = engine::Lanes::new();
+        for (index, def) in song.lanes.iter().enumerate() {
+            if let Some(def) = def {
+                table
+                    .set(index, Some(def.lane))
+                    .map_err(|e| ScriptError::new(e.to_string()))?;
+            }
+        }
+        batch.set_lanes(table);
     }
     if !song.timeline.is_empty() {
         // Con línea de tiempo, el motor lleva todas las secciones.
@@ -3075,6 +3107,7 @@ fn track_source(lua: &Lua, name: &str, source: &AnyUserData) -> mlua::Result<Tra
         origin,
         stretch: None,
         rendered: Vec::new(),
+        lanes: Vec::new(),
         instrument: None,
         granular: None,
         formant: None,
@@ -3109,6 +3142,8 @@ fn track_source(lua: &Lua, name: &str, source: &AnyUserData) -> mlua::Result<Tra
             written_melody: false,
             steps_at: String::new(),
             melodic: Rc::default(),
+            lanes: Vec::new(),
+            shape_lanes: Vec::new(),
         });
     }
     if let Ok(source) = source.borrow::<InstrumentHandle>() {
@@ -3138,6 +3173,8 @@ fn track_source(lua: &Lua, name: &str, source: &AnyUserData) -> mlua::Result<Tra
             written_melody: false,
             steps_at: String::new(),
             melodic: Rc::default(),
+            lanes: Vec::new(),
+            shape_lanes: Vec::new(),
         });
     }
     if let Ok(source) = source.borrow::<SynthHandle>() {
@@ -3170,6 +3207,8 @@ fn track_source(lua: &Lua, name: &str, source: &AnyUserData) -> mlua::Result<Tra
             written_melody: false,
             steps_at: String::new(),
             melodic: Rc::default(),
+            lanes: Vec::new(),
+            shape_lanes: Vec::new(),
         });
     }
     Err(fail(
@@ -3223,6 +3262,11 @@ struct Builder {
     key_used: Option<String>,
     /// Pistas congeladas (`frozen()`).
     frozen: Vec<FreezeRequest>,
+    /// Lanes de automatización (`auto()`, `lane()`): el índice es el del
+    /// motor; un hueco quitado con `auto_clear` se vuelve a usar.
+    lanes: Vec<Option<LaneDef>>,
+    /// Los avisos de la carga.
+    warnings: Rc<RefCell<Vec<String>>>,
 }
 
 /// `frozen(pista, wav [, huella])`, por aplicar al acabar el script.
@@ -3317,6 +3361,12 @@ struct TrackBuild {
     /// Tiene notas de `melody()` (en una pista de cortes): `transpose()`
     /// las mueve, como las de un instrumento.
     melodic: Rc<Cell<bool>>,
+    /// Sus lanes (`auto()`): el parámetro y el índice en la tabla.
+    lanes: Vec<(String, usize)>,
+    /// Las curvas de lane de la forma de sus cortes (`auto("bend", ...)`):
+    /// se ponen al acabar en su copia de las formas (las de la variable son
+    /// de todas sus pistas).
+    shape_lanes: Vec<(usize, engine::Curve)>,
 }
 
 #[derive(Clone)]
@@ -3412,9 +3462,17 @@ fn expand(track: TrackBuild, rng: &mut Rng, timing: Timing) -> Result<TrackDef, 
         written_melody,
         steps_at,
         melodic,
+        lanes,
+        shape_lanes,
     } = track;
     def.labels = labels.borrow().clone();
     def.shapes = shapes.borrow().clone();
+    for shape in &mut def.shapes {
+        for &(index, curve) in &shape_lanes {
+            shape.curves[index] = Some(curve);
+        }
+    }
+    def.lanes = lanes;
     def.slice_fx = slice_fx.borrow().clone();
     // Humanize cambia cada vuelta: el ciclo es de 16 como con `chance`.
     let mut cycle = if def.humanize.is_some() {
@@ -6740,6 +6798,36 @@ impl UserData for TrackHandle {
                 Ok(this.clone())
             },
         );
+
+        // `:auto(parámetro, puntos [, opciones])`: una lane de automatización
+        // (ver `lanes`); devuelve la pista y, si el nombre era ambiguo, el
+        // aviso.
+        methods.add_method(
+            "auto",
+            |lua, this, (param, points, options): (String, Table, Option<Table>)| {
+                let warning = lanes::auto(
+                    lua,
+                    &mut this.state.borrow_mut(),
+                    &this.name,
+                    &param,
+                    &points,
+                    options.as_ref(),
+                )?;
+                Ok((this.clone(), warning))
+            },
+        );
+        methods.add_method("auto_clear", |lua, this, param: Option<String>| {
+            lanes::auto_clear(
+                lua,
+                &mut this.state.borrow_mut(),
+                &this.name,
+                param.as_deref(),
+            )?;
+            Ok(this.clone())
+        });
+        methods.add_method("auto_list", |lua, this, ()| {
+            lanes::auto_list(lua, &this.state.borrow(), &this.name)
+        });
 
         // `:every(n, function(t) ... end)`: en los compases 0, n, 2n...
         methods.add_method("every", |lua, this, (n, func): (i64, Function)| {

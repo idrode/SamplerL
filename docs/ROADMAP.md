@@ -811,7 +811,7 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
        `Curve::Lane`.
     2. ✅ **Modos y reloj**: `loop`, `once` y `hold`, `offset`, prioridad
        con lo que ya había, sin deriva.
-    3. **Lua**: `pista:auto`, `auto_clear`, `auto_list` y `lane()`.
+    3. ✅ **Lua**: `pista:auto`, `auto_clear`, `auto_list` y `lane()`.
     4. **Panel de solo lectura** con el cursor y la lectura en vivo.
     5. **Edición con el ratón** y sincronización con el código.
     6. **Grabación en vivo** (opcional).

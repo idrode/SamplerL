@@ -2631,6 +2631,13 @@ track("drums", amen)
   :fx("lowpass", { cutoff = ramp(200, 8000, "4 compases") })
 ```
 
+### `lane(puntos [, opciones])`
+
+Una lane de automatización suelta: se pone donde va un `ramp()` (en `:fx`, `:gain()`, `bus()`, `cortes:set`...). Los mismos puntos y opciones que `pista:auto()`, pero sin parámetro: sirve en cualquier sitio que admita curvas, también en un grupo o en los efectos de un corte. Con `mode = "once"`, fuera de la lane vale `rest` (por defecto, su primer punto). Ocupa un hueco de la tabla de lanes (hay 32).
+
+- `puntos`: `{ {posición, valor [, curva]}, ... }` (posición en compases)
+- `opciones`: `len`, `mode`, `offset`, `range`, `scale` y `rest`
+
 ### `lfo(frecuencia, mín, máx)`
 
 Valor que oscila (seno) entre mín y máx (en lugar de un número). Como `ramp`, va en lugar de un número (ver la tabla que sigue). La frecuencia es un número en Hz (de 0.01 a 50) o lo que dura un ciclo en el tempo de la canción (`"1 compás"`, `"8 pasos"`). Empieza en `mín` cuando arranca el secuenciador; las frecuencias oscilan en escala logarítmica.
@@ -3667,6 +3674,39 @@ track("drums", amen)
   :chance(0.2, "retrig", 4)
   :chance(0.1, "mute")
 ```
+
+### `pista:auto(parámetro, puntos [, opciones])`
+
+Devuelve: pista.
+
+Una lane de automatización: una curva de puntos que lleva un parámetro a lo largo de la pista, con su propia duración. Cada punto es `{posición, valor [, curva]}`: la posición en compases desde el inicio de la lane, el valor en las unidades del parámetro (o de 0 a 1 con `range`) y cómo va hacia el siguiente punto: `"linear"` (por defecto), `"exp"` (exponencial: para barridos de frecuencia), `"smooth"` (suave al salir y al llegar) o `"step"` (se queda y salta). Antes del primer punto vale el primero y después del último, el último. La lane dura `len` (por defecto, hasta el último punto redondeado a compases), independiente de la longitud del patrón: una lane de 3 compases sobre un patrón de 4 hace polirritmo de automatización. El parámetro es cualquiera que admita curvas: los de los efectos de la pista (`"cutoff"`, o `"lowpass.cutoff"` y `"2.cutoff"` para elegir efecto), `"gain"`, `"pan"`, `"send.reverb"`, `"pitch"`, `"formant"`, los del sintetizador y los de la forma de los cortes (`"bend"`, `"slice.pan"`), que se leen al nacer cada golpe. Un nombre de varios sitios va al primero y lo avisa (también como segundo valor que devuelve). Entra con el patrón al empezar el compás y se suaviza como cualquier curva: los saltos no hacen clic. El `~` de un paso manda sobre la lane del primer filtro, y lo que dice un paso en sus llaves, sobre la de la forma de su corte. Caben 32 lanes en una canción.
+
+- `parámetro`: el nombre del parámetro: `"cutoff"`, `"lowpass.cutoff"`, `"2.q"`, `"gain"`, `"send.delay"`, `"bend"`...
+- `puntos`: `{ {posición, valor [, curva]}, ... }`: posición en compases, de 1 a 64 puntos en orden
+- `opciones`: tabla con `len`, `mode`, `offset`, `range`, `scale` y `rest` (ver abajo)
+
+```lua
+bpm(170)
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen)
+  :steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+  :fx("lowpass", { cutoff = 3000 })
+  -- Un barrido de 4 compases que se repite; el pan va y viene en 3.
+  :auto("cutoff", { {0, 200, "exp"}, {2, 8000, "exp"}, {4, 200} }, { len = "4 compases" })
+  :auto("pan", { {0, -0.6, "smooth"}, {1.5, 0.6, "smooth"}, {3, -0.6} }, { len = 3 })
+```
+
+### `pista:auto_clear([parámetro])`
+
+Devuelve: pista.
+
+Quita la lane de ese parámetro (o todas las de la pista): vuelve a su valor fijo. El hueco que deja en la tabla de lanes se puede volver a usar.
+
+- `parámetro`: el de `auto` (sin él, todas)
+
+### `pista:auto_list()`
+
+Las lanes de la pista: una tabla con `param`, `len` (compases), `mode` y `points` de cada una. Para mirarlas o copiarlas desde el script (`print`).
 
 ### Snippets
 
