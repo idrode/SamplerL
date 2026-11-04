@@ -164,7 +164,7 @@ impl App {
 
 impl App {
     /// La rejilla tal como se ve ahora (con la vista abierta).
-    fn current_grid(&self) -> Option<Grid> {
+    pub(super) fn current_grid(&self) -> Option<Grid> {
         self.view().occupancy
     }
 
@@ -237,7 +237,7 @@ impl App {
     }
 
     /// Enter: la línea de órdenes con `rellenar` y el golpe que se propone.
-    fn start_fill(&mut self, grid: &Grid, cursor: OccupancyCursor) {
+    pub(super) fn start_fill(&mut self, grid: &Grid, cursor: OccupancyCursor) {
         match self.fill_target(grid, cursor) {
             Ok((_, track, lap, step)) => {
                 let hit = self.proposed_hit(&track, lap, step);
@@ -455,7 +455,7 @@ impl App {
     }
 
     /// Lo que dice la línea de estado de la celda del cursor.
-    fn fill_summary(&self, grid: &Grid, cursor: OccupancyCursor) -> String {
+    pub(super) fn fill_summary(&self, grid: &Grid, cursor: OccupancyCursor) -> String {
         let name = grid
             .rows
             .get(cursor.row)

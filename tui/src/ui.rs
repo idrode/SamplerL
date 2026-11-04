@@ -122,10 +122,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     if view.editor_outside {
         // Sin editor aquí, el ratón no tiene dónde escribir.
         app.editor_area = None;
-        let (sample_area, roll_area, lanes_area) = draw_main_window(frame, &view);
-        app.sample_area = sample_area.map(|a| Block::bordered().inner(a));
-        app.set_roll_area(roll_area);
-        app.set_lanes_area(lanes_area);
+        let areas = draw_main_window(frame, &view);
+        app.sample_area = areas.sample.map(|a| Block::bordered().inner(a));
+        app.set_roll_area(areas.roll);
+        app.set_lanes_area(areas.lanes);
+        app.panels = areas.panels;
         return;
     }
     let [main, fx, help] = Layout::vertical([
@@ -179,8 +180,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         _ => sample_area,
     };
     frame.render_widget(EnginePanel(&view), engine_area);
+    let mut panels = crate::app::PanelAreas::default();
     if occupancy > 0 {
         frame.render_widget(OccupancyPanel(&view), occupancy_area);
+        panels.occupancy = OccupancyLayout::new(&view, occupancy_area);
     }
     if let Some(roll) = &view.roll {
         // El piano roll, en el sitio del sample y del tracker.
@@ -191,6 +194,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         frame.render_widget(SamplePanel(&view), sample_area);
         app.sample_area = Some(Block::bordered().inner(sample_area));
         frame.render_widget(TrackerPanel(&view), tracker_area);
+        panels.tracker = Some(TrackerLayout::new(&view, tracker_area, false));
         app.set_roll_area(None);
     }
     // La vista del sidechain, encima del sample y el tracker (el editor
@@ -202,19 +206,19 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             ..rest_area
         };
         frame.render_widget(crate::sidechain::SidechainPanel(sidechain), area);
+        panels.covers.push(area);
     }
     // Las visualizaciones (las de su panel), apiladas arriba del sample y
     // el tracker.
     let stacked = stacked_viz(&view);
     if !stacked.is_empty() {
         let height = crate::viz::total_height(&stacked).min(rest_area.height);
-        frame.render_widget(
-            crate::viz::VizPanels(&stacked),
-            Rect {
-                height,
-                ..rest_area
-            },
-        );
+        let area = Rect {
+            height,
+            ..rest_area
+        };
+        frame.render_widget(crate::viz::VizPanels(&stacked), area);
+        panels.covers.push(area);
     }
     // Las lanes de la pista seleccionada, abajo del sample y el tracker.
     let mut lanes_area = None;
@@ -222,8 +226,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         let area = bottom_part(rest_area, lanes.height());
         frame.render_widget(crate::lanes_panel::LanesPanel(lanes), area);
         lanes_area = Some(area);
+        panels.covers.push(area);
     }
     app.set_lanes_area(lanes_area);
+    app.panels = panels;
     frame.render_widget(FxPanel(&view), fx);
     frame.render_widget(HelpLine(&view), help);
     draw_popups(frame, &view, popup);
@@ -256,10 +262,15 @@ fn tracker_first(height: u16, normal: u16, squeezed: u16) -> u16 {
 /// onda grande; debajo, el mezclador y el tracker; abajo, los efectos.
 /// Devuelve dónde quedaron el panel del sample y el piano roll (que va en
 /// el sitio de la onda grande).
-fn draw_main_window(
-    frame: &mut Frame,
-    view: &ViewModel,
-) -> (Option<Rect>, Option<Rect>, Option<Rect>) {
+/// Dónde quedó cada panel de la ventana principal sin editor.
+struct MainAreas {
+    sample: Option<Rect>,
+    roll: Option<Rect>,
+    lanes: Option<Rect>,
+    panels: crate::app::PanelAreas,
+}
+
+fn draw_main_window(frame: &mut Frame, view: &ViewModel) -> MainAreas {
     let [top, body, fx, help] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Min(8),
@@ -296,8 +307,10 @@ fn draw_main_window(
         Layout::vertical([Constraint::Length(occupancy), Constraint::Min(0)]).areas(body);
     let [sample_area, lower] =
         Layout::vertical([Constraint::Min(sample_min), Constraint::Length(tracker)]).areas(body);
+    let mut panels = crate::app::PanelAreas::default();
     if occupancy > 0 {
         frame.render_widget(OccupancyPanel(view), occupancy_area);
+        panels.occupancy = OccupancyLayout::new(view, occupancy_area);
     }
     let mut roll_area = None;
     if let Some(roll) = &view.roll {
@@ -356,14 +369,17 @@ fn draw_main_window(
         Layout::horizontal([Constraint::Length(mixer_width), Constraint::Min(0)]).areas(lower);
     frame.render_widget(MixerPanel(view), mixer_area);
     frame.render_widget(FullTrackerPanel(view), tracker_area);
+    panels.mixer = Some(MixerLayout::new(view, mixer_area));
+    panels.tracker = Some(TrackerLayout::new(view, tracker_area, true));
     frame.render_widget(FxPanel(view), fx);
     frame.render_widget(HelpLine(view), help);
     draw_popups(frame, view, None);
-    (
-        roll_area.is_none().then_some(sample_area),
-        roll_area,
-        lanes_area,
-    )
+    MainAreas {
+        sample: roll_area.is_none().then_some(sample_area),
+        roll: roll_area,
+        lanes: lanes_area,
+        panels,
+    }
 }
 
 /// Ancho de la vista del sidechain en la ventana principal sin editor.
@@ -1958,9 +1974,104 @@ impl Widget for TrackerPanel<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let view = self.0;
         let block = Block::bordered().title(format!(" tracker · compás {} ", view.transport.bar));
-        let inner = block.inner(area);
         block.render(area, buf);
-        render_tracker(view, inner, buf, TRACKER_COLUMN, view.tracks.len());
+        render_tracker(view, buf, &TrackerLayout::new(view, area, false));
+    }
+}
+
+/// Dónde cae el ratón en el tracker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrackerHit {
+    /// El nombre de la pista `i`, en la cabecera.
+    Header(usize),
+    /// La celda de la pista `i` en el paso `step`.
+    Cell(usize, usize),
+}
+
+/// La geometría del tracker tal como se dibuja: el dibujo y el ratón la
+/// sacan de aquí, así que siempre coinciden.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TrackerLayout {
+    /// Dentro del borde.
+    pub inner: Rect,
+    /// Ancho de cada columna y cuántas pistas se ven.
+    pub column: usize,
+    pub shown: usize,
+    /// Primer paso que se ve y cuántos pasos tiene la más larga.
+    pub first: usize,
+    pub rows: usize,
+}
+
+impl TrackerLayout {
+    /// El tracker en `area` (con el borde): el compacto, junto al editor,
+    /// o con `full` el de la ventana principal sin editor.
+    pub fn new(view: &ViewModel, area: Rect, full: bool) -> Self {
+        let inner = Block::bordered().inner(area);
+        let (column, shown) = if full {
+            FullTrackerPanel::columns(view.tracks.len(), inner.width)
+        } else {
+            (TRACKER_COLUMN, view.tracks.len())
+        };
+        let rows = view
+            .tracks
+            .iter()
+            .map(|t| t.steps.len())
+            .max()
+            .unwrap_or(engine::STEPS)
+            .max(1);
+        // La fila que se sigue al desplazarse: la del cursor de edición, o
+        // la de la pista seleccionada (o la primera que suene).
+        let positions: Vec<Option<usize>> = view.tracks.iter().map(|t| t.position).collect();
+        let t = view.transport;
+        let current = view
+            .tracker_cursor
+            .map(|(_, row)| row)
+            .or_else(|| {
+                view.selected
+                    .and_then(|i| positions.get(i).copied().flatten())
+            })
+            .or_else(|| positions.iter().flatten().next().copied())
+            .or(t.step.filter(|_| t.running && view.tracks.is_empty()));
+        // Si no caben todas las filas, se desplaza para ver la que suena.
+        let visible = (inner.height.saturating_sub(1)) as usize;
+        let first = if visible >= rows {
+            0
+        } else {
+            current
+                .map_or(0, |s| s.saturating_sub(visible / 2))
+                .min(rows - visible)
+        };
+        TrackerLayout {
+            inner,
+            column,
+            shown,
+            first,
+            rows,
+        }
+    }
+
+    /// Filas de pasos que se ven.
+    pub fn visible(&self) -> usize {
+        (self.inner.height.saturating_sub(1)) as usize
+    }
+
+    /// Qué hay en la celda (`x`, `y`) de la terminal.
+    pub fn hit(&self, x: u16, y: u16) -> Option<TrackerHit> {
+        let inner = self.inner;
+        if inner.height < 2 || !inner.contains(ratatui::layout::Position::new(x, y)) {
+            return None;
+        }
+        // Los números de paso ocupan las tres primeras columnas.
+        let dx = (x - inner.x).checked_sub(3)? as usize;
+        let track = dx / self.column.max(1);
+        if track >= self.shown {
+            return None;
+        }
+        if y == inner.y {
+            return Some(TrackerHit::Header(track));
+        }
+        let step = self.first + (y - inner.y - 1) as usize;
+        (step < self.rows).then_some(TrackerHit::Cell(track, step))
     }
 }
 
@@ -1990,7 +2101,7 @@ impl Widget for FullTrackerPanel<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let view = self.0;
         let count = view.tracks.len();
-        let (column, shown) = Self::columns(count, area.width.saturating_sub(2));
+        let (_, shown) = Self::columns(count, area.width.saturating_sub(2));
         // Si no caben todas, cuántas se ven.
         let tracks = if shown < count {
             format!("{shown} de {count} pistas")
@@ -2001,39 +2112,25 @@ impl Widget for FullTrackerPanel<'_> {
             " tracker · compás {} · {tracks} ",
             view.transport.bar
         ));
-        let inner = block.inner(area);
         block.render(area, buf);
-        render_tracker(view, inner, buf, column, shown);
+        render_tracker(view, buf, &TrackerLayout::new(view, area, true));
     }
 }
 
 /// Las filas del tracker: un paso por fila, `shown` pistas en columnas de
-/// `column` celdas.
-fn render_tracker(view: &ViewModel, inner: Rect, buf: &mut Buffer, column: usize, shown: usize) {
-    let t = view.transport;
+/// `column` celdas (ver [`TrackerLayout`]).
+fn render_tracker(view: &ViewModel, buf: &mut Buffer, layout: &TrackerLayout) {
+    let TrackerLayout {
+        inner,
+        column,
+        shown,
+        first,
+        rows,
+    } = *layout;
     if inner.height < 2 {
         return;
     }
-    // Paso de cada pista; la fila que se sigue al desplazarse es la de la
-    // pista seleccionada (o la primera que suene).
     let positions: Vec<Option<usize>> = view.tracks.iter().map(|t| t.position).collect();
-    // Con el cursor de edición, se sigue el cursor.
-    let current = view
-        .tracker_cursor
-        .map(|(_, row)| row)
-        .or_else(|| {
-            view.selected
-                .and_then(|i| positions.get(i).copied().flatten())
-        })
-        .or_else(|| positions.iter().flatten().next().copied())
-        .or(t.step.filter(|_| t.running && view.tracks.is_empty()));
-    let rows = view
-        .tracks
-        .iter()
-        .map(|t| t.steps.len())
-        .max()
-        .unwrap_or(engine::STEPS)
-        .max(1);
 
     // Cabecera con los nombres de las pistas.
     let mut header = vec![Span::raw("   ")];
@@ -2060,15 +2157,7 @@ fn render_tracker(view: &ViewModel, inner: Rect, buf: &mut Buffer, column: usize
     }
     Line::from(header).render(Rect { height: 1, ..inner }, buf);
 
-    // Si no caben todas las filas, se desplaza para ver la que suena.
-    let visible = (inner.height - 1) as usize;
-    let first = if visible >= rows {
-        0
-    } else {
-        current
-            .map_or(0, |s| s.saturating_sub(visible / 2))
-            .min(rows - visible)
-    };
+    let visible = layout.visible();
     let playing = Style::new().bg(playing_color()).fg(Color::White).bold();
     for (row, step) in (first..rows).take(visible).enumerate() {
         let here: Vec<bool> = positions.iter().map(|p| *p == Some(step)).collect();
@@ -2168,14 +2257,38 @@ fn window_start(focus: usize, shown: usize, total: usize, align: usize) -> usize
     first.min(total - shown)
 }
 
-impl Widget for OccupancyPanel<'_> {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        use crate::occupancy::Cell;
-        let view = self.0;
-        let Some(grid) = &view.occupancy else {
-            return;
-        };
-        let theme = theme::get();
+/// Dónde cae el ratón en la vista de ocupación.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OccupancyHit {
+    /// El nombre de la fila (pista) `r`.
+    Name(usize),
+    /// La celda de la fila `r` en la columna (paso de la página) `c`.
+    Cell(usize, usize),
+}
+
+/// La geometría de la vista de ocupación tal como se dibuja (el dibujo y
+/// el ratón la sacan de aquí).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OccupancyLayout {
+    pub inner: Rect,
+    /// Ancho de la columna de los nombres.
+    pub label: usize,
+    /// Celdas por paso (2 o 1), pasos que se ven y el primero.
+    pub width: usize,
+    pub shown: usize,
+    pub first: usize,
+    /// Filas de pistas que se ven, la primera, y cuántas pistas hay.
+    pub track_rows: usize,
+    pub first_track: usize,
+    pub tracks: usize,
+    /// Líneas de sugerencias debajo.
+    pub notes: usize,
+}
+
+impl OccupancyLayout {
+    /// La vista en `area` (con el borde), si se ve.
+    pub fn new(view: &ViewModel, area: Rect) -> Option<Self> {
+        let grid = view.occupancy.as_ref()?;
         let inner = Block::bordered().inner(area);
         let steps = grid.steps();
         let label = grid
@@ -2203,13 +2316,70 @@ impl Widget for OccupancyPanel<'_> {
             .len()
             .min(track_rows.saturating_sub(tracks));
         let track_rows = track_rows - notes;
+        let focus_track = cursor.map(|(r, _)| r).or(view.selected).unwrap_or(0);
+        let first_track = window_start(focus_track, track_rows, tracks, 1);
+        Some(OccupancyLayout {
+            inner,
+            label,
+            width,
+            shown,
+            first,
+            track_rows,
+            first_track,
+            tracks,
+            notes,
+        })
+    }
+
+    /// Qué hay en la celda (`x`, `y`) de la terminal.
+    pub fn hit(&self, x: u16, y: u16) -> Option<OccupancyHit> {
+        let inner = self.inner;
+        if !inner.contains(ratatui::layout::Position::new(x, y)) || y == inner.y {
+            return None;
+        }
+        let r = (y - inner.y - 1) as usize;
+        if r >= self
+            .track_rows
+            .min(self.tracks.saturating_sub(self.first_track))
+        {
+            return None;
+        }
+        let row = self.first_track + r;
+        let dx = (x - inner.x) as usize;
+        if dx < self.label {
+            return Some(OccupancyHit::Name(row));
+        }
+        let c = (dx - self.label) / self.width.max(1);
+        (c < self.shown).then_some(OccupancyHit::Cell(row, self.first + c))
+    }
+}
+
+impl Widget for OccupancyPanel<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        use crate::occupancy::Cell;
+        let view = self.0;
+        let (Some(grid), Some(layout)) = (&view.occupancy, OccupancyLayout::new(view, area)) else {
+            return;
+        };
+        let theme = theme::get();
+        let OccupancyLayout {
+            inner,
+            label,
+            width,
+            shown,
+            first,
+            track_rows,
+            first_track,
+            tracks,
+            notes,
+        } = layout;
+        let steps = grid.steps();
+        let cursor = view.occupancy_cursor;
         let marked = |r: usize, c: usize| {
             view.fill_suggestions
                 .iter()
                 .any(|s| s.bar == grid.bar && s.col == c && (r == usize::MAX || s.row == r))
         };
-        let focus_track = cursor.map(|(r, _)| r).or(view.selected).unwrap_or(0);
-        let first_track = window_start(focus_track, track_rows, tracks, 1);
 
         let bars = steps.div_ceil(grid.bar_steps.max(1)) as u64;
         let mut title = if bars > 1 {
@@ -2405,13 +2575,69 @@ impl MixerPanel<'_> {
     }
 }
 
+/// Dónde cae el ratón en el mezclador.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MixerHit {
+    /// La tira de la pista `i` (fuera de sus botones).
+    Strip(usize),
+    /// Su `M` o su `S`.
+    Mute(usize),
+    Solo(usize),
+}
+
+/// La geometría del mezclador tal como se dibuja.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MixerLayout {
+    pub inner: Rect,
+    /// Tiras de pista que se ven (la del master va detrás).
+    pub shown: usize,
+    /// Filas del medidor.
+    pub meter_rows: u16,
+}
+
+impl MixerLayout {
+    pub fn new(view: &ViewModel, area: Rect) -> Self {
+        // La del master siempre; las pistas, las que quepan.
+        let room = (area.width.saturating_sub(2) / STRIP).saturating_sub(1) as usize;
+        let inner = Block::bordered().inner(area);
+        MixerLayout {
+            inner,
+            shown: view.tracks.len().min(room),
+            meter_rows: inner.height.saturating_sub(5),
+        }
+    }
+
+    /// La fila de los botones `M` y `S`.
+    fn flags_row(&self) -> u16 {
+        self.inner.y + 1 + self.meter_rows + 2
+    }
+
+    /// Qué hay en la celda (`x`, `y`) de la terminal.
+    pub fn hit(&self, x: u16, y: u16) -> Option<MixerHit> {
+        let inner = self.inner;
+        if inner.height < 6 || !inner.contains(ratatui::layout::Position::new(x, y)) {
+            return None;
+        }
+        let i = ((x - inner.x) / STRIP) as usize;
+        if i >= self.shown {
+            return None;
+        }
+        let at = (x - inner.x) % STRIP;
+        Some(match (y == self.flags_row(), at) {
+            (true, 0) => MixerHit::Mute(i),
+            (true, 2) => MixerHit::Solo(i),
+            _ => MixerHit::Strip(i),
+        })
+    }
+}
+
 impl Widget for MixerPanel<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let view = self.0;
         let count = view.tracks.len();
-        // La del master siempre; las pistas, las que quepan.
-        let room = (area.width.saturating_sub(2) / STRIP).saturating_sub(1) as usize;
-        let shown = count.min(room);
+        let MixerLayout {
+            shown, meter_rows, ..
+        } = MixerLayout::new(view, area);
         let title = if shown < count {
             format!(" mezclador {shown}/{count} ")
         } else {
@@ -2425,7 +2651,6 @@ impl Widget for MixerPanel<'_> {
         if inner.height < 6 || inner.width < STRIP {
             return;
         }
-        let meter_rows = inner.height - 5;
         let strip = |i: u16| Rect {
             x: inner.x + i * STRIP,
             width: STRIP - 1,

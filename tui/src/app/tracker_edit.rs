@@ -98,7 +98,7 @@ impl App {
     }
 
     /// Enter: los efectos del paso en la línea de órdenes, para cambiarlos.
-    fn start_step_edit(&mut self, cursor: TrackerCursor) {
+    pub(super) fn start_step_edit(&mut self, cursor: TrackerCursor) {
         let (track, lap) = match self.step_target(cursor) {
             Ok((_, token, track, lap)) => {
                 self.prompt = Some(format!("{COMMAND} {}", written_fx(&token)));
@@ -279,7 +279,7 @@ impl App {
     }
 
     /// Lo que dice la línea de estado del paso del cursor.
-    fn step_summary(&self, cursor: TrackerCursor) -> String {
+    pub(super) fn step_summary(&self, cursor: TrackerCursor) -> String {
         let name = self
             .tracks()
             .get(cursor.track)
@@ -293,7 +293,7 @@ impl App {
     }
 
     /// Pasos de la pista `track` (los de su vuelta).
-    fn track_rows(&self, track: usize) -> usize {
+    pub(super) fn track_rows(&self, track: usize) -> usize {
         self.tracks().get(track).map_or(0, |t| t.length)
     }
 

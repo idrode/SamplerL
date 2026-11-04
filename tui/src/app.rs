@@ -41,6 +41,8 @@ mod split;
 pub use split::editor_command;
 mod lanes;
 mod occupancy;
+mod panels;
+pub use panels::PanelAreas;
 mod roll;
 mod tracker_edit;
 mod viz;
@@ -231,6 +233,9 @@ pub struct App {
     /// Dónde se dibujó la forma de onda la última vez (dentro del borde):
     /// el ratón arrastra ahí las marcas de los cortes.
     pub sample_area: Option<ratatui::layout::Rect>,
+    /// Dónde se dibujaron el tracker, la vista de ocupación y el mezclador
+    /// (y lo que los tapa): el ratón los usa.
+    pub panels: PanelAreas,
     /// Arrastrando la marca de un corte con el ratón.
     slice_drag: Option<mouse::SliceDrag>,
     /// Zoom de la vista del sample.
@@ -455,6 +460,7 @@ impl App {
             editor_area: None,
             drag_from: None,
             sample_area: None,
+            panels: PanelAreas::default(),
             slice_drag: None,
             wave_zoom: None,
             zoom_cache: Default::default(),
@@ -3588,7 +3594,12 @@ impl App {
     /// Mute (o, con `solo`, solo) en vivo de la pista seleccionada: entra ya,
     /// sin esperar al compás.
     pub fn toggle_live(&mut self, solo: bool) {
-        let Some(name) = self.tracks().get(self.selected).map(|t| t.name.clone()) else {
+        self.toggle_live_at(self.selected, solo);
+    }
+
+    /// Lo mismo, de la pista `index` (en el orden del script).
+    pub(crate) fn toggle_live_at(&mut self, index: usize, solo: bool) {
+        let Some(name) = self.tracks().get(index).map(|t| t.name.clone()) else {
             self.message = "no hay pistas".into();
             return;
         };

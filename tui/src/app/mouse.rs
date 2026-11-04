@@ -91,6 +91,10 @@ impl App {
         if self.lanes_mouse(action, column, row) {
             return;
         }
+        // El tracker, la vista de ocupación y el mezclador.
+        if self.slice_drag.is_none() && self.panels_mouse(action, column, row) {
+            return;
+        }
         if self.slice_drag.is_some() || self.on_sample(action, column, row) {
             self.mouse_sample(action, column);
             return;

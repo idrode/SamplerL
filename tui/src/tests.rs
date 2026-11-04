@@ -2538,6 +2538,7 @@ mod mpe;
 mod navigation;
 mod notes;
 mod occupancy;
+mod panels_mouse;
 mod panic;
 mod record;
 mod resample;
