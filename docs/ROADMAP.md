@@ -809,7 +809,7 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
        `exp`, `smooth` y `step`, escala log, duración propia), la tabla
        fija del motor (32 lanes de 64 puntos) por el lote al compás y
        `Curve::Lane`.
-    2. **Modos y reloj**: `loop`, `once` y `hold`, `offset`, prioridad
+    2. ✅ **Modos y reloj**: `loop`, `once` y `hold`, `offset`, prioridad
        con lo que ya había, sin deriva.
     3. **Lua**: `pista:auto`, `auto_clear`, `auto_list` y `lane()`.
     4. **Panel de solo lectura** con el cursor y la lectura en vivo.

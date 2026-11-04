@@ -2130,6 +2130,41 @@ con `golden.rs` idéntico y `no_alloc.rs` en verde.
   filtros, el volumen y el bend de los cortes, y la tabla cambiada al
   compás sonando).
 
+### Parte 2: modos, reloj y prioridad
+
+- **Modos** (`LaneMode`, `Lane::with_timing(modo, offset, rest)`): `Loop`
+  se repite cada `length` pasos y `offset` corre su fase; `Once` solo
+  actúa de `offset` a `offset + length` y fuera da `rest`, el valor fijo
+  del parámetro (el que pone el script: así, al acabar, el parámetro vuelve
+  a donde estaba); `Hold` da el primer punto antes de empezar y el último
+  después. `Lane::phase(steps)` dice dónde va (o que no actúa) y
+  `Lane::bounds` cuenta `rest` en `once` (la validación de rangos lo ve).
+  `offset` va de ±1024 pasos.
+- **Reloj**: como todas las curvas, la posición es la de la canción (o de
+  su sección) en pasos, calculada en cada bloque desde el contador de
+  frames del transporte, cuyos compases son un número entero de frames:
+  no se acumula nada, así que no deriva. Sigue al tempo (también en una
+  rampa de BPM) y a `start_at`.
+- **Prioridad** (la de las curvas, sin nada nuevo): el `~` de un golpe
+  manda sobre la lane del primer filtro hasta el golpe siguiente; un mando
+  MIDI (MIDI learn) se aplica encima según su peso; en un parámetro que se
+  lee al nacer el golpe (la forma de un corte: `bend`, `attack`...), lo
+  que diga el paso en sus llaves manda en ese golpe (`SliceShape::with_hit`
+  quita la curva); `{lp=800}` en un paso es otro filtro, en la voz de ese
+  golpe (antes de los de la pista), y no toca la lane. Un parámetro tiene
+  una sola curva: una lane o un `ramp`/`lfo`.
+- **Tests**: `engine/tests/lane_modes.rs` (los tres modos con `offset`;
+  sin deriva: una lane de 3 compases con las cuatro curvas contra un
+  patrón de 4 a 170 BPM, 2000 vueltas en release y 200 en debug, cada
+  muestra frente a la cuenta exacta sobre la rejilla entera de compases a
+  menos de 0,008 (el suavizado de 5 ms en las rampas) y la vuelta 5 igual
+  a cada una de las siguientes en la misma fase del patrón a menos de
+  1e-5; arrancar en el compás 30 000 y en el 65 535 da el valor exacto;
+  saltos `step` de 0,1 a 1 sin pasar del salto de un polo de 5 ms, ni al
+  cambiar la tabla al compás; `~` gana a la lane del filtro; `{bend=0}`
+  en un paso gana a una lane de bend) y `no_alloc.rs` (los tres modos con
+  `offset`).
+
 ## Audio de prueba y problemas conocidos
 
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`

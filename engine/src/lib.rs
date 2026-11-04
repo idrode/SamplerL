@@ -59,7 +59,9 @@ pub use group::{Group, Groups, MAX_GROUPS};
 pub use instrument::{Adsr, Instrument, MAX_TUNE, MAX_VOICES};
 pub use key::{KeyAnalysis, KeyGuess, LOW_CONFIDENCE, detect_key};
 pub use knob::{KnobCurve, KnobLive, KnobMap, KnobTarget, Knobs, MAX_KNOBS};
-pub use lane::{Lane, LaneCurve, LanePoint, Lanes, MAX_LANE_POINTS, MAX_LANE_STEPS, MAX_LANES};
+pub use lane::{
+    Lane, LaneCurve, LaneMode, LanePoint, Lanes, MAX_LANE_POINTS, MAX_LANE_STEPS, MAX_LANES,
+};
 pub use limiter::{LIMIT_THRESHOLD, soft_limit};
 pub use output::{NullOutput, Output, open_null_output, open_output};
 pub use pitch::{NoteGuess, detect_mono, detect_note, detect_notes, note_name};

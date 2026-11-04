@@ -1944,6 +1944,16 @@ fn the_audio_thread_never_allocates() {
                 48.0,
                 i == 1,
             )
+            .unwrap()
+            .with_timing(
+                [
+                    engine::LaneMode::Loop,
+                    engine::LaneMode::Once,
+                    engine::LaneMode::Hold,
+                ][i % 3],
+                i as f64 * 3.5,
+                1000.0,
+            )
             .unwrap();
             lanes.set(i, Some(lane)).unwrap();
         }

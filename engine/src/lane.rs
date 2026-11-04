@@ -54,15 +54,35 @@ impl LanePoint {
     };
 }
 
-/// Una lane: sus puntos (crecientes en `at`), lo que dura y si interpola en
+/// Qué hace una lane al llegar a su final.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LaneMode {
+    /// Vuelve a empezar: se repite cada `length` pasos.
+    #[default]
+    Loop,
+    /// Una vez: solo actúa de `offset` a `offset + length`; antes y después,
+    /// el parámetro está en su valor fijo (`rest`).
+    Once,
+    /// Una vez y se queda: antes de empezar, el valor de su primer punto;
+    /// después de acabar, el del último.
+    Hold,
+}
+
+/// Una lane: sus puntos (crecientes en `at`), lo que dura, si interpola en
 /// escala logarítmica (las frecuencias: una recta ahí sube igual por
-/// octavas).
+/// octavas), qué hace al acabar, su desplazamiento y el valor fijo del
+/// parámetro (el de `once` fuera de la lane).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Lane {
     points: [LanePoint; MAX_LANE_POINTS],
     count: u8,
     length: f64,
     log: bool,
+    mode: LaneMode,
+    /// Pasos de la canción en que empieza (con `loop`, cuánto se desplaza
+    /// su fase).
+    offset: f64,
+    rest: f32,
 }
 
 impl Lane {
@@ -95,7 +115,59 @@ impl Lane {
             count: points.len() as u8,
             length,
             log,
+            mode: LaneMode::Loop,
+            offset: 0.0,
+            rest: points[0].value,
         })
+    }
+
+    /// Con este modo, desplazada `offset` pasos (de ±[`MAX_LANE_STEPS`]) y
+    /// con `rest` como valor fijo del parámetro (el que da `once` fuera de
+    /// la lane).
+    pub fn with_timing(
+        mut self,
+        mode: LaneMode,
+        offset: f64,
+        rest: f32,
+    ) -> Result<Lane, &'static str> {
+        if !(offset.is_finite() && offset.abs() <= MAX_LANE_STEPS) {
+            return Err("el offset de una lane va de -64 a 64 compases");
+        }
+        if !rest.is_finite() {
+            return Err("el valor fijo de una lane tiene que ser un número");
+        }
+        self.mode = mode;
+        self.offset = offset;
+        self.rest = rest;
+        Ok(self)
+    }
+
+    pub fn mode(&self) -> LaneMode {
+        self.mode
+    }
+
+    pub fn offset(&self) -> f64 {
+        self.offset
+    }
+
+    pub fn rest(&self) -> f32 {
+        self.rest
+    }
+
+    pub fn is_log(&self) -> bool {
+        self.log
+    }
+
+    /// Dónde va la lane en la posición `steps` de la canción (pasos desde
+    /// su inicio, dentro de `0..=length`), o `None` si no actúa ahí (`once`
+    /// fuera de su tramo).
+    pub fn phase(&self, steps: f64) -> Option<f64> {
+        let t = steps - self.offset;
+        match self.mode {
+            LaneMode::Loop => Some(t.rem_euclid(self.length)),
+            LaneMode::Once => (0.0..self.length).contains(&t).then_some(t),
+            LaneMode::Hold => Some(t.clamp(0.0, self.length)),
+        }
     }
 
     pub fn points(&self) -> &[LanePoint] {
@@ -107,14 +179,20 @@ impl Lane {
         self.length
     }
 
-    /// El valor más bajo y el más alto de sus puntos (los extremos de la
-    /// curva: entre dos puntos nunca se sale de ellos).
+    /// El valor más bajo y el más alto que puede dar (los de sus puntos:
+    /// entre dos puntos nunca se sale de ellos; con `once`, también el
+    /// fijo).
     pub fn bounds(&self) -> (f32, f32) {
-        self.points()
+        let (lo, hi) = self
+            .points()
             .iter()
             .fold((f32::MAX, f32::MIN), |(lo, hi), p| {
                 (lo.min(p.value), hi.max(p.value))
-            })
+            });
+        match self.mode {
+            LaneMode::Once => (lo.min(self.rest), hi.max(self.rest)),
+            _ => (lo, hi),
+        }
     }
 
     /// El valor en la posición `t` de la lane (pasos desde su inicio, ya
@@ -160,10 +238,13 @@ impl Lane {
         }
     }
 
-    /// El valor en la posición `steps` de la canción: la lane se repite
-    /// cada `length` pasos desde el inicio.
+    /// El valor en la posición `steps` de la canción, según su modo y su
+    /// desplazamiento.
     pub fn value(&self, steps: f64) -> f32 {
-        self.at(steps.rem_euclid(self.length))
+        match self.phase(steps) {
+            Some(t) => self.at(t),
+            None => self.rest,
+        }
     }
 }
 
