@@ -4256,6 +4256,12 @@ impl App {
     }
 
     /// Lee el estado del motor, actualiza medidores y recoge la basura.
+    /// Un cuadro no se pudo dibujar (pánico de un widget o error de la
+    /// terminal): se dice en la línea de mensajes y todo sigue.
+    pub fn draw_failed(&mut self, what: &str) {
+        self.message = format!("el dibujo falló un cuadro ({what}); el audio sigue");
+    }
+
     pub fn tick(&mut self) {
         self.poll_link();
         self.poll_devices();

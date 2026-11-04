@@ -26,6 +26,7 @@ mod roll;
 mod roll_keys;
 mod roll_panel;
 mod roll_window;
+mod safe_draw;
 mod sidechain;
 mod tap;
 #[cfg(test)]
@@ -891,7 +892,7 @@ fn run_devices_window(path: &std::path::Path) -> Result<(), BoxError> {
             if window.leaving() {
                 return Ok(());
             }
-            terminal.draw(|frame| window.draw(frame))?;
+            let _ = safe_draw::draw(&mut terminal, |frame| window.draw(frame));
             if !event::poll(Duration::from_millis(30))? {
                 continue;
             }
@@ -967,7 +968,7 @@ fn run_roll_window(path: &std::path::Path) -> Result<(), BoxError> {
             if window.leaving() {
                 return Ok(());
             }
-            terminal.draw(|frame| window.draw(frame))?;
+            let _ = safe_draw::draw(&mut terminal, |frame| window.draw(frame));
             if !event::poll(Duration::from_millis(30))? {
                 continue;
             }
@@ -1054,7 +1055,14 @@ fn run_terminal(
             let frame_every = app.frame_interval();
             let due = last_draw.is_none_or(|t| t.elapsed() >= frame_every);
             if due || fresh_input {
-                terminal.draw(|frame| draw(frame, app))?;
+                // Si el dibujo falla, el cuadro se salta y todo sigue (el
+                // audio no depende de la interfaz).
+                match safe_draw::draw(&mut terminal, |frame| draw(frame, app)) {
+                    safe_draw::Outcome::Drawn => {}
+                    safe_draw::Outcome::Panicked(e) | safe_draw::Outcome::Failed(e) => {
+                        app.draw_failed(&e)
+                    }
+                }
                 last_draw = Some(std::time::Instant::now());
                 fresh_input = false;
             }
