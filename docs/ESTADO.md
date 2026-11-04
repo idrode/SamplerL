@@ -2401,6 +2401,45 @@ valor: el par nunca se lee de trozos distintos.
 - **Guía**: «Lo que vale ahora» en «Automatizar con lanes»: cómo leer
   `▸` (en vivo) frente a lo escrito y frente a `∿` sin `▸` (`ramp`/`lfo`).
 
+## Visualizaciones
+
+Pedidas por el usuario, sin fase propia: visualizaciones en la terminal al
+estilo de Strudel, por pista o del master, activables desde Lua. Decidido
+antes de empezar: `punchcard` y `pianoroll` salen del modelo del piano roll
+(no se duplican la vista de ocupación ni el piano roll editable); la
+sintaxis es `track("x"):scope{...}` y `master():spectrum{...}` (las pistas
+no se indexan); las muestras van por colas `rtrb` (las del proyecto) con
+el flag por el lote al compás; la FFT es propia; y la degradación a ASCII,
+por configuración y por `LANG`.
+
+### Parte 1: las muestras
+
+- **`engine/src/viz.rs`**: una cola `rtrb<f32>` (lock-free, un productor y
+  un consumidor) por pista del motor y otra del master (`VIZ_SOURCES` = 9,
+  `VIZ_MASTER` = 8), de `VIZ_CAPACITY` = 16 384 muestras mono (unos 0,34 s
+  a 48 kHz) cada una: 576 KB entre todas, reservados al crear el motor.
+  `VizWriter::push_stereo`/`push` copian lo que cabe y cuentan lo que
+  descartan (nunca bloquean ni reservan); `VizReader::drain_into` lo pasa
+  a un `Vec` del hilo de control. `VizTap` (en el motor): las colas y qué
+  fuentes están encendidas.
+- **En el motor**: cada pista copia, si su visualización está encendida,
+  su salida en mono tras su volumen, su pan y su mute (lo que va al
+  master); el master, tras el limitador (lo que sale). Apagada, no se toca
+  la cola: solo se mira un `bool`. Qué fuentes copian entra por el lote
+  (`Batch::set_viz`, `Command::SetViz`, con su `staged` y `pending`) al
+  empezar el compás. La interfaz vacía con `Controller::viz_samples`.
+  El cálculo (ventanas, FFT, disparo) y el dibujo, en el hilo de la
+  interfaz.
+- **Tests**: `engine/src/viz.rs` (llena, descarta y cuenta; da la vuelta a
+  la cola veinte veces; un productor y un consumidor en dos hilos con
+  400 000 muestras: siempre en orden y lo perdido es solo lo descartado),
+  `engine/tests/viz.rs` (apagadas, nada en ninguna cola; encendidas, la
+  del master es la salida en mono muestra a muestra y la de la pista lo que
+  suena; llena, se queda en su capacidad y vuelve a llenarse al vaciarla;
+  el encendido entra al compás) y `no_alloc.rs` (apagadas no escriben;
+  las nueve encendidas, llenas y vaciándose, sin reservas). `golden.rs`,
+  idéntico.
+
 ## Audio de prueba y problemas conocidos
 
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`

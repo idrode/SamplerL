@@ -1,7 +1,7 @@
 //! El callback de audio no reserva memoria (regla 1 de CLAUDE.md): un
 //! asignador global cuenta las reservas que hace este hilo mientras corre
 //! `Engine::process`, con retrasos (swing, humanize), retrigger, pitch,
-//! instrumentos (polifonía, ADSR, bucles), variantes de duración de los cortes (recortar, estirar y sostener), cortes como instrumento, bend y rev, cortes precalculados (warp, smear) que cambian al compás sonando, formant por corte, lanes de automatización (y su tabla cambiada al compás), el EQ (suavizado y automatizado),
+//! instrumentos (polifonía, ADSR, bucles), variantes de duración de los cortes (recortar, estirar y sostener), cortes como instrumento, bend y rev, cortes precalculados (warp, smear) que cambian al compás sonando, formant por corte, lanes de automatización (y su tabla cambiada al compás), las colas de las visualizaciones encendidas, el EQ (suavizado y automatizado),
 //! el EQ dinámico con sidechain (y la reducción que publica para su vista),
 //! el límite de voces entre pistas y el pánico (puntual y en pausa), efectos por corte (con sus colas), bucles de corte con fundido, nubes de granos en vivo, sintetizadores (mono con accent, slide y el sub de cada nota, polifónicos con unison y sub abierto, un subharm de 8 voces con sus seis capas, un sh101 con legato, curvas y notas en vivo), grupos con sus efectos y macros que se mueven en vivo, mandos MIDI en todos sus destinos (moviéndose y soltándose), cambios de
 //! patrón al compás, un patrón que se suelta a la cola de basura y el paso
@@ -2034,6 +2034,36 @@ fn the_audio_thread_never_allocates() {
         }
     });
     assert_eq!(n, 0, "reservas al cambiar la tabla de lanes sonando");
+
+    // Visualizaciones: apagadas, el motor no escribe en sus colas; todas
+    // encendidas (las 8 pistas y el master), sin vaciarlas (se llenan y
+    // descartan) y vaciándolas desde aquí.
+    let mut seen = Vec::new();
+    for source in 0..engine::VIZ_SOURCES {
+        controller.viz_samples(source, &mut seen);
+    }
+    assert!(seen.is_empty(), "con las visualizaciones apagadas, nada");
+    let mut batch = engine::Batch::new();
+    batch.set_viz([true; engine::VIZ_SOURCES]);
+    controller.apply(batch).unwrap();
+    let n = counted(|| {
+        for _ in 0..600 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas con las visualizaciones encendidas y llenas");
+    let mut drained = Vec::with_capacity(engine::VIZ_CAPACITY);
+    for _ in 0..20 {
+        let n = counted(|| {
+            for _ in 0..8 {
+                engine.process(&mut out, 2);
+            }
+        });
+        assert_eq!(n, 0, "reservas con las visualizaciones vaciándose");
+        drained.clear();
+        controller.viz_samples(engine::VIZ_MASTER, &mut drained);
+        assert!(!drained.is_empty());
+    }
     controller.collect_garbage();
 }
 

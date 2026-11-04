@@ -139,6 +139,9 @@ enum Command {
     /// Tabla de lanes de automatización desde el siguiente compás (al
     /// cargar; en caja: la tabla es grande).
     SetLanes(Box<crate::lane::Lanes>),
+    /// Qué fuentes copian sus muestras para las visualizaciones, desde el
+    /// siguiente compás.
+    SetViz([bool; crate::viz::VIZ_SOURCES]),
     /// Un mando se ha movido a `value` (de 0 a 1; inmediato).
     MoveKnob { index: usize, value: f32 },
     /// Rampa de tempo que entra en el siguiente compás.
@@ -1348,6 +1351,7 @@ pub struct Batch {
     macros: Option<Macros>,
     knobs: Option<crate::knob::Knobs>,
     lanes: Option<Box<crate::lane::Lanes>>,
+    viz: Option<[bool; crate::viz::VIZ_SOURCES]>,
     patterns: Vec<(usize, Option<Pattern>)>,
     arrangement: Option<Option<Arrangement>>,
 }
@@ -1407,6 +1411,13 @@ impl Batch {
         self
     }
 
+    /// Qué fuentes (cada pista del motor y, la última, el master) copian
+    /// sus muestras para las visualizaciones (ver [`crate::viz`]).
+    pub fn set_viz(&mut self, on: [bool; crate::viz::VIZ_SOURCES]) -> &mut Self {
+        self.viz = Some(on);
+        self
+    }
+
     /// Patrón de la pista `track`; `None` la silencia.
     pub fn set_pattern(&mut self, track: usize, pattern: Option<Pattern>) -> &mut Self {
         self.patterns.push((track, pattern));
@@ -1439,6 +1450,8 @@ enum Garbage {
 
 /// Lado de control (UI/script). Envía comandos al hilo de audio sin bloquear.
 pub struct Controller {
+    /// Las muestras de cada fuente para las visualizaciones.
+    viz: [crate::viz::VizReader; crate::viz::VIZ_SOURCES],
     commands: Producer<Command>,
     garbage: Consumer<Garbage>,
     midi: Consumer<MidiNote>,
@@ -1613,6 +1626,8 @@ impl Track {
 /// Lado de audio. Se mueve al callback de audio (o se usa para renderizar
 /// offline). `process` no reserva memoria, no bloquea y no hace E/S.
 pub struct Engine {
+    /// Las colas de las visualizaciones y qué fuentes copian.
+    viz: crate::viz::VizTap,
     commands: Consumer<Command>,
     garbage: Producer<Garbage>,
     playing: Arc<AtomicBool>,
@@ -1741,6 +1756,7 @@ pub fn new_engine(sample_rate: u32) -> (Controller, Engine) {
     let (cmd_tx, cmd_rx) = RingBuffer::new(COMMAND_CAPACITY);
     let (garbage_tx, garbage_rx) = RingBuffer::new(GARBAGE_CAPACITY);
     let (midi_tx, midi_rx) = RingBuffer::new(MIDI_CAPACITY);
+    let (viz_tap, viz_readers) = crate::viz::VizTap::new();
     let playing = Arc::new(AtomicBool::new(false));
     let status = Arc::new(SharedStatus::new(
         crate::sequencer::DEFAULT_BPM,
@@ -1748,6 +1764,7 @@ pub fn new_engine(sample_rate: u32) -> (Controller, Engine) {
     ));
     (
         Controller {
+            viz: viz_readers,
             commands: cmd_tx,
             garbage: garbage_rx,
             midi: midi_rx,
@@ -1755,6 +1772,7 @@ pub fn new_engine(sample_rate: u32) -> (Controller, Engine) {
             status: status.clone(),
         },
         Engine {
+            viz: viz_tap,
             commands: cmd_rx,
             garbage: garbage_tx,
             playing,
@@ -2206,6 +2224,7 @@ impl Controller {
             + usize::from(batch.macros.is_some())
             + usize::from(batch.knobs.is_some())
             + usize::from(batch.lanes.is_some())
+            + usize::from(batch.viz.is_some())
             + usize::from(batch.arrangement.is_some());
         if self.commands.slots() < needed {
             return Err(SendError::QueueFull);
@@ -2238,6 +2257,9 @@ impl Controller {
         }
         if let Some(lanes) = batch.lanes {
             push(Command::SetLanes(lanes));
+        }
+        if let Some(viz) = batch.viz {
+            push(Command::SetViz(viz));
         }
         if let Some(arrangement) = batch.arrangement {
             push(Command::SetArrangement(arrangement));
@@ -2403,6 +2425,14 @@ impl Controller {
     /// Para el secuenciador y las voces que suenan (con fundido).
     pub fn stop(&mut self) -> Result<(), SendError> {
         self.send(Command::Stop, Some(false))
+    }
+
+    /// Las muestras (mono) que la fuente `source` ha copiado desde la
+    /// última vez, al final de `out` (ver [`crate::viz`]).
+    pub fn viz_samples(&mut self, source: usize, out: &mut Vec<f32>) {
+        if let Some(reader) = self.viz.get_mut(source) {
+            reader.drain_into(out);
+        }
     }
 
     pub fn is_playing(&self) -> bool {
@@ -2690,6 +2720,13 @@ impl Engine {
                     self.discard_lanes(old);
                 }
             }
+            Command::SetViz(on) => {
+                if self.batch_open {
+                    self.viz.staged = Some(on);
+                } else {
+                    self.viz.pending = Some(on);
+                }
+            }
             Command::MoveKnob { index, value } => self.knobs.moved(index, value),
             Command::SetMacro { index, value } => {
                 // También en los que esperan: un lote no deshace lo que se
@@ -2746,6 +2783,9 @@ impl Engine {
                 }
                 if let Some(knobs) = self.knobs.staged.take() {
                     self.knobs.pending = Some(knobs);
+                }
+                if let Some(on) = self.viz.staged.take() {
+                    self.viz.pending = Some(on);
                 }
                 if let Some(lanes) = self.staged_lanes.take()
                     && let Some(old) = self.pending_lanes.replace(lanes)
@@ -2971,6 +3011,11 @@ impl Engine {
             && let Some(knobs) = self.knobs.pending.take()
         {
             self.knobs.set_map(knobs);
+        }
+        if step == 0
+            && let Some(on) = self.viz.pending.take()
+        {
+            self.viz.on = on;
         }
         // Las lanes entran con los patrones: una tabla vacía es ninguna.
         if step == 0
@@ -3948,6 +3993,10 @@ impl Engine {
                 dst[0] += l;
                 dst[1] += r;
                 peak = peak.max(l.abs()).max(r.abs());
+                // Para su visualización, si está encendida (si no, nada).
+                if self.viz.on[t] {
+                    self.viz.writers[t].push(0.5 * (l + r));
+                }
                 // Envíos después del volumen, el mute y el solo.
                 for b in 0..BUSES {
                     if !sending[b] {
@@ -4036,6 +4085,7 @@ impl Engine {
             frame[1] = soft_limit(frame[1]);
         }
         self.status.add_master(peak, limited);
+        self.viz.feed(crate::viz::VIZ_MASTER, &self.master[..2 * n]);
         // Tomando una pista: su salida tras sus efectos, en vez del master.
         if let Some(t) = self.tap.filter(|&t| t < MAX_TRACKS) {
             let master = &mut self.master[..2 * n];

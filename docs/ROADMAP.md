@@ -823,3 +823,16 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
     8. ✅ **Valor en vivo visible**: tests de la publicación (sin tearing,
        puntos conocidos); el valor junto a cada parámetro automatizado en
        el panel de efectos, con su unidad y barra; guía.
+16. **Visualizaciones** (pedida por el usuario, al estilo de Strudel):
+    `punchcard`, `pianoroll`, `scope`, `spectrum`, `pitchwheel` y `spiral`
+    por pista o del master, activables desde Lua. Detalle en
+    «Visualizaciones» de [docs/ESTADO.md](ESTADO.md).
+    1. ✅ **Las muestras**: una cola lock-free por pista y otra del master,
+       con su flag, por el lote al compás.
+    2. **`punchcard` y `pianoroll`** desde el modelo del piano roll.
+    3. **`scope`** con disparo por cruce por cero y Braille.
+    4. **`spectrum`** con FFT.
+    5. **Registro, ayuda y guía.**
+    6. **`pitchwheel`, `spiral` y degradación a ASCII.**
+    7. **Inline y en la ventana del editor** (opcional).
+    8. **Recetas, tutorial y documentación.**
