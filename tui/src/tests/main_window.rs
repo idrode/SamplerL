@@ -22,26 +22,25 @@ fn with_the_editor_outside_the_views_take_the_whole_window() {
     pump(&mut main, &mut editor);
     let buffer = draw(&mut main, 120, 40);
     let screen = text(&buffer);
-    // Arriba, el transporte y el enlace; ni rastro del texto del script.
-    assert!(screen.starts_with("■ parado   120.0 BPM"), "{screen}");
+    // Arriba, los menús, y debajo el transporte y el enlace; ni rastro del
+    // texto del script.
+    let header = screen.lines().nth(1).unwrap();
+    assert!(header.starts_with("■ parado   120.0 BPM"), "{screen}");
     assert!(
-        screen
-            .lines()
-            .next()
-            .unwrap()
-            .contains("song.lua · ⇄ editor en su ventana")
+        header.contains("song.lua · ⇄ editor en su ventana"),
+        "{screen}"
     );
     assert!(!screen.contains("bpm(120)"), "{screen}");
-    // El sample, de lado a lado, bajo la cabecera y la regla.
-    assert_eq!(find(&buffer, "┌ sample · drums"), Some((0, 2)), "{screen}");
-    assert_eq!(buffer[(119, 2)].symbol(), "┐");
+    // El sample, de lado a lado, bajo los menús, la cabecera y la regla.
+    assert_eq!(find(&buffer, "┌ sample · drums"), Some((0, 3)), "{screen}");
+    assert_eq!(buffer[(119, 3)].symbol(), "┐");
 
     // Con una sola ventana, el editor a la izquierda (la mitad) y el
     // sample a la derecha.
     let (_, mut single, _engine) = open("main_window_single", Some(SONG));
     let buffer = draw(&mut single, 120, 40);
     let screen = text(&buffer);
-    assert_eq!(find(&buffer, "┌ song.lua"), Some((0, 2)), "{screen}");
+    assert_eq!(find(&buffer, "┌ song.lua"), Some((0, 3)), "{screen}");
     assert!(screen.contains("bpm(120)"), "{screen}");
     let at = find(&buffer, "┌ sample · drums").unwrap();
     assert_eq!(at.0, 60);
@@ -116,10 +115,7 @@ fn the_full_tracker_fits_every_track_widening_or_narrowing_the_columns() {
     let view = many_tracks(8);
     let buffer = draw_widget(ui::FullTrackerPanel(&view), 72, 20);
     let screen = text(&buffer);
-    assert!(
-        screen.contains("tracker · compás 3 "),
-        "{screen}"
-    );
+    assert!(screen.contains("tracker · compás 3 "), "{screen}");
     // Las ocho cabeceras, cada una en su columna de 8 (tras los 3 del
     // número de paso).
     let header = screen.lines().nth(1).unwrap();

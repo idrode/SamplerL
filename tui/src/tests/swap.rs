@@ -120,7 +120,12 @@ fn the_editor_comes_back_from_its_window_with_its_cursor_and_history() {
     let socket = link::socket_path(&socket_dir(&path), &path);
     assert!(!socket.exists());
     let buffer = draw(&mut main, 120, 40);
-    assert_eq!(super::find(&buffer, "┌ song.lua"), Some((0, 2)), "{}", text(&buffer));
+    assert_eq!(
+        super::find(&buffer, "┌ song.lua"),
+        Some((0, 3)),
+        "{}",
+        text(&buffer)
+    );
     // Y se puede volver a sacar.
     main.run_action(Action::EditorWindow);
     assert!(main.view().editor_outside, "{}", main.view().message);

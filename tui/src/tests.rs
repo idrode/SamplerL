@@ -195,12 +195,12 @@ fn lua_errors_show_in_the_editor_and_keep_playing() {
     // En rojo, en el borde del editor.
     let (x, y) = find(&buffer, "✗ error en").unwrap();
     assert_eq!(buffer[(x, y)].fg, Color::Red);
-    // La esquina del editor (bajo la cabecera y la regla).
-    assert_eq!(buffer[(0, 2)].symbol(), "┌");
-    assert_eq!(buffer[(0, 2)].fg, Color::Red);
+    // La esquina del editor (bajo los menús, la cabecera y la regla).
+    assert_eq!(buffer[(0, 3)].symbol(), "┌");
+    assert_eq!(buffer[(0, 3)].fg, Color::Red);
     // Y en la cabecera.
     let (x, y) = find(&buffer, "✗ error l.3").unwrap();
-    assert_eq!((y, buffer[(x, y)].fg), (0, Color::Red));
+    assert_eq!((y, buffer[(x, y)].fg), (1, Color::Red));
     // El archivo se guardó aunque sea inválido.
     assert_eq!(
         std::fs::read_to_string(&path).unwrap().trim_end(),
@@ -745,13 +745,13 @@ fn the_error_line_is_highlighted_in_the_editor() {
     app.editor
         .move_cursor(ratatui_textarea::CursorMove::Jump(0, 0));
     let buffer = draw(&mut app, 120, 40);
-    // Línea 3 en la fila 5 de la pantalla (cabecera, regla, borde y 2),
-    // en todo su ancho dentro del editor; ninguna otra.
-    assert_eq!(error_rows(&buffer, 5), vec![5]);
+    // Línea 3 en la fila 6 de la pantalla (menús, cabecera, regla, borde
+    // y 2), en todo su ancho dentro del editor; ninguna otra.
+    assert_eq!(error_rows(&buffer, 5), vec![6]);
     let (x, _) = find(&buffer, "track(\"drums\"").unwrap();
-    assert_eq!(buffer[(x, 5)].bg, ui::error_line());
-    assert_eq!(buffer[(x, 5)].symbol(), "t");
-    assert_ne!(buffer[(70, 5)].bg, ui::error_line(), "fuera del editor");
+    assert_eq!(buffer[(x, 6)].bg, ui::error_line());
+    assert_eq!(buffer[(x, 6)].symbol(), "t");
+    assert_ne!(buffer[(70, 6)].bg, ui::error_line(), "fuera del editor");
 
     // Sin error, sin resaltado.
     replace_all(&mut app, SONG);
@@ -2534,6 +2534,7 @@ mod learn;
 mod length;
 mod main_window;
 mod masking;
+mod menu;
 mod midi_in;
 mod midi_out;
 mod mouse;

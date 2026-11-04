@@ -834,6 +834,8 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Abrir el panel de dispositivos en su ventana | El panel de dispositivos en una terminal nueva ([dispositivos] terminal, o [editor] terminal, en config.toml); si no se puede lanzar, se abre aquí | — |
 | Volver a meter el panel de dispositivos en la principal | Con el panel de dispositivos en su ventana: la cierra y lo abre aquí | — |
 | Modo vim | Enciende o apaga el modo vim del editor en esta sesión (el de siempre, `[editor] modo`) | — |
+| Menús | Abre la barra de menús: ←→ menú, ↑↓ entrada, Enter ejecuta, la letra subrayada abre su menú | F10 |
+| Qué sabe hacer esta terminal | Dice si hay truecolor, Unicode, teclas al soltar y ratón, y dónde está la configuración | — |
 | Salir | Sale (pide confirmación si hay cambios sin guardar) | Ctrl-Q |
 | Snippet: `amen`, `fill`, `ghost`, `intro`, `euclid`, `melodia`, `polirritmo`, `barrido`, `groove`, `instrumento`, `duraciones`, `corte-melodia`, `bombo-bend`, `warp`, `lane-barrido`, `lane-pan`, `viz-espectro`, `viz-pista` | Inserta el snippet en el cursor (ver «Snippets» en la sección 4) | — |
 
@@ -1218,6 +1220,7 @@ paleta de 256.
 | `ordenes` | Línea de órdenes | `f2` |
 | `completar` | Autocompletar | `f4` |
 | `salir` | Salir | `ctrl-q` |
+| `menu` | Menús | `f10` |
 | `modo_tocar` | Modo tocar | `esc` |
 | `deshacer` | Deshacer | `ctrl-z`, `ctrl-u` |
 | `rehacer` | Rehacer | `ctrl-r` |

@@ -119,6 +119,9 @@ mod tests {
         });
         assert_eq!(outcome, Outcome::Drawn);
         let text = format!("{:?}", terminal.backend().buffer());
-        assert!(text.contains("bien") && !text.contains("audio sigue"), "{text}");
+        assert!(
+            text.contains("bien") && !text.contains("audio sigue"),
+            "{text}"
+        );
     }
 }

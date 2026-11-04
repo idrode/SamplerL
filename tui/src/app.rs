@@ -31,6 +31,7 @@ mod freeze;
 mod key;
 mod learn;
 mod macros;
+mod menu;
 mod mouse;
 mod vim;
 mod zoom;
@@ -289,7 +290,6 @@ pub struct App {
     sidechain: Option<crate::sidechain::Sidechain>,
     /// Panel de las lanes de automatización abierto, dónde se dibujó, el
     /// punto elegido y el que se arrastra.
-
     lanes_area: Option<ratatui::layout::Rect>,
     lanes_focus: Option<lanes::LaneFocus>,
     lane_drag: Option<lanes::LaneDrag>,
@@ -379,6 +379,8 @@ pub struct App {
     /// El foco puesto a mano en un panel sin cursor propio (mezcla,
     /// efectos, visualizaciones del master); ver [`crate::focus`].
     chosen_focus: Option<crate::focus::Panel>,
+    /// La barra de menús abierta (F10).
+    menu: Option<crate::menu::MenuState>,
     /// La pestaña elegida del dock (`None`: la primera).
     dock_tab: crate::layout::Tab,
     /// La rejilla del último dibujo.
@@ -544,6 +546,7 @@ impl App {
             browser: None,
             tracker_edit: None,
             chosen_focus: None,
+            menu: None,
             dock_tab: crate::layout::Tab::None,
             grid: None,
             pending_edit: None,
@@ -3499,6 +3502,8 @@ impl App {
             Action::EditRoll => self.open_roll_cursor(),
             Action::RollWindow => self.launch_roll_window(),
             Action::RollBack => self.reclaim_roll_window(),
+            Action::OpenMenu => self.toggle_menu(),
+            Action::TerminalInfo => self.terminal_info(),
             Action::Quit => {
                 let armed = std::mem::replace(&mut self.quit_armed, false);
                 return self.request_quit(armed);
@@ -3958,6 +3963,9 @@ impl App {
                 _ => {}
             }
             return Flow::Continue;
+        }
+        if self.menu.is_some() {
+            return self.handle_menu(input);
         }
         if self.palette.is_some() {
             return self.handle_palette(input);
@@ -4588,7 +4596,8 @@ impl App {
             playing_mode: self.mode == Mode::Play,
             focus: self.focus(),
             dock_tab: self.dock_tab,
-            menu_bar: false,
+            menu_bar: !self.editor_window(),
+            menu: self.menu_view(),
             master_viz: false,
             master_views: Vec::new(),
             palette: self.palette.as_ref().map(|p| {

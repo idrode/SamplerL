@@ -55,11 +55,13 @@ fn the_16_rows_show_as_soon_as_they_fit_in_both_windows() {
         // Mediano sin alto: se desplaza (parado, desde la primera fila).
         let screen = text(&draw(app, 100, 30));
         let rows = tracker_rows(&screen);
-        assert!(!rows.is_empty() && rows.len() < 16 && rows[0] == 0, "{rows:?}\n{screen}");
+        assert!(
+            !rows.is_empty() && rows.len() < 16 && rows[0] == 0,
+            "{rows:?}\n{screen}"
+        );
         // Pequeño: el tracker es la primera pestaña, y se desplaza.
         let screen = text(&draw(app, 80, 24));
         let rows = tracker_rows(&screen);
         assert!(!rows.is_empty() && rows.len() < 16, "{rows:?}\n{screen}");
     }
 }
-

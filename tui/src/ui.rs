@@ -148,7 +148,6 @@ impl ClashPanel<'_> {
             .max()
             .unwrap_or(0)
     }
-
 }
 
 /// Color de la puntuación de un choque según lo fuerte que es.
@@ -724,7 +723,8 @@ pub fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rec
         .as_ref()
         .filter(|_| view.playing_mode)
         .map_or(String::new(), |l| format!(" · {l}"));
-    let mut block = panel_block(view, crate::focus::Panel::Code).title(format!(" {}{dirty}{project}{link} ", view.file));
+    let mut block = panel_block(view, crate::focus::Panel::Code)
+        .title(format!(" {}{dirty}{project}{link} ", view.file));
     if view.external_change {
         block = block.title(
             Line::from(" ⚠ cambiado fuera · F3 recargar ")
@@ -1208,7 +1208,9 @@ pub fn track_summary(track: &crate::model::TrackView) -> String {
 /// Las teclas de un popup abierto (la paleta, el explorador...), si hay
 /// uno.
 pub fn popup_keys(view: &ViewModel) -> Option<&'static str> {
-    Some(if view.palette.is_some() {
+    Some(if view.menu.is_some() {
+        "MENÚ: ←→ menú · ↑↓ entrada · Enter ejecutar · letra: entrada o menú · Esc cerrar"
+    } else if view.palette.is_some() {
         "PALETA: escribe para filtrar · ↑↓ elegir · Enter ejecutar · Esc cerrar"
     } else if view.slots.is_some() {
         "RANURA: pulsa 1-9 · cualquier otra tecla cancela"
@@ -2057,7 +2059,9 @@ impl Widget for OccupancyPanel<'_> {
             ));
         }
         title.push(' ');
-        panel_block(view, crate::focus::Panel::Occupancy).title(title).render(area, buf);
+        panel_block(view, crate::focus::Panel::Occupancy)
+            .title(title)
+            .render(area, buf);
         if inner.height < 2 || inner.width as usize <= label {
             return;
         }

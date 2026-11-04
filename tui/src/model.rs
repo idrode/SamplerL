@@ -27,6 +27,8 @@ pub struct ViewModel {
     pub dock_tab: crate::layout::Tab,
     /// Hay barra de menús (con sitio, la principal).
     pub menu_bar: bool,
+    /// El menú abierto.
+    pub menu: Option<crate::menu::MenuView>,
     /// Scope y espectro del master en su panel, y lo que dibujan (el
     /// scope primero).
     pub master_viz: bool,

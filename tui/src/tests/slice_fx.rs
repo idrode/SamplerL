@@ -41,7 +41,11 @@ fn with_a_full_track_chain_the_slices_fold_into_one_line() {
     assert!(app.view().error.is_none(), "{:?}", app.view().error);
     // Con el alto justo (el de siempre del panel), se pliegan.
     let view = app.view();
-    let screen = text(&draw_widget(ui::FxPanel(&view), 160, ui::fx_panel_height(&view)));
+    let screen = text(&draw_widget(
+        ui::FxPanel(&view),
+        160,
+        ui::fx_panel_height(&view),
+    ));
     assert!(screen.contains("◇ efectos en 1, 2 snare"), "{screen}");
     // Los cuatro de la pista se siguen viendo.
     assert!(screen.contains("› eq plano"), "{screen}");

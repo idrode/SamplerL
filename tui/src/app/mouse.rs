@@ -80,6 +80,10 @@ impl App {
         if action == MouseAction::Down {
             self.slice_drag = None;
         }
+        // La barra de menús y el menú abierto, antes que nada.
+        if self.menu_mouse(action, column, row) {
+            return;
+        }
         // El piano roll, si se ve aquí y el ratón está encima (o arrastra).
         if let Some(area) = self.roll.area.filter(|_| self.local_roll_view_shown())
             && self.roll_mouse(action, column, row, area)

@@ -58,9 +58,16 @@ fn wide_has_three_columns_the_reference_and_the_effects_below() {
     let (rx, ry) = find(&buffer, "┌ referencia · EDITOR").expect(&screen);
     assert_eq!(rx, mx);
     assert!(ry > my);
-    assert!(screen.contains("Ctrl-S        guardar y cargar"), "{screen}");
+    assert!(
+        screen.contains("Ctrl-S        guardar y cargar"),
+        "{screen}"
+    );
     // Los efectos, a lo ancho abajo.
-    assert_eq!(find(&buffer, "┌ efectos por pista").map(|p| p.0), Some(0), "{screen}");
+    assert_eq!(
+        find(&buffer, "┌ efectos por pista").map(|p| p.0),
+        Some(0),
+        "{screen}"
+    );
 }
 
 #[test]
@@ -91,11 +98,19 @@ fn no_size_breaks_the_drawing() {
     let (_, mut app, mut engine) = open("screen_sizes", Some(SONG));
     offline::render(&mut engine, 3 * STEP, 2);
     app.tick();
-    for width in [1u16, 2, 10, 39, 40, 59, 60, 79, 80, 99, 100, 120, 159, 160, 200, 300] {
-        for height in [1u16, 2, 9, 10, 15, 16, 19, 20, 24, 29, 30, 40, 44, 45, 60, 90] {
+    for width in [
+        1u16, 2, 10, 39, 40, 59, 60, 79, 80, 99, 100, 120, 159, 160, 200, 300,
+    ] {
+        for height in [
+            1u16, 2, 9, 10, 15, 16, 19, 20, 24, 29, 30, 40, 44, 45, 60, 90,
+        ] {
             let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
             let outcome = crate::safe_draw::draw(&mut terminal, |frame| ui::draw(frame, &mut app));
-            assert_eq!(outcome, crate::safe_draw::Outcome::Drawn, "{width}×{height}");
+            assert_eq!(
+                outcome,
+                crate::safe_draw::Outcome::Drawn,
+                "{width}×{height}"
+            );
         }
     }
 }

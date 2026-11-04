@@ -124,13 +124,19 @@ impl Dock {
             }
             short[i] = true;
         }
-        self.tabs.iter().zip(&short).map(|(t, s)| t.label(*s)).collect()
+        self.tabs
+            .iter()
+            .zip(&short)
+            .map(|(t, s)| t.label(*s))
+            .collect()
     }
 }
 
 /// Dónde va cada cosa.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Grid {
+    /// Toda la pantalla.
+    pub screen: Rect,
     pub size: Size,
     pub menu: Option<Rect>,
     pub header: Option<Rect>,
@@ -323,6 +329,7 @@ fn dock(area: Rect, tabs: Vec<Tab>) -> Option<Dock> {
 pub fn grid(screen: Rect, needs: &Needs) -> Grid {
     let size = Size::of(screen.width, screen.height);
     let mut g = Grid {
+        screen,
         size,
         menu: None,
         header: None,
@@ -499,7 +506,9 @@ mod tests {
         let rects = g.rects();
         for (i, a) in rects.iter().enumerate() {
             assert!(
-                screen.contains(a.as_position()) && a.right() <= screen.right() && a.bottom() <= screen.bottom(),
+                screen.contains(a.as_position())
+                    && a.right() <= screen.right()
+                    && a.bottom() <= screen.bottom(),
                 "{a:?} se sale de {screen:?}"
             );
             for b in &rects[i + 1..] {
@@ -551,9 +560,15 @@ mod tests {
                 Tab::Panel(Panel::Lanes),
             ],
         };
-        assert_eq!(dock(60).labels(), ["3 tracker", "4 mezcla", "5 efectos", "6 lanes"]);
+        assert_eq!(
+            dock(60).labels(),
+            ["3 tracker", "4 mezcla", "5 efectos", "6 lanes"]
+        );
         // A 40 basta con acortar el más largo.
-        assert_eq!(dock(40).labels(), ["3 trk", "4 mezcla", "5 efectos", "6 lanes"]);
+        assert_eq!(
+            dock(40).labels(),
+            ["3 trk", "4 mezcla", "5 efectos", "6 lanes"]
+        );
         assert_eq!(dock(36).labels(), ["3 trk", "4 mezcla", "5 fx", "6 lanes"]);
         assert_eq!(dock(20).labels(), ["3 trk", "4 mez", "5 fx", "6 lan"]);
     }
@@ -597,7 +612,10 @@ mod tests {
     fn small_puts_the_tracker_and_the_mixer_in_tabs() {
         let g = grid(Rect::new(0, 0, 80, 24), &needs());
         assert_eq!(g.size, Size::Small);
-        assert!(g.menu.is_none(), "a 80 columnas la barra de menús no ocupa fila");
+        assert!(
+            g.menu.is_none(),
+            "a 80 columnas la barra de menús no ocupa fila"
+        );
         assert_eq!(g.editor.unwrap().width, 40);
         assert!(g.wave.is_some());
         assert!(g.tracker.is_none() && g.mixer.is_none());

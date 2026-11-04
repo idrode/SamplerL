@@ -98,6 +98,8 @@ pub enum Action {
     DevicesWindow,
     DevicesBack,
     ToggleVim,
+    OpenMenu,
+    TerminalInfo,
     Quit,
 }
 
@@ -645,6 +647,18 @@ pub const ACTIONS: &[ActionDef] = &[
         action: Action::ToggleVim,
         name: "Modo vim",
         description: "Enciende o apaga el modo vim del editor en esta sesión (el de siempre, `[editor] modo`)",
+        keys: "",
+    },
+    ActionDef {
+        action: Action::OpenMenu,
+        name: "Menús",
+        description: "Abre la barra de menús: ←→ menú, ↑↓ entrada, Enter ejecuta, la letra subrayada abre su menú",
+        keys: "F10",
+    },
+    ActionDef {
+        action: Action::TerminalInfo,
+        name: "Qué sabe hacer esta terminal",
+        description: "Dice si hay truecolor, Unicode, teclas al soltar y ratón, y dónde está la configuración",
         keys: "",
     },
     ActionDef {

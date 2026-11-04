@@ -13,10 +13,11 @@ mod focus;
 mod highlight;
 mod history;
 mod key_panel;
-mod layout;
 mod lanes_edit;
 mod lanes_panel;
+mod layout;
 mod link;
+mod menu;
 mod midi;
 #[cfg(feature = "midi")]
 mod midi_io;

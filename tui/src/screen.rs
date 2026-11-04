@@ -116,6 +116,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         return;
     }
 
+    if let Some(area) = grid.menu {
+        draw_menu_bar(&view, area, frame.buffer_mut());
+    }
     if let Some(area) = grid.header {
         Header(&view).render(area, frame.buffer_mut());
     }
@@ -136,7 +139,15 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
     let mut place = |panel: Panel, area: Rect, frame: &mut Frame, panels: &mut PanelAreas| {
         panels.focus.push((area, panel));
-        draw_panel(&view, panel, area, frame, panels, &mut roll_area, &mut lanes_area);
+        draw_panel(
+            &view,
+            panel,
+            area,
+            frame,
+            panels,
+            &mut roll_area,
+            &mut lanes_area,
+        );
     };
     for panel in [
         Panel::Tracker,
@@ -181,8 +192,28 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     app.set_roll_area(roll_area);
     app.set_lanes_area(lanes_area);
     app.panels = panels;
-    app.set_grid(grid);
     ui::draw_popups(frame, &view, popup);
+    // El menú abierto, encima de todo; sin fila propia (terminal pequeña),
+    // su barra tapa la de arriba mientras está abierto.
+    if let Some(menu) = &view.menu {
+        let bar = grid.menu.unwrap_or(Rect {
+            height: 1,
+            ..screen
+        });
+        draw_menu_bar(&view, bar, frame.buffer_mut());
+        let area = crate::menu::dropdown_area(screen, bar, menu);
+        frame.render_widget(crate::menu::Dropdown(menu), area);
+    }
+    app.set_grid(grid);
+}
+
+/// La barra de menús en `area`.
+fn draw_menu_bar(view: &ViewModel, area: Rect, buf: &mut Buffer) {
+    crate::menu::MenuBar {
+        open: view.menu.as_ref().map(|m| m.open),
+        hint: "F10 menú · F1 paleta ",
+    }
+    .render(area, buf);
 }
 
 /// La primera fila de `area` (las pestañas) y lo demás.
@@ -309,10 +340,16 @@ impl Widget for Header<'_> {
         let mut left = ui::transport_line(view);
         if let Some(error) = &view.error {
             let at = error.line.map_or(String::new(), |l| format!(" l.{l}"));
-            left.push_span(Span::from(format!("   ✗ error{at}")).fg(error_color()).bold());
+            left.push_span(
+                Span::from(format!("   ✗ error{at}"))
+                    .fg(error_color())
+                    .bold(),
+            );
         }
         if !view.diagnostics.is_empty() {
-            left.push_span(Span::from(format!("   ⚠ {}", view.diagnostics.len())).fg(warning_color()));
+            left.push_span(
+                Span::from(format!("   ⚠ {}", view.diagnostics.len())).fg(warning_color()),
+            );
         }
         // Con el editor en su ventana, el archivo y el enlace (aquí no hay
         // borde del editor que los diga).
@@ -415,10 +452,14 @@ impl Widget for KeysLine<'_> {
         }
         let keys = ui::keys_text(view);
         // Si las teclas ya dicen de quién son («TOCAR: ...»), no se repite.
-        let labelled = keys
-            .split_once(": ")
-            .is_some_and(|(head, _)| !head.is_empty() && head.chars().all(|c| c.is_uppercase() || c == ' '));
-        let owner = if labelled { String::new() } else { keys_owner(view) };
+        let labelled = keys.split_once(": ").is_some_and(|(head, _)| {
+            !head.is_empty() && head.chars().all(|c| c.is_uppercase() || c == ' ')
+        });
+        let owner = if labelled {
+            String::new()
+        } else {
+            keys_owner(view)
+        };
         let mut spans = Vec::new();
         if !owner.is_empty() {
             spans.push(Span::from(format!("{owner}  ")).fg(accent()).bold());

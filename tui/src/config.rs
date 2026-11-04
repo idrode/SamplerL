@@ -69,6 +69,7 @@ pub const BINDABLE: &[(&str, Bound, &[&str])] = &[
     ("ordenes", Bound::Action(Action::Commands), &["f2"]),
     ("completar", Bound::Action(Action::Complete), &["f4"]),
     ("salir", Bound::Action(Action::Quit), &["ctrl-q"]),
+    ("menu", Bound::Action(Action::OpenMenu), &["f10"]),
     ("modo_tocar", Bound::Action(Action::PlayMode), &["esc"]),
     (
         "deshacer",
@@ -1711,7 +1712,7 @@ brillo = "red"
             [
                 "[teclas] cargar: F1 es siempre la paleta de comandos",
                 "[teclas] explorador: Alt-S ya es de guardar; no se usa",
-                "[teclas] «inventada» no existe (hay: paleta, guardar, cargar, marcha, cue, ir_al_error, ir_a_linea, buscar, buscar_siguiente, buscar_anterior, siguiente_pista, recargar, ordenes, completar, salir, modo_tocar, deshacer, rehacer, explorador, tap_tempo, macros, metronomo, exportar, seccion_siguiente, seccion_anterior, repetir_seccion, variante, resaltado, ocupacion, piano_roll, editar_roll, panico, pausa_panico)",
+                "[teclas] «inventada» no existe (hay: paleta, guardar, cargar, marcha, cue, ir_al_error, ir_a_linea, buscar, buscar_siguiente, buscar_anterior, siguiente_pista, recargar, ordenes, completar, salir, menu, modo_tocar, deshacer, rehacer, explorador, tap_tempo, macros, metronomo, exportar, seccion_siguiente, seccion_anterior, repetir_seccion, variante, resaltado, ocupacion, piano_roll, editar_roll, panico, pausa_panico)",
                 "[teclas] salir: «q»: una letra sin ctrl- ni alt- escribiría texto",
                 "[teclas] Ctrl-G era de ir_al_error; ahora es de marcha",
                 "[colores] tenue: color no válido",

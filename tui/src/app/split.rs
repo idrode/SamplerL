@@ -92,6 +92,8 @@ fn editor_side(action: Action) -> bool {
     matches!(
         action,
         Action::ToggleVim
+            | Action::OpenMenu
+            | Action::TerminalInfo
             | Action::Undo
             | Action::Redo
             | Action::ToggleComment
@@ -284,6 +286,11 @@ impl App {
 
     pub(super) fn is_main_window(&self) -> bool {
         matches!(self.link, Some(Link::Main(_)))
+    }
+
+    /// Esta es la ventana del editor (`tui --window-editor`).
+    pub(super) fn editor_window(&self) -> bool {
+        matches!(self.link, Some(Link::Editor(_)))
     }
 
     /// Etiquetas que conoce la principal (en el editor separado).
