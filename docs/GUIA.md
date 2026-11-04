@@ -4281,7 +4281,7 @@ envolvente se fija al cargar).
 
 ### Un sub dentro del bajo (bloque sub)
 
-Cualquier sintetizador de bajo (`acid`, `sub`) tiene debajo un **sub**:
+Cualquier sintetizador de bajo (`acid`, `sub`, `sh101`) tiene debajo un **sub**:
 una onda a la frecuencia de su oscilador dividida por `sub_div` (2, una
 octava abajo; 3, una octava y una quinta; 4, dos octavas...). No es otro
 oscilador: sale de la fase del suyo contando cuántas veces vuelve a
@@ -4308,6 +4308,11 @@ track("bass", bass)
 
 El tracker marca las notas con su propio sub (`C2{sub}`) y el panel del
 sintetizador enseña el bloque sub solo cuando suena.
+
+**Límites.** `sub_div` va de 1 a 16 y no se automatiza (cambiarlo a media
+nota sería un salto de octava): por paso, sí. `"pulse25"` es el pulso
+estrecho del SH-101 y solo tiene sentido con `sub_div = 4`. El `subharm`
+no tiene bloque sub: sus subs son las capas `s1` a `s4`.
 
 ### Poliritmos de subarmónicos (subharm)
 
@@ -4396,6 +4401,11 @@ track("sh", subharm{
 Y con `voices = 3` toca acordes: cada voz con sus seis capas (cuesta
 alrededor de un 1,5 % de un núcleo por voz).
 
+**Límites.** Como mucho 8 voces (`voices`, de 1 a 8). Las capas (`div`,
+`rdiv`, `pan`, `level`) no admiten `ramp()`, `lfo()` ni lanes: cambian con
+el patrón, al compás; el filtro (`cutoff`, `res`...) sí. `div` y `rdiv` van
+de 1 a 16. No tiene bloque sub ni `quality`.
+
 ### Un monosynth de bajo y lead (sh101)
 
 `sh101{...}` es un monosynth como el SH-101. Un oscilador con la sierra
@@ -4471,6 +4481,13 @@ pliega menos cuando satura con mucha resonancia, por un 25 % más de CPU
 (alrededor de un 1,3 % de un núcleo, frente al 1 % con `quality = 1`).
 `hpf` (0 a 3) añade un paso alto fijo tras el filtro y `drift` una deriva
 de afinación mínima y lenta, la misma en cada render con la misma semilla.
+
+**Límites.** Es solo monofónico: no tiene `voices` (para acordes, el
+`subharm` con `voices` o un instrumento de samples). La envolvente (`a`,
+`d`, `s`, `r`), `quality`, `hpf`, `lfo_sync` y los modos (`vca`,
+`glide_mode`, `pwm_src`, `lfo_wave`) no admiten `ramp()`, `lfo()` ni
+lanes; el corte, la resonancia, los niveles, `pw`, el glide y el LFO, sí
+(la tabla de [`sh101`](#sh101-opciones-) dice cuáles).
 
 #### Paso a paso
 
@@ -4565,6 +4582,10 @@ Con `pressure = { "gain", range = 1 }` la nota solo suena mientras se
 aprieta (como un instrumento de viento); con `range = 0.5`, la presión
 añade la otra mitad del volumen. En un `sh101` (mono), la expresión es la
 de la nota que suena.
+
+**A medias.** La expresión por nota está hecha y probada con mensajes
+MIDI sintéticos, pero aún no con un Seaboard de verdad: puede que su
+rango de bend o sus canales pidan ajustes en `[midi]`.
 
 ### Una caja más grave que dura lo mismo
 
