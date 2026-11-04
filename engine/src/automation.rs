@@ -51,6 +51,10 @@ pub enum Curve {
     /// Sigue a la macro `index`: `from` con la macro a 0 y `to` a 1 (las
     /// frecuencias, en escala logarítmica).
     Macro { index: u8, from: f32, to: f32 },
+    /// Sigue a la lane `index` de la tabla del motor (ver [`crate::lane`]);
+    /// `min` y `max` son sus extremos (para validar el rango sin la tabla).
+    /// Si la tabla no la tiene, `min`.
+    Lane { index: u8, min: f32, max: f32 },
 }
 
 /// Lo que una curva puede mirar además de la posición de la canción: el
@@ -60,6 +64,8 @@ pub enum Curve {
 #[derive(Debug, Clone, Copy)]
 pub struct CurveEnv<'a> {
     pub macros: &'a Macros,
+    /// Las lanes de automatización (la tabla del motor).
+    pub lanes: &'a crate::lane::Lanes,
 }
 
 /// Las macros a 0, para evaluar fuera del motor (tests, precálculo).
@@ -69,6 +75,7 @@ impl CurveEnv<'static> {
     /// Sin nada que se mueva en vivo: las macros a 0.
     pub const IDLE: CurveEnv<'static> = CurveEnv {
         macros: &IDLE_MACROS,
+        lanes: &crate::lane::NO_LANES,
     };
 }
 
@@ -78,7 +85,11 @@ impl Curve {
     /// macros en `macros`. Con `log`, se interpola en escala logarítmica
     /// (frecuencias).
     pub fn value(&self, steps: f64, seconds: f64, macros: &Macros, log: bool) -> f32 {
-        self.value_in(steps, seconds, 0.0, &CurveEnv { macros }, log)
+        let env = CurveEnv {
+            macros,
+            ..CurveEnv::IDLE
+        };
+        self.value_in(steps, seconds, 0.0, &env, log)
     }
 
     /// Como [`Curve::value`], para una curva que suena en un golpe cuyo
@@ -92,7 +103,11 @@ impl Curve {
         macros: &Macros,
         log: bool,
     ) -> f32 {
-        self.value_in(steps, seconds, origin, &CurveEnv { macros }, log)
+        let env = CurveEnv {
+            macros,
+            ..CurveEnv::IDLE
+        };
+        self.value_in(steps, seconds, origin, &env, log)
     }
 
     /// Lo que usa el motor: como [`Curve::value_at`], con todo lo que
@@ -106,6 +121,13 @@ impl Curve {
         log: bool,
     ) -> f32 {
         let (a, b, t) = match *self {
+            // La lane da el valor ella sola (con su propia escala).
+            Curve::Lane { index, min, .. } => {
+                return env
+                    .lanes
+                    .get(index as usize)
+                    .map_or(min, |lane| lane.value(steps));
+            }
             Curve::Macro { index, from, to } => (
                 from,
                 to,
@@ -141,6 +163,7 @@ impl Curve {
             Curve::Ramp { from, to, .. }
             | Curve::Hit { from, to, .. }
             | Curve::Macro { from, to, .. } => (from, to),
+            Curve::Lane { min, max, .. } => (min, max),
             Curve::Lfo { min, max, .. } => (min, max),
         }
     }
@@ -232,6 +255,9 @@ pub(crate) fn check_curve(curve: &Curve) -> Result<(), &'static str> {
         }
         Curve::Macro { index, .. } if index as usize >= MAX_MACROS => {
             Err("no existe esa macro (hay 8)")
+        }
+        Curve::Lane { index, .. } if index as usize >= crate::lane::MAX_LANES => {
+            Err("no existe esa lane (hay 32)")
         }
         _ => Ok(()),
     }

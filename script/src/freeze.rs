@@ -164,6 +164,8 @@ fn period_steps(curve: &Curve) -> Option<u64> {
         // La rampa de un golpe vuelve a empezar con su golpe.
         Curve::Hit { .. } => return Some(1),
         Curve::Lfo { .. } | Curve::Macro { .. } => return None,
+        // Lo que dura una lane está en su tabla, no en la curva.
+        Curve::Lane { .. } => return None,
     };
     (steps.fract() == 0.0 && steps >= 1.0).then_some(steps as u64)
 }

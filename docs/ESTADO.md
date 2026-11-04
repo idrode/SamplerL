@@ -2065,6 +2065,71 @@ el corte o sus valores: hacerlo al cargar, síncrono, no se nota.
 Lo medido está arriba (duraciones a ±1 frame, tono por YIN, saltos en las
 uniones); que suene bien lo dice el usuario con auriculares.
 
+## Lanes de automatización
+
+Pedida por el usuario, sin fase propia: una curva de puntos que lleva un
+parámetro a lo largo del progreso de la pista, con duración propia (como
+las envolventes de clip no enlazadas de un DAW). Decidido antes de
+empezar: la sintaxis es `track("x"):auto("lowpass.cutoff", puntos, {...})`
+(las pistas no se indexan), y un nombre ambiguo va al primero con aviso;
+la lane es una curva más (`Curve::Lane`, que apunta a una tabla fija del
+motor), así que vale donde vale `ramp()` y se suaviza y combina igual; las
+posiciones van en compases; `once` vuelve al valor fijo al acabar y `hold`
+se queda en el último; el panel es aparte (el tracker es vertical) y solo
+escribe en el código si la tabla de puntos está escrita tal cual.
+
+### Parte 0: el contexto de evaluación
+
+`automation::CurveEnv { macros, lanes }`: lo que mira una curva además de
+la posición, por referencia, en los relojes de cada trozo (`Clock`,
+`BusClock`, `SongClock`, `grain::Position`); `Curve::value_in` lo recibe
+(`value` y `value_at` siguen como atajos con las macros). El motor lo arma
+al empezar cada trozo con copias locales, sin tocar `self`. Commit aparte,
+con `golden.rs` idéntico y `no_alloc.rs` en verde.
+
+### Parte 1: el modelo y la evaluación
+
+- **`engine/src/lane.rs`**: `LanePoint { at (pasos desde el inicio de la
+  lane), value, curve }` y `LaneCurve::{Linear, Exp, Smooth, Step}` (cómo va
+  ese punto hacia el siguiente: recta; exponencial, la media geométrica,
+  con un extremo en 0 o negativo, recta; smoothstep; o se queda y salta).
+  `Lane::new(puntos, length, log)` valida (de 1 a `MAX_LANE_POINTS` = 64
+  puntos, posiciones crecientes y sin repetir dentro de `0..=length`,
+  `length` de más de 0 a `MAX_LANE_STEPS` = 1024 pasos, valores > 0 con
+  `log`) y guarda los puntos en un array fijo (Copy, ~1 KB). `Lane::at(t)`
+  busca el tramo por bisección (`partition_point`, sin reservas): antes del
+  primer punto, el primero; después del último, el último; en los puntos,
+  su valor exacto. Con `log`, `linear` y `smooth` interpolan en
+  logaritmos (frecuencias). `Lane::value(steps)` la repite cada `length`
+  pasos.
+- **La tabla**: `Lanes { lanes: [Option<Lane>; MAX_LANES] }` (32 huecos,
+  ~32 KB; las dos constantes, fáciles de subir). Entra entera por el lote
+  (`Batch::set_lanes`, `Command::SetLanes(Box<Lanes>)`, con su `staged` y
+  `pending` como las macros) al empezar el compás, en el mismo que los
+  patrones que la siguen; la vieja vuelve por la cola de basura
+  (`Garbage::Lanes`). Una tabla vacía es ninguna.
+- **`Curve::Lane { index, min, max }`**: sigue a la lane `index`; `min` y
+  `max` son sus extremos, así que la validación de rangos de siempre sirve
+  sin mirar la tabla (y `check_curve` rechaza un índice de 32 o más). Si
+  el hueco está vacío, `min`. Como cualquier curva, vale en los efectos de
+  la pista, de un corte y de un grupo, la mezcla, los buses, el
+  sintetizador, los granos y la forma de un corte por golpe; se evalúa cada
+  32 frames y se suaviza (~5 ms) como siempre. Los parámetros del
+  sintetizador escalan sus extremos (`Param::curve`); los puntos los escala
+  quien hace la lane.
+- **En la mezcla**: `Engine::mix` saca la tabla de su `Option<Box>` durante
+  el trozo (`mix_with` la presta a los relojes) y la devuelve al acabar:
+  solo se mueve un puntero. Los golpes (`per_hit`, fuera de la mezcla) la
+  leen en su sitio.
+- **Tests**: `engine/tests/lanes.rs` (las cuatro curvas en los puntos y a
+  un cuarto y a mitad de tramo, la escala log, exp con un extremo negativo,
+  antes del primer punto y la repetición; validación; una lane mueve el
+  volumen de una pista en el motor a ±0,004 en seis pasos; un hueco vacío
+  da el mínimo; una tabla vacía, bit a bit lo de siempre; un índice que no
+  existe, error) y `no_alloc.rs` (cinco lanes con las cuatro curvas en dos
+  filtros, el volumen y el bend de los cortes, y la tabla cambiada al
+  compás sonando).
+
 ## Audio de prueba y problemas conocidos
 
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`

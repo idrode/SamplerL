@@ -133,6 +133,13 @@ impl PresetParam {
                 from: from * s,
                 to: to * s,
             },
+            // Los puntos de una lane están en la tabla: los escala quien la
+            // hace (con `scale`); aquí, sus extremos.
+            Curve::Lane { index, min, max } => Curve::Lane {
+                index,
+                min: min * s,
+                max: max * s,
+            },
         };
         Some((index, scaled))
     }

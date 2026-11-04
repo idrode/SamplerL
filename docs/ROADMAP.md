@@ -799,3 +799,20 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
        corte y por paso sobre el de siempre, en tiempo real.
     5. ✅ **Documentación**: snippets, cuatro recetas, tutorial en la guía
        y sus limitaciones.
+15. **Lanes de automatización** (pedida por el usuario): una curva de
+    puntos dibujable que lleva un parámetro a lo largo del progreso de la
+    pista, con su propia duración. Detalle en «Lanes de automatización» de
+    [docs/ESTADO.md](ESTADO.md).
+    0. ✅ **Contexto de evaluación de las curvas** (`CurveEnv`): las curvas
+       miran las macros (y luego las lanes) por referencia.
+    1. ✅ **Modelo y evaluación**: `engine::lane` (puntos con `linear`,
+       `exp`, `smooth` y `step`, escala log, duración propia), la tabla
+       fija del motor (32 lanes de 64 puntos) por el lote al compás y
+       `Curve::Lane`.
+    2. **Modos y reloj**: `loop`, `once` y `hold`, `offset`, prioridad
+       con lo que ya había, sin deriva.
+    3. **Lua**: `pista:auto`, `auto_clear`, `auto_list` y `lane()`.
+    4. **Panel de solo lectura** con el cursor y la lectura en vivo.
+    5. **Edición con el ratón** y sincronización con el código.
+    6. **Grabación en vivo** (opcional).
+    7. **Documentación**: recetas, tutorial en la guía.

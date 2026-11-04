@@ -1,7 +1,7 @@
 //! El callback de audio no reserva memoria (regla 1 de CLAUDE.md): un
 //! asignador global cuenta las reservas que hace este hilo mientras corre
 //! `Engine::process`, con retrasos (swing, humanize), retrigger, pitch,
-//! instrumentos (polifonía, ADSR, bucles), variantes de duración de los cortes (recortar, estirar y sostener), cortes como instrumento, bend y rev, cortes precalculados (warp, smear) que cambian al compás sonando, formant por corte, el EQ (suavizado y automatizado),
+//! instrumentos (polifonía, ADSR, bucles), variantes de duración de los cortes (recortar, estirar y sostener), cortes como instrumento, bend y rev, cortes precalculados (warp, smear) que cambian al compás sonando, formant por corte, lanes de automatización (y su tabla cambiada al compás), el EQ (suavizado y automatizado),
 //! el EQ dinámico con sidechain (y la reducción que publica para su vista),
 //! el límite de voces entre pistas y el pánico (puntual y en pausa), efectos por corte (con sus colas), bucles de corte con fundido, nubes de granos en vivo, sintetizadores (mono con accent, slide y el sub de cada nota, polifónicos con unison y sub abierto, un subharm de 8 voces con sus seis capas, un sh101 con legato, curvas y notas en vivo), grupos con sus efectos y macros que se mueven en vivo, mandos MIDI en todos sus destinos (moviéndose y soltándose), cambios de
 //! patrón al compás, un patrón que se suelta a la cola de basura y el paso
@@ -1921,6 +1921,105 @@ fn the_audio_thread_never_allocates() {
         n, 0,
         "reservas al cambiar los buffers precalculados sonando"
     );
+
+    // Lanes de automatización: varias a la vez (el corte del filtro de una
+    // pista, su volumen, el bend de un corte por golpe) con las cuatro
+    // curvas, y la tabla entera cambiada al compás con todo sonando.
+    let lane_table = |shift: f32| {
+        let point = |at: f64, value: f32, curve| engine::LanePoint { at, value, curve };
+        let mut lanes = engine::Lanes::new();
+        let curves = [
+            engine::LaneCurve::Linear,
+            engine::LaneCurve::Exp,
+            engine::LaneCurve::Smooth,
+            engine::LaneCurve::Step,
+        ];
+        for (i, curve) in curves.into_iter().enumerate() {
+            let lane = engine::Lane::new(
+                &[
+                    point(0.0, 300.0 + shift, curve),
+                    point(12.0, 6000.0, curve),
+                    point(40.0, 800.0, curve),
+                ],
+                48.0,
+                i == 1,
+            )
+            .unwrap();
+            lanes.set(i, Some(lane)).unwrap();
+        }
+        let level = engine::Lane::new(
+            &[
+                point(0.0, 0.3, engine::LaneCurve::Smooth),
+                point(20.0, 1.0, engine::LaneCurve::Step),
+            ],
+            24.0,
+            false,
+        )
+        .unwrap();
+        lanes.set(10, Some(level)).unwrap();
+        let bend = engine::Lane::new(
+            &[
+                point(0.0, -12.0, engine::LaneCurve::Linear),
+                point(30.0, 7.0, engine::LaneCurve::Linear),
+            ],
+            32.0,
+            false,
+        )
+        .unwrap();
+        lanes.set(31, Some(bend)).unwrap();
+        lanes
+    };
+    let laned = |slot: u8| {
+        let lane = |index: u8, min: f32, max: f32| engine::Curve::Lane { index, min, max };
+        let mut mix = [None; engine::MIX_PARAMS];
+        mix[engine::MIX_GAIN] = Some(lane(10, 0.3, 1.0));
+        let mut shape = engine::SliceShape::DEFAULT;
+        shape.curves[engine::SHAPE_BEND] = Some(lane(31, -12.0, 7.0));
+        Pattern::from_steps(long.clone(), &thirds, [Some(Step::new(0)); STEPS])
+            .unwrap()
+            .with_fx(&[Fx::lowpass(1000.0), Fx::highpass(100.0)])
+            .unwrap()
+            .with_automation(&[
+                engine::Automation {
+                    fx: 0,
+                    param: 0,
+                    curve: lane(slot, 300.0, 6000.0),
+                },
+                engine::Automation {
+                    fx: 1,
+                    param: 0,
+                    curve: lane(slot + 1, 300.0, 6000.0),
+                },
+            ])
+            .unwrap()
+            .with_mix_automation(mix)
+            .unwrap()
+            .with_shapes(&[shape, shape, shape])
+            .unwrap()
+    };
+    let mut batch = engine::Batch::new();
+    batch
+        .set_lanes(lane_table(0.0))
+        .set_pattern(4, Some(laned(0)))
+        .set_pattern(5, Some(laned(2)));
+    controller.apply(batch).unwrap();
+    let n = counted(|| {
+        for _ in 0..400 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas con lanes sonando");
+    let mut batch = engine::Batch::new();
+    batch
+        .set_lanes(lane_table(50.0))
+        .set_pattern(4, Some(laned(2)));
+    controller.apply(batch).unwrap();
+    let n = counted(|| {
+        for _ in 0..400 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas al cambiar la tabla de lanes sonando");
     controller.collect_garbage();
 }
 

@@ -136,6 +136,9 @@ enum Command {
     SetMacro { index: usize, value: f32 },
     /// Tabla de mandos MIDI desde el siguiente compás (al cargar).
     SetKnobs(crate::knob::Knobs),
+    /// Tabla de lanes de automatización desde el siguiente compás (al
+    /// cargar; en caja: la tabla es grande).
+    SetLanes(Box<crate::lane::Lanes>),
     /// Un mando se ha movido a `value` (de 0 a 1; inmediato).
     MoveKnob { index: usize, value: f32 },
     /// Rampa de tempo que entra en el siguiente compás.
@@ -1344,6 +1347,7 @@ pub struct Batch {
     groups: Option<Groups>,
     macros: Option<Macros>,
     knobs: Option<crate::knob::Knobs>,
+    lanes: Option<Box<crate::lane::Lanes>>,
     patterns: Vec<(usize, Option<Pattern>)>,
     arrangement: Option<Option<Arrangement>>,
 }
@@ -1396,6 +1400,13 @@ impl Batch {
         self
     }
 
+    /// Lanes de automatización (ver [`crate::lane`]): la tabla entera entra
+    /// con el lote, en el mismo compás que los patrones que las siguen.
+    pub fn set_lanes(&mut self, lanes: crate::lane::Lanes) -> &mut Self {
+        self.lanes = Some(Box::new(lanes));
+        self
+    }
+
     /// Patrón de la pista `track`; `None` la silencia.
     pub fn set_pattern(&mut self, track: usize, pattern: Option<Pattern>) -> &mut Self {
         self.patterns.push((track, pattern));
@@ -1422,6 +1433,8 @@ enum Garbage {
     Pattern(Pattern),
     /// Un arreglo entero (sus secciones y sus patrones).
     Arrangement(Arrangement),
+    /// Una tabla de lanes.
+    Lanes(Box<crate::lane::Lanes>),
 }
 
 /// Lado de control (UI/script). Envía comandos al hilo de audio sin bloquear.
@@ -1655,6 +1668,12 @@ pub struct Engine {
     macros: Macros,
     pending_macros: Option<Macros>,
     staged_macros: Option<Macros>,
+    /// Lanes de automatización que suenan (`None`: ninguna) y las que
+    /// esperan al compás. Durante la mezcla de un trozo, la que suena sale
+    /// de aquí (ver `Engine::mix`).
+    lanes: Option<Box<crate::lane::Lanes>>,
+    pending_lanes: Option<Box<crate::lane::Lanes>>,
+    staged_lanes: Option<Box<crate::lane::Lanes>>,
     /// Mandos MIDI: su tabla y su estado (ver [`crate::knob`]).
     knobs: crate::knob::KnobState,
     /// Pausa del pánico: no nace ninguna voz hasta `Resume`.
@@ -1780,6 +1799,9 @@ pub fn new_engine(sample_rate: u32) -> (Controller, Engine) {
             macros: [0.0; MAX_MACROS],
             pending_macros: None,
             staged_macros: None,
+            lanes: None,
+            pending_lanes: None,
+            staged_lanes: None,
             knobs: crate::knob::KnobState::default(),
             hushed: false,
             voice_limit: DEFAULT_VOICE_LIMIT,
@@ -2180,6 +2202,7 @@ impl Controller {
             + usize::from(batch.groups.is_some())
             + usize::from(batch.macros.is_some())
             + usize::from(batch.knobs.is_some())
+            + usize::from(batch.lanes.is_some())
             + usize::from(batch.arrangement.is_some());
         if self.commands.slots() < needed {
             return Err(SendError::QueueFull);
@@ -2209,6 +2232,9 @@ impl Controller {
         }
         if let Some(knobs) = batch.knobs {
             push(Command::SetKnobs(knobs));
+        }
+        if let Some(lanes) = batch.lanes {
+            push(Command::SetLanes(lanes));
         }
         if let Some(arrangement) = batch.arrangement {
             push(Command::SetArrangement(arrangement));
@@ -2651,6 +2677,16 @@ impl Engine {
                     self.knobs.pending = Some(knobs);
                 }
             }
+            Command::SetLanes(lanes) => {
+                let slot = if self.batch_open {
+                    &mut self.staged_lanes
+                } else {
+                    &mut self.pending_lanes
+                };
+                if let Some(old) = slot.replace(lanes) {
+                    self.discard_lanes(old);
+                }
+            }
             Command::MoveKnob { index, value } => self.knobs.moved(index, value),
             Command::SetMacro { index, value } => {
                 // También en los que esperan: un lote no deshace lo que se
@@ -2707,6 +2743,11 @@ impl Engine {
                 }
                 if let Some(knobs) = self.knobs.staged.take() {
                     self.knobs.pending = Some(knobs);
+                }
+                if let Some(lanes) = self.staged_lanes.take()
+                    && let Some(old) = self.pending_lanes.replace(lanes)
+                {
+                    self.discard_lanes(old);
                 }
                 if let Some(ramp) = self.staged_ramp.take() {
                     self.transport.pending_ramp = Some(ramp);
@@ -2928,6 +2969,15 @@ impl Engine {
         {
             self.knobs.set_map(knobs);
         }
+        // Las lanes entran con los patrones: una tabla vacía es ninguna.
+        if step == 0
+            && let Some(lanes) = self.pending_lanes.take()
+        {
+            let lanes = (!lanes.is_empty()).then_some(lanes);
+            if let Some(old) = std::mem::replace(&mut self.lanes, lanes) {
+                self.discard_lanes(old);
+            }
+        }
         if step == 0 {
             self.advance_playlist(bar, global, now);
         }
@@ -3116,6 +3166,7 @@ impl Engine {
         let (steps, seconds) = self.song_position();
         let env = CurveEnv {
             macros: &self.macros,
+            lanes: self.lanes.as_deref().unwrap_or(&crate::lane::NO_LANES),
         };
         if let Some(curve) = pattern.pitch_curve {
             let semitones = curve.value_in(steps, seconds, 0.0, &env, false) as f64;
@@ -3612,6 +3663,15 @@ impl Engine {
     /// Mezcla `n` frames en `self.master`: cada pista en su buffer, con su
     /// volumen, y al final el limitador.
     fn mix(&mut self, n: usize) {
+        // La tabla de lanes sale de `self` mientras se mezcla (las curvas la
+        // leen desde los relojes) y vuelve al acabar: solo se mueve un
+        // puntero.
+        let lanes = self.lanes.take();
+        self.mix_with(n, lanes.as_deref().unwrap_or(&crate::lane::NO_LANES));
+        self.lanes = lanes;
+    }
+
+    fn mix_with(&mut self, n: usize, lanes: &crate::lane::Lanes) {
         self.master[..2 * n].fill(0.0);
         let smoothing = 1.0 - (-1.0 / (GAIN_SMOOTHING_SECONDS * self.sample_rate as f32)).exp();
         // Con alguna pista en solo, solo suenan las que lo están.
@@ -3643,7 +3703,10 @@ impl Engine {
             seconds: (self.transport.frame - origin_frame) as f64 / rate as f64,
             frames_per_step: crate::sequencer::frames_per_step(self.transport.bpm(), rate),
             sample_rate: rate,
-            env: CurveEnv { macros: &macros },
+            env: CurveEnv {
+                macros: &macros,
+                lanes,
+            },
             knobs: self.knobs.advance(n, rate),
         };
         // Quién escucha a quién por sidechain: las que se escuchan se mezclan
@@ -4124,6 +4187,13 @@ impl Engine {
     /// sus compases (memoria) en el callback.
     fn discard_pattern(&mut self, pattern: Pattern) {
         if let Err(rtrb::PushError::Full(garbage)) = self.garbage.push(Garbage::Pattern(pattern)) {
+            std::mem::forget(garbage);
+        }
+    }
+
+    /// Devuelve una tabla de lanes al hilo de control.
+    fn discard_lanes(&mut self, lanes: Box<crate::lane::Lanes>) {
+        if let Err(rtrb::PushError::Full(garbage)) = self.garbage.push(Garbage::Lanes(lanes)) {
             std::mem::forget(garbage);
         }
     }
