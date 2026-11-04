@@ -835,5 +835,6 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
     5. ✅ **Registro, ayuda y guía.**
     6. ✅ **`pitchwheel`, `spiral` y degradación a ASCII** (y el refresco
        configurable).
-    7. **Inline y en la ventana del editor** (opcional).
+    7. ✅ **Inline y en la ventana del editor** (opcional): `inline = true`
+       y las visualizaciones dibujadas por la principal (protocolo 7).
     8. **Recetas, tutorial y documentación.**

@@ -5,6 +5,8 @@
 //! (`engine::viz`). Todo lo que se calcula (ventanas, FFT, disparo) va en
 //! el hilo de la interfaz.
 
+use ratatui::widgets::Widget;
+
 pub mod grid;
 pub mod scope;
 pub mod spectrum;
@@ -68,6 +70,8 @@ pub struct VizSpec {
     pub source: VizSource,
     pub size: u16,
     pub bands: usize,
+    /// Junto al código, en esta fila del texto (`inline = true`).
+    pub inline: Option<usize>,
 }
 
 impl VizSpec {
@@ -88,6 +92,34 @@ pub enum VizView {
     Spectrum(spectrum::SpectrumView),
     Wheel(wheel::WheelView),
     Spiral(wheel::SpiralView),
+    /// Ya dibujada, en texto (la que manda la principal a la ventana del
+    /// editor): sus filas, con los bordes.
+    Text(Vec<String>),
+}
+
+/// Una visualización y dónde va: junto al código, en una fila del texto, o
+/// (`None`) en su panel.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Placed {
+    pub line: Option<usize>,
+    pub view: VizView,
+}
+
+/// Columnas de una visualización junto al código.
+pub const INLINE_WIDTH: u16 = 40;
+/// Columnas con las que se dibujan las de su panel para la ventana del
+/// editor.
+pub const REMOTE_WIDTH: u16 = 60;
+
+/// `view` dibujada en `width` columnas, como texto (sin colores).
+pub fn to_text(view: &VizView, width: u16) -> Vec<String> {
+    let height = view.height();
+    let area = ratatui::layout::Rect::new(0, 0, width, height);
+    let mut buf = ratatui::buffer::Buffer::empty(area);
+    VizPanels(std::slice::from_ref(view)).render(area, &mut buf);
+    (0..height)
+        .map(|y| (0..width).map(|x| buf[(x, y)].symbol()).collect::<String>())
+        .collect()
 }
 
 impl VizView {
@@ -99,6 +131,7 @@ impl VizView {
             VizView::Spectrum(s) => s.size + 2,
             VizView::Wheel(w) => w.size + 2,
             VizView::Spiral(s) => s.size + 2,
+            VizView::Text(rows) => rows.len() as u16,
         }
     }
 }
@@ -121,6 +154,17 @@ impl ratatui::widgets::Widget for VizPanels<'_> {
                 VizView::Spectrum(s) => spectrum::SpectrumPanel(s).render(rect, buf),
                 VizView::Wheel(w) => wheel::WheelPanel(w).render(rect, buf),
                 VizView::Spiral(s) => wheel::SpiralPanel(s).render(rect, buf),
+                VizView::Text(rows) => {
+                    for (i, row) in rows.iter().enumerate().take(rect.height as usize) {
+                        buf.set_stringn(
+                            rect.x,
+                            rect.y + i as u16,
+                            row,
+                            rect.width as usize,
+                            ratatui::style::Style::new().fg(crate::ui::accent()),
+                        );
+                    }
+                }
             }
             y += height;
         }

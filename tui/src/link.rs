@@ -28,7 +28,7 @@ use ratatui_textarea::{Input, Key};
 /// [`FromDevices`]; la 5, la línea de los mandos MIDI en la vista del panel
 /// de dispositivos; la 6, el piano roll en su ventana, en su propio socket:
 /// [`ToRoll`] y [`FromRoll`]).
-pub const VERSION: u32 = 6;
+pub const VERSION: u32 = 7;
 
 /// Lo que se deja pendiente de escribir antes de dar el otro extremo por
 /// perdido (no lee).
@@ -134,6 +134,9 @@ pub enum ToEditor {
     /// se dibujan, sobre el texto de la revisión `base` del editor (vacío
     /// si no suena nada o el texto no es el cargado).
     Sounding { base: u64, marks: Vec<Highlight> },
+    /// Las visualizaciones, ya dibujadas en texto: cada una con su fila del
+    /// texto (junto al código) o ninguna (en su panel) y sus filas.
+    Viz(Vec<(Option<usize>, Vec<String>)>),
 }
 
 /// Estado de la reproducción que ve el editor.
@@ -453,6 +456,21 @@ impl Message for ToEditor {
             ToEditor::Bye(reason) => line("adios", &[reason]),
             ToEditor::History(handover) => fields_line("historial", &handover.fields()),
             ToEditor::GiveBack => line("devuelve", &[]),
+            ToEditor::Viz(frames) => {
+                // Cada una: su fila (o vacío) y sus filas, unidas por un
+                // separador de unidad (no sale en el dibujo).
+                let fields: Vec<String> = frames
+                    .iter()
+                    .map(|(line, rows)| {
+                        format!(
+                            "{}\u{1e}{}",
+                            line.map_or(String::new(), |l| l.to_string()),
+                            rows.join("\u{1f}")
+                        )
+                    })
+                    .collect();
+                fields_line("visual", &fields)
+            }
             ToEditor::Sounding { base, marks } => {
                 // Cada token: fila, columnas, color y si es de la seleccionada.
                 let mut fields = vec![base.to_string()];
@@ -512,6 +530,26 @@ impl Message for ToEditor {
             "adios" => ToEditor::Bye(field(&f, 0, v)?.into()),
             "historial" => ToEditor::History(Handover::from_fields(&f, v)?),
             "devuelve" => ToEditor::GiveBack,
+            "visual" => ToEditor::Viz(
+                f.iter()
+                    .map(|frame| {
+                        let (line, rows) = frame
+                            .split_once('\u{1e}')
+                            .ok_or_else(|| format!("«{v}»: visualización no válida"))?;
+                        let line = if line.is_empty() {
+                            None
+                        } else {
+                            Some(number(line, v)?)
+                        };
+                        let rows = if rows.is_empty() {
+                            Vec::new()
+                        } else {
+                            rows.split('\u{1f}').map(String::from).collect()
+                        };
+                        Ok((line, rows))
+                    })
+                    .collect::<Result<_, String>>()?,
+            ),
             "suena" => ToEditor::Sounding {
                 base: number(field(&f, 0, v)?, v)?,
                 marks: f[1..]
@@ -1257,6 +1295,15 @@ mod tests {
     fn every_message_survives_the_wire() {
         let text = "track(\"a\")\n\t:steps(\"1 . \\\\ 2\")\r\n-- ñ ✓\n".to_string();
         roundtrip(ToMain::Hello { version: VERSION });
+        roundtrip(ToEditor::Viz(vec![
+            (
+                Some(4),
+                vec!["┌ scope · bajo ┐".into(), "│⡔⢢  ⡰⠲⡀ \\ \"x\" │".into()],
+            ),
+            (None, vec!["┌ spectrum ┐".into()]),
+            (None, Vec::new()),
+        ]));
+        roundtrip(ToEditor::Viz(Vec::new()));
         roundtrip(ToMain::Text {
             rev: 7,
             text: text.clone(),

@@ -47,6 +47,7 @@ fn def(kind: &'static str, track: Option<&str>, size: u16, bands: usize) -> VizD
         track: track.map(str::to_string),
         size,
         bands,
+        inline: None,
     }
 }
 
@@ -66,6 +67,14 @@ fn the_calls_end_up_in_the_model() {
             def("scope", Some("t"), 3, 32),
         ]
     );
+}
+
+#[test]
+fn inline_remembers_the_line_where_it_was_asked() {
+    let song = song("\nt:scope{ inline = true, size = 2 }").unwrap();
+    // La fila 5 del texto (cuatro de cabecera y una en blanco).
+    assert_eq!(song.viz[0].inline, Some(5));
+    assert!(self::song("t:scope{ inline = 1 }").is_err());
 }
 
 #[test]
@@ -108,7 +117,8 @@ fn errors_point_at_the_line_and_keep_the_ones_before() {
     );
     assert!(error("t:spectrum{ bands = 2 }").contains("bands va de 4 a 128"));
     assert!(
-        error("t:scope{ alto = 3 }").contains("opción desconocida \"alto\" (admite: size, bands)")
+        error("t:scope{ alto = 3 }")
+            .contains("opción desconocida \"alto\" (admite: size, bands, inline)")
     );
     assert!(error("master():punchcard()").contains("el master no tiene: pista:punchcard()"));
     let mut host = ScriptHost::new(RATE);

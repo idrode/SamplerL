@@ -4,7 +4,7 @@
 //! el motor, que se vacían en cada `tick`.
 
 use crate::roll;
-use crate::viz::{VizKind, VizSource, VizSpec, VizView, grid};
+use crate::viz::{Placed, VizKind, VizSource, VizSpec, VizView, grid};
 
 use super::App;
 
@@ -40,6 +40,7 @@ impl App {
                         },
                         size: v.size,
                         bands: v.bands,
+                        inline: v.inline,
                     })
                 })
                 .collect()
@@ -65,11 +66,37 @@ impl App {
     }
 
     /// Lo que se dibuja de cada visualización.
-    pub(super) fn viz_views(&self) -> Vec<VizView> {
+    pub(super) fn viz_views(&self) -> Vec<Placed> {
+        // En la ventana del editor, las que dibuja la principal.
+        if let Some(remote) = self.remote_viz() {
+            return remote;
+        }
         self.viz
             .iter()
             .enumerate()
-            .filter_map(|(i, spec)| self.viz_view(i, spec))
+            .filter_map(|(i, spec)| {
+                Some(Placed {
+                    line: spec.inline,
+                    view: self.viz_view(i, spec)?,
+                })
+            })
+            .collect()
+    }
+
+    /// Las de aquí dibujadas en texto, para la ventana del editor: las de
+    /// junto al código en [`crate::viz::INLINE_WIDTH`] columnas y las demás
+    /// en [`crate::viz::REMOTE_WIDTH`].
+    pub(super) fn viz_frames(&self) -> Vec<(Option<usize>, Vec<String>)> {
+        self.viz_views()
+            .iter()
+            .map(|p| {
+                let width = if p.line.is_some() {
+                    crate::viz::INLINE_WIDTH
+                } else {
+                    crate::viz::REMOTE_WIDTH
+                };
+                (p.line, crate::viz::to_text(&p.view, width))
+            })
             .collect()
     }
 

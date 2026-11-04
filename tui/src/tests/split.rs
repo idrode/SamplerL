@@ -109,7 +109,7 @@ fn the_editor_takes_the_text_and_follows_the_main_window() {
     assert!(!screen.contains("track(\"drums\""), "{screen}");
 }
 
-fn ui_editor(app: &mut App, width: u16, height: u16) -> ratatui::buffer::Buffer {
+pub fn ui_editor(app: &mut App, width: u16, height: u16) -> ratatui::buffer::Buffer {
     let mut terminal =
         ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
     terminal

@@ -39,13 +39,16 @@ pub struct VizDef {
     pub track: Option<String>,
     pub size: u16,
     pub bands: usize,
+    /// Junto al código (`inline = true`), en la fila del texto donde se
+    /// pidió; `None`, en su panel.
+    pub inline: Option<usize>,
 }
 
 /// Lee `{ size = n, bands = n }` (claves del registro `api::VIZ_PARAMS`).
-fn options(lua: &Lua, who: &str, table: Option<&Table>) -> mlua::Result<(u16, usize)> {
-    let (mut size, mut bands) = (DEFAULT_SIZE, DEFAULT_BANDS);
+fn options(lua: &Lua, who: &str, table: Option<&Table>) -> mlua::Result<(u16, usize, bool)> {
+    let (mut size, mut bands, mut inline) = (DEFAULT_SIZE, DEFAULT_BANDS, false);
     let Some(table) = table else {
-        return Ok((size, bands));
+        return Ok((size, bands, inline));
     };
     let known: Vec<&str> = api::VIZ_PARAMS.iter().map(|p| p.name).collect();
     for pair in table.pairs::<Value, Value>() {
@@ -65,6 +68,12 @@ fn options(lua: &Lua, who: &str, table: Option<&Table>) -> mlua::Result<(u16, us
                     .filter(|n| (1..=MAX_SIZE as i64).contains(n))
                     .ok_or_else(|| fail(lua, format!("{who}: size son filas, de 1 a {MAX_SIZE}")))?
                     as u16;
+            }
+            "inline" => {
+                inline = match value {
+                    Value::Boolean(on) => on,
+                    _ => return Err(fail(lua, format!("{who}: inline es true o false"))),
+                };
             }
             "bands" => {
                 bands = integer
@@ -87,7 +96,7 @@ fn options(lua: &Lua, who: &str, table: Option<&Table>) -> mlua::Result<(u16, us
             }
         }
     }
-    Ok((size, bands))
+    Ok((size, bands, inline))
 }
 
 /// Apunta la visualización `kind` de `track` (sustituye a la misma de la
@@ -109,7 +118,17 @@ pub(crate) fn add(
             format!("{who}: sale del patrón de una pista; el master no tiene: pista:{kind}()"),
         ));
     }
-    let (size, bands) = options(lua, &who, table)?;
+    let (size, bands, inline) = options(lua, &who, table)?;
+    let inline = if inline {
+        Some(super::written::current_row(lua).ok_or_else(|| {
+            fail(
+                lua,
+                format!("{who}: inline necesita la llamada escrita en el script"),
+            )
+        })?)
+    } else {
+        None
+    };
     let track = track.map(str::to_string);
     builder
         .viz
@@ -119,6 +138,7 @@ pub(crate) fn add(
         track,
         size,
         bands,
+        inline,
     });
     Ok(())
 }

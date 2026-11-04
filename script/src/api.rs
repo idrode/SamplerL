@@ -4355,6 +4355,15 @@ pub const VIZ_PARAMS: &[FxParam] = &[
         template: "bands = ${32}",
         automate: Auto::No(VIEW),
     },
+    FxParam {
+        name: "inline",
+        description: "junto al código, como en Strudel: a la derecha de la línea donde se pide (en el editor de aquí y en el de su ventana), en vez de en su panel",
+        default: Some("false"),
+        valid: "`true` o `false`",
+        values: &[],
+        template: "inline = ${true}",
+        automate: Auto::No(VIEW),
+    },
 ];
 
 /// La tabla de opciones de las visualizaciones, como un efecto (para el

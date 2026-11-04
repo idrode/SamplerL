@@ -193,6 +193,13 @@ pub(crate) fn span_text(lua: &Lua, span: TableSpan) -> Option<String> {
     Some(out)
 }
 
+/// Fila (desde 0) del texto de la llamada de Lua en curso, si es del
+/// script.
+pub(crate) fn current_row(lua: &Lua) -> Option<usize> {
+    let script = lua.app_data_ref::<ScriptText>()?;
+    calling_line(lua, &script.chunk)?.checked_sub(1)
+}
+
 /// Línea (desde 1) de la llamada de Lua en curso, si es del trozo del
 /// script.
 fn calling_line(lua: &Lua, chunk: &str) -> Option<usize> {

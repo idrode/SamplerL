@@ -49,6 +49,8 @@ pub struct MainLink {
     sent_labels: Option<Vec<String>>,
     /// Lo último que se mandó de lo que suena, con la revisión del editor.
     sent_sounding: Option<(u64, Vec<Highlight>)>,
+    /// Las visualizaciones, como se mandaron la última vez.
+    sent_viz: Option<Vec<(Option<usize>, Vec<String>)>>,
     /// Comando que abre una terminal (`[editor] terminal`), el binario
     /// propio y lo que abre el editor (script o proyecto).
     terminal: Option<Vec<String>>,
@@ -78,6 +80,8 @@ pub struct EditorLink {
     /// Lo que suena según la principal y la revisión del texto a la que se
     /// refiere.
     sounding: (u64, Vec<Highlight>),
+    /// Las visualizaciones que dibuja la principal.
+    viz: Vec<(Option<usize>, Vec<String>)>,
     /// Ya mandó su estado a la principal: la ventana se cierra.
     leaving: bool,
 }
@@ -249,6 +253,7 @@ impl App {
             sent_state: None,
             sent_labels: None,
             sent_sounding: None,
+            sent_viz: None,
             terminal,
             exe,
             child: None,
@@ -270,6 +275,7 @@ impl App {
             remote: None,
             labels: Vec::new(),
             sounding: (0, Vec::new()),
+            viz: Vec::new(),
             leaving: false,
         }));
         self.message = "buscando la ventana principal…".into();
@@ -521,6 +527,7 @@ impl App {
             main.sent_state = None;
             main.sent_labels = None;
             main.sent_sounding = None;
+            main.sent_viz = None;
             let pending = main.pending.take();
             if let Some(conn) = main.server.client() {
                 let _ = conn.send(&welcome);
@@ -611,6 +618,7 @@ impl App {
         let message = self.message.clone();
         let labels = self.known_labels();
         let sounding = self.highlights();
+        let viz = self.viz_frames();
         let state = self.status.map(|s| RemoteState {
             running: s.running,
             bpm: s.bpm,
@@ -657,6 +665,10 @@ impl App {
                 marks: sounding.1.clone(),
             });
             main.sent_sounding = Some(sounding);
+        }
+        if main.sent_viz.as_ref() != Some(&viz) {
+            out.push(ToEditor::Viz(viz.clone()));
+            main.sent_viz = Some(viz);
         }
         // El texto, lo último: si choca con lo que se escribe allí, su aviso
         // no lo tapa el mensaje de aquí.
@@ -799,6 +811,7 @@ impl App {
             }
             ToEditor::State(state) => editor.remote = Some(state),
             ToEditor::Sounding { base, marks } => editor.sounding = (base, marks),
+            ToEditor::Viz(frames) => editor.viz = frames,
             ToEditor::Labels(labels) => editor.labels = labels,
             ToEditor::Bye(reason) => {
                 editor.client.disconnect();
@@ -1026,6 +1039,24 @@ impl App {
         self.external = None;
         self.mode = Mode::Edit;
         self.message = "el editor vuelve a estar en esta ventana".into();
+    }
+
+    /// En la ventana del editor, las visualizaciones que dibuja la
+    /// principal; en las demás, `None`.
+    pub(super) fn remote_viz(&self) -> Option<Vec<crate::viz::Placed>> {
+        let Some(Link::Editor(editor)) = &self.link else {
+            return None;
+        };
+        Some(
+            editor
+                .viz
+                .iter()
+                .map(|(line, rows)| crate::viz::Placed {
+                    line: *line,
+                    view: crate::viz::VizView::Text(rows.clone()),
+                })
+                .collect(),
+        )
     }
 
     /// En el editor separado, lo que suena según la principal: solo si el

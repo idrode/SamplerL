@@ -11,6 +11,7 @@ fn spec(kind: VizKind, source: VizSource, size: u16) -> VizSpec {
         source,
         size,
         bands: 32,
+        inline: None,
     }
 }
 
@@ -30,7 +31,7 @@ fn play(app: &mut App, engine: &mut Engine, steps: usize) {
 fn punchcard_shows_the_hits_of_the_pattern_and_the_playhead() {
     let (_, mut app, mut engine) = open("viz_punchcard", Some(SONG));
     app.set_viz(vec![drums(VizKind::Punchcard)]);
-    let VizView::Grid(grid) = &app.view().viz[0] else {
+    let VizView::Grid(grid) = &app.view().viz[0].view else {
         panic!("rejilla")
     };
     // Dos filas: los dos cortes que toca (`1 . 2 .` cuatro veces).
@@ -42,7 +43,7 @@ fn punchcard_shows_the_hits_of_the_pattern_and_the_playhead() {
     let (_, high) = &grid.rows[0];
     assert_eq!(&high[..4], &[Empty, Empty, Head, Empty]);
     play(&mut app, &mut engine, 5);
-    let VizView::Grid(grid) = &app.view().viz[0] else {
+    let VizView::Grid(grid) = &app.view().viz[0].view else {
         panic!()
     };
     assert!(grid.playhead.is_some());
@@ -62,7 +63,7 @@ track("bajo", synth("acid", {})):melody("c2 . e2 .  g2 . . .  c2 . . .  . . . ."
         VizSource::Track("bajo".into()),
         8,
     )]);
-    let VizView::Grid(grid) = &app.view().viz[0] else {
+    let VizView::Grid(grid) = &app.view().viz[0].view else {
         panic!()
     };
     let names: Vec<&str> = grid.rows.iter().map(|(n, _)| n.as_str()).collect();
@@ -114,7 +115,7 @@ fn scope_triggers_and_stays_still_frame_after_frame() {
     let mut firsts = Vec::new();
     for _ in 0..5 {
         play(&mut app, &mut engine, 1);
-        let VizView::Scope(scope) = &app.view().viz[0] else {
+        let VizView::Scope(scope) = &app.view().viz[0].view else {
             panic!("scope")
         };
         assert!(scope.triggered);
@@ -148,7 +149,7 @@ fn spectrum_peaks_where_the_tone_is_and_draws_bars() {
         ..spec(VizKind::Spectrum, VizSource::Master, 5)
     }]);
     play(&mut app, &mut engine, 20);
-    let VizView::Spectrum(spectrum) = &app.view().viz[0] else {
+    let VizView::Spectrum(spectrum) = &app.view().viz[0].view else {
         panic!("spectrum")
     };
     assert_eq!(spectrum.levels.len(), 24);
@@ -195,17 +196,18 @@ fn the_script_asks_for_them_and_the_load_switches_the_engine_on() {
         .view()
         .viz
         .iter()
-        .map(|v| match v {
+        .map(|v| match &v.view {
             VizView::Grid(_) => "grid",
             VizView::Scope(_) => "scope",
             VizView::Spectrum(_) => "spectrum",
             VizView::Wheel(_) => "pitchwheel",
             VizView::Spiral(_) => "spiral",
+            VizView::Text(_) => "texto",
         })
         .collect();
     assert_eq!(kinds, ["scope", "grid", "spectrum"]);
     play(&mut app, &mut engine, 20);
-    let VizView::Scope(scope) = &app.view().viz[0] else {
+    let VizView::Scope(scope) = &app.view().viz[0].view else {
         panic!()
     };
     assert!(scope.triggered, "el lote de la carga encendió la cola");
@@ -220,12 +222,12 @@ fn pitchwheel_and_spiral_from_the_audio() {
     ]);
     play(&mut app, &mut engine, 20);
     let view = app.view();
-    let VizView::Wheel(wheel) = &view.viz[0] else {
+    let VizView::Wheel(wheel) = &view.viz[0].view else {
         panic!("rueda")
     };
     // 220 Hz es un la.
     assert_eq!(wheel.strongest(), Some(9));
-    let VizView::Spiral(spiral) = &view.viz[1] else {
+    let VizView::Spiral(spiral) = &view.viz[1].view else {
         panic!("espiral")
     };
     assert_eq!(spiral.note.as_deref(), Some("A3"));
@@ -243,6 +245,68 @@ fn pitchwheel_and_spiral_from_the_audio() {
             .any(|c| ('\u{2800}'..='\u{28ff}').contains(&c)),
         "{screen}"
     );
+}
+
+/// La canción del tono con una visualización junto al código (en la fila
+/// 4) y otra en su panel.
+fn tone_with_inline(test: &str) -> PathBuf {
+    let (app, _engine) = open_tone(test);
+    let mut text = app.editor.lines().join("\n");
+    text.push_str(
+        "\ntrack(\"tono\"):scope{ inline = true, size = 2 }\nmaster():spectrum{ size = 3 }\n",
+    );
+    let path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../target/tmp"))
+        .join(format!("tui_{test}"))
+        .join("song.lua");
+    std::fs::write(&path, &text).unwrap();
+    path
+}
+
+#[test]
+fn inline_goes_beside_its_line_of_code() {
+    let path = tone_with_inline("viz_inline");
+    let (controller, mut engine) = new_engine(RATE);
+    let mut app = App::open(&path, controller, RATE).unwrap();
+    assert!(app.view().error.is_none(), "{:?}", app.view().error);
+    let lines: Vec<Option<usize>> = app.view().viz.iter().map(|p| p.line).collect();
+    assert_eq!(lines, [Some(4), None]);
+    play(&mut app, &mut engine, 20);
+    let buffer = draw(&mut app, 140, 40);
+    let screen = text(&buffer);
+    // En la fila de su línea (la 5.ª del texto: el borde y cuatro más),
+    // a la derecha del editor.
+    let row: String = screen.lines().nth(5).unwrap().chars().take(70).collect();
+    assert!(row.contains("scope · tono"), "{screen}");
+    // Sin tapar su propia línea.
+    assert!(
+        row.contains("track(\"tono\"):scope{ inline = true, size = 2 }"),
+        "{screen}"
+    );
+    // La del master, en su panel (fuera del editor).
+    assert!(screen.contains("spectrum · master"), "{screen}");
+}
+
+#[test]
+fn the_editor_window_gets_them_drawn_by_the_main_one() {
+    use super::split::{editor_window, main_window, pump, ui_editor};
+    let path = tone_with_inline("viz_window");
+    let (mut main, mut engine) = main_window(&path, None);
+    let (mut editor, _idle) = editor_window(&path);
+    pump(&mut main, &mut editor);
+    play(&mut main, &mut engine, 20);
+    pump(&mut main, &mut editor);
+    let lines: Vec<Option<usize>> = editor.view().viz.iter().map(|p| p.line).collect();
+    assert_eq!(lines, [Some(4), None]);
+    assert!(
+        editor
+            .view()
+            .viz
+            .iter()
+            .all(|p| matches!(p.view, VizView::Text(_)))
+    );
+    let screen = text(&ui_editor(&mut editor, 120, 40));
+    assert!(screen.contains("scope · tono"), "{screen}");
+    assert!(screen.contains("spectrum · master"), "{screen}");
 }
 
 /// Para verlas sin terminal: `cargo test -p tui pantalla_viz -- --ignored
@@ -311,4 +375,16 @@ fn coste_de_las_visualizaciones() {
             extra * 30.0 * 100.0
         );
     }
+}
+
+/// La vista junto al código, sin terminal: `cargo test -p tui
+/// pantalla_viz_inline -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn pantalla_viz_inline() {
+    let path = tone_with_inline("viz_inline_pantalla");
+    let (controller, mut engine) = new_engine(RATE);
+    let mut app = App::open(&path, controller, RATE).unwrap();
+    play(&mut app, &mut engine, 20);
+    println!("{}", text(&draw(&mut app, 140, 30)));
 }

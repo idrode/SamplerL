@@ -56,7 +56,7 @@ pub struct ViewModel {
     /// Las lanes de la pista seleccionada, con el panel abierto.
     pub lanes: Option<crate::lanes_panel::LanesView>,
     /// Las visualizaciones pedidas, ya calculadas.
-    pub viz: Vec<crate::viz::VizView>,
+    pub viz: Vec<crate::viz::Placed>,
     /// MIDI learn: la lista de parámetros para asignar, y la de mandos.
     pub knob_picker: Option<BlockPickerView>,
     pub knobs: Option<KnobsView>,

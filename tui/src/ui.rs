@@ -49,6 +49,63 @@ fn meter_color() -> Color {
     theme::get().meter
 }
 
+/// Las visualizaciones que van en su panel (no junto al código).
+fn stacked_viz(view: &ViewModel) -> Vec<crate::viz::VizView> {
+    view.viz
+        .iter()
+        .filter(|p| p.line.is_none())
+        .map(|p| p.view.clone())
+        .collect()
+}
+
+/// Las visualizaciones junto al código: a la derecha de su fila del
+/// texto, si se ve, encima del editor (`area`, el de dentro de su borde,
+/// con el texto desde `top`/`left` y empezando en `text_x`): detrás del
+/// final de esa línea si caben al menos 16 columnas; si no, pegadas a la
+/// derecha.
+fn draw_inline_viz(
+    frame: &mut Frame,
+    view: &ViewModel,
+    area: Rect,
+    (top, left, text_x): (usize, usize, u16),
+    lines: &[String],
+) {
+    let widest = crate::viz::INLINE_WIDTH.min(area.width / 2);
+    if widest < 8 {
+        return;
+    }
+    for placed in &view.viz {
+        let Some(line) = placed.line else { continue };
+        let Some(row) = line.checked_sub(top) else {
+            continue;
+        };
+        let y = area.y + row as u16;
+        if y >= area.bottom() {
+            continue;
+        }
+        let end = lines
+            .get(line)
+            .map_or(0, |l| l.chars().count().saturating_sub(left)) as u16;
+        let after = text_x.saturating_add(end).saturating_add(2);
+        let x = if area.right().saturating_sub(after) >= 16 {
+            after.max(area.right() - widest)
+        } else {
+            area.right() - widest
+        };
+        let height = placed.view.height().min(area.bottom() - y);
+        let rect = Rect {
+            x,
+            y,
+            width: area.right() - x,
+            height,
+        };
+        frame.render_widget(
+            crate::viz::VizPanels(std::slice::from_ref(&placed.view)),
+            rect,
+        );
+    }
+}
+
 /// Las últimas `height` filas de `area` (todas, si no caben).
 fn bottom_part(area: Rect, height: u16) -> Rect {
     let height = height.min(area.height);
@@ -146,11 +203,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         };
         frame.render_widget(crate::sidechain::SidechainPanel(sidechain), area);
     }
-    // Las visualizaciones, apiladas arriba del sample y el tracker.
-    if !view.viz.is_empty() {
-        let height = crate::viz::total_height(&view.viz).min(rest_area.height);
+    // Las visualizaciones (las de su panel), apiladas arriba del sample y
+    // el tracker.
+    let stacked = stacked_viz(&view);
+    if !stacked.is_empty() {
+        let height = crate::viz::total_height(&stacked).min(rest_area.height);
         frame.render_widget(
-            crate::viz::VizPanels(&view.viz),
+            crate::viz::VizPanels(&stacked),
             Rect {
                 height,
                 ..rest_area
@@ -257,11 +316,13 @@ fn draw_main_window(
     if let Some(sidechain) = view.sidechain.as_ref().filter(|_| roll_area.is_none()) {
         frame.render_widget(crate::sidechain::SidechainPanel(sidechain), sidechain_area);
     }
-    // Las visualizaciones, apiladas arriba de la forma de onda.
-    if !view.viz.is_empty() && roll_area.is_none() {
-        let height = crate::viz::total_height(&view.viz).min(sample_area.height);
+    // Las visualizaciones (las de su panel), apiladas arriba de la forma
+    // de onda.
+    let stacked = stacked_viz(view);
+    if !stacked.is_empty() && roll_area.is_none() {
+        let height = crate::viz::total_height(&stacked).min(sample_area.height);
         frame.render_widget(
-            crate::viz::VizPanels(&view.viz),
+            crate::viz::VizPanels(&stacked),
             Rect {
                 height,
                 ..sample_area
@@ -539,12 +600,19 @@ impl Widget for StatusLine<'_> {
 /// editor entero, la línea del enlace con la principal y la de ayuda.
 pub fn draw_editor_window(frame: &mut Frame, app: &mut App) {
     let view = app.view();
-    let [main, link, help] = Layout::vertical([
+    // Las visualizaciones de su panel (las dibuja la principal), abajo.
+    let stacked = stacked_viz(&view);
+    let viz_height = crate::viz::total_height(&stacked).min(frame.area().height / 2);
+    let [main, viz, link, help] = Layout::vertical([
         Constraint::Min(3),
+        Constraint::Length(viz_height),
         Constraint::Length(1),
         Constraint::Length(1),
     ])
     .areas(frame.area());
+    if !stacked.is_empty() {
+        frame.render_widget(crate::viz::VizPanels(&stacked), viz);
+    }
     let popup = draw_editor(frame, app, &view, main);
     let text = view.link.clone().unwrap_or_default();
     let color = if text.starts_with('✗') {
@@ -1128,6 +1196,14 @@ fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rect) -
             );
         }
     }
+    // Las visualizaciones junto al código, a la derecha de su línea.
+    draw_inline_viz(
+        frame,
+        view,
+        editor_area,
+        (top as usize, left as usize, text_x),
+        app.editor.lines(),
+    );
 
     let popup = view.completion.as_ref().map(|completion| {
         // Posición del cursor en pantalla (tras dibujar, con el desplazamiento

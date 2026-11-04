@@ -2573,6 +2573,33 @@ por configuración y por `LANG`.
   pantalla, y en ASCII sin Braille) y `config.rs` (`[interfaz]` y sus
   avisos).
 
+### Parte 7: junto al código y en la ventana del editor
+
+- **Junto al código**: `{ inline = true }` (registro `api::VIZ_PARAMS`)
+  apunta en `VizDef::inline` la fila del texto donde se pidió (la de la
+  llamada en curso, `written::current_row`, el mecanismo de posiciones del
+  resaltado en vivo). La vista lleva cada visualización con su sitio
+  (`viz::Placed { line, view }`): las de `inline` se dibujan encima del
+  editor, a la derecha de su fila si está a la vista (`ui::draw_inline_viz`:
+  dos columnas detrás del final de esa línea si caben 16; si no, pegadas a
+  la derecha, de `INLINE_WIDTH` = 40 columnas como mucho), y no en los
+  paneles apilados. El texto del código no se toca.
+- **En la ventana del editor** (protocolo 7): la principal dibuja cada
+  visualización en un buffer aparte (`viz::to_text`: las de junto al
+  código en 40 columnas y las demás en 60, sin colores) y le manda sus
+  filas, con su fila del texto o ninguna (`ToEditor::Viz`, mensaje
+  `visual`, solo cuando cambia); la ventana las pone como
+  `VizView::Text` (en el color de acento): las de `inline` junto a su
+  línea en su editor y las demás abajo, hasta la mitad de la ventana. Así
+  no viajan muestras por el socket, solo unas decenas de líneas de texto
+  por cuadro.
+- **Tests**: `link.rs` (el mensaje, con Braille, comillas y barras, y
+  vacío, sobrevive al viaje), `script/tests/viz.rs` (`inline` apunta su
+  fila; un valor que no es booleano, error) y `tui/src/tests/viz.rs`
+  (junto a su línea sin taparla y la del master en su panel; en la ventana
+  del editor, las dos que dibuja la principal, cada una en su sitio).
+  `pantalla_viz_inline` la enseña.
+
 ## Audio de prueba y problemas conocidos
 
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`
