@@ -779,7 +779,7 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
     de corte) sin tocar el secuenciador; Shift-F12 además no deja sonar
     nada nuevo hasta volver a pulsarla. Límite de voces entre pistas
     (`[voces] limite`, 64 por defecto) que roba la más antigua.
-14. **Edición de cortes: duraciones, el corte como instrumento y
+14. ✅ **Edición de cortes: duraciones, el corte como instrumento y
     deformaciones** (pedida por el usuario; sigue la línea de los cortes,
     el pitch sin cambio de duración, los granos y los efectos por corte y
     por paso). Detalle en «Edición de cortes» de
@@ -797,4 +797,5 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
     4. ✅ **Deformaciones precalculadas**: `warp` y `smear` al cargar, con
        caché, en el patrón (entran al compás en su lote); `formant` por
        corte y por paso sobre el de siempre, en tiempo real.
-    5. **Documentación**: presets, tutorial en la guía, limitaciones.
+    5. ✅ **Documentación**: snippets, cuatro recetas, tutorial en la guía
+       y sus limitaciones.

@@ -310,7 +310,11 @@ fn every_snippet_runs_after_what_it_requires() {
             "polirritmo",
             "barrido",
             "groove",
-            "instrumento"
+            "instrumento",
+            "duraciones",
+            "corte-melodia",
+            "bombo-bend",
+            "warp",
         ]
     );
 }

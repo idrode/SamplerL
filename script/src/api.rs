@@ -4369,6 +4369,35 @@ pub const SNIPPETS: &[Snippet] = &[
                    :melody(\"${c _ e _  g _ e _  c+e+g _ _ _  . . . .}\")\n",
         requires: "",
     },
+    Snippet {
+        name: "duraciones",
+        summary: "El mismo corte con otras duraciones: recortado, estirado sin cambiar el tono y sostenido en bucle.",
+        template: "amen:set(${3}, { dur = \"${1/16}\", release = ${20} })\n\
+                   amen:set(${1}, { dur = \"${1/4}\", fit = \"stretch\" })\n\
+                   amen:set(${2}, { dur = ${300}, fit = \"loop\", loop_start = ${20}, loop_end = ${60} })\n",
+        requires: "local amen = sample(\"amen.wav\"):slice(8)\n",
+    },
+    Snippet {
+        name: "corte-melodia",
+        summary: "Un corte tocado a varias notas: su tono es la raíz (con un golpe de batería, pon root).",
+        template: "local ${voz} = amen:instrument(${3}, { root = \"${C3}\", voices = ${4} })\n\
+                   track(\"${voz}\", ${voz}):melody(\"${c3 . e3 .  g3 . c3+e3+g3 _  . . a2 .  g2 . . .}\")\n",
+        requires: "local amen = sample(\"amen.wav\"):slice(8)\n",
+    },
+    Snippet {
+        name: "bombo-bend",
+        summary: "Un bombo que cae de tono en cada golpe (bend) y otro corte al revés.",
+        template: "amen:set(${1}, { bend = ${-12}, bend_time = ${180} })\n\
+                   amen:set(${8}, { rev = true })\n",
+        requires: "local amen = sample(\"amen.wav\"):slice(8)\n",
+    },
+    Snippet {
+        name: "warp",
+        summary: "Un corte que empieza despacio y acelera (warp) y otro difuminado con granos (smear).",
+        template: "amen:set(${3}, { warp = ${0.3} })\n\
+                   amen:set(${7}, { smear = ${0.4} })\n",
+        requires: "local amen = sample(\"amen.wav\"):slice(8)\n",
+    },
 ];
 
 /// Snippet por nombre.

@@ -52,6 +52,11 @@ la sección 4 (con sus parámetros, rangos y un ejemplo cada una).
 - Dar forma a cada corte (`cortes:set`: ataque, cola, pan, la parte que
   suena, bucle sin clic en el salto o ida y vuelta) y ponerle sus propios efectos
   (`cortes:fx`: ensuciar solo la caja, bajar solo el bombo).
+- Editar un corte sin copiar su audio: otra duración (`dur`, recortado,
+  estirado sin cambiar el tono o sostenido en bucle), tocarlo a varias
+  notas (`cortes:instrument(i)`, con la raíz de su tono) y deformarlo
+  (`bend`, `rev`, `warp`, `smear`, `formant`); ver
+  [Editar un corte](#editar-un-corte-duraciones-notas-y-deformaciones).
 
 **Secuenciar** (sección 3 y sección 4)
 - Pasos con la mini-notación: reverse, pitch con duración (`^`) o sin ella
@@ -816,7 +821,7 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Volver a meter el panel de dispositivos en la principal | Con el panel de dispositivos en su ventana: la cierra y lo abre aquí | — |
 | Modo vim | Enciende o apaga el modo vim del editor en esta sesión (el de siempre, `[editor] modo`) | — |
 | Salir | Sale (pide confirmación si hay cambios sin guardar) | Ctrl-Q |
-| Snippet: `amen`, `fill`, `ghost`, `intro`, `euclid`, `melodia`, `polirritmo`, `barrido`, `groove`, `instrumento` | Inserta el snippet en el cursor (ver «Snippets» en la sección 4) | — |
+| Snippet: `amen`, `fill`, `ghost`, `intro`, `euclid`, `melodia`, `polirritmo`, `barrido`, `groove`, `instrumento`, `duraciones`, `corte-melodia`, `bombo-bend`, `warp` | Inserta el snippet en el cursor (ver «Snippets» en la sección 4) | — |
 
 <!-- paleta:fin -->
 
@@ -2126,6 +2131,7 @@ compases).
 | `rN` | Retrigger / stutter: el paso se divide en N partes y el corte vuelve a empezar en cada una (de 1 a 16) | `3r4` |
 | `~Hz` | Corte del primer filtro de la pista desde este golpe hasta el siguiente (parameter lock, de 20 a 20000 Hz); un golpe sin `~` vuelve al corte de `:fx` | `3~800` |
 | `{efecto=valor,clave=valor}` | Un efecto solo en este golpe, con sus parámetros; varios, cada uno en sus llaves | `3{lp=800,q=4}{crush=6}` |
+| `{dur=...,fit=...}` | La forma del corte solo en este golpe (manda sobre la de `cortes:set`): `dur` (ms, figura `1/8` o compases `2bars`), `fit` (`trim`, `stretch`, `loop`), `loop_start`, `loop_end`, `bend`, `bend_time`, `rev` (1 o 0), `formant`, `warp` (un número) y `smear`, en sus propias llaves (sin efectos) | `3{dur=1/8,fit=loop}{lp=800}`, `1{bend=-12,bend_time=200}` |
 | `!` | Accent (solo en un sintetizador): la nota suena más fuerte (en el acid, también más abierta) | `1!`, en `melody` `c!` |
 | `/` | Slide (solo en un sintetizador): la nota llega ligada desde la anterior, deslizándose hasta su altura sin volver a disparar las envolventes | `1^3/`, en `melody` `eb/` |
 | `{sub=n,sub_div=n,...}` | El sub de esta nota (solo en un sintetizador): manda sobre el de su tabla mientras suena; claves `sub`, `sub_div`, `sub_wave`, `sub_pan` y `sub_drive`, en sus propias llaves (sin efectos) | `1{sub=0.8,sub_div=3}`, en `melody` `c{sub=0}` |
@@ -3678,6 +3684,10 @@ Trozos de script con campos para rellenar. Se insertan desde el autocompletado (
 | `barrido` | Filtro que se abre poco a poco (ramp) y un envío a la reverb en una pista existente. |
 | `groove` | Swing y humanize en una pista existente, para que no suene a máquina. |
 | `instrumento` | Un sample tocado como instrumento (raíz, bucle, voces y ADSR) con una melodía. |
+| `duraciones` | El mismo corte con otras duraciones: recortado, estirado sin cambiar el tono y sostenido en bucle. |
+| `corte-melodia` | Un corte tocado a varias notas: su tono es la raíz (con un golpe de batería, pon root). |
+| `bombo-bend` | Un bombo que cae de tono en cada golpe (bend) y otro corte al revés. |
+| `warp` | Un corte que empieza despacio y acelera (warp) y otro difuminado con granos (smear). |
 
 `amen`:
 
@@ -3773,6 +3783,39 @@ local piano = sample("amen.wav"):instrument({
 })
 track("lead", piano)
   :melody("c _ e _  g _ e _  c+e+g _ _ _  . . . .")
+```
+
+`duraciones` (las primeras líneas son lo que necesita tener antes):
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+amen:set(3, { dur = "1/16", release = 20 })
+amen:set(1, { dur = "1/4", fit = "stretch" })
+amen:set(2, { dur = 300, fit = "loop", loop_start = 20, loop_end = 60 })
+```
+
+`corte-melodia` (las primeras líneas son lo que necesita tener antes):
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+local voz = amen:instrument(3, { root = "C3", voices = 4 })
+track("voz", voz):melody("c3 . e3 .  g3 . c3+e3+g3 _  . . a2 .  g2 . . .")
+```
+
+`bombo-bend` (las primeras líneas son lo que necesita tener antes):
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+amen:set(1, { bend = -12, bend_time = 180 })
+amen:set(8, { rev = true })
+```
+
+`warp` (las primeras líneas son lo que necesita tener antes):
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+amen:set(3, { warp = 0.3 })
+amen:set(7, { smear = 0.4 })
 ```
 
 <!-- api:fin -->
@@ -4476,6 +4519,103 @@ Los envíos (`send`) son de la pista entera: para una caja con reverb,
 sácala a su pista con `amen:slice_at(3)`, que se lleva sus efectos.
 
 > **Usado en el tutorial:** [paso 6, Efectos en un solo corte](PRIMERA-CANCION.md#paso-6-efectos-en-un-solo-corte).
+
+### Editar un corte: duraciones, notas y deformaciones
+
+Un corte se puede alargar, acortar, tocar como instrumento y deformar sin
+copiar su audio: todo va en su forma (`cortes:set(i, { ... })`, para
+todas sus pistas y pads) o en las llaves de un paso (`3{dur=1/8}`, solo
+ese golpe; manda sobre lo del corte). En cuatro pasos:
+
+**1. El mismo corte con tres duraciones.** `dur` es la duración: ms (un
+número), una figura (`"1/8"` es una corchea, sea cual sea el compás) o
+compases (`"2 compases"`), calculada al sonar con el tempo de ese
+momento. `fit` dice cómo llega ahí: `"trim"` lo recorta con su cola
+(`release`, sin clics), `"stretch"` lo estira o encoge sin cambiar el tono
+y `"loop"` repite su tramo central (`loop_start` a `loop_end`, en ms desde
+el inicio del corte) con un fundido en la unión (`crossfade`).
+
+```lua
+-- 17-corte-duraciones.lua
+bpm(170)
+local amen = sample("amen.wav"):slice(8)
+-- La caja corta, el bombo estirado a una negra y el charles sostenido.
+amen:set(3, { dur = "1/16", release = 20 })
+amen:set(1, { dur = "1/4", fit = "stretch" })
+amen:set(2, { dur = 300, fit = "loop", loop_start = 20, loop_end = 60 })
+track("drums", amen)
+  -- El paso 15 alarga su caja: dos corcheas en bucle.
+  :steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 3{dur=1/4,fit=loop} .")
+```
+
+**2. Un corte tocado a varias notas.** `cortes:instrument(i, {...})` toca
+el corte `i` como un instrumento (polifonía, ADSR, acordes; los ms de
+`loop` cuentan desde el inicio del corte). Sin `root`, su raíz es su tono
+(YIN, como `cortes:note(i)`) con los cents corregidos; un golpe de
+batería no tiene un tono claro, así que con el break se pone a mano. Por
+defecto transpone como un sampler clásico (tono y duración a la vez);
+con `keep = true` conserva la duración.
+
+```lua
+-- 18-corte-instrumento.lua
+bpm(120)
+local amen = sample("amen.wav"):slice(8)
+-- Con una voz o un bajo, quita root: lo detecta.
+local caja = amen:instrument(3, { root = "C3", voices = 4, adsr = { 2, 60, 0.7, 120 } })
+local estirada = amen:instrument(3, { root = "C3", keep = true })
+track("caja", caja):melody("c3 . e3 .  g3 . c3+e3+g3 _  . . a2 .  g2 . . .")
+track("lenta", estirada):melody(". . . .  . . . .  c2 _ _ _  g2 _ _ _")
+```
+
+**3. Deformarlo al sonar.** `bend` es una curva de tono dentro del golpe
+(semitonos; negativo cae) que llega en `bend_time` ms y se queda: el
+bombo que baja del drum and bass. Admite `ramp()` y `lfo()`, que cambian
+la curva golpe a golpe. `rev = true` lo da la vuelta (como `'`).
+
+```lua
+-- 19-corte-bend.lua
+bpm(170)
+local amen = sample("amen.wav"):slice(8)
+amen:set(1, { bend = -12, bend_time = 180 })
+amen:set(5, { bend = ramp(0, -24, "4 compases"), bend_time = 120 })
+amen:set(8, { rev = true })
+track("drums", amen)
+  :steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 1{bend=7,bend_time=40}")
+```
+
+**4. Deformarlo al cargar.** `warp` dobla el tiempo dentro del corte sin
+cambiar su duración ni su tono: un número dice lo que suena en la mitad
+del tiempo (`0.3` empieza despacio y acelera; `0.7`, al revés) y una
+lista de puntos `{ {x, y}, ... }` da la curva entera. `smear` lo difumina
+con granos (0 nada, 1 todo granos). Los dos se calculan al guardar (unos
+20 ms por segundo de corte), una vez: mientras, suena lo de antes, y la
+pista los guarda para la carga siguiente. `formant` mueve el timbre sin
+cambiar la nota (en tiempo real, en los golpes con `%` o sin pitch).
+
+```lua
+-- 20-corte-warp.lua
+bpm(170)
+local amen = sample("amen.wav"):slice(8)
+amen:set(3, { warp = 0.3 })
+amen:set(7, { warp = { {0.25, 0.4}, {0.5, 0.45}, {0.75, 0.9} }, smear = 0.3 })
+amen:set(2, { formant = 5 })
+track("drums", amen)
+  :steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 3{smear=0.8} .")
+```
+
+Límites:
+
+- **Transponer material percusivo o con mucho ruido** (`keep`, `%`,
+  `fit = "stretch"`) suena artificial: los granos alineados buscan un
+  periodo que un golpe no tiene. Para melodías con bombos o cajas, el
+  sampler clásico (sin `keep`, `^`).
+- **`formant`, `stretch` y `smear`** van mejor con material tonal (voz,
+  bajo, sintes) que con percusión: en un golpe corto emborronan el ataque.
+- `bend` no va con `%` ni con `fit = "stretch"` (sus granos leen a un tono
+  fijo); `dur` no va con `play = "loop"` (para sostener, `fit = "loop"`).
+- Con `keep`, cada voz de un instrumento cuesta unas cinco veces más que
+  como sampler: con más de 8 a la vez, baja `voices`.
+- La vista del sample enseña el corte original, no el deformado.
 
 ### Que el break deje sitio al bombo (EQ dinámico y sidechain)
 

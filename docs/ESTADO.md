@@ -2041,6 +2041,30 @@ coste`: por cada segundo de corte, `warp` 20,7 ms, `smear` 5,0 ms y los
 dos 24,0 ms (en debug, 130, 56 y 178). Con la caché, solo cuando cambia
 el corte o sus valores: hacerlo al cargar, síncrono, no se nota.
 
+### Parte 5: guía, recetas y snippets
+
+- **Guía**: «Editar un corte: duraciones, notas y deformaciones» en las
+  recetas (sección 6), un tutorial corto en cuatro pasos (duraciones,
+  instrumento, `bend`/`rev`, `warp`/`smear`/`formant`) con las
+  limitaciones (transponer percusión o ruido con granos suena
+  artificial: para melodías con bombos y cajas, el sampler clásico;
+  `formant`, `stretch` y `smear` van mejor con material tonal; `bend` no
+  va con `%` ni `stretch`; el coste de `keep`; la vista del sample enseña
+  el original); una línea en «Qué se puede hacer» y la fila de las llaves
+  de forma en la tabla de la mini-notación. La API (las claves de
+  `cortes:set` y `cortes:instrument`) sale del registro como siempre.
+- **Recetas**: `scripts/ejemplos/17-corte-duraciones.lua`,
+  `18-corte-instrumento.lua`, `19-corte-bend.lua` y `20-corte-warp.lua`,
+  iguales a sus bloques de la guía (`script/tests/guide.rs`, ahora 20).
+- **Snippets** (los «presets» del editor, en `api::SNIPPETS`):
+  `duraciones`, `corte-melodia`, `bombo-bend` y `warp`
+  (`script/tests/registry.rs` los ejecuta).
+
+### Sin probar de oído
+
+Lo medido está arriba (duraciones a ±1 frame, tono por YIN, saltos en las
+uniones); que suene bien lo dice el usuario con auriculares.
+
 ## Audio de prueba y problemas conocidos
 
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`
