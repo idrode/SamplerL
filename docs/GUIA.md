@@ -4996,7 +4996,11 @@ Límites:
 - **Transponer material percusivo o con mucho ruido** (`keep`, `%`,
   `fit = "stretch"`) suena artificial: los granos alineados buscan un
   periodo que un golpe no tiene. Para melodías con bombos o cajas, el
-  sampler clásico (sin `keep`, `^`).
+  sampler clásico (sin `keep`, `^`), que cambia tono y duración a la vez.
+  Para quedarte con el golpe transpuesto como un sample más (y darle
+  luego la duración que quieras con `dur` y `fit = "trim"`), tócalo con
+  `^`, [remuestrea](#renderizar-a-wav) la pista y vuelve a cortar el WAV
+  que sale: el cambio queda en el audio, sin granos.
 - **`formant`, `stretch` y `smear`** van mejor con material tonal (voz,
   bajo, sintes) que con percusión: en un golpe corto emborronan el ataque.
 - `bend` no va con `%` ni con `fit = "stretch"` (sus granos leen a un tono
