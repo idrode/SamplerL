@@ -2687,6 +2687,117 @@ con la batería lo decide el usuario.
 
 Con el ratón de la terminal del usuario y dentro de tmux.
 
+## Rediseño de la interfaz
+
+Diseño aprobado en [docs/DISENO-TUI.md](DISENO-TUI.md) (qué se toma de
+la referencia y qué no, maquetas y plan). La referencia tiene una
+licencia copyleft: de ella solo se toman ideas de disposición y de
+interacción; no se ha mirado ni copiado su código, sus textos ni sus
+assets.
+
+- **Rejilla pura** (`tui/src/layout.rs`): `layout::grid(pantalla, needs)`
+  da el rectángulo de cada panel (menús, cabecera, regla, editor, onda,
+  tracker, mezclador, efectos, scope, espectro, referencia, dock, mensaje
+  y teclas) sin dibujar ni mirar la aplicación. Cuatro tamaños
+  (`Size::of`): diminuto (menos de 40×10), pequeño (menos de 100×30),
+  mediano y ancho (desde 160×45). `stack` reparte el alto entre la onda,
+  el tracker (sus 16 filas si caben) y el dock, que crece hasta lo que
+  pide su pestaña (`Needs::dock_want`) apretando antes la onda (hasta 6) y
+  luego el tracker (hasta 7). La misma rejilla sirve con el editor dentro
+  o fuera (`Needs::editor`).
+- **La ventana** (`tui/src/screen.rs`): dos pasadas de la rejilla (la
+  segunda con el alto que pide la pestaña que se va a ver, `grid_of`);
+  cada panel sigue siendo su widget de `ui`. `Header` (transporte, error,
+  avisos y el master a la derecha), `Ruler` (16 pasos y la línea de
+  tiempo), `MessageLine`, `KeysLine` (el dueño de las teclas en mayúsculas
+  y sus teclas) y `Reference` (las teclas una por fila, en el ancho). El
+  panel «motor» desaparece: el resumen de la pista elegida
+  (`ui::track_summary`) va en el título del tracker, lo congelado en el
+  título del sample y en la cabecera del tracker, y la variante, la
+  grabación y el master en la cabecera. Un solo tracker
+  (`FullTrackerPanel`, todas las pistas que quepan), con `▲n ▼n` abajo
+  si se desplaza.
+- **Pestañas** (`layout::Tab`, `Dock`): lo que no tiene sitio propio,
+  nunca encima de otro panel (se acabaron los `covers`). `App::show_tab`
+  elige la de la vista que se abre (ocupación, sidechain, choques, lanes,
+  las primeras visualizaciones de panel del script); `screen::shown_tab`
+  enseña la del panel con el foco si está ahí, si no la elegida, si no la
+  primera. Los nombres largos se acortan empezando por los más largos
+  (`Dock::labels`) y la fila se desplaza hasta la elegida (`‹` `›`).
+- **Foco** (`tui/src/focus.rs`, `app/focus.rs`): `focus::derive` lo saca
+  del modo y de los cursores que ya había (tracker, piano roll,
+  ocupación, punto de lane); solo la mezcla, los efectos, el scope y el
+  espectro se apuntan aparte (`chosen_focus`). `Action::Focus(panel)`
+  (Alt-1…9, `foco_*` en `[teclas]`, menú Ver) abre el cursor de ese panel
+  como la paleta; Esc vuelve. Con el foco en un panel sin cursor, sus
+  teclas (`handle_chosen_focus`) y las letras que no usa no llegan al
+  editor; Ctrl, Alt y F siguen. `ui::panel_block` pinta el borde en
+  `borde_foco` o `borde` (colores nuevos de `[colores]`, con `cabecera`).
+- **Menús** (`tui/src/menu.rs`, `app/menu.rs`): el menú de cada acción
+  sale de `menu_of`, un `match` sin comodín (una acción nueva no compila
+  sin su menú), con el nombre de la paleta y la tecla de `[teclas]`.
+  `MenuBar`, `Dropdown` y `hit` comparten `bar_layout` y
+  `dropdown_area`: lo que se ve y lo que pulsa el ratón no se separan.
+  F10 (`menu` en `[teclas]`) los abre; sin fila propia (pequeña), la
+  barra tapa la cabecera mientras está abierta. Ayuda › «Qué sabe hacer
+  esta terminal».
+- **Scope y espectro del master** (`app/viz.rs`): `sync_ui_viz` pide al
+  motor la fuente del master junto con lo del script (un lote con
+  `set_viz`, que entra al compás; tras cada carga, el lote del script
+  solo trae lo suyo y se vuelve a pedir). El motor ya copiaba a esa cola:
+  sin cambios en el hilo de audio ni publicación nueva (`no_alloc.rs` y
+  `golden.rs` igual). `master_views` arma el scope (con el RMS de lo
+  último en el título) y el espectro (con su caída).
+- **Ratón**: `menu_mouse` antes que nada; luego `focus_mouse` (una
+  pestaña se elige; un clic en la mezcla, los efectos, el scope o el
+  espectro les da el foco; el primer clic en el editor sin el foco solo
+  se lo devuelve y no mueve el cursor); luego lo de siempre.
+- **Degradación**: los menús sin fila por debajo del tamaño mediano, la
+  regla desde 20 filas, el mensaje desde 16; con `ascii`,
+  `screen::to_ascii` pasa al final del cuadro el dibujo de cajas, los
+  bloques y los símbolos a ASCII.
+- **Dibujo a prueba de fallos** (`tui/src/safe_draw.rs`): un pánico de un
+  widget se recoge con `catch_unwind` (su aviso no se escribe en la
+  terminal: el gancho lo guarda mientras se dibuja) y ese cuadro sale con
+  una pantalla mínima; un error de la terminal se salta el cuadro. El
+  bucle, la entrada y el motor siguen.
+- **Ventana del editor** (`ui::draw_editor_window`): con alto, menús,
+  cabecera con lo que suena en la principal, mensaje y teclas. El
+  protocolo pasa a la versión 8: `estado` lleva la variante, la
+  grabación y el master en dB enteros, en campos que una principal de
+  antes puede no mandar.
+- **Tests**: `layout::tests` (sin solapes ni salidas en doce tamaños, con
+  y sin editor y piano roll; los tamaños; el dock que crece; los nombres
+  de las pestañas), `tests/screen.rs` (cada disposición, la diminuta,
+  ASCII, un barrido de 1×1 a 300×90 sin fallos, el master sin pedirlo y
+  tras una recarga, el tracker desplazado, las pestañas que se
+  desplazan), `tests/menu.rs`, `tests/focus.rs`, `safe_draw::tests` y la
+  ventana del editor en `tests/split.rs`. Los tests de antes que miraban
+  posiciones fijas se pasaron a la disposición nueva; los del ratón
+  siguen con la posición de lo dibujado.
+
+### Decisiones
+
+- F1 sigue siendo la paleta; los menús van en F10 (libre). Alt y un
+  número para el foco porque el editor usa Alt con letras, flechas y
+  signos; Tab no, que es del autocompletado, las plantillas y los
+  cursores.
+- Las pestañas en una fila propia encima de su panel (no dentro del
+  borde): así cada panel conserva su título.
+- RMS en vez de LUFS: la cola del master es mono y sin ponderar; un
+  número que se llama LUFS sin serlo engañaría.
+- En el modo tocar, el primer clic en el editor solo cambia el foco: así
+  no se edita sin querer mientras se toca.
+- Los grupos no tienen tira en el mezclador (siguen en el panel de
+  efectos).
+
+### Sin probar en una terminal de verdad
+
+Todo se ha visto con el backend de test de ratatui: falta cambiar el
+tamaño en vivo, Alt y un número dentro de tmux y en la terminal del
+usuario, el ratón en cada panel y los menús, `LANG=C` y una terminal sin
+truecolor, y el editor en su ventana con los menús.
+
 ## Audio de prueba y problemas conocidos
 
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`

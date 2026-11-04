@@ -1,6 +1,6 @@
 # Rediseño de la TUI (propuesta)
 
-Estado: **aprobada**; se implementa por partes (ver la sección 8).
+Estado: **hecho** (ver «Rediseño de la interfaz» en [ESTADO.md](ESTADO.md)). Lo que cambió al implementarlo, en la sección 11.
 
 La referencia es un estudio externo para la terminal, hecho para otro
 lenguaje de patrones y con una licencia copyleft (AGPL). De él se toman
@@ -464,3 +464,23 @@ commit cuando cambie algo visible.
   anterior y el aviso sale en la cabecera y en el editor.
 - `LANG=C` y una terminal sin truecolor.
 - El editor en su ventana (`--split`) con los menús.
+
+## 11. Lo que cambió al implementarlo
+
+- **Nueve teclas de foco** (Alt-1…9): la ocupación tiene la suya (9). El
+  panel de la onda se llama «sample», como su título de siempre.
+- **Las pestañas van en una fila propia** encima de su panel, no dentro de
+  su borde: así cada panel conserva su título.
+- **El dock crece** hasta lo que pide la pestaña que se ve, apretando la
+  onda y luego el tracker.
+- **RMS en vez de LUFS** en el scope del master: la cola es mono y sin
+  ponderar, y llamarlo LUFS engañaría.
+- **El editor ocupa la mitad** en el tamaño mediano (no nueve vigésimos):
+  con menos, las líneas largas y la ayuda se cortaban.
+- **Los grupos no tienen tira** en el mezclador: siguen en el panel de
+  efectos.
+- **El primer clic en el editor** sin el foco solo se lo devuelve, sin
+  mover el cursor (desde el modo tocar no se edita sin querer).
+- **Las pestañas que no caben** se acortan y la fila se desplaza hasta la
+  elegida.
+

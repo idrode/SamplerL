@@ -2650,7 +2650,7 @@ pub const FUNCTIONS: &[Function] = &[
         signature: "pista:punchcard([opciones])",
         returns: Some(Receiver::Track),
         summary: "Una rejilla con los golpes (o las notas) de la pista por paso, y el cursor de lo que suena.",
-        doc: "Sale del patrón, no del audio: lo que sonará, con `every`, `chance` y `fill` ya resueltos (el mismo modelo que el piano roll). Una fila por corte o nota que suena; una columna por paso del ciclo. Va en un panel fijo arriba del sample y el tracker. Entra con la carga; si el script falla, siguen las de antes.",
+        doc: "Sale del patrón, no del audio: lo que sonará, con `every`, `chance` y `fill` ya resueltos (el mismo modelo que el piano roll). Una fila por corte o nota que suena; una columna por paso del ciclo. Va en la pestaña «visual» de la ventana principal (se elige sola al aparecer la primera). Entra con la carga; si el script falla, siguen las de antes.",
         params: &[Param {
             name: "opciones",
             description: "`size` (filas) y, en `spectrum`, `bands` (ver abajo)",
@@ -4824,7 +4824,7 @@ pub const SNIPPETS: &[Snippet] = &[
     },
     Snippet {
         name: "viz-espectro",
-        summary: "El espectro del master, en barras, arriba del sample y el tracker.",
+        summary: "El espectro del master, en barras, en la pestaña «visual».",
         template: "master():spectrum{ size = ${8}, bands = ${48} }\n",
         requires: "",
     },

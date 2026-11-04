@@ -849,3 +849,11 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
     los cursores de edición y de relleno con un clic. Detalle en «El ratón
     en el tracker, la ocupación y el mezclador» de
     [docs/ESTADO.md](ESTADO.md).
+19. ✅ **Rediseño de la interfaz** (pedida por el usuario, con una
+    referencia externa de la que solo se toman ideas): disposición por
+    tamaños (pequeña, mediana, ancha y diminuta) con cabecera, regla,
+    pestañas y la referencia de teclas; barra de menús (F10); foco entre
+    paneles (Alt-1…9) con su borde; scope y espectro del master sin
+    pedirlos en Lua; ASCII de verdad sin Unicode; y que un fallo del dibujo
+    nunca pare el audio. Diseño en [docs/DISENO-TUI.md](DISENO-TUI.md);
+    detalle en «Rediseño de la interfaz» de [docs/ESTADO.md](ESTADO.md).

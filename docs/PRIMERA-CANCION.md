@@ -169,10 +169,12 @@ tui --edit cancion.lua --new
 `cancion.lua` todavía no existe: `--new` le dice al programa que lo
 quieres empezar, y el editor abre una **plantilla** (un break de ejemplo
 con `amen.wav`). El archivo no se crea hasta que guardas con Ctrl-S. Con
-el archivo ya guardado, `--new` no cambia nada: lo abre tal cual. A la izquierda está el editor; a la derecha, el
-estado del motor, la forma de onda del sample y el tracker; abajo, los
-efectos de cada pista (ver «Abrir la interfaz» en la
-[sección 1](GUIA.md#1-inicio-rápido)). Ctrl-Q sale.
+el archivo ya guardado, `--new` no cambia nada: lo abre tal cual. A la izquierda está el editor; a la derecha, la
+forma de onda del sample, el tracker y el mezclador, y debajo pestañas
+con los efectos de cada pista y lo demás; arriba, la cabecera con el
+transporte (ver «La pantalla: tamaños, pestañas, foco y menús» en la
+[sección 1](GUIA.md#la-pantalla-tamaños-pestañas-foco-y-menús)). F10 abre
+los menús y Alt con un número lleva a cada panel. Ctrl-Q sale.
 
 Así no suena nada: el tracker se mueve, pero el audio se tira. Para oírlo
 (¡con el volumen bajo!), sal y vuelve a abrir con `--allow-audio`:
@@ -472,7 +474,7 @@ Pon el tempo de **tu** loop en `stretch(...)`. Va bien entre ×0,7 y
 - `argumento 2 no válido`: has pasado a `track()` el sample sin cortar.
   Añade `:slice(n)` o `:slice_grid(n)`.
 - Suena demasiado fuerte al sumar las dos pistas: baja los `:gain()`. El
-  panel del motor avisa con `LIMITADOR` o `SATURA` (ver «Saturación» en
+  master de la cabecera avisa con `LIMITADOR` o `SATURA` (ver «Saturación» en
   la [sección 7](GUIA.md#7-solución-de-problemas)).
 
 **Elegir samples sin salir.** F1 «Explorador de samples» lista los WAV
@@ -1202,7 +1204,7 @@ end)
 
 Ctrl-S. Suena la A (lo escrito). En el modo tocar, `v` (o F1 «Alternar
 variante A/B») pasa a la B en el compás siguiente: el drop sin melodía y
-con otra batería. El panel del motor dice `variante A` o `variante B`.
+con otra batería. La cabecera dice `variante A` o `variante B`.
 
 **Si no pasa:**
 
@@ -1377,7 +1379,7 @@ end)
 | `el patrón necesita 16 pasos` | Cuenta los pasos: cuatro grupos de cuatro (o los de `:length(n)`) |
 | He cambiado algo y no se oye | ¿Has cargado (Ctrl-S)? Los cambios entran al empezar el compás siguiente. Con secciones, ¿esa pista suena en esta sección? ¿Estás en la variante B? |
 | Una pista no se oye | `:mute()` en el script o `m` en vivo (`M` en el tracker; el clic derecho en su nombre la devuelve); otra pista en solo; `:gain(0)`; la sección la silencia |
-| Suena saturado o distorsionado | El panel del motor dice `LIMITADOR` o `SATURA`: baja los `:gain()`, los `@` y los envíos (ver «Saturación», [sección 7](GUIA.md#7-solución-de-problemas)) |
+| Suena saturado o distorsionado | La cabecera dice `LIMITADOR` o `SATURA`: baja los `:gain()`, los `@` y los envíos (ver «Saturación», [sección 7](GUIA.md#7-solución-de-problemas)) |
 | Muy fuerte de golpe | Un `@` o un `:gain()` mayor que 1 (llegan hasta 4). Baja el volumen del sistema antes de probar |
 | El instrumento suena desafinado | `root` tiene que ser la nota en la que suena tu sample (paso 8) |
 | Las notas se cortan | Más `voices`; un `release` más largo en `adsr`; o un `loop` para que la nota dure más que el sample |
