@@ -823,7 +823,7 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
     8. ✅ **Valor en vivo visible**: tests de la publicación (sin tearing,
        puntos conocidos); el valor junto a cada parámetro automatizado en
        el panel de efectos, con su unidad y barra; guía.
-16. **Visualizaciones** (pedida por el usuario, al estilo de Strudel):
+16. ✅ **Visualizaciones** (pedida por el usuario, al estilo de Strudel):
     `punchcard`, `pianoroll`, `scope`, `spectrum`, `pitchwheel` y `spiral`
     por pista o del master, activables desde Lua. Detalle en
     «Visualizaciones» de [docs/ESTADO.md](ESTADO.md).
@@ -837,4 +837,4 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
        configurable).
     7. ✅ **Inline y en la ventana del editor** (opcional): `inline = true`
        y las visualizaciones dibujadas por la principal (protocolo 7).
-    8. **Recetas, tutorial y documentación.**
+    8. ✅ **Recetas, tutorial y documentación.**

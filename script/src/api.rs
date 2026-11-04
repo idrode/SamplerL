@@ -4822,6 +4822,21 @@ pub const SNIPPETS: &[Snippet] = &[
         requires: "local amen = sample(\"amen.wav\"):slice(8)\n\
                    track(\"drums\", amen):steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\")\n",
     },
+    Snippet {
+        name: "viz-espectro",
+        summary: "El espectro del master, en barras, arriba del sample y el tracker.",
+        template: "master():spectrum{ size = ${8}, bands = ${48} }\n",
+        requires: "",
+    },
+    Snippet {
+        name: "viz-pista",
+        summary: "Osciloscopio y rejilla de golpes de una pista (el scope, junto a su línea).",
+        template: "track(\"${drums}\")\n  \
+                   :punchcard{ size = ${6} }\n  \
+                   :scope{ size = ${2}, inline = ${true} }\n",
+        requires: "local amen = sample(\"amen.wav\"):slice(8)\n\
+                   track(\"drums\", amen):steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\")\n",
+    },
 ];
 
 /// Snippet por nombre.

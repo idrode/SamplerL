@@ -64,7 +64,8 @@ la sección 4 (con sus parámetros, rangos y un ejemplo cada una).
 - Ver lo que suena, al estilo de Strudel: `pista:punchcard()` y
   `pista:pianoroll()` (del patrón, con el cursor), `pista:scope()` y
   `pista:spectrum()` (del audio de la pista), y lo mismo del master con
-  `master():spectrum()`; `viz_off()` las quita.
+  `master():spectrum()`; `viz_off()` las quita; ver
+  [Ver lo que suena](#ver-lo-que-suena).
 
 **Secuenciar** (sección 3 y sección 4)
 - Pasos con la mini-notación: reverse, pitch con duración (`^`) o sin ella
@@ -831,7 +832,7 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Volver a meter el panel de dispositivos en la principal | Con el panel de dispositivos en su ventana: la cierra y lo abre aquí | — |
 | Modo vim | Enciende o apaga el modo vim del editor en esta sesión (el de siempre, `[editor] modo`) | — |
 | Salir | Sale (pide confirmación si hay cambios sin guardar) | Ctrl-Q |
-| Snippet: `amen`, `fill`, `ghost`, `intro`, `euclid`, `melodia`, `polirritmo`, `barrido`, `groove`, `instrumento`, `duraciones`, `corte-melodia`, `bombo-bend`, `warp`, `lane-barrido`, `lane-pan` | Inserta el snippet en el cursor (ver «Snippets» en la sección 4) | — |
+| Snippet: `amen`, `fill`, `ghost`, `intro`, `euclid`, `melodia`, `polirritmo`, `barrido`, `groove`, `instrumento`, `duraciones`, `corte-melodia`, `bombo-bend`, `warp`, `lane-barrido`, `lane-pan`, `viz-espectro`, `viz-pista` | Inserta el snippet en el cursor (ver «Snippets» en la sección 4) | — |
 
 <!-- paleta:fin -->
 
@@ -3860,6 +3861,8 @@ Trozos de script con campos para rellenar. Se insertan desde el autocompletado (
 | `warp` | Un corte que empieza despacio y acelera (warp) y otro difuminado con granos (smear). |
 | `lane-barrido` | Un barrido de filtro dibujado como lane, con su propia duración (polirritmo con el patrón). |
 | `lane-pan` | El pan de una pista yendo y viniendo, suave, como lane. |
+| `viz-espectro` | El espectro del master, en barras, arriba del sample y el tracker. |
+| `viz-pista` | Osciloscopio y rejilla de golpes de una pista (el scope, junto a su línea). |
 
 `amen`:
 
@@ -4007,6 +4010,22 @@ local amen = sample("amen.wav"):slice(8)
 track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
 track("drums")
   :auto("pan", { {0, -0.7, "smooth"}, {1, 0.7, "smooth"}, {2, -0.7} }, { len = 2 })
+```
+
+`viz-espectro`:
+
+```lua
+master():spectrum{ size = 8, bands = 48 }
+```
+
+`viz-pista` (las primeras líneas son lo que necesita tener antes):
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+track("drums")
+  :punchcard{ size = 6 }
+  :scope{ size = 2, inline = true }
 ```
 
 <!-- api:fin -->
@@ -4638,6 +4657,72 @@ group("bateria", { "kick", "caja", "hats" })
   :send("reverb", 0.1)
 ```
 
+### Ver lo que suena
+
+Visualizaciones al estilo de Strudel, de una pista o del master, en un
+panel arriba del sample y el tracker (o junto a su línea del código, con
+`inline = true`).
+
+**1. El espectro del master.** `master():spectrum{ bands = 48 }`: barras
+en escala logarítmica de 30 Hz a 20 kHz, que suben de golpe y bajan
+despacio para que no parpadeen. Con un barrido de filtro se ve moverse el
+corte.
+
+```lua
+-- 24-viz-espectro.lua
+bpm(170)
+local amen = sample("amen.wav"):slice(8)
+-- Un barrido del filtro de 4 compases, y el espectro del master para
+-- verlo subir y bajar.
+track("drums", amen)
+  :steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+  :fx("lowpass", { cutoff = 3000, q = 3 })
+  :auto("cutoff", { {0, 200, "exp"}, {2, 12000, "exp"}, {4, 200} }, { len = 4 })
+master():spectrum{ size = 8, bands = 48 }
+```
+
+**2. La forma de onda.** `pista:scope{ size = 6 }` dibuja con Braille lo
+que sale de la pista, empezando en un cruce por cero: una nota estable se
+queda quieta. `pista:pitchwheel()` dice qué notas suenan, en una rueda
+con do arriba; `pista:spiral()` enrolla la onda con el periodo de la nota.
+
+```lua
+-- 25-viz-scope-bajo.lua
+bpm(120)
+-- La forma de onda del bajo: el disparo la deja quieta en cada nota.
+track("bajo", sh101{ saw = 1, cutoff = 900, res = 0.4 })
+  :melody("c2 _ . c2  eb2 _ g1 .  c2 _ . bb1  . g1 c2 .")
+  :scope{ size = 6 }
+  :pitchwheel{ size = 6 }
+```
+
+**3. El patrón.** `pista:punchcard()` es una rejilla con los golpes de la
+pista por paso y el cursor de lo que suena (lo que sonará, con `every`,
+`chance` y `fill` ya resueltos); `pista:pianoroll()`, lo mismo con cada
+nota del rango y su nombre. Y `inline = true` pone una junto a su línea
+del código.
+
+```lua
+-- 26-viz-punchcard.lua
+bpm(170)
+local amen = sample("amen.wav"):slice(8)
+track("drums", amen)
+  :steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+  :every(4, function(c) c:reverse() end)
+  -- Los golpes de la batería, con el cursor (y lo que cambia cada 4
+  -- compases); y un scope pequeño junto a esta línea.
+  :punchcard{ size = 8 }
+  :scope{ size = 2, inline = true }
+```
+
+Cada una entra al cargar (si el script falla, siguen las de antes);
+`pista:viz_off()`, `master():viz_off()` y `viz_off()` las quitan. Las de
+audio solo hacen trabajar al motor mientras se ven: copia las muestras
+de esa pista a una cola; el cálculo y el dibujo, en la interfaz. Con el
+editor en su ventana, también salen allí. Si la terminal no pinta Braille
+ni bloques, `[interfaz] ascii = true` (o un `LANG` sin UTF-8) las dibuja
+con ASCII; `[interfaz] refresco` dice cuántos cuadros por segundo.
+
 ### Automatizar con lanes
 
 Una lane es una curva de puntos que lleva un parámetro a lo largo de la
@@ -5187,5 +5272,8 @@ song.lua:1: ')' expected near <eof>
 
 Error de sintaxis de Lua: falta cerrar un paréntesis, unas comillas o un
 `end`.
+as comillas o un
+`end`.
+nd`.
 as comillas o un
 `end`.

@@ -319,6 +319,8 @@ fn every_snippet_runs_after_what_it_requires() {
             "warp",
             "lane-barrido",
             "lane-pan",
+            "viz-espectro",
+            "viz-pista",
         ]
     );
 }

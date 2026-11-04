@@ -2600,6 +2600,23 @@ por configuración y por `LANG`.
   del editor, las dos que dibuja la principal, cada una en su sitio).
   `pantalla_viz_inline` la enseña.
 
+### Parte 8: documentación
+
+«Ver lo que suena» en las recetas de la guía: un tutorial en tres pasos
+(el espectro del master con un barrido de filtro, el scope y la rueda de
+notas de un bajo del sh101, el punchcard de la batería con un scope junto
+a su línea) y cómo quitarlas, el ASCII y el refresco; una línea en «Qué se
+puede hacer». Recetas `scripts/ejemplos/24-viz-espectro.lua`,
+`25-viz-scope-bajo.lua` y `26-viz-punchcard.lua`, iguales a sus bloques
+(`script/tests/guide.rs`, ahora 26), y snippets `viz-espectro` y
+`viz-pista`.
+
+### Sin probar en una terminal de verdad
+
+Que el Braille y los bloques se vean bien (y la degradación a ASCII) en la
+terminal del usuario, por SSH y en tmux, y que 30 cuadros por segundo no
+pesen por la red.
+
 ## Audio de prueba y problemas conocidos
 
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`
