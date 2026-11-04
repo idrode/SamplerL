@@ -4830,10 +4830,34 @@ parámetro con lane (se oye mientras se mueve) o arrastrar en vertical
 sobre su curva graba lo que se toca. Al soltar (o con el mando quieto
 0,6 s), la toma se simplifica y sustituye a los puntos de ese tramo.
 
-Límites: 32 lanes por canción y 64 puntos por lane; `pista:auto_clear()`
-libera las suyas. Fuera de una pista, `lane(puntos, opciones)` es la misma
-curva para ponerla donde va un `ramp()` (un grupo, los efectos de un
-corte), pero no se edita desde el panel.
+**Quién manda.** Un parámetro tiene una sola curva: un `auto()` sustituye
+al `ramp()`, `lfo()` o `macro()` que tuviera. Sobre la lane:
+
+- el `~` de un paso (`3~800`) manda sobre la lane del primer filtro desde
+  ese golpe hasta el siguiente;
+- en lo que un golpe lee al nacer (la forma de un corte: `bend`, `attack`,
+  `release`...), lo que diga el paso entre llaves (`1{bend=7}`) manda en
+  ese golpe; los demás siguen la lane;
+- `{lp=800}` en un paso no toca la lane: es otro filtro, solo en la voz de
+  ese golpe y antes de los de la pista;
+- un mando MIDI asignado con MIDI learn se aplica encima según su peso
+  mientras se mueve, y luego la lane vuelve a mandar.
+
+Límites:
+
+- 32 lanes por canción y 64 puntos por lane; pasarse es un error (y sigue
+  sonando lo anterior). `pista:auto_clear()` libera las de la pista,
+  `pista:auto_list()` dice cuáles tiene y una misma `lane()` puede ir en
+  varios parámetros.
+- Una lane solo se edita desde el panel (ratón, teclas, touch) si su tabla
+  de puntos está escrita tal cual dentro de la llamada a `auto()`: una que
+  sale de una variable o de una función se ve en «solo lectura», y el
+  panel explica cómo pasarla a literal (copiar sus puntos en la llamada).
+- Fuera de una pista, `lane(puntos, opciones)` es la misma curva para
+  ponerla donde va un `ramp()` (un grupo, los efectos de un corte), pero
+  no se edita desde el panel.
+- Al grabar con un mando, la toma no se oye con el ratón hasta que se
+  escribe (con un mando sí, mientras se mueve).
 
 ### Una macro para el subidón
 
