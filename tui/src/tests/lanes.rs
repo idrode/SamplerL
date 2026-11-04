@@ -113,7 +113,11 @@ fn the_live_reading_shows_the_value_its_bar_and_a_mark_on_the_curve() {
     let buffer = draw_widget(crate::lanes_panel::LanesPanel(&single), 60, 7);
     let lines: Vec<String> = text(&buffer).lines().map(str::to_string).collect();
     // El título lleva la lectura y su barra (1 de 0 a 4: un cuarto).
-    assert!(lines[1].contains("▸ 1.00 ███░░░░░░░░░"), "{}", lines[1]);
+    assert!(
+        lines[1].contains("▸ 1.00 en vivo ███░░░░░░░░░"),
+        "{}",
+        lines[1]
+    );
     // El rombo, a un cuarto de la altura (la fila de abajo de las cuatro,
     // redondeado), en la columna del cursor.
     let x = gain.column(live.phase.unwrap() as f64, 58) as usize + 1;
@@ -411,6 +415,61 @@ fn touch_with_a_midi_knob_records_when_it_rests() {
     let after = auto_line(&app, "gain");
     assert_ne!(after, before, "{}", app.view().message);
     assert!(app.view().error.is_none(), "{:?}", app.view().error);
+}
+
+#[test]
+fn the_fx_panel_shows_the_live_value_next_to_each_parameter_with_a_lane() {
+    let (_, mut app, mut engine) = open("lanes_fx_live", Some(SONG_LANES));
+    play(&mut app, &mut engine, 6);
+    let view = app.view();
+    let drums = &view.tracks[0];
+    // Lo que vale ahora, de lo que publica el motor: el corte y el
+    // volumen.
+    let cutoff = drums
+        .live
+        .iter()
+        .find(|l| l.name == "lowpass.cutoff")
+        .expect("en vivo");
+    assert!((200.0..=8000.0).contains(&cutoff.value), "{}", cutoff.value);
+    let gain = drums.live.iter().find(|l| l.name == "gain").unwrap();
+    assert_eq!(gain.value, 0.3);
+    let screen = text(&draw(&mut app, 140, 40));
+    let shown = crate::units::with_unit("lowpass.cutoff", cutoff.value);
+    assert!(screen.contains(&format!("∿cutoff ▸{shown}")), "{screen}");
+    assert!(screen.contains("vol ▸0.30∿"), "{screen}");
+    // Sin lanes, como siempre: ni `▸` ni barras de más.
+    let (_, mut plain, mut engine) = open("lanes_fx_plain", Some(SONG));
+    play(&mut plain, &mut engine, 2);
+    assert!(plain.view().tracks[0].live.is_empty());
+    assert!(!text(&draw(&mut plain, 140, 40)).contains('▸'));
+}
+
+#[test]
+fn a_synth_lane_reads_in_its_own_units() {
+    let song = r#"bpm(120)
+track("acid", synth("acid", { envmod = 0.5 })):melody("c2 . . .  . . . .  . . . .  . . . .")
+  :auto("envmod", { {0, 0.2}, {1, 0.8} })
+"#;
+    let (_, mut app, mut engine) = open("lanes_synth_units", Some(song));
+    assert!(app.view().error.is_none(), "{:?}", app.view().error);
+    play(&mut app, &mut engine, 8);
+    let live = app.view().tracks[0]
+        .live
+        .iter()
+        .find(|l| l.name == "synth.envmod")
+        .cloned()
+        .expect("en vivo");
+    // A mitad de la lane: 0.5, en las unidades de Lua (no las del núcleo).
+    assert!((0.2..=0.8).contains(&live.value), "{}", live.value);
+    palette(&mut app, "lanes de automatización");
+    let lanes = app.view().lanes.unwrap();
+    let points: Vec<f32> = lanes.lanes[0]
+        .lane
+        .points()
+        .iter()
+        .map(|p| p.value)
+        .collect();
+    assert_eq!(points, [0.2, 0.8]);
 }
 
 /// Para ver el panel sin terminal: `cargo test -p tui pantalla_lanes --

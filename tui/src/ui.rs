@@ -2466,6 +2466,49 @@ pub fn sends_text_moving(sends: [f32; 2], moving: [bool; 2]) -> String {
 
 /// El pan de una pista para el panel de efectos: ` pan -0.30`, ` pan ∿`
 /// si se mueve, o nada al centro.
+/// Lo que vale ahora el parámetro `target` de la pista, si tiene lane.
+fn live_of<'a>(
+    track: &'a crate::model::TrackView,
+    target: &script::LaneTarget,
+) -> Option<&'a crate::model::LiveParam> {
+    track.live.iter().find(|l| &l.target == target)
+}
+
+/// Columnas de la barra de un parámetro en vivo.
+const LIVE_BAR: usize = 5;
+
+/// Lo que vale ahora un parámetro con lane, para ponerlo junto a él: el
+/// valor con su unidad tras `▸` (en vivo, no lo escrito) y una barra.
+fn live_spans(live: &crate::model::LiveParam) -> Vec<Span<'static>> {
+    vec![
+        Span::from(format!(
+            " ▸{}",
+            crate::units::with_unit(&live.name, live.value)
+        ))
+        .fg(accent())
+        .bold(),
+        Span::from(format!(" {}", meter(live.level, LIVE_BAR))).fg(accent()),
+    ]
+}
+
+/// Los envíos con los que tienen lane en vivo: `→ d▸0.30 r0.15`.
+fn sends_text_live(
+    sends: [f32; 2],
+    moving: [bool; engine::MIX_PARAMS],
+    live: [Option<f32>; 2],
+) -> String {
+    let parts: Vec<String> = [("d", 0usize), ("r", 1)]
+        .iter()
+        .filter_map(|&(bus, i)| match live[i] {
+            Some(v) => Some(format!("{bus}▸{v:.2}")),
+            None if moving[engine::MIX_SEND + i] => Some(format!("{bus}∿")),
+            None if sends[i] > 0.0 => Some(format!("{bus}{:.2}", sends[i])),
+            None => None,
+        })
+        .collect();
+    format!(" → {}", parts.join(" "))
+}
+
 fn pan_text(track: &crate::model::TrackView) -> String {
     pan_text_of(track.pan, track.mix_moving[engine::MIX_PAN])
 }
@@ -2651,34 +2694,55 @@ impl Widget for FxPanel<'_> {
             if let Some(group) = &track.group {
                 title.push(Span::from(format!(" · ▣ {group}")).fg(dim()));
             }
+            // El volumen, el pan y los envíos con lane: lo que valen ahora.
+            let mix_live = |index: usize| live_of(track, &script::LaneTarget::Mix(index));
+            let gain_live = mix_live(engine::MIX_GAIN);
+            let pan_span = match mix_live(engine::MIX_PAN) {
+                Some(live) => Span::from(format!(" pan ▸{:+.2}", live.value)).fg(accent()),
+                None => Span::from(pan_text(track)).fg(dim()),
+            };
+            let send_live = [
+                mix_live(engine::MIX_SEND).map(|l| l.value),
+                mix_live(engine::MIX_SEND + 1).map(|l| l.value),
+            ];
+            let sends_span = if send_live.iter().any(Option::is_some) {
+                Span::from(sends_text_live(track.sends, track.mix_moving, send_live)).fg(accent())
+            } else {
+                Span::from(sends_text_moving(
+                    track.sends,
+                    [
+                        track.mix_moving[engine::MIX_SEND],
+                        track.mix_moving[engine::MIX_SEND + 1],
+                    ],
+                ))
+                .fg(dim())
+            };
             let mut lines = vec![
                 Line::from(title),
                 Line::from(vec![
-                    Span::raw(format!(
-                        "vol {:.2}{} ",
-                        track.gain,
-                        if track.mix_moving[engine::MIX_GAIN] {
-                            "∿"
-                        } else {
-                            ""
-                        }
-                    )),
+                    match gain_live {
+                        Some(live) => Span::from(format!("vol ▸{:.2}∿ ", live.value))
+                            .fg(accent())
+                            .bold(),
+                        None => Span::raw(format!(
+                            "vol {:.2}{} ",
+                            track.gain,
+                            if track.mix_moving[engine::MIX_GAIN] {
+                                "∿"
+                            } else {
+                                ""
+                            }
+                        )),
+                    },
                     Span::from(meter(
-                        track.gain / engine::MAX_GAIN,
+                        gain_live.map_or(track.gain, |l| l.value) / engine::MAX_GAIN,
                         width.saturating_sub(4),
                     ))
                     .fg(accent()),
                     // Pan de la pista, si no está al centro (o se mueve).
-                    Span::from(pan_text(track)).fg(dim()),
+                    pan_span,
                     // Envíos a los buses: `→ d0.30 r0.15`.
-                    Span::from(sends_text_moving(
-                        track.sends,
-                        [
-                            track.mix_moving[engine::MIX_SEND],
-                            track.mix_moving[engine::MIX_SEND + 1],
-                        ],
-                    ))
-                    .fg(dim()),
+                    sends_span,
                 ]),
                 Line::from(vec![
                     Span::raw("nivel "),
@@ -2726,31 +2790,27 @@ impl Widget for FxPanel<'_> {
             }
             for (i, fx) in track.fx.iter().enumerate() {
                 // Los parámetros que se mueven (ramp, lfo): `∿cutoff`.
-                let moving: Vec<String> = track
-                    .automated
-                    .iter()
-                    .filter(|(f, _)| *f == i)
-                    .map(|(_, p)| format!("∿{p}"))
-                    .collect();
-                lines.push(Line::from(vec![
-                    Span::raw(format!(
-                        "› {}",
-                        fx_text_named(
-                            fx,
-                            fx.sidechain().and_then(|k| view
-                                .tracks
-                                .iter()
-                                .find(|t| t.slot == Some(k))
-                                .map(|t| t.name.as_str()))
-                        )
-                    )),
-                    Span::from(if moving.is_empty() {
-                        String::new()
-                    } else {
-                        format!(" {}", moving.join(" "))
-                    })
-                    .fg(accent()),
-                ]));
+                // Con lane, además, lo que vale ahora (en vivo, no lo
+                // escrito): `∿cutoff ▸1.23 kHz ███░░`.
+                let mut spans = vec![Span::raw(format!(
+                    "› {}",
+                    fx_text_named(
+                        fx,
+                        fx.sidechain().and_then(|k| view
+                            .tracks
+                            .iter()
+                            .find(|t| t.slot == Some(k))
+                            .map(|t| t.name.as_str()))
+                    )
+                ))];
+                for (_, p) in track.automated.iter().filter(|(f, _)| *f == i) {
+                    spans.push(Span::from(format!(" ∿{p}")).fg(accent()));
+                    let target = script::LaneTarget::Fx { slot: i, param: p };
+                    if let Some(live) = live_of(track, &target) {
+                        spans.extend(live_spans(live));
+                    }
+                }
+                lines.push(Line::from(spans));
             }
             Paragraph::new(lines).render(*column, buf);
         }

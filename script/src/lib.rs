@@ -67,7 +67,7 @@ pub mod masking;
 pub mod patterns;
 pub mod project;
 pub mod step_fx;
-pub use lanes::{LaneDef, number_text, parse_points, points_text};
+pub use lanes::{LaneDef, LaneTarget, number_text, parse_points, points_text};
 mod watch;
 mod written;
 

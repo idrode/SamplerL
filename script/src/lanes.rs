@@ -44,6 +44,12 @@ pub struct LaneDef {
     /// Dónde está escrita la tabla de puntos (para editarla desde la
     /// interfaz), o por qué no se puede.
     pub written: Result<super::TableSpan, String>,
+    /// A qué va (`None`: una `lane()` suelta).
+    pub target: Option<LaneTarget>,
+    /// Lo que la lane lleva multiplicado respecto a lo escrito (los
+    /// parámetros del sintetizador van en las unidades de su núcleo): el
+    /// valor de verdad es el de la lane dividido por esto.
+    pub unit_scale: f32,
     /// Dónde se llamó (`song.lua:12: `).
     pub location: String,
 }
@@ -53,6 +59,24 @@ impl LaneDef {
     pub fn bars(&self) -> f64 {
         self.lane.length() / self.bar_steps as f64
     }
+}
+
+/// A qué va una lane de `auto()`, para quien la enseña: el efecto (su
+/// índice en la cadena de la pista) y el nombre de su parámetro, la
+/// mezcla, el pitch, el formante, un parámetro del sintetizador o uno de
+/// la forma de los cortes.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LaneTarget {
+    Fx {
+        slot: usize,
+        param: &'static str,
+    },
+    /// Volumen, pan o un envío (`engine::MIX_*`).
+    Mix(usize),
+    Pitch,
+    Formant,
+    Synth(&'static str),
+    Shape(&'static str),
 }
 
 /// Lo que puede seguir una lane en una pista.
@@ -683,6 +707,8 @@ pub(crate) fn auto(
         scale,
         range_log: opts.log,
         written: source,
+        target: Some(public_target(&track_def_fx(builder, name), target.target)),
+        unit_scale: target.scale,
         location: location(lua),
     };
     let index = place(builder, slot, def).map_err(|e| fail(lua, format!("{who}: {e}")))?;
@@ -819,6 +845,8 @@ pub(crate) fn lane(
             .map_or((lo, hi, opts.log), |(a, b)| (a, b, opts.log)),
         range_log: opts.log,
         written: Err("una lane() suelta no tiene pista: edítala en el código".into()),
+        target: None,
+        unit_scale: 1.0,
         location: location(lua),
     };
     let index = place(builder, None, def).map_err(|e| fail(lua, format!("{who}: {e}")))?;
@@ -979,4 +1007,36 @@ pub fn points_text(points: &[(f64, f32, LaneCurve)], original: &str) -> String {
     }
     out.push_str(&format!("{outer}}}"));
     out
+}
+
+/// Los efectos de la pista `name` (para nombrar el parámetro de un destino).
+fn track_def_fx(builder: &Builder, name: &str) -> Vec<engine::Fx> {
+    builder
+        .tracks
+        .iter()
+        .find(|t| t.def.name == name)
+        .map_or_else(Vec::new, |t| t.def.fx.clone())
+}
+
+/// El destino como lo ve quien lo enseña.
+fn public_target(fx: &[engine::Fx], target: AutoTarget) -> LaneTarget {
+    match target {
+        AutoTarget::Fx { slot, param } => LaneTarget::Fx {
+            slot,
+            param: fx
+                .get(slot)
+                .and_then(|f| f.params().get(param).copied())
+                .unwrap_or(""),
+        },
+        AutoTarget::Mix(i) => LaneTarget::Mix(i),
+        AutoTarget::Pitch => LaneTarget::Pitch,
+        AutoTarget::Formant => LaneTarget::Formant,
+        AutoTarget::Synth(name) => LaneTarget::Synth(name),
+        AutoTarget::Shape(index) => LaneTarget::Shape(
+            SHAPE_TARGETS
+                .iter()
+                .find(|(_, i)| *i == index)
+                .map_or("", |(n, _)| n),
+        ),
+    }
 }

@@ -606,3 +606,42 @@ impl App {
         }
     }
 }
+
+impl App {
+    /// Lo que vale ahora cada parámetro con lane de la pista `track` (lo
+    /// que publica el motor, en las unidades de Lua), para enseñarlo junto
+    /// al parámetro.
+    pub(super) fn live_params(&self, track: &script::TrackDef) -> Vec<crate::model::LiveParam> {
+        let (Some(song), Some(status)) = (self.host.song(), self.status.as_ref()) else {
+            return Vec::new();
+        };
+        track
+            .lanes
+            .iter()
+            .filter_map(|(name, index)| {
+                let def = song.lanes.get(*index)?.as_ref()?;
+                let live = status.lanes.get(*index).copied().flatten()?;
+                let k = if def.unit_scale != 0.0 {
+                    def.unit_scale
+                } else {
+                    1.0
+                };
+                let value = live.value / k;
+                let (lo, hi, log) = def.scale;
+                let level = if hi <= lo {
+                    0.5
+                } else if log && lo > 0.0 && value > 0.0 {
+                    (value.ln() - lo.ln()) / (hi.ln() - lo.ln())
+                } else {
+                    (value - lo) / (hi - lo)
+                };
+                Some(crate::model::LiveParam {
+                    target: def.target.clone()?,
+                    name: name.clone(),
+                    value,
+                    level: level.clamp(0.0, 1.0),
+                })
+            })
+            .collect()
+    }
+}

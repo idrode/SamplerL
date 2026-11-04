@@ -275,8 +275,22 @@ impl SliceFxView {
     }
 }
 
+/// Un parámetro con lane y lo que vale ahora: lo que publica el motor (en
+/// las unidades de Lua), no lo escrito.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LiveParam {
+    pub target: script::LaneTarget,
+    /// Su nombre completo (`"lowpass.cutoff"`).
+    pub name: String,
+    pub value: f32,
+    /// Lo alto que va en la escala de su lane (de 0 a 1), para su barra.
+    pub level: f32,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct TrackView {
+    /// Lo que vale ahora cada parámetro con lane (ver [`LiveParam`]).
+    pub live: Vec<LiveParam>,
     pub name: String,
     /// Congelada (`frozen()`): `Some(true)` si ha cambiado desde entonces.
     pub frozen: Option<bool>,

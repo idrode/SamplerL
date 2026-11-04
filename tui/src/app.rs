@@ -4300,6 +4300,7 @@ impl App {
                             ),
                         };
                         TrackView {
+                            live: self.live_params(t),
                             name: t.name.clone(),
                             frozen: t.frozen.as_ref().map(|f| f.stale),
                             slot,

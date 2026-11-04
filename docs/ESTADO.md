@@ -2375,6 +2375,29 @@ valor: el par nunca se lee de trozos distintos.
   publicada; y `no_alloc.rs` comprueba que lo publicó dentro del tramo sin
   reservas.
 
+- **En la interfaz**: `TrackView::live` (`App::live_params`): por cada
+  lane de la pista, a qué va (`script::LaneTarget`, el destino público de
+  `LaneDef::target`), lo que vale ahora (lo publicado, en las unidades de
+  Lua) y su nivel en la escala de la lane. En el panel de efectos, junto a
+  cada parámetro con lane, `∿cutoff ▸631 Hz ██░░░` (el valor con su
+  unidad tras `▸`, en el color de acento: en vivo, no lo escrito, que sigue
+  en el texto del efecto: `LP 3000 Hz`); el volumen `vol ▸0.30∿` con su
+  barra en el valor de ahora; el pan `pan ▸+0.30`; los envíos `→ d▸0.30`.
+  Un parámetro con `ramp`/`lfo` sigue con su `∿` solo. El panel de lanes
+  dice la unidad y «en vivo» en su lectura. Unidades (`tui/src/units.rs`,
+  solo texto: lo que suena no se redondea): Hz (kHz desde mil) en los
+  cortes y frecuencias, dB en umbrales, `makeup`, `range` y las ganancias
+  del EQ, ms en ataques, colas y `bend_time`, semitonos en `pitch`, `bend`
+  y `formant`. Se redibuja cada 30 ms (~33 Hz).
+- **Arreglado**: las lanes de un parámetro del sintetizador con escala
+  (`envmod` del acid y sus parientes) llevan sus puntos en las unidades del
+  núcleo; `LaneDef::unit_scale` lo dice y la vista y la edición los pasan a
+  las de Lua (antes, el panel los enseñaba y los habría escrito mal).
+- **Tests**: `tui/src/units.rs` (cada unidad) y `tui/src/tests/lanes.rs`
+  (en el panel de efectos, `∿cutoff ▸…` con el valor publicado y `vol
+  ▸0.30∿`; sin lanes, nada; el `envmod` de un acid en sus unidades de Lua,
+  en la vista y en los puntos del panel).
+
 ## Audio de prueba y problemas conocidos
 
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`

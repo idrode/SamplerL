@@ -107,11 +107,12 @@ impl LaneRow {
         }
     }
 
-    /// Lo que se lee ahora: el valor que publica el motor (con «fijo» fuera
-    /// del tramo de una `once`), o nada si aún no ha llegado.
+    /// Lo que se lee ahora: el valor que publica el motor, con su unidad
+    /// (con «fijo» fuera del tramo de una `once`), o nada si aún no ha
+    /// llegado.
     pub fn reading(&self) -> Option<String> {
         let live = self.live?;
-        let value = number(live.value);
+        let value = crate::units::with_unit(&self.param, live.value);
         Some(match live.phase {
             Some(_) => value,
             None => format!("{value} fijo"),
@@ -136,12 +137,24 @@ impl LanesView {
             .iter()
             .filter_map(|(param, index)| {
                 let lane_def = song.lanes.get(*index)?.as_ref()?;
+                // Los del sintetizador van en las unidades de su núcleo: a
+                // las de Lua, para verlos y editarlos.
+                let k = lane_def.unit_scale;
+                let mut live = status.and_then(|s| s.lanes.get(*index).copied().flatten());
+                let lane = if k != 1.0 && k != 0.0 {
+                    if let Some(l) = &mut live {
+                        l.value /= k;
+                    }
+                    unscaled(&lane_def.lane, k).unwrap_or(lane_def.lane)
+                } else {
+                    lane_def.lane
+                };
                 Some(LaneRow {
                     param: param.clone(),
                     index: *index,
-                    lane: lane_def.lane,
+                    lane,
                     bar_steps: lane_def.bar_steps,
-                    live: status.and_then(|s| s.lanes.get(*index).copied().flatten()),
+                    live,
                     scale: lane_def.scale,
                     range: lane_def.range,
                     range_log: lane_def.range_log,
@@ -161,6 +174,22 @@ impl LanesView {
         let lanes = self.lanes.len().max(1) as u16;
         lanes * (CURVE_ROWS + 1) + 2
     }
+}
+
+/// La lane con sus valores divididos por `k` (los del sintetizador, de las
+/// unidades del núcleo a las de Lua).
+fn unscaled(lane: &Lane, k: f32) -> Option<Lane> {
+    let points: Vec<engine::LanePoint> = lane
+        .points()
+        .iter()
+        .map(|p| engine::LanePoint {
+            value: p.value / k,
+            ..*p
+        })
+        .collect();
+    Lane::new(&points, lane.length(), lane.is_log())
+        .and_then(|l| l.with_timing(lane.mode(), lane.offset(), lane.rest() / k))
+        .ok()
 }
 
 /// Un valor como se lee: sin decimales los grandes, con dos los pequeños.
@@ -214,10 +243,11 @@ impl Widget for LanesPanel<'_> {
             let mut spans = vec![Span::from(head.clone()).bold()];
             if let Some(reading) = row.reading() {
                 let level = row.live.map_or(0.0, |l| row.level(l.value));
-                let used = head.chars().count() + reading.chars().count() + BAR + 4;
+                let used = head.chars().count() + reading.chars().count() + BAR + 12;
                 let gap = (inner.width as usize).saturating_sub(used).max(1);
                 spans.push(Span::from(" ".repeat(gap)));
                 spans.push(Span::from(format!("▸ {reading} ")).fg(accent()).bold());
+                spans.push(Span::from("en vivo ").fg(dim()));
                 spans.push(Span::from(crate::ui::meter(level, BAR)).fg(accent()));
             }
             Line::from(spans).render(title, buf);

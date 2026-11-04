@@ -33,6 +33,7 @@ mod tests;
 mod theme;
 mod touch;
 mod ui;
+mod units;
 
 use std::sync::Arc;
 use std::time::Duration;
