@@ -83,7 +83,7 @@ pub fn hit_shape(written: &[&WrittenFx]) -> Result<HitShape, String> {
                 FxValue::Ramp { .. } => Err(format!(
                     "{who}: {key} no admite rampas: cada golpe lo lee al nacer"
                 )),
-                _ => Err(format!("{who}: {key} es un número (ms)")),
+                _ => Err(format!("{who}: {key} es un número")),
             };
             match key {
                 "dur" => {
@@ -106,6 +106,17 @@ pub fn hit_shape(written: &[&WrittenFx]) -> Result<HitShape, String> {
                         fit_word(word)
                             .ok_or_else(|| format!("{who}: fit es trim, stretch o loop"))?,
                     );
+                }
+                "bend" => hit.bend = Some(ms()?),
+                "bend_time" => hit.bend_ms = Some(ms()?),
+                "rev" => {
+                    hit.reverse = Some(match value {
+                        FxValue::Number(n) if *n == 0.0 => false,
+                        FxValue::Number(n) if *n == 1.0 => true,
+                        FxValue::Word(w) if w == "true" => true,
+                        FxValue::Word(w) if w == "false" => false,
+                        _ => return Err(format!("{who}: rev es 1 o 0")),
+                    });
                 }
                 "loop_start" => hit.loop_start_ms = Some(ms()?),
                 "loop_end" => hit.loop_end_ms = Some(ms()?),

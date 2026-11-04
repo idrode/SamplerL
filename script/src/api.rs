@@ -3011,12 +3011,47 @@ pub const SLICE_PARAMS: &[FxParam] = &[
         template: "loop_end = ${120}",
         automate: Auto::No(LOOP_POINTS),
     },
+    FxParam {
+        name: "bend",
+        description: "curva de tono dentro del golpe, en semitonos: negativo cae (un bombo que baja), positivo sube; llega en bend_time ms y se queda ahí. Cambia también la velocidad de lectura, como `^` (no va con `%` ni con fit = \"stretch\")",
+        default: Some("0"),
+        valid: "-36–36",
+        values: &[],
+        template: "bend = ${-12}",
+        automate: Auto::PerHit,
+    },
+    FxParam {
+        name: "bend_time",
+        description: "lo que tarda bend en llegar, en ms desde el golpe",
+        default: Some("100"),
+        valid: "1–10000",
+        values: &[],
+        template: "bend_time = ${200}",
+        automate: Auto::PerHit,
+    },
+    FxParam {
+        name: "rev",
+        description: "el corte suena al revés en todas sus pistas y pads (como `'` en un paso)",
+        default: Some("false"),
+        valid: "`true` o `false` (en las llaves, `rev=1` o `rev=0`)",
+        values: &[],
+        template: "rev = ${true}",
+        automate: Auto::No(DISCRETE),
+    },
 ];
 
 /// Las claves de la forma de un corte (de [`SLICE_PARAMS`]) que también
 /// valen en las llaves de un paso (`3{dur=1/8,fit=loop}`): mandan sobre
 /// las del corte en ese golpe.
-pub const STEP_SHAPE_KEYS: &[&str] = &["dur", "fit", "loop_start", "loop_end"];
+pub const STEP_SHAPE_KEYS: &[&str] = &[
+    "dur",
+    "fit",
+    "loop_start",
+    "loop_end",
+    "bend",
+    "bend_time",
+    "rev",
+];
 
 /// Opciones de `sample(ruta, { ... })`: cómo se prepara el sample al
 /// importarlo.

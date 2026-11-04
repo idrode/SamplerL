@@ -120,6 +120,7 @@ fn braces_of_a_step_override_the_slice() {
             fit: Some(Fit::Loop),
             loop_start_ms: Some(20.0),
             loop_end_ms: Some(90.0),
+            ..HitShape::default()
         }
     );
     let third = bar[2].unwrap();

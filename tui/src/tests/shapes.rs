@@ -27,7 +27,10 @@ fn the_panel_marks_gate_and_choke_and_set_completes_its_keys() {
             "dur",
             "fit",
             "loop_start",
-            "loop_end"
+            "loop_end",
+            "bend",
+            "bend_time",
+            "rev"
         ]
     );
     app.handle(esc());

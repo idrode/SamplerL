@@ -791,7 +791,9 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
     2. ✅ **El corte como instrumento**: `cortes:instrument(i, {...})`
        con la raíz de YIN y sus cents corregidos; `keep` para no cambiar
        la duración.
-    3. **Deformaciones en tiempo real**: `bend`/`bend_time` y `rev`.
+    3. ✅ **Deformaciones en tiempo real**: `bend`/`bend_time` (curva de
+       tono dentro del golpe, con `ramp`/`lfo`) y `rev`, por corte y por
+       paso; `stutter` no (ya están `r4` y `chance("stutter")`).
     4. **Deformaciones precalculadas**: `warp` y `smear` al cargar, con
        caché; `formant` por corte y por paso sobre el de siempre.
     5. **Documentación**: presets, tutorial en la guía, limitaciones.

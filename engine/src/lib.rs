@@ -40,9 +40,10 @@ pub use device::{
     AudioBackend, AudioDeviceInfo, AudioEvent, AudioOutput, CpalBackend, NULL_NAME, OutputInfo,
 };
 pub use engine::{
-    Batch, Controller, DEFAULT_VOICE_LIMIT, Dur, Engine, Fit, HitShape, MAX_ATTACK_MS, MAX_BEND,
-    MAX_CHOKE, MAX_CROSSFADE_MS, MAX_DUR_BARS, MAX_DUR_MS, MAX_DUR_NOTE, MAX_FIT_STRETCH,
-    MAX_RELEASE_MS, MAX_START_BAR, MAX_TRACKS, MAX_VOICE_LIMIT, MidiNote, PlayMode, SHAPE_ATTACK,
+    Batch, Controller, DEFAULT_BEND_MS, DEFAULT_VOICE_LIMIT, Dur, Engine, Fit, HitShape,
+    MAX_ATTACK_MS, MAX_BEND, MAX_BEND_MS, MAX_CHOKE, MAX_CROSSFADE_MS, MAX_DUR_BARS, MAX_DUR_MS,
+    MAX_DUR_NOTE, MAX_FIT_STRETCH, MAX_RELEASE_MS, MAX_SLICE_BEND, MAX_START_BAR, MAX_TRACKS,
+    MAX_VOICE_LIMIT, MidiNote, PlayMode, SHAPE_ATTACK, SHAPE_BEND, SHAPE_BEND_TIME,
     SHAPE_CROSSFADE, SHAPE_LENGTH, SHAPE_PAN, SHAPE_PARAMS, SHAPE_RELEASE, SendError, ShapeCurves,
     SliceShape, loop_seam_room, new_engine,
 };

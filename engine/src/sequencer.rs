@@ -113,6 +113,9 @@ impl Step {
                 fit: None,
                 loop_start_ms: None,
                 loop_end_ms: None,
+                bend: None,
+                bend_ms: None,
+                reverse: None,
             },
         }
     }
@@ -624,11 +627,18 @@ impl Pattern {
             if let Some(shape) = shapes.get(hit.slice) {
                 // Lo del paso manda sobre lo del corte.
                 let shape = shape.with_hit(&hit.hit);
-                shape.validate().map_err(|reason| SendError::InvalidStep {
+                let invalid = |reason| SendError::InvalidStep {
                     step: i % length,
                     reason,
-                })?;
+                };
+                shape.validate().map_err(invalid)?;
+                check_bend(&shape, hit.playback.keep).map_err(invalid)?;
                 hit.playback.shape = shape;
+                // Al revés también en las nubes de granos (la voz lo mira
+                // en su forma).
+                if shape.reverse {
+                    hit.playback.reverse = true;
+                }
                 let range = shape.range(hit.start..hit.end);
                 hit.end = range.end;
             }
@@ -861,10 +871,9 @@ fn resolve_bar(
         if let Some(sub) = &step.sub {
             sub.validate().map_err(invalid)?;
         }
-        SliceShape::DEFAULT
-            .with_hit(&step.hit)
-            .validate()
-            .map_err(invalid)?;
+        let shape = SliceShape::DEFAULT.with_hit(&step.hit);
+        shape.validate().map_err(invalid)?;
+        check_bend(&shape, step.keep).map_err(invalid)?;
         if step.hold as usize >= MAX_STEPS {
             return Err(invalid("golpe alargado (_) más que el patrón más largo"));
         }
@@ -909,6 +918,18 @@ fn resolve_bar(
             sub: step.sub,
             hit: step.hit,
         }));
+    }
+    Ok(())
+}
+
+/// `bend` cambia la velocidad de lectura: no va con los granos que leen a
+/// un tono fijo (`%`, `fit = "stretch"`).
+fn check_bend(shape: &SliceShape, keep: bool) -> Result<(), &'static str> {
+    let stretched = shape.dur.is_some() && shape.fit == crate::engine::Fit::Stretch;
+    if (shape.bend != 0.0 || shape.curves[crate::engine::SHAPE_BEND].is_some())
+        && (keep || stretched)
+    {
+        return Err("bend no va con % ni con fit = \"stretch\": sus granos leen a un tono fijo");
     }
     Ok(())
 }

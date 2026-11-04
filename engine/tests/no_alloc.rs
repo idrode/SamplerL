@@ -1,7 +1,7 @@
 //! El callback de audio no reserva memoria (regla 1 de CLAUDE.md): un
 //! asignador global cuenta las reservas que hace este hilo mientras corre
 //! `Engine::process`, con retrasos (swing, humanize), retrigger, pitch,
-//! instrumentos (polifonía, ADSR, bucles), variantes de duración de los cortes (recortar, estirar y sostener), el EQ (suavizado y automatizado),
+//! instrumentos (polifonía, ADSR, bucles), variantes de duración de los cortes (recortar, estirar y sostener), cortes como instrumento, bend y rev, el EQ (suavizado y automatizado),
 //! el EQ dinámico con sidechain (y la reducción que publica para su vista),
 //! el límite de voces entre pistas y el pánico (puntual y en pausa), efectos por corte (con sus colas), bucles de corte con fundido, nubes de granos en vivo, sintetizadores (mono con accent, slide y el sub de cada nota, polifónicos con unison y sub abierto, un subharm de 8 voces con sus seis capas, un sh101 con legato, curvas y notas en vivo), grupos con sus efectos y macros que se mueven en vivo, mandos MIDI en todos sus destinos (moviéndose y soltándose), cambios de
 //! patrón al compás, un patrón que se suelta a la cola de basura y el paso
@@ -1035,6 +1035,8 @@ fn the_audio_thread_never_allocates() {
             (-1.0, 1.0),
             (0.05, 1.0),
             (0.0, 20.0),
+            (-24.0, 12.0),
+            (5.0, 400.0),
         ][i];
         *curve = Some(ramp(lo, hi));
     }
@@ -1755,6 +1757,89 @@ fn the_audio_thread_never_allocates() {
         }
     });
     assert_eq!(n, 0, "reservas al soltar las notas del corte");
+
+    // Deformaciones en tiempo real: bend que cae y que sube (fijo, con una
+    // curva por golpe y en las llaves del paso), con `^`, en bucle, con
+    // `fit = loop`, al revés (`rev` del corte y del paso, con `'`) y con
+    // retrigger; y un pad con bend.
+    let bending = |gate: bool| {
+        let mut steps = [None; STEPS];
+        for (k, slot) in steps.iter_mut().enumerate() {
+            let step = match k % 4 {
+                0 => Step::new(0).with_pitch(7.0),
+                1 => Step::new(1).reversed().with_retrig(3),
+                2 => Step::new(2).with_hit(engine::HitShape {
+                    bend: Some(12.0),
+                    bend_ms: Some(30.0),
+                    reverse: Some(true),
+                    ..engine::HitShape::default()
+                }),
+                _ => Step::new(0).with_pitch(-24.0),
+            };
+            *slot = Some(step);
+        }
+        let mut curved = engine::SliceShape {
+            bend_ms: 80.0,
+            ..engine::SliceShape::DEFAULT
+        };
+        curved.curves[engine::SHAPE_BEND] = Some(engine::Curve::Ramp {
+            from: -24.0,
+            to: 24.0,
+            steps: 16.0,
+        });
+        Pattern::from_steps(long.clone(), &thirds, steps)
+            .unwrap()
+            .with_gate(gate)
+            .with_shapes(&[
+                curved,
+                engine::SliceShape {
+                    bend: -36.0,
+                    bend_ms: 5.0,
+                    reverse: true,
+                    play: engine::PlayMode::PingPong,
+                    ..engine::SliceShape::DEFAULT
+                },
+                engine::SliceShape {
+                    bend: -12.0,
+                    dur: Some(engine::Dur::Ms(400.0)),
+                    fit: engine::Fit::Loop,
+                    ..engine::SliceShape::DEFAULT
+                },
+            ])
+            .unwrap()
+    };
+    controller
+        .set_track_pattern(4, Some(bending(false)))
+        .unwrap();
+    controller
+        .set_track_pattern(5, Some(bending(true)))
+        .unwrap();
+    let n = counted(|| {
+        for _ in 0..600 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas con bend y rev");
+    controller
+        .play_slice_shaped(
+            4,
+            &long,
+            &thirds,
+            0,
+            engine::SliceShape {
+                bend: -12.0,
+                bend_ms: 200.0,
+                reverse: true,
+                ..engine::SliceShape::DEFAULT
+            },
+        )
+        .unwrap();
+    let n = counted(|| {
+        for _ in 0..100 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas con un pad con bend");
     controller.collect_garbage();
 }
 

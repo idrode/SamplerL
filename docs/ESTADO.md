@@ -1928,6 +1928,50 @@ es un límite que proteja la CPU), así que con `keep` conviene no pasar de
 8 voces por pista y de unas 20 en total. No se añade otro límite: el
 de voces entre pistas (`[voces] limite`) ya se puede bajar.
 
+### Parte 3: deformaciones en tiempo real
+
+- **Motor** (`engine/src/engine.rs`): `SliceShape` suma `bend`
+  (semitonos, ±36, `MAX_SLICE_BEND`), `bend_ms` (1 a 10 000 ms, 100 por
+  defecto) y `reverse`; `bend` y `bend_ms` admiten curvas por golpe
+  (`SHAPE_BEND`, `SHAPE_BEND_TIME`; `SHAPE_PARAMS` pasa a 7), y
+  `HitShape` lleva los tres por paso (el paso quita la curva del corte).
+  `Bend { rate, k, frames }`: la velocidad de lectura va de la del golpe
+  a `· 2^(bend/12)` en `bend_ms`, recta en semitonos, y luego se queda;
+  la posición es la integral exacta (`Bend::offset`: `r·T/k·(e^(k·n/T) −
+  1)` durante la curva, recta después), calculada desde el número de
+  frame (sin acumular), y la interpolación usa la velocidad de ese frame
+  (`Bend::rate_at`) para su filtro antialias. La duración de un golpe que
+  se lee una vez sale de invertirla (`Bend::frames_for`): al bajar, el
+  corte dura más, como con `^`. La curva se acorta si la velocidad final
+  pasaría de ×8 o ÷8 (`MAX_BEND_RATE`: más, la interpolación cuesta
+  demasiado). Vale con `^`, `'`, `play = "loop"`/`"pingpong"` y `fit =
+  "trim"`/`"loop"`; con `%` o `fit = "stretch"` los granos leen a un tono
+  fijo, así que es un error al hacer el patrón (`check_bend`, con el
+  número del paso; si solo llegase por una curva, la voz lo ignora). Sin
+  `bend` (0) la voz no crea nada y lee como siempre: bit a bit.
+  `reverse` da la vuelta a la lectura en la voz (`Voice::lasting`: también
+  en los pads) y en el golpe (`with_shapes`: también en las nubes de
+  granos); con `'` a la vez, sigue al revés.
+- **Lua y llaves**: `cortes:set(i, { bend = -12, bend_time = 200, rev =
+  true })` (números, `ramp()` o `lfo()` en `bend` y `bend_time`; `rev`,
+  `true`/`false` o 1/0) y `3{bend=-12,bend_time=200}`, `3{rev=1}`
+  (`api::STEP_SHAPE_KEYS`, sin rampas de golpe: la propia curva ya lo es).
+  Registro: tres claves más en `api::SLICE_PARAMS`.
+- **`stutter`, fuera**: ya lo hacen `r4` (el paso se repite 4 veces) y
+  `chance(p, "stutter", n)` (alias de `retrig`); decidido con el usuario.
+- **Tests**: `engine/tests/slice_bend.rs` (200 Hz que caen una octava en
+  200 ms: la frecuencia medida por cruces por cero sigue `200 · 2^(−n/9600)`
+  a menos de 0,3 % en cuatro instantes, y desde `bend_time` es 100 Hz a
+  menos de 0,3 % por YIN; subida con `^-12`; la duración del corte con
+  `bend` es la integral exacta a ±2 frames; `rev` es `'` muestra a
+  muestra y la rampa al revés exacta; el paso manda; una rampa de `bend`
+  cambia golpe a golpe; con los valores por defecto, bit a bit; con `%` y
+  `stretch`, error; rangos), `no_alloc.rs` (bend fijo, con curva y por
+  paso, con `^`, ida y vuelta, `fit = "loop"`, `rev` del corte y del paso
+  con `'`, retrigger, gate y un pad; y las dos curvas nuevas en la prueba
+  de todas las curvas por golpe) y `script/tests/slice_bend.rs` (suena
+  como el motor, curvas, llaves, errores con línea).
+
 ## Audio de prueba y problemas conocidos
 
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`

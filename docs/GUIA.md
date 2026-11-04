@@ -2657,7 +2657,7 @@ track("drums", amen)
 | `fx("dyneq")` | `freq` (continuo), `q` (continuo), `threshold` (continuo), `ratio` (continuo), `range` (continuo), `attack` (continuo), `release` (continuo) |
 | `bus("delay")` | `feedback` (continuo), `level` (continuo) |
 | `bus("reverb")` | `size` (continuo), `damp` (continuo), `level` (continuo) |
-| `cortes:set` | `attack` (por golpe), `release` (por golpe), `pan` (por golpe), `length` (por golpe), `crossfade` (por golpe) |
+| `cortes:set` | `attack` (por golpe), `release` (por golpe), `pan` (por golpe), `length` (por golpe), `crossfade` (por golpe), `bend` (por golpe), `bend_time` (por golpe) |
 | `:grains` | `size` (por grano), `density` (por grano), `pos` (por grano), `speed` (por grano), `jitter` (por grano), `pitch` (por grano), `spread` (por grano) |
 | `synth("acid")` | `cutoff` (continuo), `res` (continuo), `envmod` (continuo), `decay` (continuo), `accent` (continuo), `dist` (continuo), `glide` (continuo), `sub` (continuo), `sub_pan` (continuo), `sub_drive` (continuo) |
 | `synth("sub")` | `tone` (continuo), `drive` (continuo), `glide` (continuo), `sub` (continuo), `sub_pan` (continuo), `sub_drive` (continuo) |
@@ -2673,7 +2673,7 @@ track("drums", amen)
 | `fx("dyneq")` | `sidechain` | es una pista, no un número |
 | `bus("delay")` | `time` | es una figura ("1/8"), no un número; además, mover el retardo de una línea con repeticiones dentro suena a cambio de pitch |
 | `slice` | `zero_cross` | se aplica al cargar, en el hilo de control (el sample o el bucle se preparan una vez): no suena en el tiempo |
-| `cortes:set` | `play`, `fit` | elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer |
+| `cortes:set` | `play`, `fit`, `rev` | elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer |
 | `cortes:set` | `dur` | es una duración que puede ser una figura ("1/8") o compases, no solo ms; para cambiarla golpe a golpe, en las llaves del paso (`3{dur=1/16}`) |
 | `cortes:set` | `loop_start`, `loop_end` | son los puntos del tramo que se repite y cada golpe los lee al nacer; para cambiarlos golpe a golpe, en las llaves del paso (`3{loop_start=40}`) |
 | `:grains` | `seed` | es la semilla del azar: entre dos semillas no hay nada continuo |
@@ -3107,6 +3107,9 @@ Forma de un corte (o de todos, sin i): ataque, cola, pan, parte que suena y bucl
 | `fit` | cómo llega el corte a dur: "trim" lo recorta (con su cola, release, sin clics; si el corte acaba antes, acaba antes), "stretch" lo estira o encoge sin cambiar el tono (los granos del pitch sin cambio de duración) y "loop" repite un tramo central (loop_start a loop_end) con un fundido en la unión (crossfade) | `"trim"` | `"trim"`, `"stretch"` o `"loop"` |
 | `loop_start` | con fit = "loop", dónde empieza el tramo que se repite, en ms desde el inicio del corte (por defecto, a un cuarto del corte) | obligatorio | 0 o más, antes de loop_end |
 | `loop_end` | con fit = "loop", dónde acaba el tramo que se repite, en ms desde el inicio del corte (por defecto, a tres cuartos) | obligatorio | después de loop_start, dentro del corte |
+| `bend` | curva de tono dentro del golpe, en semitonos: negativo cae (un bombo que baja), positivo sube; llega en bend_time ms y se queda ahí. Cambia también la velocidad de lectura, como `^` (no va con `%` ni con fit = "stretch") | `0` | -36–36 |
+| `bend_time` | lo que tarda bend en llegar, en ms desde el golpe | `100` | 1–10000 |
+| `rev` | el corte suena al revés en todas sus pistas y pads (como `'` en un paso) | `false` | `true` o `false` (en las llaves, `rev=1` o `rev=0`) |
 
 ```lua
 local amen = sample("amen.wav"):slice(8)

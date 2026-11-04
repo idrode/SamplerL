@@ -309,6 +309,82 @@ pub struct SliceShape {
     /// cuarto a tres cuartos del corte).
     pub loop_start_ms: Option<f32>,
     pub loop_end_ms: Option<f32>,
+    /// Curva de tono dentro del golpe: `bend` semitonos (negativo, cae;
+    /// positivo, sube) en `bend_ms` ms desde que empieza, y luego se
+    /// queda ahí. 0, sin curva (lo de siempre). Ver [`Bend`].
+    pub bend: f32,
+    pub bend_ms: f32,
+    /// Suena al revés (como `'` en el paso; los dos juntos, también al
+    /// revés).
+    pub reverse: bool,
+}
+
+/// Semitonos máximos de `bend` (arriba o abajo).
+pub const MAX_SLICE_BEND: f32 = 36.0;
+/// Duración máxima de la curva de `bend`.
+pub const MAX_BEND_MS: f32 = 10_000.0;
+/// Lo más deprisa o despacio que lee un golpe al acabar su `bend` (la
+/// curva se acorta para no pasar de aquí: más, la interpolación cuesta
+/// demasiado).
+const MAX_BEND_RATE: f64 = 8.0;
+
+/// La curva de tono de un golpe (`bend`): la velocidad de lectura va de
+/// `rate` a `rate · 2^(semitonos/12)` en `frames` frames, recta en
+/// semitonos (exponencial en velocidad), y luego se queda. La posición es
+/// la integral exacta de la velocidad, calculada en cada frame desde su
+/// número (sin acumular): determinista y sin deriva.
+#[derive(Clone, Copy)]
+struct Bend {
+    rate: f64,
+    /// `semitonos · ln 2 / 12` (nunca 0).
+    k: f64,
+    frames: f64,
+}
+
+impl Bend {
+    fn new(rate: f64, semitones: f32, ms: f32, sample_rate: u32) -> Option<Bend> {
+        if semitones == 0.0 {
+            return None;
+        }
+        // Que la velocidad final no pase de ×8 ni de ÷8.
+        let top = 12.0 * (MAX_BEND_RATE / rate).log2();
+        let bottom = 12.0 * (1.0 / (MAX_BEND_RATE * rate)).log2();
+        let semitones = (semitones as f64).clamp(bottom, top);
+        (semitones != 0.0).then(|| Bend {
+            rate,
+            k: semitones * std::f64::consts::LN_2 / 12.0,
+            frames: ((ms as f64 / 1000.0 * sample_rate as f64).round()).max(1.0),
+        })
+    }
+
+    /// Velocidad de lectura en el frame de salida `n`.
+    #[inline]
+    fn rate_at(&self, n: f64) -> f64 {
+        self.rate * (self.k * (n / self.frames).min(1.0)).exp()
+    }
+
+    /// Frames del sample leídos hasta el frame de salida `n`.
+    #[inline]
+    fn offset(&self, n: f64) -> f64 {
+        let t = self.frames;
+        let during = |n: f64| self.rate * t / self.k * ((self.k * n / t).exp() - 1.0);
+        if n <= t {
+            during(n)
+        } else {
+            during(t) + self.rate_at(t) * (n - t)
+        }
+    }
+
+    /// Frames de salida que tarda en leer `span` frames del sample.
+    fn frames_for(&self, span: f64) -> f64 {
+        let t = self.frames;
+        let at_end = self.offset(t);
+        if span <= at_end {
+            t / self.k * (1.0 + self.k * span / (self.rate * t)).ln()
+        } else {
+            t + (span - at_end) / self.rate_at(t)
+        }
+    }
 }
 
 /// Duración de un golpe: en ms, en figuras (fracción de redonda, que son
@@ -390,6 +466,9 @@ pub struct HitShape {
     pub fit: Option<Fit>,
     pub loop_start_ms: Option<f32>,
     pub loop_end_ms: Option<f32>,
+    pub bend: Option<f32>,
+    pub bend_ms: Option<f32>,
+    pub reverse: Option<bool>,
 }
 
 impl HitShape {
@@ -405,7 +484,9 @@ pub const SHAPE_RELEASE: usize = 1;
 pub const SHAPE_PAN: usize = 2;
 pub const SHAPE_LENGTH: usize = 3;
 pub const SHAPE_CROSSFADE: usize = 4;
-pub const SHAPE_PARAMS: usize = 5;
+pub const SHAPE_BEND: usize = 5;
+pub const SHAPE_BEND_TIME: usize = 6;
+pub const SHAPE_PARAMS: usize = 7;
 
 /// Una curva (o ninguna) por parámetro de la forma de un corte.
 pub type ShapeCurves = [Option<crate::automation::Curve>; SHAPE_PARAMS];
@@ -423,6 +504,9 @@ impl SliceShape {
         fit: Fit::Trim,
         loop_start_ms: None,
         loop_end_ms: None,
+        bend: 0.0,
+        bend_ms: DEFAULT_BEND_MS,
+        reverse: false,
     };
 
     /// La forma con lo que cambia el paso (manda el paso).
@@ -438,6 +522,17 @@ impl SliceShape {
         }
         if hit.loop_end_ms.is_some() {
             self.loop_end_ms = hit.loop_end_ms;
+        }
+        if let Some(bend) = hit.bend {
+            self.bend = bend;
+            self.curves[SHAPE_BEND] = None;
+        }
+        if let Some(ms) = hit.bend_ms {
+            self.bend_ms = ms;
+            self.curves[SHAPE_BEND_TIME] = None;
+        }
+        if let Some(reverse) = hit.reverse {
+            self.reverse = reverse;
         }
         self
     }
@@ -462,7 +557,9 @@ impl SliceShape {
             SHAPE_RELEASE => (0.0, MAX_RELEASE_MS),
             SHAPE_PAN => (-1.0, 1.0),
             SHAPE_LENGTH => (0.01, 1.0),
-            _ => (0.0, MAX_CROSSFADE_MS),
+            SHAPE_CROSSFADE => (0.0, MAX_CROSSFADE_MS),
+            SHAPE_BEND => (-MAX_SLICE_BEND, MAX_SLICE_BEND),
+            _ => (1.0, MAX_BEND_MS),
         }
     }
 
@@ -484,7 +581,9 @@ impl SliceShape {
                 SHAPE_RELEASE => shape.release_ms = value,
                 SHAPE_PAN => shape.pan = value,
                 SHAPE_LENGTH => shape.length = value,
-                _ => shape.crossfade_ms = value,
+                SHAPE_CROSSFADE => shape.crossfade_ms = value,
+                SHAPE_BEND => shape.bend = value,
+                _ => shape.bend_ms = value,
             }
         }
         shape
@@ -521,6 +620,12 @@ impl SliceShape {
                 return Err("dur va con play = \"normal\" (para sostenerlo, fit = \"loop\")");
             }
         }
+        if !(-MAX_SLICE_BEND..=MAX_SLICE_BEND).contains(&self.bend) {
+            return Err("bend fuera de rango (-36 a 36 semitonos)");
+        }
+        if !(1.0..=MAX_BEND_MS).contains(&self.bend_ms) {
+            return Err("bend_time fuera de rango (1 a 10000 ms)");
+        }
         let point = |ms: Option<f32>| ms.is_none_or(|ms| (0.0..=MAX_DUR_MS).contains(&ms));
         if !point(self.loop_start_ms) || !point(self.loop_end_ms) {
             return Err("loop_start y loop_end van en ms desde el inicio del corte (0 o más)");
@@ -556,6 +661,8 @@ pub const MAX_CROSSFADE_MS: f32 = 1000.0;
 pub const MAX_RELEASE_MS: f32 = 5000.0;
 /// Grupos de choke: de 1 a este.
 pub const MAX_CHOKE: u8 = 16;
+/// Duración por defecto de la curva de `bend`.
+pub const DEFAULT_BEND_MS: f32 = 100.0;
 /// Lo que más acelera o frena un corte `fit = Stretch` (la proporción
 /// entre su duración y `dur`; más allá, se queda en este).
 pub const MAX_FIT_STRETCH: f64 = 16.0;
@@ -586,6 +693,8 @@ struct Voice {
     seam: Option<Seam>,
     /// Con `fit = Loop`: el tramo que se repite hasta `dur`.
     sustain: Option<Sustain>,
+    /// Curva de tono del golpe (`bend`).
+    bend: Option<Bend>,
     /// Sin rampas de entrada ni de salida (una pista congelada); el
     /// fundido de interrumpirla, sí.
     raw: bool,
@@ -694,6 +803,10 @@ impl Voice {
         playback: Playback,
         dur: Option<usize>,
     ) -> Self {
+        let mut playback = playback;
+        if playback.shape.reverse {
+            playback.reverse = true;
+        }
         let rate = sample.sample_rate() as f32;
         let fade = ((FADE_SECONDS * rate) as usize).max(1);
         let ms = |ms: f32| (ms / 1000.0 * rate) as usize;
@@ -712,14 +825,27 @@ impl Voice {
             _ => (playback.keep && Shift::needed(playback.rate, playback.formant))
                 .then(|| Shift::new(playback.rate, sample.sample_rate(), playback.formant)),
         };
-        // Con los granos, la voz avanza por el sample a velocidad 1.
+        // Con los granos, la voz avanza por el sample a velocidad 1 (y
+        // leen a un tono fijo: sin `bend`).
         let speed = if shift.is_some() { 1.0 } else { playback.rate };
+        let bend = match shift {
+            Some(_) => None,
+            None => Bend::new(
+                playback.rate,
+                playback.shape.bend,
+                playback.shape.bend_ms,
+                sample.sample_rate(),
+            ),
+        };
         // Último frame de salida: el que lee el último frame del rango. En
         // bucle, la voz no acaba sola.
-        let natural = match (frames, playback.shape.play) {
-            (0, _) => 0,
-            (_, PlayMode::Loop | PlayMode::PingPong) => usize::MAX,
-            (frames, PlayMode::Once) => ((frames - 1) as f64 / speed).floor() as usize + 1,
+        let natural = match (frames, playback.shape.play, bend) {
+            (0, _, _) => 0,
+            (_, PlayMode::Loop | PlayMode::PingPong, _) => usize::MAX,
+            (frames, PlayMode::Once, None) => ((frames - 1) as f64 / speed).floor() as usize + 1,
+            (frames, PlayMode::Once, Some(b)) => {
+                b.frames_for((frames - 1) as f64).floor() as usize + 1
+            }
         };
         let sustain = match fit {
             Some((_, Fit::Loop)) => {
@@ -764,6 +890,7 @@ impl Voice {
             fx: None,
             seam,
             sustain,
+            bend,
             raw: false,
         }
     }
@@ -865,9 +992,14 @@ impl Voice {
         let (start, end, playback, seam) = (self.start, self.end, self.playback, self.seam);
         let sustain = self.sustain;
         let sample = &self.sample;
+        // Con `bend`, la velocidad de ahora (para el filtro antialias).
+        let speed = match self.bend {
+            None => playback.rate,
+            Some(b) => b.rate_at(self.rendered as f64),
+        };
         let plain = |offset: f64| {
             let pos = voice_position(start, end, &playback, offset);
-            let main = crate::interp::read(sample, pos, start, end, playback.rate);
+            let main = crate::interp::read(sample, pos, start, end, speed);
             match seam {
                 Some(seam) => seam_mix(sample, start, end, &playback, seam, offset, main),
                 None => main,
@@ -888,7 +1020,10 @@ impl Voice {
             Some(s) => s.fold(offset).0,
         };
         let Some(shift) = self.shift.as_mut() else {
-            return read_at(self.rendered as f64 * playback.rate);
+            return match self.bend {
+                None => read_at(self.rendered as f64 * playback.rate),
+                Some(b) => read_at(b.offset(self.rendered as f64)),
+            };
         };
         let span = (end - start) as f64;
         // Sin bucle, ningún grano pasa del final del corte.

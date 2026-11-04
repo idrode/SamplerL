@@ -5042,6 +5042,18 @@ fn apply_slice_table(
                     )
                 })?;
             }
+            "bend" => shape.bend = number(&value, engine::SHAPE_BEND)?,
+            "bend_time" => shape.bend_ms = number(&value, engine::SHAPE_BEND_TIME)?,
+            "rev" => {
+                shape.reverse = match value {
+                    Value::Boolean(on) => on,
+                    Value::Integer(0) => false,
+                    Value::Integer(1) => true,
+                    _ => {
+                        return Err(fail(lua, format!("{who}: rev es true o false (o 1 y 0)")));
+                    }
+                };
+            }
             "loop_start" | "loop_end" => {
                 let ms = match &value {
                     Value::Integer(i) => *i as f32,
