@@ -129,7 +129,8 @@ la sección 4 (con sus parámetros, rangos y un ejemplo cada una).
 **Editor** (sección 2)
 - Autocompletado, ayuda contextual y errores subrayados mientras escribes;
   paleta de comandos (F1) y línea de órdenes (F2); biblioteca de bloques y
-  ranuras; el editor en su propia ventana (`--split`).
+  ranuras; el editor en su propia ventana (`--split`); dónde sirve el
+  ratón, en [El ratón, de un vistazo](#el-ratón-de-un-vistazo).
 
 **Sacarlo** («Renderizar a WAV», «Proyectos»)
 - Exportar la mezcla a WAV, remuestrear una pista para volver a cortarla y
@@ -1695,6 +1696,24 @@ terminal lo manda igual que Esc. Los atajos (Ctrl-S, Ctrl-Espacio, F1, Alt-G,
 F6/F7...) funcionan en los dos modos. Es la fase 1: sin cuentas (`3j`),
 operadores con movimientos (`dw`, `cw`), Visual, `.`, macros, registros,
 marcas ni `:s`.
+
+### El ratón, de un vistazo
+
+Si la terminal lo manda (dentro de tmux, `set -g mouse on`) y `[editor]
+raton` está encendido (por defecto), el ratón sirve en cuatro sitios; en
+los demás paneles (el tracker, la vista de ocupación, el mezclador) aún
+no, y se usan con las teclas.
+
+| Dónde | Qué hace | Más |
+| --- | --- | --- |
+| Editor | clic mueve el cursor, arrastrar selecciona, la rueda desplaza | [Editor](#editor) |
+| Vista del sample | arrastrar una marca mueve el corte, clic lo elige y suena, clic derecho pone o quita un corte, la rueda acerca y aleja | [Modo tocar](#modo-tocar-esc) |
+| Piano roll | clic pone una nota, arrastrar la mueve o la alarga, clic derecho la borra; nunca suena | [Piano roll](#piano-roll) |
+| Lanes de automatización | clic añade un punto, arrastrar lo mueve, clic derecho lo borra; armado el touch, arrastrar en vertical graba | [Automatizar con lanes](#automatizar-con-lanes) |
+
+Con la paleta o la línea de órdenes abiertas encima, el ratón no hace
+nada. Shift y arrastrar (Alt en algunas terminales) sigue seleccionando
+texto para copiar con la terminal.
 
 ### Resaltado en vivo
 
@@ -4678,6 +4697,11 @@ group("bateria", { "kick", "caja", "hats" })
   :send("reverb", 0.1)
 ```
 
+Límites: 4 grupos de un nivel (un grupo no va a otro) y cada pista en un
+grupo como mucho. Los envíos de cada pista salen de ella, sin pasar por la
+cadena del grupo. Los grupos son de toda la canción: no cambian por
+sección.
+
 ### Ver lo que suena
 
 Visualizaciones al estilo de Strudel, de una pista o del master, en un
@@ -4743,6 +4767,12 @@ de esa pista a una cola; el cálculo y el dibujo, en la interfaz. Con el
 editor en su ventana, también salen allí. Si la terminal no pinta Braille
 ni bloques, `[interfaz] ascii = true` (o un `LANG` sin UTF-8) las dibuja
 con ASCII; `[interfaz] refresco` dice cuántos cuadros por segundo.
+
+Límites: `size` va de 1 a 40 filas y `bands` de 4 a 128; `punchcard` y
+`pianoroll` salen del patrón, así que el master no las tiene. Las de audio
+ven las 8 pistas del motor y el master; si la interfaz se atrasa, la cola
+de cada una (unos 0,34 s) se llena y descarta muestras: se ve a saltos,
+pero el audio no cambia.
 
 ### Automatizar con lanes
 
@@ -4864,7 +4894,11 @@ Límites:
 Una macro mueve varios parámetros a la vez, cada uno en su rango. Aquí,
 «tension» abre el filtro del break, sube su envío a la reverb y el
 feedback del delay. Muévela con «Macros» en la paleta (←→) o con un mando
-MIDI (`[midi] macros = [21]`); recargar no la devuelve a su sitio.
+MIDI (`[midi] macros = [21]`); recargar no la devuelve a su sitio
+(`macro_init` pone el valor de partida al cargar por primera vez, al
+exportar y cuando cambias su valor en el script). Hay 8 macros
+como mucho, y una macro es la curva de su parámetro: no se suma a un
+`ramp()`, un `lfo()` ni una lane en el mismo sitio.
 
 ```lua
 -- 16-macro-subidon.lua
