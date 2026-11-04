@@ -52,7 +52,7 @@ pub use fx::{
 };
 pub use grain::{GRAIN_PARAMS, Granular, Knob, MAX_GRAINS};
 pub use group::{Group, Groups, MAX_GROUPS};
-pub use instrument::{Adsr, Instrument, MAX_VOICES};
+pub use instrument::{Adsr, Instrument, MAX_TUNE, MAX_VOICES};
 pub use key::{KeyAnalysis, KeyGuess, LOW_CONFIDENCE, detect_key};
 pub use knob::{KnobCurve, KnobLive, KnobMap, KnobTarget, Knobs, MAX_KNOBS};
 pub use limiter::{LIMIT_THRESHOLD, soft_limit};

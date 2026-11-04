@@ -1837,6 +1837,44 @@ pub const FUNCTIONS: &[Function] = &[
         ),
     },
     Function {
+        name: "instrument",
+        receiver: Receiver::Slices,
+        signature: "cortes:instrument([i,] [opciones])",
+        returns: Some(Receiver::Instrument),
+        summary: "Toca un corte como un instrumento: su tono es la raíz y cada nota lo transpone.",
+        doc: "Como `sample:instrument()`, pero solo con un corte: el `i` (desde \
+              1), o el único de `cortes:slice_at(i)` (con varios cortes y sin `i`, \
+              error). Las notas leen ese corte y \
+              nada más, con polifonía, ADSR y acordes. Sin `root`, la raíz es el \
+              tono del corte (YIN, como `cortes:note(i)`) y sus cents se corrigen: \
+              `melody(\"c3 e3 g3\")` suena justo en esas notas. Si el corte no \
+              tiene un tono claro (un golpe de ruido), error: pon `root` a mano. \
+              Los ms de `loop` cuentan desde el inicio del corte. Por defecto \
+              transpone como un sampler clásico (tono y duración a la vez, lo \
+              mejor para bombos y cajas); con `keep = true` conserva la duración \
+              (granos alineados, mejor con material tonal). Con `loop`, sostiene \
+              notas largas.",
+        params: &[
+            Param {
+                name: "i",
+                description: "el corte (desde 1); sin él, los cortes tienen que ser uno (`slice_at`)",
+            },
+            Param {
+                name: "opciones",
+                description: "la tabla de `sample:instrument()` (`root`, `loop`, `voices`, `adsr`, `crossfade`, `keep`, `formant`)",
+            },
+        ],
+        template: "instrument(${1}, { root = \"${C3}\" })",
+        example: Some(
+            "bpm(100)\n\
+             local cortes = sample(\"amen.wav\"):slice(8)\n\
+             -- Sin root, la raíz es el tono del corte (YIN); un golpe de batería\n\
+             -- no tiene un tono claro, así que aquí se pone a mano.\n\
+             local bombo = cortes:instrument(1, { root = \"C2\", voices = 4 })\n\
+             track(\"bombo\", bombo):melody(\"c2 . g1 .  c2 . . .  eb2 . c2 .  g1 . . .\")\n",
+        ),
+    },
+    Function {
         name: "steps",
         receiver: Receiver::Track,
         signature: "pista:steps(texto)",
@@ -3036,9 +3074,9 @@ pub const CUT_PARAMS: &[FxParam] = &[FxParam {
 pub const INSTRUMENT_PARAMS: &[FxParam] = &[
     FxParam {
         name: "root",
-        description: "la nota en la que suena el sample tal cual (`melody` toca desde ahí); C4 es el do central",
+        description: "la nota en la que suena el sample tal cual (`melody` toca desde ahí); C4 es el do central. `\"auto\"`: su tono (YIN), con los cents corregidos; en un corte (`slice_at(i):instrument`), es lo que se hace sin `root`",
         default: Some("\"C4\""),
-        valid: "una nota (`\"C3\"`, `\"F#2\"`, `\"Bb4\"`) o un número MIDI (0–127)",
+        valid: "una nota (`\"C3\"`, `\"F#2\"`, `\"Bb4\"`), un número MIDI (0–127) o `\"auto\"`",
         values: &[],
         template: "root = \"${C3}\"",
         automate: Auto::No(INSTRUMENT),

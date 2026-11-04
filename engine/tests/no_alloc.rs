@@ -1696,6 +1696,65 @@ fn the_audio_thread_never_allocates() {
         }
     });
     assert_eq!(n, 0, "reservas con un pad con duración");
+
+    // Un corte como instrumento: solo su rango, con la desafinación
+    // corregida, acordes, bucle dentro del corte, `keep` y notas en vivo.
+    let third = thirds.only(1).unwrap();
+    let range = third.get(0).unwrap();
+    let mut tuned = engine::Instrument::new(4);
+    tuned.tune = 0.3;
+    tuned.sustain_loop = Some((range.start + 1000, range.start + 5000));
+    tuned.crossfade = 400;
+    let chords: Vec<Option<Step>> = (0..STEPS)
+        .map(|k| {
+            Some(
+                Step::new(0)
+                    .with_pitch(k as f32 - 8.0)
+                    .with_chord(&[k as f32 - 4.0, k as f32 - 1.0])
+                    .with_hold(2),
+            )
+        })
+        .collect();
+    let slice_instrument = |keep: bool| {
+        Pattern::from_steps(long.clone(), &third, chords.clone())
+            .unwrap()
+            .with_instrument(Some(engine::Instrument { keep, ..tuned }))
+            .unwrap()
+    };
+    controller
+        .set_track_pattern(4, Some(slice_instrument(false)))
+        .unwrap();
+    controller
+        .set_track_pattern(5, Some(slice_instrument(true)))
+        .unwrap();
+    for key in 0..3u8 {
+        controller
+            .note_on(
+                4,
+                &long,
+                range.clone(),
+                tuned,
+                key as f32 * 4.0,
+                0.7,
+                50 + key,
+            )
+            .unwrap();
+    }
+    let n = counted(|| {
+        for _ in 0..600 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas con un corte como instrumento");
+    for key in 0..3u8 {
+        controller.note_off(4, 50 + key).unwrap();
+    }
+    let n = counted(|| {
+        for _ in 0..100 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas al soltar las notas del corte");
     controller.collect_garbage();
 }
 

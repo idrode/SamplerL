@@ -70,7 +70,14 @@ pub struct Instrument {
     /// Formantes de sus notas con `keep`: `Some(0)` donde estaban,
     /// `Some(n)` desplazados `n` semitonos; `None`, con el pitch.
     pub formant: Option<f32>,
+    /// Lo que el sample está desafinado respecto a su raíz, en semitonos
+    /// (de ±[`MAX_TUNE`]; la raíz detectada con YIN y sus cents): cada nota
+    /// lo corrige, así que suena justo a la nota pedida. 0, sin tocar nada.
+    pub tune: f32,
 }
+
+/// Desafinación máxima que se corrige (media nota).
+pub const MAX_TUNE: f32 = 0.5;
 
 impl Instrument {
     pub fn new(voices: u8) -> Self {
@@ -81,6 +88,7 @@ impl Instrument {
             crossfade: 0,
             keep: false,
             formant: None,
+            tune: 0.0,
         }
     }
 
@@ -90,6 +98,9 @@ impl Instrument {
             return Err("voces fuera de rango (1 a 16)");
         }
         crate::shift::check_formant(self.formant)?;
+        if !(-MAX_TUNE..=MAX_TUNE).contains(&self.tune) {
+            return Err("tune fuera de rango (-0.5 a 0.5 semitonos)");
+        }
         if self.formant.is_some() && !self.keep {
             return Err("formant necesita keep (los formantes se corrigen en los granos)");
         }

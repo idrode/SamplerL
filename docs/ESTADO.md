@@ -1870,6 +1870,64 @@ calcula al cargar, con caché, como `stretch`.
   `sample:stretch()` al cargar: en tiempo real, sin copias, y la misma
   calidad medida en la fase K.
 
+### Parte 2: el corte como instrumento
+
+- **Lua** (`script/src/lib.rs`): `cortes:instrument(i, {...})` o
+  `cortes:slice_at(i):instrument{...}` (método de `SlicedHandle`, con el
+  número como `set`; con varios cortes y sin número, error que dice cómo
+  elegir uno; con `stretch`, error como en el sample) con la misma tabla
+  que `sample:instrument` (`instrument_options`, ahora sobre una
+  `InstrumentSource`: el sample, el rango que toca y si es un corte). El
+  instrumento guarda el corte (`InstrumentHandle::slice`: sus `Slices`
+  de un corte, su origen y su etiqueta), y `track_source` hace la pista
+  con ese corte en vez del sample entero: las notas leen solo su rango.
+  Los ms de `loop` cuentan desde el inicio del corte y tienen que caber en
+  él. **Raíz**: sin `root` en un corte, la de YIN (`detected_root`, con
+  `engine::detect_note` sobre el corte, como `cortes:note`): la nota más
+  cercana y lo que se desvía va a `Instrument::tune`; si no hay tono claro
+  (un golpe de ruido), error con la línea que pide `root`. `root = "auto"`
+  hace lo mismo, también en `sample:instrument`. Con `root` a mano, `tune`
+  es 0. `SlicedHandle` lleva los avisos del sample (los del bucle).
+- **Motor** (`engine/src/instrument.rs`): `Instrument::tune` (semitonos,
+  ±0,5, `MAX_TUNE`; validado): `open_note` multiplica la velocidad de
+  cada nota por `2^(−tune/12)` (secuenciador y notas en vivo), así una
+  nota pedida suena en su frecuencia aunque el sample esté desafinado.
+  Con 0 no se toca nada (bit a bit lo de siempre).
+- **Los dos modos**: el de siempre (sampler clásico: tono y duración a la
+  vez) y `keep = true` (granos alineados: la misma duración). No hay
+  `mode` nuevo. Con `loop`, sostiene notas largas (también en el release).
+- **Registro**: función `instrument` del receptor `Receiver::Slices`
+  (después de las demás de los cortes; plantilla `instrument(1, { root =
+  "C3" })`), y `"auto"` en la clave `root`.
+- **Tests**: `script/tests/slice_instrument.rs` (la raíz y los cents de
+  YIN: un la3 da 57 y 0, un do4 subido 30 cents da 60 y +0,30; `root` a
+  mano y `"auto"`; do3, mi3, sol3 y do5 sobre ese do4 medidos con YIN: error
+  máximo 0,004 % como sampler y 0,065 % con `keep`; la duración cambia
+  como sampler (el doble a −12, la mitad a +12, con los 30 cents) y no con
+  `keep`; bucle en el corte con un acorde de tres voces; errores con
+  línea), `no_alloc.rs` (un corte como instrumento con `tune`, acordes,
+  bucle, con y sin `keep`, y notas en vivo con sus note off) y la medida
+  de coste (ignorada) en `engine/tests/instrument.rs`.
+
+### Coste y polifonía
+
+`cargo test -p engine --release --test instrument -- --ignored
+--nocapture coste`, en el i7 de desarrollo, con bucle y `tune`:
+
+| Voces | Sampler clásico | `keep = true` |
+| --- | --- | --- |
+| 1 | 0,7 % | 3,9 % |
+| 4 | 2,5 % | 15,3 % |
+| 8 | 5,2 % | 30,6 % |
+| 16 | 12,0 % | 64,4 % |
+
+(Porcentaje de un núcleo.) Como sampler, cada voz cuesta ~0,7 % y caben
+de sobra las 16 de una pista y las 64 del límite entre pistas (~45 %).
+Con `keep`, ~3,9 % por voz: el límite de 64 se pasaría de un núcleo (no
+es un límite que proteja la CPU), así que con `keep` conviene no pasar de
+8 voces por pista y de unas 20 en total. No se añade otro límite: el
+de voces entre pistas (`[voces] limite`) ya se puede bajar.
+
 ## Audio de prueba y problemas conocidos
 
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`

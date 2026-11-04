@@ -26,6 +26,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::fmt;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -3060,20 +3061,23 @@ fn track_source(lua: &Lua, name: &str, source: &AnyUserData) -> mlua::Result<Tra
         });
     }
     if let Ok(source) = source.borrow::<InstrumentHandle>() {
-        // Un solo corte: el sample entero, que no se etiqueta ni se mueve.
-        let origin = SliceOrigin {
-            sample: source.name.clone(),
-            count: 1,
-            grid: true,
-            indices: vec![None],
-            zero_cross: None,
-        };
-        let slices = Slices::grid(&source.sample, 1);
+        // Un solo corte: el sample entero, que no se etiqueta ni se mueve,
+        // o el corte del que se hizo.
+        let (slices, origin, label) = source.slice.clone().unwrap_or_else(|| {
+            let origin = SliceOrigin {
+                sample: source.name.clone(),
+                count: 1,
+                grid: true,
+                indices: vec![None],
+                zero_cross: None,
+            };
+            (Slices::grid(&source.sample, 1), origin, None)
+        });
         let mut def = def(&source.sample, &source.path, slices, origin);
         def.instrument = Some(source.def);
         return Ok(TrackBuild {
             def,
-            labels: Rc::new(RefCell::new(vec![None])),
+            labels: Rc::new(RefCell::new(vec![label])),
             stale: Rc::new(Vec::new()),
             shapes: Rc::new(RefCell::new(vec![DEFAULT_SHAPE])),
             slice_fx: Rc::default(),
@@ -3709,12 +3713,20 @@ impl UserData for SampleHandle {
                     ),
                 ));
             }
-            let def = instrument_options(lua, this, table.as_ref())?;
+            let source = InstrumentSource {
+                name: &this.name,
+                sample: &this.sample,
+                range: 0..this.sample.frames(),
+                slice: false,
+                warnings: &this.warnings,
+            };
+            let def = instrument_options(lua, &source, table.as_ref())?;
             Ok(InstrumentHandle {
                 name: this.name.clone(),
                 path: this.path.clone(),
                 sample: this.sample.clone(),
                 def,
+                slice: None,
             })
         });
 
@@ -3772,6 +3784,9 @@ struct InstrumentHandle {
     path: PathBuf,
     sample: Arc<Sample>,
     def: InstrumentDef,
+    /// Un corte (`cortes:slice_at(i):instrument{...}`): toca solo ese
+    /// rango, con su origen y su etiqueta. `None`: el sample entero.
+    slice: Option<(Slices, SliceOrigin, Option<String>)>,
 }
 
 impl UserData for InstrumentHandle {
@@ -4243,9 +4258,41 @@ const DEFAULT_CROSSFADE_MS: f64 = 10.0;
 /// Lee la tabla de `sample:instrument()` (claves del registro
 /// `api::INSTRUMENT_PARAMS`). El fundido del bucle se acorta si no cabe
 /// (antes del inicio o dentro del bucle), con un aviso.
+/// De dónde toca un instrumento: el sample entero o un corte suyo
+/// (`cortes:slice_at(i):instrument{...}`), para los ms del bucle y la raíz.
+struct InstrumentSource<'a> {
+    name: &'a str,
+    sample: &'a Arc<Sample>,
+    range: Range<usize>,
+    /// Es un corte: sin `root`, la raíz sale de su tono (YIN).
+    slice: bool,
+    warnings: &'a RefCell<Vec<String>>,
+}
+
+/// La raíz de un instrumento detectada en su rango (YIN): la nota más
+/// cercana y lo que está desafinado (para `Instrument::tune`).
+fn detected_root(lua: &Lua, who: &str, source: &InstrumentSource) -> mlua::Result<(i32, f32)> {
+    let guess = engine::detect_note(source.sample, source.range.clone()).ok_or_else(|| {
+        fail(
+            lua,
+            format!(
+                "{who}: no se ve el tono {} (YIN); pon la raíz a mano: root = \"C3\"",
+                if source.slice {
+                    "del corte"
+                } else {
+                    "del sample"
+                }
+            ),
+        )
+    })?;
+    let note = guess.note();
+    let tune = (guess.midi - note as f32).clamp(-engine::MAX_TUNE, engine::MAX_TUNE);
+    Ok((note, tune))
+}
+
 fn instrument_options(
     lua: &Lua,
-    this: &SampleHandle,
+    this: &InstrumentSource,
     table: Option<&Table>,
 ) -> mlua::Result<InstrumentDef> {
     let who = format!("instrument({})", this.name);
@@ -4255,6 +4302,12 @@ fn instrument_options(
         engine: engine::Instrument::new(4),
         synth: None,
     };
+    let root_given = table.is_some_and(|t| t.contains_key("root").unwrap_or(false));
+    if this.slice && !root_given {
+        let (root, tune) = detected_root(lua, &who, this)?;
+        def.root = root;
+        def.engine.tune = tune;
+    }
     let Some(table) = table else {
         return Ok(def);
     };
@@ -4289,6 +4342,11 @@ fn instrument_options(
         match key.as_str() {
             "root" => {
                 def.root = match &value {
+                    Value::String(name) if name.to_str()?.as_ref() as &str == "auto" => {
+                        let (root, tune) = detected_root(lua, &who, this)?;
+                        def.engine.tune = tune;
+                        root
+                    }
                     Value::String(name) => {
                         let name = name.to_str()?.to_string();
                         patterns::note_number(&name).ok_or_else(|| {
@@ -4324,13 +4382,14 @@ fn instrument_options(
                 let Some(range) = numbers(&value, 2) else {
                     return Err(fail(lua, format!("{who}: loop es {{inicio, fin}} en ms")));
                 };
-                let length = frame_to_ms(this.sample.frames(), &this.sample);
+                let length = frame_to_ms(this.range.len(), this.sample);
                 let (from, to) = (range[0], range[1]);
                 if !(0.0 <= from && from < to && to <= length) {
                     return Err(fail(
                         lua,
                         format!(
-                            "{who}: loop = {{{from}, {to}}}: tiene que ir dentro del sample (0 a {length:.1} ms) y con el fin después del inicio"
+                            "{who}: loop = {{{from}, {to}}}: tiene que ir dentro del {} (0 a {length:.1} ms) y con el fin después del inicio",
+                            if this.slice { "corte" } else { "sample" }
                         ),
                     ));
                 }
@@ -4403,20 +4462,20 @@ fn instrument_options(
         }
     }
     if let Some((from, to)) = def.loop_ms {
+        // Los ms son desde el inicio de lo que toca (el corte).
+        let offset = this.range.start;
         let (start, end) = (
-            ms_to_frame(from, &this.sample),
-            ms_to_frame(to, &this.sample),
+            offset + ms_to_frame(from, this.sample),
+            offset + ms_to_frame(to, this.sample),
         );
-        let end = end.min(this.sample.frames()).max(start + 1);
+        let end = end.min(this.range.end).max(start + 1);
         let wanted = crossfade.unwrap_or(DEFAULT_CROSSFADE_MS);
-        let frames = ms_to_frame(wanted, &this.sample)
-            .min(start)
-            .min(end - start);
-        if frames < ms_to_frame(wanted, &this.sample) {
+        let frames = ms_to_frame(wanted, this.sample).min(start).min(end - start);
+        if frames < ms_to_frame(wanted, this.sample) {
             let warning = format!(
                 "{who}: el fundido del bucle se queda en {:.1} ms (pedía {wanted} ms): \
                  necesita audio antes del inicio del bucle y caber dentro{}",
-                frame_to_ms(frames, &this.sample),
+                frame_to_ms(frames, this.sample),
                 if frames == 0 {
                     "; el salto puede hacer clic"
                 } else {
@@ -4823,6 +4882,7 @@ fn cut_sample(
         stretch: this.stretch,
         shapes: Rc::new(RefCell::new(vec![DEFAULT_SHAPE; count])),
         slice_fx: Rc::new(RefCell::new(vec![SliceFxDef::default(); count])),
+        warnings: this.warnings.clone(),
     })
 }
 
@@ -4847,6 +4907,8 @@ struct SlicedHandle {
     shapes: Rc<RefCell<Vec<SliceShape>>>,
     /// Efectos de cada corte (`:fx()`); compartidos como las formas.
     slice_fx: Rc<RefCell<Vec<SliceFxDef>>>,
+    /// Avisos de la carga (los del sample).
+    warnings: Rc<RefCell<Vec<String>>>,
 }
 
 /// Lee la tabla de opciones de `sample(nombre, { ... })` (claves del
@@ -5248,6 +5310,72 @@ impl UserData for SlicedHandle {
                 stretch: this.stretch,
                 shapes: Rc::new(RefCell::new(vec![this.shapes.borrow()[i]])),
                 slice_fx: Rc::new(RefCell::new(vec![this.slice_fx.borrow()[i].clone()])),
+                warnings: this.warnings.clone(),
+            })
+        });
+
+        // `:instrument({ root, loop, voices, adsr, crossfade, keep, formant })`
+        // en un solo corte (`cortes:slice_at(i)`): el corte se toca como
+        // notas; sin `root`, su raíz es su tono (YIN), con los cents
+        // corregidos.
+        methods.add_method(
+            "instrument",
+            |lua, this, (first, second): (Value, Option<Table>)| {
+            // `instrument(i, { ... })` elige el corte `i`; sin número, los
+            // cortes tienen que ser uno (`slice_at(i):instrument{...}`).
+            let count = this.slices.len();
+            let (index, table) = match (first, second) {
+                (Value::Integer(i), table) => (Some(i), table),
+                (Value::Number(n), table) if n.fract() == 0.0 => (Some(n as i64), table),
+                (Value::Table(table), None) => (None, Some(table)),
+                (Value::Nil, None) => (None, None),
+                _ => {
+                    return Err(fail(
+                        lua,
+                        "instrument(i, { ... }) para el corte i, o slice_at(i):instrument({ ... })",
+                    ));
+                }
+            };
+            let i = match index {
+                Some(i) => usize::try_from(i - 1)
+                    .ok()
+                    .filter(|&i| i < count)
+                    .ok_or_else(|| {
+                        fail(lua, format!("instrument({i}): el corte no existe (hay {count})"))
+                    })?,
+                None if count == 1 => 0,
+                None => {
+                    return Err(fail(
+                        lua,
+                        format!(
+                            "instrument: estos cortes son {count}; elige uno: cortes:instrument(3, {{...}}) o cortes:slice_at(3):instrument{{...}}"
+                        ),
+                    ));
+                }
+            };
+            let range = this.slices.get(i).expect("el corte existe");
+            let name = format!("{}, corte", this.origin.sample);
+            let source = InstrumentSource {
+                name: &name,
+                sample: &this.sample,
+                range,
+                slice: true,
+                warnings: &this.warnings,
+            };
+            let def = instrument_options(lua, &source, table.as_ref())?;
+            Ok(InstrumentHandle {
+                name: this.origin.sample.clone(),
+                path: this.path.clone(),
+                sample: this.sample.clone(),
+                def,
+                slice: Some((
+                    this.slices.only(i).expect("el corte existe"),
+                    SliceOrigin {
+                        indices: vec![this.origin.indices[i]],
+                        ..this.origin.clone()
+                    },
+                    this.labels.borrow()[i].clone(),
+                )),
             })
         });
 

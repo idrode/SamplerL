@@ -151,6 +151,7 @@ fn the_script_sounds_like_the_engine() {
         crossfade: 720,
         keep: false,
         formant: None,
+        tune: 0.0,
     };
     let pattern = Pattern::from_steps(sample, &slices, steps)
         .unwrap()

@@ -3130,6 +3130,11 @@ impl Engine {
         let track = &mut self.tracks[t];
         track.born = self.stamp;
         on.born = self.stamp;
+        // La desafinación del sample, corregida (sin ella, la velocidad tal
+        // cual).
+        if instrument.tune != 0.0 {
+            on.rate *= 2f64.powf(-instrument.tune as f64 / 12.0);
+        }
         let note = Note::new(sample.clone(), instrument, on, fade);
         let free = (0..MAX_VOICES)
             .find(|&v| !is_voice(&track.notes[v]))

@@ -484,3 +484,54 @@ fn live_keys_are_independent_and_share_the_voices() {
             .is_err()
     );
 }
+
+/// Coste de un corte como instrumento según las voces que suenan, como
+/// sampler clásico y con `keep` (`cargo test -p engine --release --test
+/// instrument -- --ignored --nocapture coste`): qué parte de un núcleo
+/// gasta cada voz, para decir cuántas caben.
+#[test]
+#[ignore]
+fn coste_de_las_voces_de_un_corte() {
+    use std::time::Instant;
+    let tone: Vec<f32> = (0..48_000)
+        .map(|i| 0.3 * (std::f32::consts::TAU * 261.6 * i as f32 / RATE as f32).sin())
+        .collect();
+    let sample = Arc::new(Sample::from_interleaved(&tone, 1, RATE, RATE).unwrap());
+    let slices = Slices::grid(&sample, 4).only(1).unwrap();
+    let range = slices.get(0).unwrap();
+    for keep in [false, true] {
+        for voices in [1u8, 4, 8, 16] {
+            let mut instrument = engine::Instrument::new(voices);
+            instrument.keep = keep;
+            instrument.tune = 0.3;
+            instrument.sustain_loop = Some((range.start + 2000, range.start + 10_000));
+            instrument.crossfade = 480;
+            let (mut controller, mut engine) = new_engine(RATE);
+            for key in 0..voices {
+                controller
+                    .note_on(
+                        0,
+                        &sample,
+                        range.clone(),
+                        instrument,
+                        key as f32 - 5.5,
+                        0.5,
+                        key,
+                    )
+                    .unwrap();
+            }
+            let seconds = 4.0;
+            let mut out = vec![0.0f32; 512 * 2];
+            let start = Instant::now();
+            for _ in 0..(seconds * RATE as f64 / 512.0) as usize {
+                engine.process(&mut out, 2);
+            }
+            let core = start.elapsed().as_secs_f64() / seconds;
+            println!(
+                "keep = {keep:5}, {voices:2} voces: {:5.1} % de un núcleo ({:.2} % por voz)",
+                100.0 * core,
+                100.0 * core / voices as f64
+            );
+        }
+    }
+}

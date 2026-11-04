@@ -2873,7 +2873,7 @@ Toca el sample como un instrumento: notas con polifonía, ADSR y bucle sostenido
 
 | Parámetro | Qué es | Por defecto | Valores |
 | --- | --- | --- | --- |
-| `root` | la nota en la que suena el sample tal cual (`melody` toca desde ahí); C4 es el do central | `"C4"` | una nota (`"C3"`, `"F#2"`, `"Bb4"`) o un número MIDI (0–127) |
+| `root` | la nota en la que suena el sample tal cual (`melody` toca desde ahí); C4 es el do central. `"auto"`: su tono (YIN), con los cents corregidos; en un corte (`slice_at(i):instrument`), es lo que se hace sin `root` | `"C4"` | una nota (`"C3"`, `"F#2"`, `"Bb4"`), un número MIDI (0–127) o `"auto"` |
 | `loop` | bucle sostenido `{inicio, fin}` en ms: la nota sigue en bucle mientras dure (sin él, acaba con el sample) | `nil` | dentro del sample, con el fin después del inicio |
 | `voices` | notas que pueden sonar a la vez; con todas ocupadas, una nota nueva roba la más antigua | `4` | 1–16 |
 | `adsr` | envolvente de cada nota `{ataque, decay, sustain, release}`: ms, ms, nivel (0–1) y ms (0 ms: el fundido mínimo de 1,5 ms) | `{ 0, 0, 1, 100 }` | ms de 0 a 10000; sustain de 0 a 1 |
@@ -3192,6 +3192,24 @@ local amen = sample("amen.wav"):slice(8)
 -- El charles del corte 2, un poco antes para que entre con su ataque.
 amen:move(2, 205.5)
 track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
+```
+
+### `cortes:instrument([i,] [opciones])`
+
+Devuelve: instrumento.
+
+Toca un corte como un instrumento: su tono es la raíz y cada nota lo transpone. Como `sample:instrument()`, pero solo con un corte: el `i` (desde 1), o el único de `cortes:slice_at(i)` (con varios cortes y sin `i`, error). Las notas leen ese corte y nada más, con polifonía, ADSR y acordes. Sin `root`, la raíz es el tono del corte (YIN, como `cortes:note(i)`) y sus cents se corrigen: `melody("c3 e3 g3")` suena justo en esas notas. Si el corte no tiene un tono claro (un golpe de ruido), error: pon `root` a mano. Los ms de `loop` cuentan desde el inicio del corte. Por defecto transpone como un sampler clásico (tono y duración a la vez, lo mejor para bombos y cajas); con `keep = true` conserva la duración (granos alineados, mejor con material tonal). Con `loop`, sostiene notas largas.
+
+- `i`: el corte (desde 1); sin él, los cortes tienen que ser uno (`slice_at`)
+- `opciones`: la tabla de `sample:instrument()` (`root`, `loop`, `voices`, `adsr`, `crossfade`, `keep`, `formant`)
+
+```lua
+bpm(100)
+local cortes = sample("amen.wav"):slice(8)
+-- Sin root, la raíz es el tono del corte (YIN); un golpe de batería
+-- no tiene un tono claro, así que aquí se pone a mano.
+local bombo = cortes:instrument(1, { root = "C2", voices = 4 })
+track("bombo", bombo):melody("c2 . g1 .  c2 . . .  eb2 . c2 .  g1 . . .")
 ```
 
 ### `pista:steps(texto)`

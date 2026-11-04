@@ -788,7 +788,7 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
        `"2 compases"`) y `fit` (`"trim"`, `"stretch"`, `"loop"` con
        `loop_start`/`loop_end`) en `cortes:set` y en las llaves de un paso
        (`3{dur=1/8,fit=loop}`), sin copiar el audio.
-    2. **El corte como instrumento**: `cortes:slice_at(i):instrument{...}`
+    2. ✅ **El corte como instrumento**: `cortes:instrument(i, {...})`
        con la raíz de YIN y sus cents corregidos; `keep` para no cambiar
        la duración.
     3. **Deformaciones en tiempo real**: `bend`/`bend_time` y `rev`.
