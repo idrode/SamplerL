@@ -70,6 +70,51 @@ pub const BINDABLE: &[(&str, Bound, &[&str])] = &[
     ("completar", Bound::Action(Action::Complete), &["f4"]),
     ("salir", Bound::Action(Action::Quit), &["ctrl-q"]),
     ("menu", Bound::Action(Action::OpenMenu), &["f10"]),
+    (
+        "foco_codigo",
+        Bound::Action(Action::Focus(crate::focus::Panel::Code)),
+        &["alt-1"],
+    ),
+    (
+        "foco_sample",
+        Bound::Action(Action::Focus(crate::focus::Panel::Wave)),
+        &["alt-2"],
+    ),
+    (
+        "foco_tracker",
+        Bound::Action(Action::Focus(crate::focus::Panel::Tracker)),
+        &["alt-3"],
+    ),
+    (
+        "foco_mezcla",
+        Bound::Action(Action::Focus(crate::focus::Panel::Mixer)),
+        &["alt-4"],
+    ),
+    (
+        "foco_efectos",
+        Bound::Action(Action::Focus(crate::focus::Panel::Fx)),
+        &["alt-5"],
+    ),
+    (
+        "foco_lanes",
+        Bound::Action(Action::Focus(crate::focus::Panel::Lanes)),
+        &["alt-6"],
+    ),
+    (
+        "foco_scope",
+        Bound::Action(Action::Focus(crate::focus::Panel::Scope)),
+        &["alt-7"],
+    ),
+    (
+        "foco_espectro",
+        Bound::Action(Action::Focus(crate::focus::Panel::Spectrum)),
+        &["alt-8"],
+    ),
+    (
+        "foco_ocupacion",
+        Bound::Action(Action::Focus(crate::focus::Panel::Occupancy)),
+        &["alt-9"],
+    ),
     ("modo_tocar", Bound::Action(Action::PlayMode), &["esc"]),
     (
         "deshacer",
@@ -1712,7 +1757,7 @@ brillo = "red"
             [
                 "[teclas] cargar: F1 es siempre la paleta de comandos",
                 "[teclas] explorador: Alt-S ya es de guardar; no se usa",
-                "[teclas] «inventada» no existe (hay: paleta, guardar, cargar, marcha, cue, ir_al_error, ir_a_linea, buscar, buscar_siguiente, buscar_anterior, siguiente_pista, recargar, ordenes, completar, salir, menu, modo_tocar, deshacer, rehacer, explorador, tap_tempo, macros, metronomo, exportar, seccion_siguiente, seccion_anterior, repetir_seccion, variante, resaltado, ocupacion, piano_roll, editar_roll, panico, pausa_panico)",
+                "[teclas] «inventada» no existe (hay: paleta, guardar, cargar, marcha, cue, ir_al_error, ir_a_linea, buscar, buscar_siguiente, buscar_anterior, siguiente_pista, recargar, ordenes, completar, salir, menu, foco_codigo, foco_sample, foco_tracker, foco_mezcla, foco_efectos, foco_lanes, foco_scope, foco_espectro, foco_ocupacion, modo_tocar, deshacer, rehacer, explorador, tap_tempo, macros, metronomo, exportar, seccion_siguiente, seccion_anterior, repetir_seccion, variante, resaltado, ocupacion, piano_roll, editar_roll, panico, pausa_panico)",
                 "[teclas] salir: «q»: una letra sin ctrl- ni alt- escribiría texto",
                 "[teclas] Ctrl-G era de ir_al_error; ahora es de marcha",
                 "[colores] tenue: color no válido",

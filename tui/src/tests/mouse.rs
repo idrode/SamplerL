@@ -76,14 +76,16 @@ fn dragging_selects_and_ctrl_c_copies_it() {
 }
 
 #[test]
-fn the_mouse_does_nothing_in_play_mode_with_the_palette_or_when_disabled() {
+fn the_mouse_does_not_edit_from_play_mode_with_the_palette_or_when_disabled() {
     let (_, mut app, _engine) = open("mouse_off", Some(SONG));
     let buffer = draw(&mut app, 120, 40);
     let (x, y) = find(&buffer, "track(\"kick\"").unwrap();
     app.handle(esc());
+    // Desde el modo tocar, el primer clic solo devuelve el foco al editor:
+    // el cursor no se mueve.
     app.mouse(MouseAction::Down, x + 3, y);
     assert_eq!(app.editor.cursor(), (0, 0), "modo tocar");
-    app.handle(esc());
+    assert!(!app.view().playing_mode, "el clic vuelve al editor");
     app.open_palette();
     app.mouse(MouseAction::Down, x + 3, y);
     assert_eq!(app.editor.cursor(), (0, 0), "con la paleta");

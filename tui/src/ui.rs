@@ -1239,6 +1239,8 @@ pub fn popup_keys(view: &ViewModel) -> Option<&'static str> {
 pub fn keys_text(view: &ViewModel) -> String {
     if let Some(keys) = popup_keys(view) {
         keys.into()
+    } else if let Some(keys) = crate::app::panel_keys(view.focus) {
+        keys.into()
     } else if !view.key_help.is_empty() {
         view.key_help.clone()
     } else if view.playing_mode && view.editor_outside {

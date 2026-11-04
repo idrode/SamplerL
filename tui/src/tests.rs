@@ -2519,6 +2519,7 @@ mod clipboard;
 mod config;
 mod devices;
 mod devices_panel;
+mod focus;
 mod formant;
 mod freeze;
 mod grains;

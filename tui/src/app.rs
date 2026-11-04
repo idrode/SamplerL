@@ -27,6 +27,7 @@ mod devices;
 pub use devices::devices_command;
 #[cfg(test)]
 pub use roll::roll_command;
+mod focus;
 mod freeze;
 mod key;
 mod learn;
@@ -43,6 +44,7 @@ pub use split::editor_command;
 mod lanes;
 mod occupancy;
 mod panels;
+pub use focus::panel_keys;
 pub use panels::PanelAreas;
 mod roll;
 mod tracker_edit;
@@ -3505,6 +3507,7 @@ impl App {
             Action::EditRoll => self.open_roll_cursor(),
             Action::RollWindow => self.launch_roll_window(),
             Action::RollBack => self.reclaim_roll_window(),
+            Action::Focus(panel) => self.set_focus(panel),
             Action::OpenMenu => self.toggle_menu(),
             Action::TerminalInfo => self.terminal_info(),
             Action::Quit => {
@@ -4058,6 +4061,11 @@ impl App {
         }
         // Con un punto de una lane elegido, sus teclas.
         if let Some(flow) = self.lanes_key(&input) {
+            return flow;
+        }
+        // Con el foco en un panel sin cursor (mezcla, efectos...), sus
+        // teclas.
+        if let Some(flow) = self.handle_chosen_focus(&input) {
             return flow;
         }
         // Y con el piano roll al mando.

@@ -84,6 +84,10 @@ impl App {
         if self.menu_mouse(action, column, row) {
             return;
         }
+        // Las pestañas del dock, y el foco al panel que se pulsa.
+        if action == MouseAction::Down && self.nothing_on_top() && self.focus_mouse(column, row) {
+            return;
+        }
         // El piano roll, si se ve aquí y el ratón está encima (o arrastra).
         if let Some(area) = self.roll.area.filter(|_| self.local_roll_view_shown())
             && self.roll_mouse(action, column, row, area)

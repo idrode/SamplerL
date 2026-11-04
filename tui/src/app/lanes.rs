@@ -180,10 +180,14 @@ impl App {
 
     /// Las teclas con un punto elegido: `true` si eran para él.
     pub(super) fn lanes_key(&mut self, input: &Input) -> Option<Flow> {
-        let focus = self
-            .lanes_focus
-            .clone()
-            .filter(|_| self.lanes_area.is_some())?;
+        let focus = self.lanes_focus.clone()?;
+        // Esc lo suelta siempre; lo demás, solo con el panel a la vista.
+        if input.key == Key::Esc {
+            self.lanes_focus = None;
+            self.message = "lanes: punto suelto".into();
+            return Some(Flow::Continue);
+        }
+        self.lanes_area?;
         let view = self.lanes_view()?;
         let Some(row) = view
             .lanes

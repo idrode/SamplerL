@@ -834,6 +834,15 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Abrir el panel de dispositivos en su ventana | El panel de dispositivos en una terminal nueva ([dispositivos] terminal, o [editor] terminal, en config.toml); si no se puede lanzar, se abre aquí | — |
 | Volver a meter el panel de dispositivos en la principal | Con el panel de dispositivos en su ventana: la cierra y lo abre aquí | — |
 | Modo vim | Enciende o apaga el modo vim del editor en esta sesión (el de siempre, `[editor] modo`) | — |
+| Foco: código | Lleva el foco a el editor de código (el modo editar); Esc vuelve | Alt-1 |
+| Foco: sample | Lleva el foco a la forma de onda del sample (el modo tocar); Esc vuelve | Alt-2 |
+| Foco: tracker | Lleva el foco a el tracker (o el piano roll, si está abierto) con su cursor; Esc vuelve | Alt-3 |
+| Foco: mezcla | Lleva el foco a el mezclador: ←→ pista, m mute, s solo; Esc vuelve | Alt-4 |
+| Foco: efectos | Lleva el foco a los efectos por pista: ←→ pista; Esc vuelve | Alt-5 |
+| Foco: lanes | Lleva el foco a las lanes de la pista con el primer punto elegido; Esc vuelve | Alt-6 |
+| Foco: scope | Lleva el foco a el scope del master; Esc vuelve | Alt-7 |
+| Foco: espectro | Lleva el foco a el espectro del master; Esc vuelve | Alt-8 |
+| Foco: ocupación | Lleva el foco a la vista de ocupación con su cursor; Esc vuelve | Alt-9 |
 | Menús | Abre la barra de menús: ←→ menú, ↑↓ entrada, Enter ejecuta, la letra subrayada abre su menú | F10 |
 | Qué sabe hacer esta terminal | Dice si hay truecolor, Unicode, teclas al soltar y ratón, y dónde está la configuración | — |
 | Salir | Sale (pide confirmación si hay cambios sin guardar) | Ctrl-Q |
@@ -1221,6 +1230,15 @@ paleta de 256.
 | `completar` | Autocompletar | `f4` |
 | `salir` | Salir | `ctrl-q` |
 | `menu` | Menús | `f10` |
+| `foco_codigo` | Foco: código | `alt-1` |
+| `foco_sample` | Foco: sample | `alt-2` |
+| `foco_tracker` | Foco: tracker | `alt-3` |
+| `foco_mezcla` | Foco: mezcla | `alt-4` |
+| `foco_efectos` | Foco: efectos | `alt-5` |
+| `foco_lanes` | Foco: lanes | `alt-6` |
+| `foco_scope` | Foco: scope | `alt-7` |
+| `foco_espectro` | Foco: espectro | `alt-8` |
+| `foco_ocupacion` | Foco: ocupación | `alt-9` |
 | `modo_tocar` | Modo tocar | `esc` |
 | `deshacer` | Deshacer | `ctrl-z`, `ctrl-u` |
 | `rehacer` | Rehacer | `ctrl-r` |
