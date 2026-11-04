@@ -9,6 +9,7 @@
 //! el hilo de la interfaz.
 
 pub mod grid;
+pub mod scope;
 
 /// Qué se enseña.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,6 +71,7 @@ impl VizSpec {
 #[derive(Debug, Clone, PartialEq)]
 pub enum VizView {
     Grid(grid::GridView),
+    Scope(scope::ScopeView),
 }
 
 impl VizView {
@@ -77,6 +79,7 @@ impl VizView {
     pub fn height(&self) -> u16 {
         match self {
             VizView::Grid(g) => g.size + 2,
+            VizView::Scope(s) => s.size + 2,
         }
     }
 }
@@ -95,11 +98,15 @@ impl ratatui::widgets::Widget for VizPanels<'_> {
             let rect = ratatui::layout::Rect { y, height, ..area };
             match view {
                 VizView::Grid(g) => grid::GridPanel(g).render(rect, buf),
+                VizView::Scope(s) => scope::ScopePanel(s).render(rect, buf),
             }
             y += height;
         }
     }
 }
+
+/// Lo que se guarda de cada fuente de audio (lo último que ha llegado).
+pub const HISTORY: usize = 16_384;
 
 /// Lo que piden todas, apiladas.
 pub fn total_height(views: &[VizView]) -> u16 {

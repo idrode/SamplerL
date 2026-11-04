@@ -2466,6 +2466,28 @@ por configuración y por `LANG`.
   de do2 a sol2, las ocho filas con su nombre; en ASCII). `cargo test -p tui
   pantalla_viz -- --ignored --nocapture` las enseña.
 
+### Parte 3: `scope`
+
+- **Las muestras en la interfaz** (`App::tick_viz`): en cada `tick`, las
+  colas de las fuentes encendidas se vacían (con un `Vec` que se reutiliza)
+  a un historial por fuente de `viz::HISTORY` = 16 384 muestras (lo
+  último que ha llegado).
+- **`viz/scope.rs`**: `trigger(muestras, ventana)` es el último cruce por
+  cero de subida (habiendo bajado de −0,01 antes: sin esa histéresis, el
+  ruido dispara en cualquier sitio) que deja la ventana entera detrás
+  (`WINDOW` = 2048 muestras, ~43 ms a 48 kHz). Con una señal periódica,
+  cada cuadro empieza en la misma fase y la onda se queda quieta; sin
+  disparo, lo último (y el título lo dice). El dibujo, en el `Canvas` de
+  ratatui con `Marker::Braille` (2×4 puntos por celda: dos puntos por
+  columna, unidos con rectas) entre −1 y 1, con el cero tenue; en ASCII,
+  un `*` por columna.
+- **Tests**: `viz/scope.rs` (diez cuadros de un seno de periodo no entero,
+  cada uno con lo último desplazado otra cantidad: empiezan en la misma
+  fase a menos de una muestra, y subiendo por el cero; sin cruces, lo
+  último y «sin disparo») y `tui/src/tests/viz.rs` (un seno de 220 Hz en
+  bucle: el scope del master dispara, cinco cuadros seguidos con la misma
+  fase, Braille en pantalla y `*` en ASCII).
+
 ## Audio de prueba y problemas conocidos
 
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`

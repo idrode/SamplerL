@@ -75,8 +75,44 @@ impl App {
                     spec.kind == VizKind::Punchcard,
                 )))
             }
+            VizKind::Scope => {
+                let history = self.viz_history(&spec.source)?;
+                let samples: Vec<f32> = history.iter().copied().collect();
+                Some(VizView::Scope(crate::viz::scope::build(
+                    &samples,
+                    spec.title(),
+                    spec.size,
+                )))
+            }
             _ => None,
         }
+    }
+
+    /// Lo último que ha llegado de la fuente de `source`.
+    fn viz_history(&self, source: &VizSource) -> Option<&std::collections::VecDeque<f32>> {
+        let slot = match source {
+            VizSource::Master => engine::VIZ_MASTER,
+            VizSource::Track(name) => self.host.track_slot(name)?,
+        };
+        self.viz_history.get(slot)
+    }
+
+    /// Vacía las colas del motor de las fuentes encendidas en su historial
+    /// (en cada `tick`).
+    pub(super) fn tick_viz(&mut self) {
+        let mut fresh = std::mem::take(&mut self.viz_scratch);
+        for source in 0..engine::VIZ_SOURCES {
+            if !self.viz_sent[source] {
+                continue;
+            }
+            fresh.clear();
+            self.controller.viz_samples(source, &mut fresh);
+            let history = &mut self.viz_history[source];
+            history.extend(fresh.iter().copied());
+            let extra = history.len().saturating_sub(crate::viz::HISTORY);
+            history.drain(..extra);
+        }
+        self.viz_scratch = fresh;
     }
 
     /// La columna del ciclo de `def` que se oye (como el cursor del piano

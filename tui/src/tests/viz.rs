@@ -84,14 +84,70 @@ fn ascii_draws_the_grid_without_blocks() {
     assert!(screen.contains('#'), "{screen}");
 }
 
+/// Un seno de 220 Hz largo en un bucle, para las de audio.
+fn open_tone(test: &str) -> (App, Engine) {
+    let path = fixture(test, None);
+    let dir = path.parent().unwrap();
+    let tone: Vec<f32> = (0..96_000)
+        .map(|i| 0.6 * (std::f32::consts::TAU * 220.0 * i as f32 / RATE as f32).sin())
+        .collect();
+    offline::write_wav(dir.join("tono.wav"), &tone, 1, RATE).unwrap();
+    std::fs::write(
+        &path,
+        "bpm(120)\nlocal t = sample(\"tono.wav\"):slice_grid(1)\n\
+         t:set(1, { play = \"loop\" })\n\
+         track(\"tono\", t):steps(\"1 . . .  . . . .  . . . .  . . . .\")\n",
+    )
+    .unwrap();
+    let (controller, engine) = new_engine(RATE);
+    let app = App::open(&path, controller, RATE).unwrap();
+    assert!(app.view().error.is_none(), "{:?}", app.view().error);
+    (app, engine)
+}
+
+#[test]
+fn scope_triggers_and_stays_still_frame_after_frame() {
+    let (mut app, mut engine) = open_tone("viz_scope");
+    app.set_viz(vec![spec(VizKind::Scope, VizSource::Master, 6)]);
+    // El encendido entra al compás: pasado el primero, ya llega.
+    play(&mut app, &mut engine, 20);
+    let mut firsts = Vec::new();
+    for _ in 0..5 {
+        play(&mut app, &mut engine, 1);
+        let VizView::Scope(scope) = &app.view().viz[0] else {
+            panic!("scope")
+        };
+        assert!(scope.triggered);
+        assert_eq!(scope.samples.len(), crate::viz::scope::WINDOW);
+        firsts.push(scope.samples[..6].to_vec());
+    }
+    for f in &firsts[1..] {
+        for (a, b) in f.iter().zip(&firsts[0]) {
+            assert!((a - b).abs() < 0.02, "{a} {b}");
+        }
+    }
+    let screen = text(&draw(&mut app, 140, 40));
+    assert!(screen.contains("scope · master"), "{screen}");
+    assert!(
+        screen
+            .chars()
+            .any(|c| ('\u{2801}'..='\u{28ff}').contains(&c)),
+        "sin Braille: {screen}"
+    );
+    crate::theme::set_ascii(true);
+    let screen = text(&draw(&mut app, 140, 40));
+    crate::theme::set_ascii(false);
+    assert!(screen.contains('*'), "{screen}");
+}
+
 /// Para verlas sin terminal: `cargo test -p tui pantalla_viz -- --ignored
 /// --nocapture`.
 #[test]
 #[ignore]
 fn pantalla_viz() {
-    let (_, mut app, mut engine) = open("viz_pantalla", Some(SONG));
+    let (mut app, mut engine) = open_tone("viz_pantalla");
     app.set_viz(vec![
-        drums(VizKind::Punchcard),
+        spec(VizKind::Punchcard, VizSource::Track("tono".into()), 2),
         spec(VizKind::Scope, VizSource::Master, 6),
         spec(VizKind::Spectrum, VizSource::Master, 6),
     ]);
