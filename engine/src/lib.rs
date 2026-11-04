@@ -4,6 +4,7 @@ pub mod arrangement;
 pub mod automation;
 pub mod bpm;
 pub mod bus;
+pub mod deform;
 pub mod device;
 mod engine;
 mod fx;
@@ -36,6 +37,7 @@ pub use automation::{
 };
 pub use bpm::{BpmGuess, detect_bpm};
 pub use bus::{Buses, DelayParams, Division, ReverbParams};
+pub use deform::{MAX_WARP_POINTS, RenderKey, Warp};
 pub use device::{
     AudioBackend, AudioDeviceInfo, AudioEvent, AudioOutput, CpalBackend, NULL_NAME, OutputInfo,
 };
@@ -44,8 +46,8 @@ pub use engine::{
     MAX_ATTACK_MS, MAX_BEND, MAX_BEND_MS, MAX_CHOKE, MAX_CROSSFADE_MS, MAX_DUR_BARS, MAX_DUR_MS,
     MAX_DUR_NOTE, MAX_FIT_STRETCH, MAX_RELEASE_MS, MAX_SLICE_BEND, MAX_START_BAR, MAX_TRACKS,
     MAX_VOICE_LIMIT, MidiNote, PlayMode, SHAPE_ATTACK, SHAPE_BEND, SHAPE_BEND_TIME,
-    SHAPE_CROSSFADE, SHAPE_LENGTH, SHAPE_PAN, SHAPE_PARAMS, SHAPE_RELEASE, SendError, ShapeCurves,
-    SliceShape, loop_seam_room, new_engine,
+    SHAPE_CROSSFADE, SHAPE_FORMANT, SHAPE_LENGTH, SHAPE_PAN, SHAPE_PARAMS, SHAPE_RELEASE,
+    SendError, ShapeCurves, SliceShape, loop_seam_room, new_engine,
 };
 pub use fx::{
     DEFAULT_Q, DynEqParams, EQ_BANDS, EQ_DEFAULT_FREQS, EQ_DEFAULT_Q, EQ_FREQ_RANGE, EQ_GAIN_RANGE,

@@ -300,6 +300,7 @@ fn frozen_track(
             zero_cross: None,
         },
         stretch: None,
+        rendered: Vec::new(),
         instrument: None,
         granular: None,
         formant: None,

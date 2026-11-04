@@ -10,6 +10,7 @@
 use std::sync::Arc;
 
 use crate::automation::{Automation, MAX_AUTOMATIONS, MIX_PARAMS, MixCurves};
+use crate::deform::RenderKey;
 use crate::engine::{HitShape, MAX_CHOKE, Playback, SendError, SliceShape};
 use crate::fx::{Fx, MAX_FX};
 use crate::grain::Granular;
@@ -116,6 +117,9 @@ impl Step {
                 bend: None,
                 bend_ms: None,
                 reverse: None,
+                formant: None,
+                warp: None,
+                smear: None,
             },
         }
     }
@@ -239,6 +243,9 @@ pub(crate) struct Trigger {
     pub sub: Option<SubNote>,
     /// Lo que el paso cambia de la forma de su corte.
     pub hit: HitShape,
+    /// Suena de un buffer precalculado (`warp`, `smear`): su índice en
+    /// `Pattern::rendered` (su rango ya es el de ese buffer).
+    pub variant: Option<u16>,
 }
 
 /// Patrón de una pista. Los pasos se resuelven a rangos de frames y
@@ -304,6 +311,15 @@ pub struct Pattern {
     /// Sus golpes suenan sin los fundidos de entrada y de salida (ver
     /// [`Pattern::with_raw`]).
     pub(crate) raw: bool,
+    /// El rango de cada corte y su forma (la de `with_shapes`): de dónde
+    /// salen las claves de lo precalculado.
+    slice_ranges: Vec<std::ops::Range<usize>>,
+    shapes: Vec<SliceShape>,
+    /// Los cortes precalculados (`warp`, `smear`), cada uno con su clave
+    /// ([`Pattern::with_rendered`]), y cuál es el de la forma de cada corte
+    /// (para los pads).
+    rendered: Vec<(RenderKey, Arc<Sample>)>,
+    slice_rendered: Vec<Option<u16>>,
 }
 
 impl Pattern {
@@ -379,7 +395,117 @@ impl Pattern {
             step_fx,
             tag: 0,
             raw: false,
+            slice_ranges: slices.iter().collect(),
+            shapes: Vec::new(),
+            rendered: Vec::new(),
+            slice_rendered: Vec::new(),
         })
+    }
+
+    /// El sample del que suena un golpe: el del patrón o, si su corte está
+    /// precalculado, ese buffer.
+    pub(crate) fn hit_sample(&self, hit: &Trigger) -> &Arc<Sample> {
+        match hit.variant {
+            Some(v) => &self.rendered[v as usize].1,
+            None => &self.sample,
+        }
+    }
+
+    /// Dónde empieza en el sample del patrón lo que suena en un golpe (el
+    /// corte original si suena de un buffer precalculado): lo que marca la
+    /// interfaz.
+    pub(crate) fn hit_position(&self, hit: &Trigger) -> usize {
+        match hit.variant {
+            Some(_) => self.slice_ranges.get(hit.slice).map_or(0, |r| r.start),
+            None => hit.start,
+        }
+    }
+
+    /// El buffer precalculado de la forma del corte `slice`, si lo tiene
+    /// (para los pads).
+    pub(crate) fn slice_rendered(&self, slice: usize) -> Option<&Arc<Sample>> {
+        let v = self.slice_rendered.get(slice).copied().flatten()?;
+        Some(&self.rendered[v as usize].1)
+    }
+
+    /// Lo que hay que precalcular para que suene este patrón (después de
+    /// `with_shapes`): una clave por cada corte y golpe con `warp` o
+    /// `smear`, sin repetir. Se calculan fuera del audio
+    /// ([`crate::deform::render`]) y se pasan a [`Pattern::with_rendered`].
+    pub fn render_keys(&self) -> Vec<RenderKey> {
+        let mut keys: Vec<RenderKey> = Vec::new();
+        let mut add = |shape: &SliceShape, range: std::ops::Range<usize>| {
+            if !shape.rendered() {
+                return;
+            }
+            let key = RenderKey {
+                start: range.start,
+                end: range.end,
+                warp: shape.warp,
+                smear: shape.smear,
+            };
+            if !keys.contains(&key) {
+                keys.push(key);
+            }
+        };
+        for (shape, range) in self.shapes.iter().zip(&self.slice_ranges) {
+            add(shape, range.clone());
+        }
+        for hit in self.steps.iter().flatten() {
+            add(&hit.playback.shape, hit.start..hit.full_end);
+        }
+        keys
+    }
+
+    /// Los cortes precalculados de [`Pattern::render_keys`]: los golpes y
+    /// los pads de esos cortes suenan de su buffer, con su `length` y
+    /// todo lo demás igual. Falta alguno, error (el patrón anterior sigue).
+    pub fn with_rendered(
+        mut self,
+        rendered: Vec<(RenderKey, Arc<Sample>)>,
+    ) -> Result<Self, SendError> {
+        let missing = SendError::InvalidStep {
+            step: 0,
+            reason: "falta un corte precalculado (warp, smear)",
+        };
+        let find = |key: &RenderKey| {
+            rendered
+                .iter()
+                .position(|(k, _)| k == key)
+                .map(|i| i as u16)
+        };
+        let key = |shape: &SliceShape, range: std::ops::Range<usize>| RenderKey {
+            start: range.start,
+            end: range.end,
+            warp: shape.warp,
+            smear: shape.smear,
+        };
+        for hit in self.steps.iter_mut().flatten() {
+            let shape = hit.playback.shape;
+            if !shape.rendered() {
+                continue;
+            }
+            let v = find(&key(&shape, hit.start..hit.full_end)).ok_or(missing)?;
+            let frames = rendered[v as usize].1.frames();
+            hit.variant = Some(v);
+            hit.start = 0;
+            hit.full_end = frames;
+            hit.end = shape.range(0..frames).end;
+        }
+        self.slice_rendered = self
+            .shapes
+            .iter()
+            .zip(&self.slice_ranges)
+            .map(|(shape, range)| {
+                if shape.rendered() {
+                    find(&key(shape, range.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        self.rendered = rendered;
+        Ok(self)
     }
 
     /// Error si algún paso cambia la forma de su corte (`{dur=...}`).
@@ -621,6 +747,7 @@ impl Pattern {
                 .validate()
                 .map_err(|reason| SendError::InvalidStep { step: i, reason })?;
         }
+        self.shapes = shapes.to_vec();
         let length = self.length;
         for (i, hit) in self.steps.iter_mut().enumerate() {
             let Some(hit) = hit else { continue };
@@ -633,6 +760,11 @@ impl Pattern {
                 };
                 shape.validate().map_err(invalid)?;
                 check_bend(&shape, hit.playback.keep).map_err(invalid)?;
+                if shape.formant.is_some() && !hit.playback.keep && hit.playback.rate != 1.0 {
+                    return Err(invalid(
+                        "formant del corte va con % o sin pitch (con ^, los formantes se mueven con el tono)",
+                    ));
+                }
                 hit.playback.shape = shape;
                 // Al revés también en las nubes de granos (la voz lo mira
                 // en su forma).
@@ -917,6 +1049,7 @@ fn resolve_bar(
             slide: step.slide,
             sub: step.sub,
             hit: step.hit,
+            variant: None,
         }));
     }
     Ok(())

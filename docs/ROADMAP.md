@@ -794,6 +794,7 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
     3. ✅ **Deformaciones en tiempo real**: `bend`/`bend_time` (curva de
        tono dentro del golpe, con `ramp`/`lfo`) y `rev`, por corte y por
        paso; `stutter` no (ya están `r4` y `chance("stutter")`).
-    4. **Deformaciones precalculadas**: `warp` y `smear` al cargar, con
-       caché; `formant` por corte y por paso sobre el de siempre.
+    4. ✅ **Deformaciones precalculadas**: `warp` y `smear` al cargar, con
+       caché, en el patrón (entran al compás en su lote); `formant` por
+       corte y por paso sobre el de siempre, en tiempo real.
     5. **Documentación**: presets, tutorial en la guía, limitaciones.

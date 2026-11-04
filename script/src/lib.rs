@@ -326,6 +326,9 @@ pub struct TrackDef {
     /// Time-stretch al tempo de la canción (`sample:stretch()`), si lo hay.
     /// Entonces `sample` y `slices` ya están estirados.
     pub stretch: Option<Stretch>,
+    /// Los cortes precalculados (`warp`, `smear`; ver `engine::deform`),
+    /// con su clave: los calcula la carga y viajan en el patrón.
+    pub rendered: Vec<(engine::RenderKey, Arc<Sample>)>,
     /// Instrumento (`sample:instrument()`): sus golpes son notas, con
     /// polifonía, ADSR y bucle sostenido. Tiene un solo corte (el sample).
     pub instrument: Option<InstrumentDef>,
@@ -612,6 +615,14 @@ impl Imports {
     }
 }
 
+/// Un corte precalculado que se guarda entre cargas (`warp`, `smear`:
+/// calcularlo cuesta), por sample y clave.
+struct Deformed {
+    original: Arc<Sample>,
+    key: engine::RenderKey,
+    result: Arc<Sample>,
+}
+
 /// Un sample estirado que se guarda entre cargas (estirar cuesta).
 struct Stretched {
     original: Arc<Sample>,
@@ -649,6 +660,8 @@ pub struct ScriptHost {
     /// Samples estirados con `:stretch()` en la última carga (se reutilizan
     /// si no cambian el sample, la proporción ni los cortes).
     stretched: Vec<Stretched>,
+    /// Cortes precalculados de la carga anterior (`warp`, `smear`).
+    deformed: Vec<Deformed>,
     /// Última etiqueta dada a una pista ([`TrackDef::tag`]).
     last_tag: u32,
     /// Cada macro por su nombre: el valor que le daba el script en la
@@ -677,6 +690,7 @@ impl ScriptHost {
             edits: Vec::new(),
             imported: Vec::new(),
             stretched: Vec::new(),
+            deformed: Vec::new(),
             last_tag: 0,
             macro_values: HashMap::new(),
             learned: Vec::new(),
@@ -1213,6 +1227,7 @@ impl ScriptHost {
             transpose,
         };
         let mut used = Vec::new();
+        let mut deformed = Vec::new();
         let tags = Cell::new(self.last_tag);
         let base_warnings = warnings.borrow().clone();
         let mut songs = Vec::with_capacity(versions.len());
@@ -1231,6 +1246,7 @@ impl ScriptHost {
                         let tag = tags.get() % engine::MAX_TAG + 1;
                         tags.set(tag);
                         track.tag = tag;
+                        self.apply_deform(track, &mut deformed);
                     }
                     tracks
                 })
@@ -1350,6 +1366,7 @@ impl ScriptHost {
             });
         }
         self.stretched = used;
+        self.deformed = deformed;
         self.last_tag = tags.get();
         // Con variantes, la A lleva a la B.
         let mut songs = songs.into_iter();
@@ -1376,6 +1393,38 @@ impl ScriptHost {
         }
         check_groups(&song)?;
         Ok(song)
+    }
+
+    /// Precalcula los cortes de la pista con `warp` o `smear` (en este
+    /// hilo, al cargar; el de audio solo recibe los buffers en el patrón),
+    /// reaprovechando los de la carga anterior y los de otras pistas con el
+    /// mismo sample y la misma clave. Si el patrón no se puede hacer, nada:
+    /// el error lo dirá al montarlo.
+    fn apply_deform(&self, track: &mut TrackDef, used: &mut Vec<Deformed>) {
+        let Ok(pattern) = Pattern::from_bars(track.sample.clone(), &track.slices, &track.bars)
+            .and_then(|p| p.with_shapes(&track.shapes))
+        else {
+            return;
+        };
+        track.rendered = pattern
+            .render_keys()
+            .into_iter()
+            .map(|key| {
+                let same = |e: &&Deformed| Arc::ptr_eq(&e.original, &track.sample) && e.key == key;
+                let result = match used.iter().chain(&self.deformed).find(same) {
+                    Some(e) => e.result.clone(),
+                    None => Arc::new(engine::deform::render(&track.sample, &key)),
+                };
+                if !used.iter().any(|e| same(&e)) {
+                    used.push(Deformed {
+                        original: track.sample.clone(),
+                        key,
+                        result: result.clone(),
+                    });
+                }
+                (key, result)
+            })
+            .collect();
     }
 
     /// Estira los samples de las pistas con `:stretch()` al tempo de la
@@ -2637,6 +2686,7 @@ fn track_pattern(
         .and_then(|p| p.with_pan(track.pan))
         .and_then(|p| p.with_mix_automation(track.mix_curves))
         .and_then(|p| p.with_shapes(&track.shapes))
+        .and_then(|p| p.with_rendered(track.rendered.clone()))
         .and_then(|p| p.with_slice_fx(&chains))
         .and_then(|p| p.with_choke(track.choke))
         .and_then(|p| p.with_midi(track.midi))
@@ -3024,6 +3074,7 @@ fn track_source(lua: &Lua, name: &str, source: &AnyUserData) -> mlua::Result<Tra
         solo: false,
         origin,
         stretch: None,
+        rendered: Vec::new(),
         instrument: None,
         granular: None,
         formant: None,
@@ -5041,6 +5092,42 @@ fn apply_slice_table(
                         ),
                     )
                 })?;
+            }
+            "formant" => shape.formant = Some(number(&value, engine::SHAPE_FORMANT)?),
+            "smear" => {
+                shape.smear = match value {
+                    Value::Integer(i) => i as f32,
+                    Value::Number(n) => n as f32,
+                    _ => return Err(fail(lua, format!("{who}: smear es un número de 0 a 1"))),
+                };
+            }
+            "warp" => {
+                let wrong = || {
+                    fail(
+                        lua,
+                        format!(
+                            "{who}: warp es un número (dónde está la mitad del tiempo: 0.3 empieza despacio y acelera) o puntos {{ {{x, y}}, ... }}"
+                        ),
+                    )
+                };
+                let warp = match &value {
+                    Value::Integer(i) => engine::Warp::midpoint(*i as f32),
+                    Value::Number(n) => engine::Warp::midpoint(*n as f32),
+                    Value::Table(t) => {
+                        let mut points = Vec::new();
+                        for point in t.clone().sequence_values::<Table>() {
+                            let point = point.map_err(|_| wrong())?;
+                            let (x, y): (f32, f32) = (
+                                point.get(1).map_err(|_| wrong())?,
+                                point.get(2).map_err(|_| wrong())?,
+                            );
+                            points.push((x, y));
+                        }
+                        engine::Warp::new(&points)
+                    }
+                    _ => return Err(wrong()),
+                };
+                shape.warp = Some(warp.map_err(|e| fail(lua, format!("{who}: {e}")))?);
             }
             "bend" => shape.bend = number(&value, engine::SHAPE_BEND)?,
             "bend_time" => shape.bend_ms = number(&value, engine::SHAPE_BEND_TIME)?,

@@ -317,6 +317,17 @@ pub struct SliceShape {
     /// Suena al revés (como `'` en el paso; los dos juntos, también al
     /// revés).
     pub reverse: bool,
+    /// Formantes del corte (semitonos, de ±[`crate::shift::MAX_FORMANT`]):
+    /// con `%` o sin pitch, el timbre se mueve sin cambiar la nota (los
+    /// granos con la corrección de formantes de siempre); manda sobre el
+    /// de la pista. `None`: el de la pista.
+    pub formant: Option<f32>,
+    /// Curva de tiempo precalculada (ver [`crate::deform`]): el corte
+    /// suena de un buffer que el script calcula al cargar
+    /// (`Pattern::with_rendered`); aquí solo se dice cuál.
+    pub warp: Option<crate::deform::Warp>,
+    /// Difuminado con granos, precalculado como `warp`: de 0 a 1.
+    pub smear: f32,
 }
 
 /// Semitonos máximos de `bend` (arriba o abajo).
@@ -469,6 +480,9 @@ pub struct HitShape {
     pub bend: Option<f32>,
     pub bend_ms: Option<f32>,
     pub reverse: Option<bool>,
+    pub formant: Option<f32>,
+    pub warp: Option<crate::deform::Warp>,
+    pub smear: Option<f32>,
 }
 
 impl HitShape {
@@ -486,7 +500,8 @@ pub const SHAPE_LENGTH: usize = 3;
 pub const SHAPE_CROSSFADE: usize = 4;
 pub const SHAPE_BEND: usize = 5;
 pub const SHAPE_BEND_TIME: usize = 6;
-pub const SHAPE_PARAMS: usize = 7;
+pub const SHAPE_FORMANT: usize = 7;
+pub const SHAPE_PARAMS: usize = 8;
 
 /// Una curva (o ninguna) por parámetro de la forma de un corte.
 pub type ShapeCurves = [Option<crate::automation::Curve>; SHAPE_PARAMS];
@@ -507,6 +522,9 @@ impl SliceShape {
         bend: 0.0,
         bend_ms: DEFAULT_BEND_MS,
         reverse: false,
+        formant: None,
+        warp: None,
+        smear: 0.0,
     };
 
     /// La forma con lo que cambia el paso (manda el paso).
@@ -534,7 +552,22 @@ impl SliceShape {
         if let Some(reverse) = hit.reverse {
             self.reverse = reverse;
         }
+        if hit.formant.is_some() {
+            self.formant = hit.formant;
+            self.curves[SHAPE_FORMANT] = None;
+        }
+        if hit.warp.is_some() {
+            self.warp = hit.warp;
+        }
+        if let Some(smear) = hit.smear {
+            self.smear = smear;
+        }
         self
+    }
+
+    /// Hay que precalcular el corte (`warp` o `smear`).
+    pub fn rendered(&self) -> bool {
+        self.warp.is_some() || self.smear > 0.0
     }
 
     /// El tramo que repite `fit = Loop` en un corte de `span` frames a
@@ -559,7 +592,8 @@ impl SliceShape {
             SHAPE_LENGTH => (0.01, 1.0),
             SHAPE_CROSSFADE => (0.0, MAX_CROSSFADE_MS),
             SHAPE_BEND => (-MAX_SLICE_BEND, MAX_SLICE_BEND),
-            _ => (1.0, MAX_BEND_MS),
+            SHAPE_BEND_TIME => (1.0, MAX_BEND_MS),
+            _ => (-crate::shift::MAX_FORMANT, crate::shift::MAX_FORMANT),
         }
     }
 
@@ -583,7 +617,8 @@ impl SliceShape {
                 SHAPE_LENGTH => shape.length = value,
                 SHAPE_CROSSFADE => shape.crossfade_ms = value,
                 SHAPE_BEND => shape.bend = value,
-                _ => shape.bend_ms = value,
+                SHAPE_BEND_TIME => shape.bend_ms = value,
+                _ => shape.formant = Some(value),
             }
         }
         shape
@@ -625,6 +660,10 @@ impl SliceShape {
         }
         if !(1.0..=MAX_BEND_MS).contains(&self.bend_ms) {
             return Err("bend_time fuera de rango (1 a 10000 ms)");
+        }
+        crate::shift::check_formant(self.formant)?;
+        if !(0.0..=1.0).contains(&self.smear) {
+            return Err("smear fuera de rango (0 a 1)");
         }
         let point = |ms: Option<f32>| ms.is_none_or(|ms| (0.0..=MAX_DUR_MS).contains(&ms));
         if !point(self.loop_start_ms) || !point(self.loop_end_ms) {
@@ -806,6 +845,15 @@ impl Voice {
         let mut playback = playback;
         if playback.shape.reverse {
             playback.reverse = true;
+        }
+        // Los formantes del corte mandan; sin pitch, el golpe pasa por los
+        // granos como un `%0` (con `^`, los formantes se mueven con el tono
+        // como siempre).
+        if let Some(formant) = playback.shape.formant {
+            playback.formant = Some(formant);
+            if !playback.keep && playback.rate == 1.0 {
+                playback.keep = true;
+            }
         }
         let rate = sample.sample_rate() as f32;
         let fade = ((FADE_SECONDS * rate) as usize).max(1);
@@ -2513,6 +2561,23 @@ impl Engine {
             } => {
                 self.status.set_hit(track, start);
                 let origin = self.song_position().0;
+                // Un pad de un corte precalculado (`warp`, `smear`) de la
+                // pista: su buffer (sin reservas: un `Arc` más).
+                let rendered = self.tracks[track]
+                    .pattern
+                    .as_ref()
+                    .filter(|p| Arc::ptr_eq(&p.sample, &sample))
+                    .and_then(|p| slice.and_then(|i| p.slice_rendered(i)))
+                    .cloned();
+                let (sample, start, end) = match rendered {
+                    Some(rendered) => {
+                        // El original vuelve por la cola de basura.
+                        self.discard(sample);
+                        let range = playback.shape.range(0..rendered.frames());
+                        (rendered, range.start, range.end)
+                    }
+                    None => (sample, start, end),
+                };
                 // Un pad del sample de la pista: con los efectos de su corte.
                 let fx = self.tracks[track]
                     .pattern
@@ -2951,16 +3016,16 @@ impl Engine {
         if let Some(instrument) = pattern.instrument {
             let sample = pattern.sample.clone();
             let midi = pattern.midi;
-            self.status.set_hit(t, hit.start);
+            self.status.set_hit(t, pattern.hit_position(&hit));
             self.tracks[t].lock = hit.lock;
             self.play_notes(t, sample, hit, gate, instrument, midi);
             self.choke(t);
             return;
         }
         if pattern.granular.is_some() {
-            let sample = pattern.sample.clone();
+            let sample = pattern.hit_sample(&hit).clone();
             let midi = pattern.midi;
-            self.status.set_hit(t, hit.start);
+            self.status.set_hit(t, pattern.hit_position(&hit));
             let track = &mut self.tracks[t];
             track.lock = hit.lock;
             if !track.sounding() {
@@ -2994,8 +3059,8 @@ impl Engine {
             .hit_fx(&hit)
             .map(|chain| VoiceFx::new(chain, self.sample_rate, hit.origin));
         let dur = self.dur_frames(&playback.shape);
-        let mut voice =
-            Voice::lasting(pattern.sample.clone(), hit.start, hit.end, playback, dur).with_fx(fx);
+        let sample = pattern.hit_sample(&hit).clone();
+        let mut voice = Voice::lasting(sample, hit.start, hit.end, playback, dur).with_fx(fx);
         if pattern.gate {
             voice = voice.with_gate(gate);
         }
@@ -3003,7 +3068,7 @@ impl Engine {
             voice = voice.raw();
         }
         let midi = pattern.midi;
-        self.status.set_hit(t, hit.start);
+        self.status.set_hit(t, pattern.hit_position(&hit));
         self.tracks[t].lock = hit.lock;
         self.trigger(t, Some(voice));
         self.choke(t);

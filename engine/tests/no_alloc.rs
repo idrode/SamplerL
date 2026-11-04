@@ -1,7 +1,7 @@
 //! El callback de audio no reserva memoria (regla 1 de CLAUDE.md): un
 //! asignador global cuenta las reservas que hace este hilo mientras corre
 //! `Engine::process`, con retrasos (swing, humanize), retrigger, pitch,
-//! instrumentos (polifonía, ADSR, bucles), variantes de duración de los cortes (recortar, estirar y sostener), cortes como instrumento, bend y rev, el EQ (suavizado y automatizado),
+//! instrumentos (polifonía, ADSR, bucles), variantes de duración de los cortes (recortar, estirar y sostener), cortes como instrumento, bend y rev, cortes precalculados (warp, smear) que cambian al compás sonando, formant por corte, el EQ (suavizado y automatizado),
 //! el EQ dinámico con sidechain (y la reducción que publica para su vista),
 //! el límite de voces entre pistas y el pánico (puntual y en pausa), efectos por corte (con sus colas), bucles de corte con fundido, nubes de granos en vivo, sintetizadores (mono con accent, slide y el sub de cada nota, polifónicos con unison y sub abierto, un subharm de 8 voces con sus seis capas, un sh101 con legato, curvas y notas en vivo), grupos con sus efectos y macros que se mueven en vivo, mandos MIDI en todos sus destinos (moviéndose y soltándose), cambios de
 //! patrón al compás, un patrón que se suelta a la cola de basura y el paso
@@ -1037,6 +1037,7 @@ fn the_audio_thread_never_allocates() {
             (0.0, 20.0),
             (-24.0, 12.0),
             (5.0, 400.0),
+            (-6.0, 6.0),
         ][i];
         *curve = Some(ramp(lo, hi));
     }
@@ -1840,6 +1841,86 @@ fn the_audio_thread_never_allocates() {
         }
     });
     assert_eq!(n, 0, "reservas con un pad con bend");
+
+    // Deformaciones precalculadas (warp y smear, del corte y del paso) y
+    // formant por corte: cambiar los buffers al compás con los golpes
+    // sonando, pads de cortes precalculados y soltar los patrones viejos.
+    let deformed = |warp: f32, smear: f32| {
+        let mut steps = [None; STEPS];
+        for (k, slot) in steps.iter_mut().enumerate() {
+            let step = match k % 4 {
+                0 => Step::new(0),
+                1 => Step::new(1).with_kept_pitch(4.0),
+                2 => Step::new(2).with_hit(engine::HitShape {
+                    smear: Some(smear),
+                    ..engine::HitShape::default()
+                }),
+                _ => Step::new(0).reversed().with_retrig(2),
+            };
+            *slot = Some(step);
+        }
+        let pattern = Pattern::from_steps(long.clone(), &thirds, steps)
+            .unwrap()
+            .with_shapes(&[
+                engine::SliceShape {
+                    warp: Some(engine::Warp::midpoint(warp).unwrap()),
+                    dur: Some(engine::Dur::Ms(300.0)),
+                    fit: engine::Fit::Stretch,
+                    ..engine::SliceShape::DEFAULT
+                },
+                engine::SliceShape {
+                    formant: Some(-4.0),
+                    smear,
+                    ..engine::SliceShape::DEFAULT
+                },
+                engine::SliceShape {
+                    formant: Some(3.0),
+                    ..engine::SliceShape::DEFAULT
+                },
+            ])
+            .unwrap();
+        // Lo que haría el script al cargar (fuera de lo que se cuenta).
+        let rendered = pattern
+            .render_keys()
+            .into_iter()
+            .map(|k| (k, Arc::new(engine::deform::render(&long, &k))))
+            .collect();
+        pattern.with_rendered(rendered).unwrap()
+    };
+    controller
+        .set_track_pattern(4, Some(deformed(0.3, 0.4)))
+        .unwrap();
+    controller
+        .set_track_pattern(5, Some(deformed(0.6, 0.8)))
+        .unwrap();
+    let n = counted(|| {
+        for _ in 0..300 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas con cortes precalculados");
+    // Otros buffers en pleno sonido: entran al compás y los viejos se van
+    // a la cola de basura.
+    controller
+        .set_track_pattern(4, Some(deformed(0.7, 0.2)))
+        .unwrap();
+    controller
+        .set_track_pattern(5, Some(deformed(0.2, 0.5)))
+        .unwrap();
+    for i in 0..3 {
+        controller
+            .play_slice_shaped(4, &long, &thirds, i, engine::SliceShape::DEFAULT)
+            .unwrap();
+    }
+    let n = counted(|| {
+        for _ in 0..400 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(
+        n, 0,
+        "reservas al cambiar los buffers precalculados sonando"
+    );
     controller.collect_garbage();
 }
 

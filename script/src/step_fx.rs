@@ -107,6 +107,12 @@ pub fn hit_shape(written: &[&WrittenFx]) -> Result<HitShape, String> {
                             .ok_or_else(|| format!("{who}: fit es trim, stretch o loop"))?,
                     );
                 }
+                "formant" => hit.formant = Some(ms()?),
+                "smear" => hit.smear = Some(ms()?),
+                "warp" => {
+                    hit.warp =
+                        Some(engine::Warp::midpoint(ms()?).map_err(|e| format!("{who}: {e}"))?);
+                }
                 "bend" => hit.bend = Some(ms()?),
                 "bend_time" => hit.bend_ms = Some(ms()?),
                 "rev" => {

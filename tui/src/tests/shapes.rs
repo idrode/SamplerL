@@ -30,7 +30,10 @@ fn the_panel_marks_gate_and_choke_and_set_completes_its_keys() {
             "loop_end",
             "bend",
             "bend_time",
-            "rev"
+            "rev",
+            "formant",
+            "warp",
+            "smear"
         ]
     );
     app.handle(esc());

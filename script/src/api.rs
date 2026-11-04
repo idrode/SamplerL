@@ -3038,6 +3038,33 @@ pub const SLICE_PARAMS: &[FxParam] = &[
         template: "rev = ${true}",
         automate: Auto::No(DISCRETE),
     },
+    FxParam {
+        name: "formant",
+        description: "mueve el timbre del corte sin cambiar su nota, en semitonos (la corrección de formantes de `%`, en tiempo real): vale en los golpes con `%` y en los que no llevan pitch; con `^`, los formantes se mueven con el tono (error). Manda sobre `pista:formant()`. Mejor en material tonal (voz, bajo, sintes)",
+        default: None,
+        valid: "-24–24",
+        values: &[],
+        template: "formant = ${5}",
+        automate: Auto::PerHit,
+    },
+    FxParam {
+        name: "warp",
+        description: "curva de tiempo dentro del corte, sin cambiar su duración ni su tono: un número es lo que suena en la mitad del tiempo (0.3: empieza despacio y acelera; 0.7, al revés) o puntos `{ {x, y}, ... }` (en la fracción x del tiempo suena la y del corte; hasta 6, crecientes). Se calcula al cargar (los granos alineados de `%`), con caché",
+        default: None,
+        valid: "un número entre 0 y 1 (sin llegar) o de 1 a 6 puntos `{x, y}` crecientes",
+        values: &[],
+        template: "warp = ${0.3}",
+        automate: Auto::No(AT_LOAD),
+    },
+    FxParam {
+        name: "smear",
+        description: "difumina el corte con granos suaves que recorren el corte con su posición al azar, mezclados con el original en esta proporción (0 nada, 1 todo granos); dura lo mismo. Se calcula al cargar, con caché. Mejor en material tonal",
+        default: Some("0"),
+        valid: "0–1",
+        values: &[],
+        template: "smear = ${0.5}",
+        automate: Auto::No(AT_LOAD),
+    },
 ];
 
 /// Las claves de la forma de un corte (de [`SLICE_PARAMS`]) que también
@@ -3051,6 +3078,9 @@ pub const STEP_SHAPE_KEYS: &[&str] = &[
     "bend",
     "bend_time",
     "rev",
+    "formant",
+    "warp",
+    "smear",
 ];
 
 /// Opciones de `sample(ruta, { ... })`: cómo se prepara el sample al

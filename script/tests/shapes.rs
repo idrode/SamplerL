@@ -118,7 +118,7 @@ fn shape_errors_point_at_the_line() {
     );
     assert_eq!(
         error("b:set({ ataque = 5 })"),
-        "song.lua:3: set: parámetro desconocido \"ataque\" (admite: attack, release, pan, length, play, crossfade, dur, fit, loop_start, loop_end, bend, bend_time, rev)"
+        "song.lua:3: set: parámetro desconocido \"ataque\" (admite: attack, release, pan, length, play, crossfade, dur, fit, loop_start, loop_end, bend, bend_time, rev, formant, warp, smear)"
     );
     assert!(error("b:set({ release = 9000 })").contains("cola fuera de rango"));
     assert!(error("b:set(1)").contains("set(i, { ... })"));

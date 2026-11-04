@@ -1972,6 +1972,75 @@ de voces entre pistas (`[voces] limite`) ya se puede bajar.
   de todas las curvas por golpe) y `script/tests/slice_bend.rs` (suena
   como el motor, curvas, llaves, errores con línea).
 
+### Parte 4: deformaciones precalculadas y formant por corte
+
+- **Precalculado** (`engine/src/deform.rs`): `Warp` (de 1 a 6 puntos
+  interiores `(x, y)` crecientes; `Warp::midpoint(y)` es uno en la mitad;
+  `Warp::at(x)`, recta entre puntos por (0, 0) y (1, 1)), `RenderKey {
+  start, end, warp, smear }` y `render(sample, clave)`, que reserva y es
+  para el hilo de control. `warp`: un `Shift` a velocidad 1 con el ancla
+  de cada grano donde dice la curva (`Shift::with_warp`, en vez de
+  `advance`): la duración y el tono no cambian, el tiempo sí. `smear`:
+  una `Cloud` de granos de 60 ms (66 por segundo, solape 4, semilla fija)
+  que recorre el corte a velocidad 1 con la posición desplazada al azar
+  hasta `smear · 80 ms`, igualada en RMS al original y mezclada con él en
+  esa proporción (`(1 − s)·seco + s·granos`), con 5 ms de fundido al
+  final. Primero `warp`, luego `smear`. No hay técnicas nuevas: son los
+  granos de `%` y la nube de `grains`.
+- **El patrón** (`engine/src/sequencer.rs`): guarda el rango de cada corte
+  y sus formas (`with_shapes`); `Pattern::render_keys()` dice qué hay que
+  precalcular (cada forma de corte y cada golpe con `warp` o `smear`, sin
+  repetir) y `Pattern::with_rendered(buffers)` los pone: cada golpe de esos
+  cortes suena de su buffer (`Trigger::variant`, con su rango rehecho
+  sobre el buffer y su `length`), y los pads de esos cortes también
+  (`Pattern::slice_rendered`, que mira `Command::Play` si el sample es el
+  del patrón: un `Arc` más, sin reservas; el original vuelve por la cola de
+  basura). Si falta alguno, error. La interfaz sigue viendo la posición
+  del corte original (`Pattern::hit_position`). Todo va en el patrón: entra
+  al compás en su lote, la voz que suena sigue con su buffer (lleva su
+  `Arc`) y el patrón viejo se suelta por la cola de basura como siempre.
+- **Al cargar** (`ScriptHost::apply_deform`, en `finish` tras expandir
+  cada pista): monta el patrón con sus formas, le pide las claves y
+  calcula los buffers (`TrackDef::rendered`) en el hilo del script, con
+  caché por sample y clave (`Deformed`: la de la carga anterior y las de
+  otras pistas; mismo `Arc`). `track_pattern` los pone con
+  `with_rendered`. Mientras se calcula, suena lo de antes (el motor no se
+  entera hasta el lote); si la carga falla, el modelo y el patrón de antes
+  siguen.
+- **`formant` por corte y por paso**, en tiempo real: `SliceShape::formant`
+  (con curva por golpe, `SHAPE_FORMANT`; `SHAPE_PARAMS` pasa a 8) manda
+  sobre el de la pista (`pista:formant`) en la voz (`Voice::lasting`); en
+  un golpe sin pitch, la voz pasa por los granos como un `%0`, así que
+  el timbre se mueve sin cambiar la nota (con 0, nada cambia). Con `^`,
+  error al hacer el patrón (los formantes se mueven con el tono, como
+  siempre). No hay `formant` precalculado: el de tiempo real ya estaba.
+- **Lua y llaves**: `cortes:set(i, { warp = 0.3 | { {x, y}, ... }, smear
+  = 0.5, formant = 5 })` y `3{warp=0.3}`, `3{smear=0.5}`, `3{formant=-3}`.
+  Registro: tres claves más en `api::SLICE_PARAMS` (`warp` y `smear` no
+  admiten curvas: se calculan al cargar; `formant`, por golpe).
+- **Tests**: `engine/tests/deform.rs` (con `warp = 0.3` un corte de 300 Hz
+  y luego 600 Hz cambia de nota en el 64,3 % del tiempo y no en la mitad,
+  y cada nota queda a menos de 0,5 % por YIN; la duración es la del
+  corte; los puntos y sus errores; `smear` dura lo mismo, sale igual dos
+  veces, a menos de 2 % de la nota y con su nivel; un buffer nuevo entra
+  al compás: el primero es el de antes muestra a muestra, el segundo el
+  nuevo, y la unión no salta más que el seno; las claves sin repetir y el
+  error si falta un buffer; `formant(7)` sube el formante del armónico 6
+  al 8-10 con la fundamental a menos de 0,5 %, con 0 bit a bit, con `^`
+  error; la medida del coste, ignorada), `no_alloc.rs` (cortes
+  precalculados del corte y del paso con `fit = "stretch"`, `%`, reverse
+  y retrigger, cambiarlos al compás con los golpes sonando, pads de esos
+  cortes, `formant` por corte y su curva) y `script/tests/deform.rs`
+  (suena como el motor, caché entre cargas y entre pistas, llaves y
+  `formant`, errores con línea y el modelo de antes sigue).
+
+### Coste del precálculo
+
+`cargo test -p engine --release --test deform -- --ignored --nocapture
+coste`: por cada segundo de corte, `warp` 20,7 ms, `smear` 5,0 ms y los
+dos 24,0 ms (en debug, 130, 56 y 178). Con la caché, solo cuando cambia
+el corte o sus valores: hacerlo al cargar, síncrono, no se nota.
+
 ## Audio de prueba y problemas conocidos
 
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`

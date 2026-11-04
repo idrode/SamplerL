@@ -97,6 +97,10 @@ pub(crate) struct Shift {
     /// la duración; 2 recorre el corte en la mitad de tiempo (time-stretch,
     /// `fit = "stretch"`).
     advance: f64,
+    /// Con `warp` (al precalcular, ver [`crate::deform`]): el ancla de
+    /// cada grano la pone la curva de tiempo (frames de salida y del
+    /// original que mide), en vez de `advance`.
+    warp: Option<(crate::deform::Warp, f64, f64)>,
     /// Medio grano, en frames de salida.
     hop: u64,
     search: u64,
@@ -265,6 +269,7 @@ impl Shift {
         Shift {
             rate,
             advance: 1.0,
+            warp: None,
             hop,
             search: ((SEARCH_SECONDS * sample_rate as f64) as u64).max(1),
             grain: 0,
@@ -289,6 +294,13 @@ impl Shift {
     /// mismo tono.
     pub fn with_advance(mut self, advance: f64) -> Self {
         self.advance = advance;
+        self
+    }
+
+    /// El ancla del grano que empieza en el frame de salida `n` es la que
+    /// da `warp` (de `out` frames de salida a `input` frames del original).
+    pub fn with_warp(mut self, warp: crate::deform::Warp, out: f64, input: f64) -> Self {
+        self.warp = Some((warp, out, input));
         self
     }
 
@@ -394,7 +406,11 @@ impl Shift {
         let k = self.grain + 1;
         let hop = self.hop as f64;
         let top = fit.map_or(f64::MAX, |f| f.max(0.0));
-        let nominal = (k as f64 * hop * self.advance).min(top);
+        let nominal = match self.warp {
+            None => k as f64 * hop * self.advance,
+            Some((warp, out, input)) => input * warp.at(k as f64 * hop / out),
+        }
+        .min(top);
         let natural = self.anchor + self.rate * hop;
         let rate = self.rate;
         // Lo que seguiría leyendo el grano anterior, una vez (en la pila).
