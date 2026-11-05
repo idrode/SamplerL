@@ -2528,6 +2528,7 @@ mod grid;
 mod groups_macros;
 mod highlight;
 mod history;
+mod idle;
 mod import;
 mod instrument;
 mod lanes;

@@ -29,6 +29,7 @@ pub use devices::devices_command;
 pub use roll::roll_command;
 mod focus;
 mod freeze;
+mod idle;
 mod key;
 mod learn;
 mod macros;
@@ -378,6 +379,9 @@ pub struct App {
     /// Cargas que han entrado bien (y cambios de variante): lo que sabe si
     /// el último análisis es de lo que suena.
     loads: u64,
+    /// Mensajes MIDI que han llegado (un mando movido con el transporte
+    /// parado también cambia la pantalla).
+    midi_events: u64,
     /// Explorador de samples abierto.
     browser: Option<Browser>,
     /// Cursor del tracker para editar los efectos de los pasos, y el paso
@@ -550,6 +554,7 @@ impl App {
             masking: None,
             last_masking: None,
             loads: 0,
+            midi_events: 0,
             editor_terminal: None,
             socket_dir: None,
             browser: None,
@@ -2037,6 +2042,7 @@ impl App {
     /// volumen); con `reloj = true`, el reloj pone el tempo (entra al
     /// compás) y Start/Stop la marcha.
     pub fn midi_event(&mut self, event: crate::midi::TimedEvent) {
+        self.midi_events += 1;
         use crate::midi::MidiEvent;
         match event.event {
             MidiEvent::NoteOn {

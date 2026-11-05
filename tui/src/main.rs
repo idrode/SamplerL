@@ -1049,6 +1049,10 @@ fn run_terminal(
         // dibujo y el dibujo no se repite de más.
         let mut last_draw: Option<std::time::Instant> = None;
         let mut fresh_input = true;
+        // En reposo (ver `App::idle_key`), la huella del último cuadro: con
+        // la misma, el cuadro se salta (pero uno cada `IDLE_REFRESH`, por
+        // si cambia algo que no entra en ella).
+        let mut drawn_key = None;
         loop {
             app.poll_midi();
             app.tick();
@@ -1058,7 +1062,12 @@ fn run_terminal(
             }
             let frame_every = app.frame_interval();
             let due = last_draw.is_none_or(|t| t.elapsed() >= frame_every);
-            if due || fresh_input {
+            let key = app.idle_key();
+            let unchanged = key.is_some()
+                && key == drawn_key
+                && last_draw.is_some_and(|t| t.elapsed() < IDLE_REFRESH);
+            let skipped = due && unchanged && !fresh_input;
+            if (due && !unchanged) || fresh_input {
                 // Si el dibujo falla, el cuadro se salta y todo sigue (el
                 // audio no depende de la interfaz).
                 match safe_draw::draw(&mut terminal, |frame| draw(frame, app)) {
@@ -1069,6 +1078,7 @@ fn run_terminal(
                 }
                 last_draw = Some(std::time::Instant::now());
                 fresh_input = false;
+                drawn_key = key;
             }
             // Lo copiado, al portapapeles de la terminal (OSC 52).
             let osc = app.clipboard.take_osc();
@@ -1080,8 +1090,13 @@ fn run_terminal(
                 }
                 let _ = out.flush();
             }
-            let wait =
-                last_draw.map_or(poll, |t| frame_every.saturating_sub(t.elapsed()).min(poll));
+            // Con el cuadro saltado, se vuelve a mirar al ritmo de la
+            // entrada (no hay cuadro que esperar).
+            let wait = match last_draw {
+                Some(_) if skipped => poll,
+                Some(t) => frame_every.saturating_sub(t.elapsed()).min(poll),
+                None => poll,
+            };
             if !event::poll(wait)? {
                 continue;
             }
@@ -1136,6 +1151,9 @@ fn run_terminal(
     ratatui::restore();
     result
 }
+
+/// En reposo, un cuadro cada tanto aunque la huella no cambie.
+const IDLE_REFRESH: Duration = Duration::from_millis(500);
 
 /// Si `events` solo trae movimientos del ratón sin botón (no se usan: el
 /// ratón pide a la terminal todos los movimientos para poder arrastrar).
