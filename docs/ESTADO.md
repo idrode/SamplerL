@@ -2947,6 +2947,23 @@ rendimiento): el break solo, 0,26 s; el `sh101` solo, 1,61 s (con
 de esta canción: ~190 ns por frame, con el oscilador, el sub y el filtro
 al doble y el diezmado.
 
+**Causas arregladas** (una por commit; cada optimización del motor,
+comprobada con `scripts/comparar-audio.sh` contra el binario de antes:
+las 26 canciones deterministas de `scripts/ejemplos/` y
+`scripts/consumo/`, idénticas bit a bit; `no_alloc.rs` en verde):
+
+- **Los coeficientes del diezmado, copiados en cada diezmador**
+  (`synth::osc::Halfband`): `output` leía el `LazyLock` de `HALFBAND`
+  dos veces por frame y voz, y cada lectura es una carga atómica con
+  adquisición (`ldar` en ARM64, que en x86_64 es un `mov` sin más). El
+  `sh101` solo, 128 compases: de 1,61 s a 1,41 s en un núcleo de
+  rendimiento (−12 %), de 3,00 s a 2,94 s en uno de eficiencia (−2 %).
+  En vivo no se ve (el hilo de audio va en los de eficiencia: 7,0 % →
+  6,8-7,0 %, dentro del ruido); ayuda cuando una canción pesada sube el
+  hilo a los de rendimiento. La otra tabla con `LazyLock`, la de la
+  interpolación sinc, se lee una vez por frame entre 16 vecinos o más:
+  ahí no compensa.
+
 ## Explorador y editor abajo
 
 Continuación del rediseño de la interfaz, pedida por el usuario con un
