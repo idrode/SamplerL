@@ -1085,13 +1085,18 @@ fn run_terminal(
             if !event::poll(wait)? {
                 continue;
             }
-            fresh_input = true;
             // Lo que ya ha llegado, junto: un pegado sin bracketed paste
             // es una ráfaga de teclas.
             let mut events = vec![event::read()?];
             while events.len() < BURST_MAX && event::poll(Duration::ZERO)? {
                 events.push(event::read()?);
             }
+            // El ratón que solo se mueve (la terminal manda cada movimiento)
+            // no cambia nada: ni se dibuja antes de tiempo ni es entrada.
+            if only_motion(&events) {
+                continue;
+            }
+            fresh_input = true;
             let presses: Option<Vec<_>> = events
                 .iter()
                 .map(|e| match e {
@@ -1130,6 +1135,15 @@ fn run_terminal(
     drop(modes);
     ratatui::restore();
     result
+}
+
+/// Si `events` solo trae movimientos del ratón sin botón (no se usan: el
+/// ratón pide a la terminal todos los movimientos para poder arrastrar).
+fn only_motion(events: &[ratatui::crossterm::event::Event]) -> bool {
+    use ratatui::crossterm::event::{Event, MouseEventKind};
+    events
+        .iter()
+        .all(|e| matches!(e, Event::Mouse(m) if m.kind == MouseEventKind::Moved))
 }
 
 /// Eventos leídos de una vez como mucho (un pegado largo sin bracketed

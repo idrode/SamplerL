@@ -298,3 +298,25 @@ fn the_big_sample_view_of_the_main_window_drags_marks_too() {
         view.message
     );
 }
+
+#[test]
+fn a_batch_of_only_motion_is_not_input() {
+    use ratatui::crossterm::event::{
+        Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    };
+    let mouse = |kind| {
+        Event::Mouse(MouseEvent {
+            kind,
+            column: 3,
+            row: 4,
+            modifiers: KeyModifiers::NONE,
+        })
+    };
+    let moved = mouse(MouseEventKind::Moved);
+    assert!(crate::only_motion(&[moved.clone(), moved.clone()]));
+    // Arrastrar, un clic o una tecla en el mismo lote sí lo son.
+    let drag = mouse(MouseEventKind::Drag(MouseButton::Left));
+    assert!(!crate::only_motion(&[moved.clone(), drag]));
+    let key = Event::Key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
+    assert!(!crate::only_motion(&[moved, key]));
+}
