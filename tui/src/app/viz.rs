@@ -298,13 +298,11 @@ impl App {
     /// mira la entrada cada 2 ms).
     pub fn frame_viz(&mut self) {
         let rate = self.sample_rate;
-        let mut tail = std::mem::take(&mut self.viz_tail);
         if self.viz_sent[engine::VIZ_MASTER] && self.master_shown() {
             let history = &self.viz_history[engine::VIZ_MASTER];
             if !history.is_empty() {
-                last_samples(history, &mut tail);
-                let fresh = crate::viz::spectrum::analyze(&tail, rate, MASTER_BANDS);
-                crate::viz::spectrum::fall(&mut self.master_spectrum, &fresh);
+                let fresh = self.analyzer.analyze(last(history), rate, MASTER_BANDS);
+                crate::viz::spectrum::fall(&mut self.master_spectrum, fresh);
             }
         }
         self.viz_spectra.resize(self.viz.len(), Vec::new());
@@ -313,14 +311,16 @@ impl App {
             if spec.kind != VizKind::Spectrum {
                 continue;
             }
-            let Some(history) = self.viz_history(&spec.source) else {
+            let slot = match &spec.source {
+                VizSource::Master => Some(engine::VIZ_MASTER),
+                VizSource::Track(name) => self.host.track_slot(name),
+            };
+            let Some(history) = slot.and_then(|s| self.viz_history.get(s)) else {
                 continue;
             };
-            last_samples(history, &mut tail);
-            let fresh = crate::viz::spectrum::analyze(&tail, rate, spec.bands);
-            crate::viz::spectrum::fall(&mut self.viz_spectra[i], &fresh);
+            let fresh = self.analyzer.analyze(last(history), rate, spec.bands);
+            crate::viz::spectrum::fall(&mut self.viz_spectra[i], fresh);
         }
-        self.viz_tail = tail;
     }
 
     /// La columna del ciclo de `def` que se oye (como el cursor del piano
@@ -341,9 +341,8 @@ impl App {
 }
 
 /// Las últimas [`crate::viz::spectrum::SIZE`] muestras de `history` (las
-/// que mira la FFT) en `out`, sin copiar el resto.
-fn last_samples(history: &std::collections::VecDeque<f32>, out: &mut Vec<f32>) {
-    out.clear();
+/// que mira la FFT), sin copiar el resto.
+fn last(history: &std::collections::VecDeque<f32>) -> impl Iterator<Item = f32> + '_ {
     let from = history.len().saturating_sub(crate::viz::spectrum::SIZE);
-    out.extend(history.range(from..).copied());
+    history.range(from..).copied()
 }

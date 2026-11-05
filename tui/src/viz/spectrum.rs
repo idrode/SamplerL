@@ -23,9 +23,39 @@ const FLOOR_DB: f32 = -90.0;
 /// de arriba abajo en algo más de un segundo.
 pub const FALL: f32 = 0.025;
 
+/// Los giros de una FFT de `n` puntos: `e^(-2πik/n)` para `k < n/2`
+/// (calculados en f64 una vez; cada etapa toma uno de cada `n/len`).
+pub struct Twiddles {
+    cos: Vec<f32>,
+    sin: Vec<f32>,
+}
+
+impl Twiddles {
+    pub fn new(n: usize) -> Twiddles {
+        let (cos, sin) = (0..n / 2)
+            .map(|k| {
+                let (s, c) = (-std::f64::consts::TAU * k as f64 / n as f64).sin_cos();
+                (c as f32, s as f32)
+            })
+            .unzip();
+        Twiddles { cos, sin }
+    }
+
+    /// Para cuántos puntos son.
+    fn len(&self) -> usize {
+        self.cos.len() * 2
+    }
+}
+
 /// FFT compleja en el sitio (radix-2, `re.len()` potencia de dos).
 pub fn fft(re: &mut [f32], im: &mut [f32]) {
+    fft_with(re, im, &Twiddles::new(re.len()));
+}
+
+/// [`fft`] con los giros ya calculados (de `re.len()` puntos).
+pub fn fft_with(re: &mut [f32], im: &mut [f32], twiddles: &Twiddles) {
     let n = re.len();
+    debug_assert_eq!(twiddles.len(), n);
     // Reordenar por bits invertidos.
     let mut j = 0;
     for i in 1..n {
@@ -42,11 +72,10 @@ pub fn fft(re: &mut [f32], im: &mut [f32]) {
     }
     let mut len = 2;
     while len <= n {
-        let angle = -std::f64::consts::TAU / len as f64;
+        let stride = n / len;
         for start in (0..n).step_by(len) {
             for k in 0..len / 2 {
-                let (s, c) = (angle * k as f64).sin_cos();
-                let (wr, wi) = (c as f32, s as f32);
+                let (wr, wi) = (twiddles.cos[k * stride], twiddles.sin[k * stride]);
                 let (a, b) = (start + k, start + k + len / 2);
                 let (xr, xi) = (re[b] * wr - im[b] * wi, re[b] * wi + im[b] * wr);
                 re[b] = re[a] - xr;
@@ -69,23 +98,73 @@ pub fn edges(bands: usize, rate: u32) -> Vec<f32> {
 }
 
 /// El nivel de cada banda (de 0 a 1) de las últimas [`SIZE`] muestras de
-/// `samples` a `rate`.
+/// `samples` a `rate` (de una vez; en uso, con un [`Analyzer`]).
+#[cfg(test)]
 pub fn analyze(samples: &[f32], rate: u32, bands: usize) -> Vec<f32> {
-    let mut re = vec![0.0f32; SIZE];
-    let mut im = vec![0.0f32; SIZE];
     let tail = &samples[samples.len().saturating_sub(SIZE)..];
-    for (i, &x) in tail.iter().enumerate() {
-        let w = 0.5 - 0.5 * (std::f32::consts::TAU * i as f32 / (SIZE - 1) as f32).cos();
-        re[i] = x * w;
+    Analyzer::new()
+        .analyze(tail.iter().copied(), rate, bands)
+        .to_vec()
+}
+
+/// Lo que hace [`analyze`], con todo calculado y reservado una vez: la
+/// ventana de Hann, los giros de la FFT, sus búferes y los bordes de las
+/// bandas (de los últimos `bands` y `rate`).
+pub struct Analyzer {
+    window: Vec<f32>,
+    twiddles: Twiddles,
+    re: Vec<f32>,
+    im: Vec<f32>,
+    edges: Vec<f32>,
+    edges_for: (usize, u32),
+    levels: Vec<f32>,
+}
+
+impl Default for Analyzer {
+    fn default() -> Self {
+        Analyzer::new()
     }
-    fft(&mut re, &mut im);
-    // Amplitud de cada bin, normalizada (un seno de amplitud 1 da ~1).
-    let bin_hz = rate as f32 / SIZE as f32;
-    let magnitude = |k: usize| (re[k] * re[k] + im[k] * im[k]).sqrt() * 4.0 / SIZE as f32;
-    let edges = edges(bands, rate);
-    edges
-        .windows(2)
-        .map(|e| {
+}
+
+impl Analyzer {
+    pub fn new() -> Analyzer {
+        Analyzer {
+            window: (0..SIZE)
+                .map(|i| 0.5 - 0.5 * (std::f32::consts::TAU * i as f32 / (SIZE - 1) as f32).cos())
+                .collect(),
+            twiddles: Twiddles::new(SIZE),
+            re: vec![0.0; SIZE],
+            im: vec![0.0; SIZE],
+            edges: Vec::new(),
+            edges_for: (0, 0),
+            levels: Vec::new(),
+        }
+    }
+
+    /// El nivel de cada banda de `tail` (sus primeras [`SIZE`] muestras;
+    /// si son menos, el resto es silencio).
+    pub fn analyze(
+        &mut self,
+        tail: impl IntoIterator<Item = f32>,
+        rate: u32,
+        bands: usize,
+    ) -> &[f32] {
+        self.re.fill(0.0);
+        self.im.fill(0.0);
+        for ((re, &w), x) in self.re.iter_mut().zip(&self.window).zip(tail) {
+            *re = x * w;
+        }
+        fft_with(&mut self.re, &mut self.im, &self.twiddles);
+        if self.edges_for != (bands, rate) {
+            self.edges = edges(bands, rate);
+            self.edges_for = (bands, rate);
+        }
+        // Amplitud de cada bin, normalizada (un seno de amplitud 1 da ~1).
+        let (re, im) = (&self.re, &self.im);
+        let bin_hz = rate as f32 / SIZE as f32;
+        let magnitude = |k: usize| (re[k] * re[k] + im[k] * im[k]).sqrt() * 4.0 / SIZE as f32;
+        self.levels.clear();
+        self.levels.extend(self.edges.windows(2).map(|e| {
             // Los bins cuyo centro cae en la banda; una banda más estrecha
             // que un bin (las graves), el más cercano a su centro.
             let from = ((e[0] / bin_hz).ceil() as usize).max(1);
@@ -98,8 +177,9 @@ pub fn analyze(samples: &[f32], rate: u32, bands: usize) -> Vec<f32> {
             };
             let db = 20.0 * peak.max(1e-9).log10();
             ((db - FLOOR_DB) / -FLOOR_DB).clamp(0.0, 1.0)
-        })
-        .collect()
+        }));
+        &self.levels
+    }
 }
 
 /// Lo que se ve con caída: sube de golpe y baja [`FALL`] por cuadro.
@@ -192,6 +272,25 @@ mod tests {
             let far = if peak > 16 { 0 } else { 31 };
             assert!(levels[far] < 0.5, "{}", levels[far]);
         }
+    }
+
+    #[test]
+    fn a_reused_analyzer_gives_what_a_new_one_gives() {
+        let mut reused = Analyzer::new();
+        for (hz, rate, bands) in [(440.0, 48_000, 32), (80.0, 44_100, 24), (440.0, 48_000, 32)] {
+            let samples = sine(hz, rate);
+            let tail = &samples[samples.len() - SIZE..];
+            let fresh = Analyzer::new()
+                .analyze(tail.iter().copied(), rate, bands)
+                .to_vec();
+            assert_eq!(
+                reused.analyze(tail.iter().copied(), rate, bands),
+                &fresh[..]
+            );
+        }
+        // Menos muestras que la FFT: el resto, silencio (como al empezar).
+        let short = Analyzer::new().analyze([0.5; 100], 48_000, 8).to_vec();
+        assert_eq!(reused.analyze([0.5; 100], 48_000, 8), &short[..]);
     }
 
     #[test]
