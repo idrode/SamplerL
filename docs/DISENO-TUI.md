@@ -1,6 +1,6 @@
 # Rediseño de la TUI (propuesta)
 
-Estado: **hecho** (ver «Rediseño de la interfaz» en [ESTADO.md](ESTADO.md)). Lo que cambió al implementarlo, en la sección 11.
+Estado: **hecho** (ver «Rediseño de la interfaz» en [ESTADO.md](ESTADO.md)). Lo que cambió al implementarlo, en la sección 11. Después, el explorador de archivos a la izquierda, el editor abajo (redimensionable, maximizado o flotante), la onda con puntos y el espectro del master en su panel: la sección 12, que sustituye a las maquetas de la sección 3 (el código ya no va a la izquierda).
 
 La referencia es un estudio externo para la terminal, hecho para otro
 lenguaje de patrones y con una licencia copyleft (AGPL). De él se toman
@@ -484,3 +484,345 @@ commit cuando cambie algo visible.
 - **Las pestañas que no caben** se acortan y la fila se desplaza hasta la
   elegida.
 
+
+
+## 12. Explorador, editor abajo y espectro del master
+
+Estado: **hecho** (ver «Explorador y editor abajo» en [ESTADO.md](ESTADO.md)).
+Es una continuación de lo de arriba, no una fase nueva.
+
+La referencia de estilo es la disposición de un editor modal con su
+distribución para programar (un árbol de archivos a la izquierda, menús
+desplegables con submenús y una terminal abajo que se agranda o flota).
+Se toman solo ideas de disposición e interacción; no se mira ni se copia
+código, configuración ni textos de ningún proyecto externo, y todo está
+hecho desde cero sobre lo que ya había (la rejilla pura, `Focus`, los
+`*Layout` con su `hit`, el dibujo a prueba de fallos y en reposo, y el
+`Analyzer` del espectro).
+
+### 12.1 Disposición
+
+De arriba abajo: la barra de menús (desde el tamaño mediano), la cabecera
+y la regla, como antes; luego el cuerpo y, abajo del todo, el mensaje y
+las teclas del foco. El cuerpo se reparte así:
+
+- **A la izquierda, el explorador de archivos** (`0 archivos`), a todo el
+  alto del cuerpo, si la terminal tiene al menos 120 columnas. Por debajo
+  no se ve, y Alt-E lo abre **encima** del resto (con el foco).
+- **En el centro, arriba, el sonido**: la onda, el tracker y el mezclador,
+  las pestañas y el espectro del master, colocados por tamaño como en la
+  sección 3 (pequeño, mediano, ancho), pero sin la columna del código.
+- **En el centro, abajo, el editor**, a todo el ancho del centro. Su alto
+  se arrastra por su borde de arriba o con Ctrl-Alt-↑↓; Alt-Z lo maximiza
+  (el centro entero) y Alt-W lo saca a flotar encima de todo.
+
+A 80×24 (sin explorador: no cabe; el tracker y el espectro, en pestañas):
+
+```text
+▶ en marcha   120.0 BPM   compás 0   paso 05
+▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱
+┌ sample · drums · break.wav · 0.12 s · 2 cortes · corte 1 0.0 ms ─────────────┐
+│1⣤⣤⣤⣤⣤⣤⣤⣤⣤⣄⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀2⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀│
+│⡇                                      ⡇                                      │
+└──────────────────────────────────────────────────────────────────────────────┘
+ 3 tracker   4 mezcla   5 efectos   6 lanes   8 espectro   7 scope
+┌ tracker · compás 0 · drums ▶01 · 2 cortes · ciclo 1 · pista 1 ───────────────┐
+│   drums           kick                                                       │
+│03 ---             ---                                                        │
+│04 01              01                                                         │
+│05 ---             ---                                                        │
+│06 02              ---                                                        │
+└ ▲3 ▼9 ───────────────────────────────────────────────────────────────────────┘
+┌ song.lua ────────────────────────────────────────────────────────────────────┐
+│ 1 bpm(120)                                                                   │
+│ 2 local amen = sample("break.wav"):slice(2)                                  │
+│ 3 track("drums", amen):steps("1 . 2 .  1 . 2 .  1 . 2 .  1 . 2 .")           │
+│ 4 track("kick", amen:slice_at(1)):steps("x . . .  x . . .  x . . .  x . . .")│
+│                                                                              │
+│ⓘ bpm(n)  Tempo en pulsos por minuto, de 20 a 400.                            │
+└──────────────────────────────────────────────────────────────────────────────┘
+cargado: entra en el siguiente compás
+EDITOR  Ctrl-S guardar y cargar · Ctrl-L cargar · Ctrl-Espacio marcha/paro · Ctr
+```
+
+A 120×40 (explorador; tracker y mezclador lado a lado; debajo las
+pestañas con el espectro del master fijo a su derecha):
+
+```text
+ Archivo   Editar   Pista   Transporte   Ver   Ventanas   Ayuda                                    F10 menú · F1 paleta
+▶ en marcha   120.0 BPM   compás 0   paso 05                                     master    ████████  +0.0 dB  LIMITADOR
+▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱
+┌ 0 archivos ────────────┐┌ sample · drums · break.wav · 0.12 s · 2 cortes · corte 1 0.0 ms ───────────────────────────┐
+│ ▾ tui_pantalla_tamanos ││1                                             2                                             │
+│   ♪ break.wav          ││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣇⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣧⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣄⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀│
+│   λ song.lua ◂         ││⡇                                             ⡇                                             │
+│                        ││⡇                                             ⡇                                             │
+│                        │└────────────────────────────────────────────────────────────────────────────────────────────┘
+│                        │┌ tracker · compás 0 · drums ▶01 · 2 cortes · ciclo 1 · pista 1 ┐┌ mezclador ────────────────┐
+│                        ││   drums           kick                                        ││drums    kick     master   │
+│                        ││01 ---             ---                                         ││··       ··       ██       │
+│                        ││02 02              ---                                         ││··       ··       ██       │
+│                        ││03 ---             ---                                         ││██       ██       ██       │
+│                        ││04 01              01                                          ││██       ██       ██       │
+│                        ││05 ---             ---                                         ││-6.0     -6.0     +0.0     │
+│                        ││06 02              ---                                         ││vol 1.00 vol 1.00          │
+│                        ││07 ---             ---                                         ││M S      M S      LIM      │
+│                        ││08 01              01                                          ││                           │
+│                        │└ ▲1 ▼7 ────────────────────────────────────────────────────────┘└───────────────────────────┘
+│                        │ 5 efectos   6 lanes   7 scope                           ┌ 8 espectro ───────────────────────┐
+│                        │┌ efectos por pista ────────────────────────────────────┐│esperando audio del master (suena a│
+│                        ││drums                       kick                       ││                                   │
+│                        ││vol 1.00 ██░░░░░░           vol 1.00 ██░░░░░░          ││                                   │
+│                        ││nivel ██████░░░░░░          nivel ██████░░░░░░         ││                                   │
+│                        ││sin efectos                 sin efectos                ││                                   │
+│                        │└───────────────────────────────────────────────────────┘└───────────────────────────────────┘
+│                        │┌ song.lua ──────────────────────────────────────────────────────────────────────────────────┐
+│                        ││ 1 bpm(120)                                                                                 │
+│                        ││ 2 local amen = sample("break.wav"):slice(2)                                                │
+│                        ││ 3 track("drums", amen):steps("1 . 2 .  1 . 2 .  1 . 2 .  1 . 2 .")                         │
+│                        ││ 4 track("kick", amen:slice_at(1)):steps("x . . .  x . . .  x . . .  x . . .")              │
+│                        ││                                                                                            │
+│                        ││                                                                                            │
+│                        ││                                                                                            │
+│                        ││                                                                                            │
+│                        ││ⓘ bpm(n)  Tempo en pulsos por minuto, de 20 a 400.                                          │
+└────────────────────────┘└────────────────────────────────────────────────────────────────────────────────────────────┘
+cargado: entra en el siguiente compás
+EDITOR  Ctrl-S guardar y cargar · Ctrl-L cargar · Ctrl-Espacio marcha/paro · Ctrl-G ir al error · Ctrl-O pista · Esc toc
+```
+
+A 180×50 (la columna de la derecha con el mezclador, el scope y el
+espectro del master; los efectos, en la primera pestaña):
+
+```text
+ Archivo   Editar   Pista   Transporte   Ver   Ventanas   Ayuda                                                                                                F10 menú · F1 paleta
+▶ en marcha   120.0 BPM   compás 0   paso 05                                                                                                 master    ████████  +0.0 dB  LIMITADOR
+▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱
+┌ 0 archivos ────────────┐┌ sample · drums · break.wav · 0.12 s · 2 cortes · corte 1 0.0 ms ─────────────────────────────────────┐┌ mezclador ─────────────────────────────────────┐
+│ ▾ tui_pantalla_tamanos ││1                                                  2                                                  ││drums    kick     master                        │
+│   ♪ break.wav          ││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣧⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀││··       ··       ██                            │
+│   λ song.lua ◂         ││⡇                                                  ⡇                                                  ││··       ··       ██                            │
+│                        ││⡇                                                  ⡇                                                  ││··       ··       ██                            │
+│                        │└──────────────────────────────────────────────────────────────────────────────────────────────────────┘│··       ··       ██                            │
+│                        │┌ tracker · compás 0 · drums ▶01 · 2 cortes · ciclo 1 · pista 1 ───────────────────────────────────────┐│██       ██       ██                            │
+│                        ││   drums           kick                                                                               ││██       ██       ██                            │
+│                        ││00 01              01                                                                                 ││██       ██       ██                            │
+│                        ││01 ---             ---                                                                                ││██       ██       ██                            │
+│                        ││02 02              ---                                                                                ││-6.0     -6.0     +0.0                          │
+│                        ││03 ---             ---                                                                                ││vol 1.00 vol 1.00                               │
+│                        ││04 01              01                                                                                 ││M S      M S      LIM                           │
+│                        ││05 ---             ---                                                                                ││                                                │
+│                        ││06 02              ---                                                                                │└────────────────────────────────────────────────┘
+│                        ││07 ---             ---                                                                                │┌ 7 scope ───────────────────────────────────────┐
+│                        ││08 01              01                                                                                 ││esperando audio del master (suena al dar marcha)│
+│                        ││09 ---             ---                                                                                ││                                                │
+│                        ││10 02              ---                                                                                ││                                                │
+│                        ││11 ---             ---                                                                                ││                                                │
+│                        ││12 01              01                                                                                 ││                                                │
+│                        ││13 ---             ---                                                                                │└────────────────────────────────────────────────┘
+│                        │└ ▼2 ──────────────────────────────────────────────────────────────────────────────────────────────────┘┌ 8 espectro ────────────────────────────────────┐
+│                        │ 5 efectos   6 lanes                                                                                    │esperando audio del master (suena al dar marcha)│
+│                        │┌ efectos por pista ───────────────────────────────────────────────────────────────────────────────────┐│                                                │
+│                        ││drums                                              kick                                               ││                                                │
+│                        ││vol 1.00 ██░░░░░░                                  vol 1.00 ██░░░░░░                                  ││                                                │
+│                        ││nivel ██████░░░░░░                                 nivel ██████░░░░░░                                 ││                                                │
+│                        ││sin efectos                                        sin efectos                                        ││                                                │
+│                        │└──────────────────────────────────────────────────────────────────────────────────────────────────────┘└────────────────────────────────────────────────┘
+│                        │┌ song.lua ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                        ││ 1 bpm(120)                                                                                                                                             │
+│                        ││ 2 local amen = sample("break.wav"):slice(2)                                                                                                            │
+│                        ││ 3 track("drums", amen):steps("1 . 2 .  1 . 2 .  1 . 2 .  1 . 2 .")                                                                                     │
+│                        ││ 4 track("kick", amen:slice_at(1)):steps("x . . .  x . . .  x . . .  x . . .")                                                                          │
+│                        ││                                                                                                                                                        │
+│                        ││                                                                                                                                                        │
+│                        ││                                                                                                                                                        │
+│                        ││                                                                                                                                                        │
+│                        ││                                                                                                                                                        │
+│                        ││                                                                                                                                                        │
+│                        ││                                                                                                                                                        │
+│                        ││                                                                                                                                                        │
+│                        ││ⓘ bpm(n)  Tempo en pulsos por minuto, de 20 a 400.                                                                                                      │
+└────────────────────────┘└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+cargado: entra en el siguiente compás
+EDITOR  Ctrl-S guardar y cargar · Ctrl-L cargar · Ctrl-Espacio marcha/paro · Ctrl-G ir al error · Ctrl-O pista · Esc tocar · F1 paleta · F2 órdenes · F4 completar · Ctrl-Q salir
+```
+
+Con el editor flotante (Alt-W), a 120×40: tapa lo de debajo, que se sigue
+dibujando alrededor.
+
+```text
+ Archivo   Editar   Pista   Transporte   Ver   Ventanas   Ayuda                                    F10 menú · F1 paleta
+▶ en marcha   120.0 BPM   compás 0   paso 05                                     master    ████████  +0.0 dB  LIMITADOR
+▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱
+┌ 0 archivos ────────────┐┌ sample · drums · break.wav · 0.12 s · 2 cortes · corte 1 0.0 ms ───────────────────────────┐
+│ ▾ tui_pantalla_flotante││1                                             2                                             │
+│   ♪ break.wav          ││⣧⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⡄                                 ⡇                                             │
+│   λ song.lua ◂         ││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣇⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣷⣶⣶⣶⣶⣶⣶⣶⣶⣶⣶⣶⣆⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀│
+│                        ││⡇                                             ⡇                                             │
+│                        ││⡇                                             ⡇                                             │
+│                        ││⡇                                             ⡇                                             │
+│                       ┌ song.lua ────────────────────────────────────────────────────────────┐───────────────────────┘
+│                       │ 1 bpm(120)                                                           │clador ────────────────┐
+│                       │ 2 local amen = sample("break.wav"):slice(2)                          │s    kick     master   │
+│                       │ 3 track("drums", amen):steps("1 . 2 .  1 . 2 .  1 . 2 .  1 . 2 .")   │     ··       ██       │
+│                       │ 4 track("kick", amen:slice_at(1)):steps("x . . .  x . . .  x . . .  x│     ··       ██       │
+│                       │                                                                      │     ··       ██       │
+│                       │                                                                      │     ··       ██       │
+│                       │                                                                      │     ··       ██       │
+│                       │                                                                      │     ··       ██       │
+│                       │                                                                      │     ██       ██       │
+│                       │                                                                      │     ██       ██       │
+│                       │                                                                      │     ██       ██       │
+│                       │                                                                      │     ██       ██       │
+│                       │                                                                      │     ██       ██       │
+│                       │                                                                      │     ██       ██       │
+│                       │                                                                      │     -6.0     +0.0     │
+│                       │                                                                      │1.00 vol 1.00          │
+│                       │                                                                      │     M S      LIM      │
+│                       │                                                                      │                       │
+│                       │ⓘ bpm(n)  Tempo en pulsos por minuto, de 20 a 400.                    │───────────────────────┘
+│                       └──────────────────────────────────────────────────────────────────────┘───────────────────────┐
+│                        │┌ efectos por pista ────────────────────────────────────┐│esperando audio del master (suena a│
+│                        ││drums                       kick                       ││                                   │
+│                        ││vol 1.00 ██░░░░░░           vol 1.00 ██░░░░░░          ││                                   │
+│                        ││nivel ██████░░░░░░          nivel ██████░░░░░░         ││                                   │
+│                        ││sin efectos                 sin efectos                ││                                   │
+│                        ││                                                       ││                                   │
+└────────────────────────┘└───────────────────────────────────────────────────────┘└───────────────────────────────────┘
+editor flotante: arrastra su título para moverlo y sus bordes para el tamaño · Alt-Shift-flechas lo mueven · Ctrl-Alt-fl
+EDITOR  Ctrl-S guardar y cargar · Ctrl-L cargar · Ctrl-Espacio marcha/paro · Ctrl-G ir al error · Ctrl-O pista · Esc toc
+```
+
+Al estrechar o achicar la terminal se quita, por este orden:
+
+1. **El explorador** (por debajo de 120 columnas): Alt-E lo abre encima.
+2. **El espectro fijo** (sin 80 columnas o 18 filas para el sonido en el
+   mediano): pasa a una pestaña. El **espectrograma**, con menos de tres
+   filas, se dibuja relleno.
+3. **El tracker y el mezclador** (por debajo de 100×30, o si el editor
+   crece y al sonido le quedan menos de 20 filas): pestañas. El ancho, con
+   menos de 26 filas para el sonido, se coloca como el mediano.
+4. **La barra de menús** (por debajo del mediano): F10 la enseña encima.
+5. **La regla** (menos de 20 filas) y la línea del mensaje (menos de 16).
+6. **Todo** (menos de 40×10): la línea que dice que el audio sigue.
+
+### 12.2 Decisiones
+
+Tomadas sin preguntar (el trabajo era desatendido); cada una, con su
+motivo:
+
+- **El explorador solo va en su columna desde 120 columnas**, no desde
+  100: así, al estrechar, lo primero que se va es él y el sonido conserva
+  el tamaño mediano. Ancho por defecto 26, mínimo 14 y nunca más de dos
+  quintos del ancho.
+- **Qué enseña el árbol**: carpetas, `.lua`, `.sampler` y `.wav` (lo único
+  que lee `sample()`), sin los ocultos. Iconos `▾ ▸ λ ◆ ♪`, y en ASCII
+  `v > s p ~`. El script del editor lleva `◂`.
+- **Carga perezosa**: solo se lee una carpeta al abrirla, y de ella las
+  primeras 500 entradas (las demás se cuentan, hasta 500 más, y lo dice
+  una fila `… N más sin leer`). No hay vigilancia del disco: `R` vuelve a
+  leer lo abierto (vigilar el disco pediría un hilo o inotify por
+  plataforma, y no compensa).
+- **Crear, renombrar y borrar, sí, pero solo archivos**: `n` crea uno
+  vacío (con `.lua` si el nombre no lleva extensión) junto a lo elegido,
+  `r` renombra y `Supr` (o `d`) borra **con confirmación** (`s` o Enter;
+  otra tecla, no). Las carpetas no se crean, renombran ni borran desde
+  aquí, ni se borra el script del editor: es lo irreversible y no hace
+  falta para el flujo de trabajo.
+- **Abrir un `.lua` con cambios sin guardar** pide Enter dos veces, como
+  `abrir!`. Un script de fuera del proyecto abierto deja de usar el
+  proyecto (sus samples, junto a él). Con el editor en su ventana
+  (`--split`), la principal no abre scripts (lo dice): el editor manda.
+- **Un sample**, con Enter o Espacio, se preescucha con lo mismo que el
+  explorador de samples (`App::preview_file`, una caché compartida) y se
+  ve en el panel del sample mientras el árbol tiene el foco, y al pie del
+  árbol. `a` escribe su `sample("...")` en el cursor del editor.
+- **El alto del editor** por defecto es un tercio del cuerpo (al menos 8,
+  salvo en una terminal muy baja), mínimo 4 y dejando siempre 6 al sonido.
+  Se guarda en `[interfaz] alto_editor` al cambiarlo; el ancho del
+  explorador, en `ancho_explorador`, y si se ve, en `explorador`. **Lo
+  maximizado y la posición del flotante no se guardan**: un rectángulo
+  pensado para un tamaño de terminal no sirve en otro.
+- **Teclas nuevas** (todas en `[teclas]`): Alt-E explorador, Alt-0 su
+  foco, Ctrl-Alt-↑↓ alto del editor (o del flotante), Ctrl-Alt-←→ ancho
+  del flotante (si flota) o del explorador, Alt-Z maximizar, Alt-W
+  flotante, Alt-Shift-flechas mover el flotante. En el árbol, `<`/`>`
+  también cambian su ancho. **Cambia una**: en el editor, Ctrl-Alt-↑↓←→
+  iban al principio o al final del texto y de la línea; eso sigue con
+  Ctrl-Inicio/Fin, Alt-</Alt-> e Inicio/Fin (anotado en la guía).
+  `[teclas]` acepta ahora flechas (`ctrl-alt-up`...), siempre con Ctrl o
+  Alt (sin ellos son del panel con el foco).
+- **El flotante** se mueve por su título y cambia de tamaño por sus bordes
+  de abajo y de la derecha (y su esquina); no sale nunca del cuerpo ni
+  baja de 20×5, y Alt-W lo vuelve a poner donde se dejó. El ratón no llega
+  a lo que tapa (la rejilla apunta lo que flota y `Grid::covered` lo
+  dice); el primer clic sin el foco solo se lo da, como en el editor
+  acoplado. Arrastrar y soltar siguen llegando a lo que se arrastraba. No
+  sustituye a la ventana aparte (`--split`, protocolo 8), que sigue igual.
+- **El foco**: el explorador es un panel más (`Panel::Files`, el 0); el
+  flotante es el editor de siempre (Alt-1). Esc desde el árbol vuelve a
+  donde se estaba y cierra el de encima.
+- **La onda con puntos** enciende de lo más bajo a lo más alto de cada
+  medio carácter (con el centro dentro, como las barras): la envolvente
+  rellena se lee mejor que solo el contorno en las pocas filas que suele
+  tener. Cada marca de corte es la columna izquierda de puntos de su
+  celda, en su color. Con `ascii`, o `onda = "barras"`, el dibujo de antes.
+- **El espectro del master** pasa de 32 a 64 bandas (la FFT es la misma;
+  se interpolan al ancho) y tiene sitio fijo en el mediano (abajo a la
+  derecha, junto a las pestañas) y en el ancho (la columna de la derecha).
+  `[interfaz] espectro`: `relleno` (por defecto), `linea`, `barras` (lo
+  que menos gasta) o `espectrograma` (la densidad de los puntos sigue al
+  nivel con un tramado fijo de 2×4, y el color marca lo más fuerte). En
+  reposo, el espectrograma se queda quieto: desplazarlo en silencio
+  gastaba un 11 % de CPU para nada.
+- **Los efectos** dejan de ir a lo ancho abajo en el tamaño ancho (ahí va
+  el editor): son la primera pestaña.
+- **Submenús**: lo que más entradas tenía se agrupa (Archivo › Bloques,
+  Ranuras, Congelar; Editar › Buscar e ir; Pista › Cortes, Zoom de la
+  onda, Mandos MIDI; Transporte › Secciones; Ver › Foco, Editor, Dibujo;
+  Ventanas › Ventana del editor, del piano roll, Dispositivos). → o Enter
+  lo abren a su lado (a la izquierda si no cabe), ← o Esc lo cierran. El
+  test sigue comprobando que toda acción de la paleta está en algún menú.
+
+### 12.3 Lo que se deja fuera
+
+- **El popup de una tecla líder** (que tras una tecla configurable enseña
+  las acciones agrupadas): no se ha hecho. Quedaría como un desplegable
+  más que reutiliza `menu::rows` (las mismas agrupaciones) y se abre con
+  una tecla de `[teclas]`; la paleta (F1) y F10 cubren hoy lo mismo.
+- **Carpetas desde el árbol** (crear, renombrar, borrar) y vigilar el
+  disco: ver arriba.
+- **Guardar dónde flota el editor** entre sesiones.
+
+### 12.4 Consumo
+
+Medido en la laptop de desarrollo (x86_64, `--release`, salida nula sin
+abrir la tarjeta, `scripts/ejemplos/08-varias-pistas.lua` con el break
+sintético, el ratón quieto): el % de CPU del hilo de la interfaz, leído de
+`/proc/<pid>/task/<pid>/stat` durante 10 s, en un pseudo-terminal del
+tamaño dado. «Antes» es el binario de justo antes de este trabajo
+(`2685d92`), con la misma canción; dos tandas, se dan las dos cifras.
+
+| Escenario | Antes | Ahora |
+|---|---|---|
+| 200×50, sonando | 10,3–10,6 % | 10,1–10,2 % |
+| 200×50, parado | 1,0–1,1 % | 1,0 % |
+| 200×50 sin lo nuevo (`explorador = false`, onda y espectro en barras), sonando / parado | — | 9,5–10,2 % / 0,6–1,0 % |
+| 200×50, espectrograma, sonando / parado | — | 10,8 % / 1,2 % |
+| 200×50, editor flotante, sonando / parado | — | 11,6 % / 1,1 % |
+| 120×40, sonando | 5,9–6,6 % | 7,6–8,0 % |
+| 120×40, parado | 0,7 % | 0,8 % |
+
+- **Los puntos no se notan**: con la onda y el espectro en barras y sin
+  explorador sale lo mismo dentro del ruido de la medida (en una de las
+  tandas, dos medidas salieron a la mitad, ~5 %, sin causa clara: se
+  descartan como ruido). Por eso los puntos son lo de siempre, y
+  `onda = "barras"` y `espectro = "barras"` quedan para el ARM64 si allí se
+  notan.
+- **A 120×40 sube algo** (de ~6 % a ~8 %) porque el espectro del master
+  tiene ahora sitio fijo: antes era una pestaña que no se veía, y sin
+  verse el master no se pedía ni se hacía su FFT. A la terminal salen
+  20 KiB/s en vez de 12.
+- **Parado, el reposo se mantiene** (~1 %): el espectro se sigue
+  dibujando solo hasta que ha caído del todo. El espectrograma se
+  desplazaba en reposo (11 % parado): ahora se queda quieto.

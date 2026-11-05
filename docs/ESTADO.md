@@ -2863,6 +2863,160 @@ Medido solo en x86_64: falta repetir la tabla en el Asahi (con y sin
 `--allow-midi`, el ratón quieto y moviéndose, parado y sonando) y
 comprobar que el binario es el de `target/release`.
 
+## Explorador y editor abajo
+
+Continuación del rediseño de la interfaz, pedida por el usuario con un
+editor modal y su distribución para programar como referencia de estilo
+(solo ideas; nada de su código, configuración ni textos). Diseño,
+maquetas a 80×24, 120×40 y 180×50 y decisiones en la sección 12 de
+[docs/DISENO-TUI.md](DISENO-TUI.md). No toca el motor: `no_alloc.rs` y
+`golden.rs` no cambian.
+
+- **Rejilla** (`tui/src/layout.rs`): `Needs` dice si se quiere el
+  explorador, su ancho, si va encima (`explorer_overlay`), dónde va el
+  editor (`EditorPlace`: `Docked`, `Maximized`, `Floating(Option<Rect>)`)
+  y su alto. `grid` corta a la izquierda el explorador (desde
+  `EXPLORER_SCREEN`, 120 columnas), abajo el editor (`editor_rows`: un
+  tercio por defecto, mínimo `EDITOR_MIN`, dejando `SOUND_MIN` al
+  sonido) y coloca el sonido en lo que queda con `small`, `medium` o
+  `wide`, que bajan de tamaño si el alto no les llega (`MEDIUM_SOUND`,
+  `WIDE_SOUND`). El flotante, `float_rect`, siempre dentro del cuerpo y
+  de al menos `FLOAT_MIN`. Lo que va encima (el flotante y el explorador
+  abierto a mano) sale en `Grid::overlays`, y `Grid::covered` dice si un
+  punto lo tapa algo: el ratón no llega a lo de debajo. El espectro del
+  master tiene sitio fijo en el mediano (junto a las pestañas) y en el
+  ancho (la columna de la derecha); en el pequeño, pestaña. Los efectos
+  del ancho pasan a la primera pestaña.
+- **Explorador de archivos** (`tui/src/files.rs`, puro; el panel en
+  `tui/src/files_panel.rs` con `FilesLayout::hit`; la aplicación en
+  `tui/src/app/files.rs`): `files::Tree` lee solo la carpeta que se abre
+  (las primeras `MAX_ENTRIES`, 500) y enseña carpetas, `.lua`,
+  `.sampler` y `.wav`. Con el foco (`Panel::Files`, Alt-0), flechas o
+  `hjkl`, Enter abre (`open_script` para un `.lua`, la orden `abrir`
+  para un proyecto, la preescucha para un sample), `a` escribe su
+  `sample()`, `n`/`r`/`Supr` crean, renombran y borran archivos (con
+  confirmación), `<`/`>` el ancho, `R` vuelve a leer. Alt-E lo esconde o,
+  en una terminal estrecha, lo abre encima. La preescucha es la del
+  explorador de samples, ahora `App::preview_file` con una caché
+  compartida (`preview_cache`).
+- **Editor abajo, maximizado y flotante** (`tui/src/app/dock.rs`): el
+  borde de arriba se arrastra (`EdgeDrag::EditorTop`; sin moverlo, es un
+  clic que da el foco), Ctrl-Alt-↑↓ cambian el alto (`resize_editor`),
+  Alt-Z maximiza (`toggle_maximized`), Alt-W lo hace flotar
+  (`toggle_float`, vuelve a `last_float`), su título lo mueve y sus bordes
+  de abajo y de la derecha cambian su tamaño (`EdgeDrag::FloatMove` y
+  `FloatResize`), Alt-Shift-flechas lo mueven y Ctrl-Alt-←→ cambian el
+  ancho del flotante o del explorador (`widen`). `screen::draw` dibuja el
+  flotante al final (con `Clear`) y el explorador de encima antes que
+  él; en `App::mouse`, sobre el flotante solo llega al editor (el primer
+  clic sin el foco solo se lo da; arrastrar y soltar siguen llegando a lo
+  que se arrastraba). Lo que se mueve se guarda con
+  `config::save_keys` en `[interfaz]` (`alto_editor`,
+  `ancho_explorador`, `explorador`), sin tocar el resto del archivo.
+- **Onda con puntos** (`ui::wave_dots`, `ui::braille`): dos columnas y
+  cuatro filas de puntos por celda, de lo más bajo a lo más alto de cada
+  medio carácter; las marcas de los cortes, la columna izquierda de
+  puntos de su celda. La usan la onda de la pista, la grande y la vista
+  previa del explorador (`ui::draw_waveform`). `[interfaz] onda =
+  "barras"` (`theme::set_wave_bars`) o `ascii`: las barras de antes.
+- **Espectro del master** (`tui/src/viz/master.rs`): `MasterSpectrumPanel`
+  dibuja `relleno`, `linea`, `barras` o `espectrograma`
+  (`[interfaz] espectro`, `viz::master::Look`) con el eje de frecuencias
+  logarítmico (`axis_marks`). Las bandas (ahora 64) se interpolan al ancho
+  (`level_at`); el espectrograma guarda los últimos
+  `SPECTROGRAM_FRAMES` cuadros reutilizando los `Vec` y tramado 2×4 para
+  la densidad. Con menos de tres filas, el espectrograma se dibuja
+  relleno. El análisis no cambia: una FFT por cuadro dibujado, y el
+  master solo se pide mientras el panel o el scope se ven. En reposo
+  (`app/idle.rs`) se dibuja hasta que el espectro ha caído; el
+  espectrograma se queda quieto.
+- **Menús** (`tui/src/menu.rs`): `submenu_of` agrupa las acciones en
+  submenús y `rows` arma las filas (la lista plana de `items` sigue para
+  el test de que toda acción está en un menú). `MenuState::sub`, el
+  submenú abierto; `sub_area`, dónde va (a la derecha o, si no cabe, a la
+  izquierda); `hit` devuelve también `MenuHit::Sub`. Ver › Dibujo tiene
+  «Onda: puntos o barras» y «Espectro: otro dibujo» para la sesión.
+- **Teclas** (`config::BINDABLE`, todas en `[teclas]`): `foco_archivos`
+  (Alt-0), `explorador_archivos` (Alt-E), `editor_mas_alto` y
+  `editor_menos_alto` (Ctrl-Alt-↑↓), `mas_ancho` y `menos_ancho`
+  (Ctrl-Alt-←→), `maximizar_editor` (Alt-Z), `editor_flotante` (Alt-W) y
+  `flotante_arriba`… (Alt-Shift-flechas). `KeyCombo` lee flechas
+  (`ctrl-alt-up`), siempre con Ctrl o Alt. En el editor, Ctrl-Alt-flechas
+  iban al principio o al final del texto o de la línea (lo anota la
+  guía; sigue con Ctrl-Inicio/Fin, Alt-</> e Inicio/Fin).
+- **Tests**: la rejilla por tamaños con el explorador visible, oculto y
+  encima y el editor acoplado, maximizado y flotante (`layout.rs`); el
+  árbol (`files.rs`: perezoso, una carpeta de 520 archivos, refrescar,
+  nombres); `tests/files.rs` (dibujo plegado y desplegado, abrir un
+  `.lua` y los cambios sin guardar, un sample, el ratón y el borde, Alt-E
+  y la terminal estrecha, crear, renombrar y borrar); `tests/dock.rs`
+  (alto con teclas y borde, maximizar, la configuración, flechas en
+  `[teclas]`); `tests/float.rs` (mover, redimensionar, teclas y que el
+  ratón no llegue a lo tapado); los puntos de la onda y del espectro
+  (`tests.rs`, `viz/master.rs`, `tests/screen.rs`); los submenús
+  (`menu.rs`, `tests/menu.rs`); el foco del explorador
+  (`tests/focus.rs`); y que ningún tamaño rompe el dibujo con el
+  explorador encima, flotante o maximizado, en ASCII y no. Las pantallas:
+  `pantalla_tamanos` y `pantalla_flotante`.
+
+### Consumo
+
+Medido en la laptop de desarrollo (x86_64, `--release`, salida nula sin
+abrir la tarjeta, `scripts/ejemplos/08-varias-pistas.lua` con el break
+sintético, el ratón quieto): el % de CPU del hilo de la interfaz, leído de
+`/proc/<pid>/task/<pid>/stat` durante 10 s, en un pseudo-terminal del
+tamaño dado. «Antes» es el binario de justo antes de este trabajo
+(`2685d92`), con la misma canción; dos tandas, se dan las dos cifras.
+
+| Escenario | Antes | Ahora |
+|---|---|---|
+| 200×50, sonando | 10,3–10,6 % | 10,1–10,2 % |
+| 200×50, parado | 1,0–1,1 % | 1,0 % |
+| 200×50 sin lo nuevo (`explorador = false`, onda y espectro en barras), sonando / parado | — | 9,5–10,2 % / 0,6–1,0 % |
+| 200×50, espectrograma, sonando / parado | — | 10,8 % / 1,2 % |
+| 200×50, editor flotante, sonando / parado | — | 11,6 % / 1,1 % |
+| 120×40, sonando | 5,9–6,6 % | 7,6–8,0 % |
+| 120×40, parado | 0,7 % | 0,8 % |
+
+- **Los puntos no se notan**: con la onda y el espectro en barras y sin
+  explorador sale lo mismo dentro del ruido de la medida (en una de las
+  tandas, dos medidas salieron a la mitad, ~5 %, sin causa clara: se
+  descartan como ruido). Por eso los puntos son lo de siempre, y
+  `onda = "barras"` y `espectro = "barras"` quedan para el ARM64 si allí se
+  notan.
+- **A 120×40 sube algo** (de ~6 % a ~8 %) porque el espectro del master
+  tiene ahora sitio fijo: antes era una pestaña que no se veía, y sin
+  verse el master no se pedía ni se hacía su FFT. A la terminal salen
+  20 KiB/s en vez de 12.
+- **Parado, el reposo se mantiene** (~1 %): el espectro se sigue
+  dibujando solo hasta que ha caído del todo. El espectrograma se
+  desplazaba en reposo (11 % parado): ahora se queda quieto.
+
+### Decisiones
+
+Ver la sección 12.2 de [docs/DISENO-TUI.md](DISENO-TUI.md). Las de más
+peso: el explorador solo en su columna desde 120 columnas (así es lo
+primero que se va); solo se borran archivos, nunca carpetas ni el script
+del editor; no se vigila el disco; lo maximizado y la posición del
+flotante no se guardan; los puntos por defecto (no cuestan más que las
+barras).
+
+### Fuera, por ahora
+
+- El popup de una tecla líder con las acciones agrupadas («which-key»):
+  no se ha hecho; reutilizaría `menu::rows`.
+- Carpetas desde el árbol y vigilar el disco.
+- Abrir un `.lua` desde la principal con el editor en su ventana.
+
+### Sin probar en una terminal de verdad
+
+Todo se ha visto con el backend de test de ratatui y con el binario en un
+pseudo-terminal (salida nula): falta en el Asahi ARM64 el consumo sonando
+y parado, arrastrar los bordes del editor y del explorador y el flotante
+con el ratón de verdad, Alt-E/Alt-0/Alt-W/Alt-Z y Ctrl-Alt-flechas dentro
+de tmux y en su terminal, los puntos Braille en su fuente, el espectro
+con un barrido de cutoff, y la terminal pequeña y `LANG=C`.
+
 ## Audio de prueba y problemas conocidos
 
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`

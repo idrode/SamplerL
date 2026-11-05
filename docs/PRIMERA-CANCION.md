@@ -169,9 +169,10 @@ tui --edit cancion.lua --new
 `cancion.lua` todavía no existe: `--new` le dice al programa que lo
 quieres empezar, y el editor abre una **plantilla** (un break de ejemplo
 con `amen.wav`). El archivo no se crea hasta que guardas con Ctrl-S. Con
-el archivo ya guardado, `--new` no cambia nada: lo abre tal cual. A la izquierda está el editor; a la derecha, la
+el archivo ya guardado, `--new` no cambia nada: lo abre tal cual. Abajo está el editor; encima, la
 forma de onda del sample, el tracker y el mezclador, y debajo pestañas
-con los efectos de cada pista y lo demás; arriba, la cabecera con el
+con los efectos de cada pista y lo demás; a la izquierda, si la terminal
+es ancha, el explorador de archivos; arriba, la cabecera con el
 transporte (ver «La pantalla: tamaños, pestañas, foco y menús» en la
 [sección 1](GUIA.md#la-pantalla-tamaños-pestañas-foco-y-menús)). F10 abre
 los menús y Alt con un número lleva a cada panel. Ctrl-Q sale.

@@ -857,3 +857,13 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
     pedirlos en Lua; ASCII de verdad sin Unicode; y que un fallo del dibujo
     nunca pare el audio. Diseño en [docs/DISENO-TUI.md](DISENO-TUI.md);
     detalle en «Rediseño de la interfaz» de [docs/ESTADO.md](ESTADO.md).
+20. ✅ **Explorador y editor abajo** (pedida por el usuario, continuación
+    del rediseño): explorador de archivos a la izquierda (árbol perezoso,
+    abrir scripts, proyectos y samples, crear, renombrar y borrar), el
+    editor abajo con su alto, maximizado y flotante dentro de la ventana,
+    la onda de los samples con puntos Braille, el espectro del master en
+    su panel (relleno, línea, barras o espectrograma), submenús y el
+    orden de lo que se quita al achicar. Falta el popup de una tecla líder
+    («which-key»). Diseño en la sección 12 de
+    [docs/DISENO-TUI.md](DISENO-TUI.md); detalle en «Explorador y editor
+    abajo» de [docs/ESTADO.md](ESTADO.md).

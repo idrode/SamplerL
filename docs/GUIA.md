@@ -284,10 +284,11 @@ error: mi-canción.lua: el script no existe (buscado en /home/yo/sampler/mi-canc
 
 Un proyecto (`.sampler`) que no existe es siempre un error: se crea desde
 la interfaz con la orden `guardar`. A la izquierda está el
-editor; a la derecha, la forma de onda del sample, el tracker y el
-mezclador, y pestañas con los efectos y lo demás; arriba, los menús y la
-cabecera con el transporte y el master (ver «La pantalla: tamaños,
-pestañas, foco y menús», más abajo). Ctrl-S guarda y carga. El tracker
+explorador de archivos (desde 120 columnas); en el centro, arriba, la
+forma de onda del sample, el tracker y el mezclador, y pestañas con los
+efectos y lo demás junto al espectro del master; abajo, el editor; arriba
+del todo, los menús y la cabecera con el transporte y el master (ver «La
+pantalla: tamaños, pestañas, foco y menús», más abajo). Ctrl-S guarda y carga. El tracker
 enseña sus 16 pasos enteros en cuanto caben; en una terminal más baja se
 desplaza siguiendo el paso que suena.
 
@@ -303,53 +304,67 @@ cargo run -p tui -- --edit mi-cancion.lua --new --allow-audio
 ### La pantalla: tamaños, pestañas, foco y menús
 
 La ventana se reparte según el tamaño de la terminal, y cambia en vivo al
-cambiarlo (el audio no se entera):
+cambiarlo (el audio no se entera). Arriba van siempre la **cabecera**
+(marcha o paro, BPM, compás y paso, el cue, la variante, lo que se graba,
+el error y los avisos del código, y a la derecha el master con
+`LIMITADOR` o `SATURA`) y la **regla** de los 16 pasos con la línea de
+tiempo de las secciones. Abajo, el mensaje y las **teclas del panel con
+el foco** (`EDITOR`, `TOCAR`, `MEZCLA`, `ARCHIVOS`...). En medio:
 
-- **Pequeña** (menos de 100×30): el código a la izquierda; a la derecha,
-  la forma de onda en dos filas y debajo **pestañas** con todo lo demás
-  (el tracker, el mezclador, los efectos, las lanes, el scope y el
-  espectro del master...). Los menús no tienen fila: F10 los enseña
-  encima de la cabecera.
-- **Mediana**: arriba la barra de menús; a la derecha, la forma de onda,
-  el tracker con sus 16 pasos y el mezclador al lado, y debajo las
-  pestañas (efectos, lanes, scope, espectro y las vistas que se abran).
-- **Ancha** (desde 160×45): tres columnas (código; onda, tracker y
-  pestañas; mezclador, scope y espectro del master y la **referencia** con
-  todas las teclas del panel con el foco) y los efectos a lo ancho abajo.
+- **A la izquierda, el explorador de archivos** (`0 archivos`), desde 120
+  columnas. Con menos no se ve y Alt-E lo abre encima (ver [El explorador
+  de archivos](#el-explorador-de-archivos)).
+- **Abajo, el editor**, a todo el ancho que deja el explorador; su alto se
+  cambia arrastrando su borde de arriba o con Ctrl-Alt-↑↓, Alt-Z lo
+  maximiza y Alt-W lo hace flotar (ver [El editor abajo, maximizado o
+  flotante](#el-editor-abajo-maximizado-o-flotante)).
+- **Arriba, el sonido**, según el tamaño:
+  - **Pequeña** (menos de 100×30): la forma de onda en pocas filas y
+    debajo **pestañas** con todo lo demás (el tracker, el mezclador, los
+    efectos, las lanes, el espectro y el scope del master...). Los menús
+    no tienen fila: F10 los enseña encima de la cabecera.
+  - **Mediana**: arriba la barra de menús; la forma de onda, el tracker
+    con el mezclador al lado y, debajo, las pestañas (efectos, lanes,
+    scope y las vistas que se abran) con el **espectro del master** fijo a
+    su derecha.
+  - **Ancha** (desde 160×45): la onda, el tracker y las pestañas, y una
+    columna a la derecha con el mezclador, el scope y el espectro del
+    master (y la **referencia** de teclas del foco si sobra sitio).
+  - Si el editor crece y al sonido le queda poco alto, se coloca como en
+    el tamaño de abajo.
 - **Diminuta** (menos de 40×10): una línea dice que la terminal es
   demasiado pequeña y que el audio sigue; las teclas siguen funcionando.
 
-Arriba van siempre la **cabecera** (marcha o paro, BPM, compás y paso, el
-cue, la variante, lo que se graba, el error y los avisos del código, y a
-la derecha el master con `LIMITADOR` o `SATURA`) y la **regla** de los 16
-pasos con la línea de tiempo de las secciones. Abajo, el mensaje y las
-**teclas del panel con el foco** (`EDITOR`, `TOCAR`, `MEZCLA`...).
+Al achicar la terminal se quita, por orden: el explorador (por debajo de
+120 columnas), el espectro fijo (a una pestaña), el tracker y el
+mezclador (a las pestañas), la barra de menús, la regla y el mensaje, y
+por último todo menos la línea mínima.
 
 A 80×24:
 
 ```text
 ▶ en marcha   120.0 BPM   compás 0   paso 05
 ▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱
-┌ song.lua ────────────────────────────┐┌ sample · drums · break.wav · 0.12 s ·┐
-│ 1 bpm(120)                           ││1▄▄▄▄▄─────────────2▂▂▂▂▂─────────────│
-│ 2 local amen = sample("break.wav"):sl│││                  │                  │
-│ 3 track("drums", amen):steps("1 . 2 .│└──────────────────────────────────────┘
-│ 4 track("kick", amen:slice_at(1)):ste│ 3 trk   4 mez   5 fx   6 lan   7 sco  ›
-│                                      │┌ tracker · compás 0 · drums ▶01 · 2 co┐
-│                                      ││   drums           kick               │
-│                                      ││00 01              01                 │
-│                                      ││01 ---             ---                │
-│                                      ││02 02              ---                │
-│                                      ││03 ---             ---                │
-│                                      ││04 01              01                 │
-│                                      ││05 ---             ---                │
-│                                      ││06 02              ---                │
-│                                      ││07 ---             ---                │
-│                                      ││08 01              01                 │
-│                                      ││09 ---             ---                │
-│                                      ││10 02              ---                │
-│ⓘ bpm(n)  Tempo en pulsos por minuto, ││11 ---             ---                │
-└──────────────────────────────────────┘└ ▼4 ──────────────────────────────────┘
+┌ sample · drums · break.wav · 0.12 s · 2 cortes · corte 1 0.0 ms ─────────────┐
+│1⣤⣤⣤⣤⣤⣤⣤⣤⣤⣄⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀2⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀│
+│⡇                                      ⡇                                      │
+└──────────────────────────────────────────────────────────────────────────────┘
+ 3 tracker   4 mezcla   5 efectos   6 lanes   8 espectro   7 scope
+┌ tracker · compás 0 · drums ▶01 · 2 cortes · ciclo 1 · pista 1 ───────────────┐
+│   drums           kick                                                       │
+│03 ---             ---                                                        │
+│04 01              01                                                         │
+│05 ---             ---                                                        │
+│06 02              ---                                                        │
+└ ▲3 ▼9 ───────────────────────────────────────────────────────────────────────┘
+┌ song.lua ────────────────────────────────────────────────────────────────────┐
+│ 1 bpm(120)                                                                   │
+│ 2 local amen = sample("break.wav"):slice(2)                                  │
+│ 3 track("drums", amen):steps("1 . 2 .  1 . 2 .  1 . 2 .  1 . 2 .")           │
+│ 4 track("kick", amen:slice_at(1)):steps("x . . .  x . . .  x . . .  x . . .")│
+│                                                                              │
+│ⓘ bpm(n)  Tempo en pulsos por minuto, de 20 a 400.                            │
+└──────────────────────────────────────────────────────────────────────────────┘
 cargado: entra en el siguiente compás
 EDITOR  Ctrl-S guardar y cargar · Ctrl-L cargar · Ctrl-Espacio marcha/paro · Ctr
 ```
@@ -360,41 +375,41 @@ A 120×40:
  Archivo   Editar   Pista   Transporte   Ver   Ventanas   Ayuda                                    F10 menú · F1 paleta
 ▶ en marcha   120.0 BPM   compás 0   paso 05                                     master    ████████  +0.0 dB  LIMITADOR
 ▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱
-┌ song.lua ────────────────────────────────────────────────┐┌ sample · drums · break.wav · 0.12 s · 2 cortes · corte 1 ┐
-│ 1 bpm(120)                                               ││1                            2                            │
-│ 2 local amen = sample("break.wav"):slice(2)              ││▄▄▄▄▄▄▄▄                     │                            │
-│ 3 track("drums", amen):steps("1 . 2 .  1 . 2 .  1 . 2 .  ││████████─────────────────────▆▆▆▆▆▆▆▆─────────────────────│
-│ 4 track("kick", amen:slice_at(1)):steps("x . . .  x . . .│││                            │                            │
-│                                                          │││                            │                            │
-│                                                          │││                            │                            │
-│                                                          │└──────────────────────────────────────────────────────────┘
-│                                                          │┌ tracker · compás 0 · drums ▶┐┌ mezclador ────────────────┐
-│                                                          ││   drums        kick         ││drums    kick     master   │
-│                                                          ││00 01           01           ││··       ··       ██       │
-│                                                          ││01 ---          ---          ││··       ··       ██       │
-│                                                          ││02 02           ---          ││··       ··       ██       │
-│                                                          ││03 ---          ---          ││··       ··       ██       │
-│                                                          ││04 01           01           ││··       ··       ██       │
-│                                                          ││05 ---          ---          ││··       ··       ██       │
-│                                                          ││06 02           ---          ││██       ██       ██       │
-│                                                          ││07 ---          ---          ││██       ██       ██       │
-│                                                          ││08 01           01           ││██       ██       ██       │
-│                                                          ││09 ---          ---          ││██       ██       ██       │
-│                                                          ││10 02           ---          ││██       ██       ██       │
-│                                                          ││11 ---          ---          ││██       ██       ██       │
-│                                                          ││12 01           01           ││-6.0     -6.0     +0.0     │
-│                                                          ││13 ---          ---          ││vol 1.00 vol 1.00          │
-│                                                          ││14 02           ---          ││M S      M S      LIM      │
-│                                                          ││15 ---          ---          ││                           │
-│                                                          │└─────────────────────────────┘└───────────────────────────┘
-│                                                          │ 5 efectos   6 lanes   7 scope   8 espectro
-│                                                          │┌ efectos por pista ───────────────────────────────────────┐
-│                                                          ││drums                        kick                         │
-│                                                          ││vol 1.00 ██░░░░░░            vol 1.00 ██░░░░░░            │
-│                                                          ││nivel ██████░░░░░░           nivel ██████░░░░░░           │
-│                                                          ││sin efectos                  sin efectos                  │
-│ⓘ bpm(n)  Tempo en pulsos por minuto, de 20 a 400.        ││                                                          │
-└──────────────────────────────────────────────────────────┘└──────────────────────────────────────────────────────────┘
+┌ 0 archivos ────────────┐┌ sample · drums · break.wav · 0.12 s · 2 cortes · corte 1 0.0 ms ───────────────────────────┐
+│ ▾ tui_pantalla_tamanos ││1                                             2                                             │
+│   ♪ break.wav          ││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣇⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣧⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣄⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀│
+│   λ song.lua ◂         ││⡇                                             ⡇                                             │
+│                        ││⡇                                             ⡇                                             │
+│                        │└────────────────────────────────────────────────────────────────────────────────────────────┘
+│                        │┌ tracker · compás 0 · drums ▶01 · 2 cortes · ciclo 1 · pista 1 ┐┌ mezclador ────────────────┐
+│                        ││   drums           kick                                        ││drums    kick     master   │
+│                        ││01 ---             ---                                         ││··       ··       ██       │
+│                        ││02 02              ---                                         ││··       ··       ██       │
+│                        ││03 ---             ---                                         ││██       ██       ██       │
+│                        ││04 01              01                                          ││██       ██       ██       │
+│                        ││05 ---             ---                                         ││-6.0     -6.0     +0.0     │
+│                        ││06 02              ---                                         ││vol 1.00 vol 1.00          │
+│                        ││07 ---             ---                                         ││M S      M S      LIM      │
+│                        ││08 01              01                                          ││                           │
+│                        │└ ▲1 ▼7 ────────────────────────────────────────────────────────┘└───────────────────────────┘
+│                        │ 5 efectos   6 lanes   7 scope                           ┌ 8 espectro ───────────────────────┐
+│                        │┌ efectos por pista ────────────────────────────────────┐│esperando audio del master (suena a│
+│                        ││drums                       kick                       ││                                   │
+│                        ││vol 1.00 ██░░░░░░           vol 1.00 ██░░░░░░          ││                                   │
+│                        ││nivel ██████░░░░░░          nivel ██████░░░░░░         ││                                   │
+│                        ││sin efectos                 sin efectos                ││                                   │
+│                        │└───────────────────────────────────────────────────────┘└───────────────────────────────────┘
+│                        │┌ song.lua ──────────────────────────────────────────────────────────────────────────────────┐
+│                        ││ 1 bpm(120)                                                                                 │
+│                        ││ 2 local amen = sample("break.wav"):slice(2)                                                │
+│                        ││ 3 track("drums", amen):steps("1 . 2 .  1 . 2 .  1 . 2 .  1 . 2 .")                         │
+│                        ││ 4 track("kick", amen:slice_at(1)):steps("x . . .  x . . .  x . . .  x . . .")              │
+│                        ││                                                                                            │
+│                        ││                                                                                            │
+│                        ││                                                                                            │
+│                        ││                                                                                            │
+│                        ││ⓘ bpm(n)  Tempo en pulsos por minuto, de 20 a 400.                                          │
+└────────────────────────┘└────────────────────────────────────────────────────────────────────────────────────────────┘
 cargado: entra en el siguiente compás
 EDITOR  Ctrl-S guardar y cargar · Ctrl-L cargar · Ctrl-Espacio marcha/paro · Ctrl-G ir al error · Ctrl-O pista · Esc toc
 ```
@@ -413,7 +428,8 @@ hasta la elegida (`‹` y `›` dicen que hay más).
 
 | Tecla | Panel | Qué es tener el foco |
 | --- | --- | --- |
-| Alt-1 | código | El modo editar |
+| Alt-0 | archivos | El explorador de archivos (si no se veía, aparece; en una terminal estrecha, encima) |
+| Alt-1 | código | El modo editar (también con el editor flotante) |
 | Alt-2 | sample | El modo tocar |
 | Alt-3 | tracker | El cursor del tracker (o el del piano roll, si está abierto) |
 | Alt-4 | mezcla | ←→ pista, `m` mute y `s` solo en vivo |
@@ -424,39 +440,127 @@ hasta la elegida (`‹` y `›` dicen que hay más).
 | Alt-9 | ocupación | La vista de ocupación, abierta y con su cursor |
 
 Esc vuelve a donde se estaba (el editor o el modo tocar). Con el foco en
-la mezcla, los efectos, el scope o el espectro, las letras que no usan no
-llegan al editor ni suenan; Ctrl, Alt y las F siguen funcionando. Un clic
-en uno de esos paneles le da el foco, y el primer clic en el editor sin
-el foco solo se lo devuelve (no mueve el cursor). Si la terminal usa
-Alt y un número para sus pestañas (GNOME Terminal, Konsole), cambia las
-teclas en `[teclas]` (`foco_codigo` ... `foco_ocupacion`) o usa el menú
-Ver.
+el explorador, la mezcla, los efectos, el scope o el espectro, las letras
+que no usan no llegan al editor ni suenan; Ctrl, Alt y las F siguen
+funcionando. Un clic en uno de esos paneles le da el foco, y el primer
+clic en el editor sin el foco solo se lo devuelve (no mueve el cursor).
+Si la terminal usa Alt y un número para sus pestañas (GNOME Terminal,
+Konsole), cambia las teclas en `[teclas]` (`foco_archivos`, `foco_codigo`
+... `foco_ocupacion`) o usa el menú Ver › Foco.
 
 **Menús.** F10 abre la barra: Archivo, Editar, Pista, Transporte, Ver,
-Ventanas y Ayuda, con todas las acciones de la paleta y su tecla. ←→ de
-menú en menú, ↑↓ y Enter, una letra va a la siguiente entrada que empieza
-por ella (o abre su menú), Alt y la letra subrayada abre ese menú, Esc
-cierra. Con el ratón, un clic en un nombre lo abre y en una entrada la
-ejecuta; un clic fuera lo cierra. Ayuda › «Qué sabe hacer esta terminal»
-dice si hay truecolor, Unicode, teclas al soltar y ratón, y dónde está la
-configuración.
+Ventanas y Ayuda, con todas las acciones de la paleta y su tecla. Lo que
+tiene muchas entradas va en **submenús** (con `▸`): Archivo › Bloques,
+Ranuras y Congelar; Editar › Buscar e ir; Pista › Cortes, Zoom de la onda
+y Mandos MIDI; Transporte › Secciones; Ver › Foco, Editor y Dibujo;
+Ventanas › la del editor, la del piano roll y Dispositivos. ←→ de menú en
+menú, ↑↓ y Enter; **→ o Enter abren el submenú** a su lado y **← o Esc lo
+cierran** (Esc otra vez, o F10, cierran el menú). Una letra va a la
+siguiente entrada que empieza por ella, y Alt y la letra subrayada abre
+ese menú. Con el ratón, un clic en un nombre lo abre, en una fila con `▸`
+abre su submenú y en una entrada la ejecuta; un clic fuera lo cierra.
+Ayuda › «Qué sabe hacer esta terminal» dice si hay truecolor, Unicode,
+teclas al soltar y ratón, y dónde está la configuración.
+
+**La onda con puntos.** La forma de onda de los samples se dibuja con
+puntos Braille: dos columnas de puntos por carácter, cada una con su
+trozo del sample, y cuatro filas, del mínimo al máximo de su trozo (el
+cuádruple de resolución que las barras). Cada corte es una columna de
+puntos en su color, el que suena va en el acento y el elegido en los
+números, como siempre. `[interfaz] onda = "barras"` vuelve a las barras
+de bloques, y Ver › Dibujo › «Onda: puntos o barras» lo cambia en la
+sesión.
 
 **Scope y espectro del master.** Salen sin pedirlos en el script (la
-interfaz le pide al motor que copie el master; no cambia el audio y entra
-al compás, así que con el transporte parado esperan). El título del scope
-lleva el nivel eficaz de lo último (`RMS -12.3 dB`, mono y sin ponderar:
-una idea del nivel, no sonoridad LUFS).
+interfaz le pide al motor que copie el master mientras se ven; no cambia
+el audio y entra al compás, así que con el transporte parado esperan). El
+título del scope lleva el nivel eficaz de lo último (`RMS -12.3 dB`, mono
+y sin ponderar: una idea del nivel, no sonoridad LUFS). El **espectro**
+tiene su panel fijo en la mediana y la ancha: con puntos, en escala
+logarítmica de 30 Hz a 20 kHz y con el eje de frecuencias al pie (`50 100
+200 500 1k 2k 5k 10k`), sube de golpe y baja despacio, así que no
+parpadea. `[interfaz] espectro` elige `relleno` (por defecto), `linea`,
+`barras` (lo que menos gasta) o `espectrograma`: el historial, con lo más
+nuevo a la derecha, los graves abajo y la intensidad en la cantidad de
+puntos y en el color (parado y en silencio se queda quieto). Ver ›
+Dibujo › «Espectro: otro dibujo» los recorre en la sesión.
 
 **Sin Unicode o sin color.** Con `[interfaz] ascii = true` (o un `LANG`
 sin UTF-8), los bordes, los bloques de la onda y de los medidores, las
-flechas y los símbolos pasan a ASCII (`+ - | # = . > < ^ v * x ! i ~`).
-Sin truecolor, los colores se acercan a la paleta de 256, como siempre.
-Si un cuadro falla al dibujarse, sale una pantalla mínima y la línea de
+flechas y los símbolos pasan a ASCII (`+ - | # = . > < ^ v * x ! i ~`); la
+onda y el espectro, a barras en ASCII, y el espectrograma a `.:-=#`. Sin
+truecolor, los colores se acercan a la paleta de 256, como siempre. Si un
+cuadro falla al dibujarse, sale una pantalla mínima y la línea de
 mensajes lo dice; el audio no se para.
+
+### El explorador de archivos
+
+A la izquierda, el árbol de la carpeta del proyecto (o la del script),
+con las carpetas, los scripts (`λ`), los proyectos (`◆`) y los samples
+WAV (`♪`); el script del editor lleva `◂`. Solo se lee una carpeta al
+abrirla, y de una carpeta enorme las primeras 500 entradas (una fila dice
+cuántas quedan sin leer), así que nunca para el dibujo. Lo que cambie en
+el disco se ve al volver a abrir la carpeta o con `R`.
+
+Alt-0 le da el foco (Esc lo devuelve) y Alt-E lo esconde o lo vuelve a
+poner; en una terminal de menos de 120 columnas no cabe, y Alt-E (o Alt-0)
+lo abre **encima** de lo demás, con el foco, hasta Esc. Con el foco:
+
+| Tecla | Qué hace |
+| --- | --- |
+| ↑↓ (o `k` `j`), RePág/AvPág, Inicio/Fin (o `G`) | Elegir |
+| → (o `l`) | Abre la carpeta (si ya está abierta, baja a lo de dentro) |
+| ← (o `h`) | Cierra la carpeta, o sube a la que la contiene |
+| Enter | Una carpeta, la abre o la cierra; un `.lua`, lo abre en el editor y lo carga; un `.sampler`, lo abre como proyecto; un sample, lo escucha |
+| Espacio | Escucha el sample (en la voz aparte: no toca las pistas) y lo enseña en el panel del sample y al pie del árbol |
+| `a` | Escribe `sample("...")` del elegido en el cursor del editor (la ruta, desde la carpeta de los samples) |
+| `n` | Un archivo nuevo junto al elegido (sin extensión, `.lua`) |
+| `r` | Renombra el archivo elegido |
+| Supr (o `d`) | Borra el archivo elegido, tras preguntar (`s` o Enter, sí; otra tecla, no) |
+| `<` `>` | Más estrecho o más ancho (también Ctrl-Alt-←→) |
+| `R` | Vuelve a leer lo abierto |
+| Esc | Devuelve el foco (y cierra el de encima) |
+
+Abrir un `.lua` con cambios sin guardar pide Enter otra vez (los descarta;
+Ctrl-S antes para no perderlos). Las carpetas no se crean, renombran ni
+borran desde aquí, y el script del editor no se borra. Con el ratón: un
+clic elige (y da el foco), un clic en el icono de una carpeta la abre o la
+cierra, dos clics hacen lo de Enter, la rueda recorre y **arrastrar su
+borde derecho** cambia el ancho. El ancho y si se ve se guardan en
+`[interfaz]` (`ancho_explorador`, `explorador`).
+
+### El editor abajo, maximizado o flotante
+
+El editor va abajo, a todo el ancho del centro, con todo lo de siempre
+(modo vim, resaltado en vivo, autocompletado, errores, la línea ⓘ y las
+visualizaciones `inline`).
+
+- **Su alto**: arrastra su borde de arriba con el ratón (un clic sin
+  moverlo le da el foco, como siempre), o Ctrl-Alt-↑ y Ctrl-Alt-↓ (una
+  fila cada vez). Al menos 4 filas y siempre deja 6 al sonido; si el
+  sonido se queda con poco alto, sus paneles se colocan como en una
+  terminal más pequeña. Se guarda en `[interfaz] alto_editor`.
+- **Maximizado**: Alt-Z le da todo el centro (los paneles del sonido no se
+  ven; la cabecera y el audio siguen); Alt-Z otra vez lo devuelve.
+- **Flotante**: Alt-W lo saca encima de todo, con su borde, y lo de detrás
+  se sigue dibujando alrededor. Se mueve arrastrando su título o con
+  Alt-Shift-flechas, y cambia de tamaño arrastrando su borde de abajo, el
+  de la derecha o la esquina, o con Ctrl-Alt-flechas (↑↓ el alto, ←→ el
+  ancho). Nunca sale de la ventana ni baja de 20×5. Sobre él, el ratón es
+  solo del editor: no llega a lo que tapa. Alt-W lo devuelve abajo, y la
+  próxima vez vuelve a donde se dejó (durante la sesión).
+
+No es lo mismo que el editor en su propia ventana (`--split`), que sigue
+igual. Todas estas teclas están en Ver › Editor y se cambian en
+`[teclas]`: `editor_mas_alto`, `editor_menos_alto`, `mas_ancho`,
+`menos_ancho`, `maximizar_editor`, `editor_flotante` y
+`flotante_arriba`... `flotante_derecha`. **Ctrl-Alt-flechas** eran, dentro
+del editor, ir al principio o al final del texto y de la línea; eso sigue
+con Ctrl-Inicio y Ctrl-Fin (o Alt-< y Alt->) e Inicio y Fin.
 
 ### Leer el panel de efectos
 
-En su pestaña (o abajo a lo ancho, en una terminal ancha), una columna por pista. Cada una dice:
+En su pestaña (la primera en la mediana y la ancha), una columna por pista. Cada una dice:
 
 | Lo que ves | Qué es |
 | --- | --- |
@@ -1842,8 +1946,8 @@ anterior.
 | Tecla | Qué hace |
 | --- | --- |
 | Ctrl-← / Ctrl-→ | Palabra anterior / siguiente (con Shift, selecciona por palabras) |
-| Inicio / Fin (o Ctrl-A / Ctrl-E) | Principio / final de la línea |
-| Ctrl-Inicio / Ctrl-Fin | Principio / final del texto |
+| Inicio / Fin (o Ctrl-A / Ctrl-E) | Principio / final de la línea (Ctrl-Alt-←→ cambian ahora el ancho del explorador o del flotante) |
+| Ctrl-Inicio / Ctrl-Fin (o Alt-< / Alt->) | Principio / final del texto (Ctrl-Alt-↑↓, que también lo hacían, cambian ahora el alto del editor) |
 | Alt-G | Ir a la línea N (abre `linea ` en la línea de órdenes; Ctrl-G sigue siendo ir al error) |
 | Ctrl-↑ / Ctrl-↓ | Párrafo anterior / siguiente (hasta la línea en blanco) |
 | RePág / AvPág (o Alt-V / Ctrl-V) | Una pantalla arriba / abajo |
@@ -1928,7 +2032,8 @@ segundo clic, como con Enter.
 
 | Dónde | Qué hace | Más |
 | --- | --- | --- |
-| Editor | clic mueve el cursor, arrastrar selecciona, la rueda desplaza | [Editor](#editor) |
+| Editor | clic mueve el cursor, arrastrar selecciona, la rueda desplaza; arrastrar su borde de arriba cambia su alto; flotante, arrastrar su título lo mueve y sus bordes de abajo y de la derecha, su tamaño | [Editor](#editor), [El editor abajo](#el-editor-abajo-maximizado-o-flotante) |
+| Explorador de archivos | clic elige, clic en el icono de una carpeta la abre o la cierra, dos clics abren, la rueda recorre, arrastrar su borde derecho cambia el ancho | [El explorador de archivos](#el-explorador-de-archivos) |
 | Vista del sample | arrastrar una marca mueve el corte, clic lo elige y suena, clic derecho pone o quita un corte, la rueda acerca y aleja | [Modo tocar](#modo-tocar-esc) |
 | Piano roll | clic pone una nota, arrastrar la mueve o la alarga, clic derecho la borra; nunca suena | [Piano roll](#piano-roll) |
 | Lanes de automatización | clic añade un punto, arrastrar lo mueve, clic derecho lo borra; armado el touch, arrastrar en vertical graba | [Automatizar con lanes](#automatizar-con-lanes) |
@@ -1936,7 +2041,7 @@ segundo clic, como con Enter.
 | Vista de ocupación | clic en el nombre elige la pista y el clic derecho la silencia; clic en una celda pone ahí el cursor para rellenar y otro clic en ella abre `rellenar` (Enter); la rueda mueve el cursor de pista en pista y Shift y la rueda, de paso en paso | [Vista de ocupación](#vista-de-ocupación) |
 | Mezclador | clic en una tira elige la pista (y le da el foco al mezclador); en su `M`, mute, y en su `S`, solo, en vivo | [El editor en su propia ventana](#el-editor-en-su-propia-ventana) |
 | Pestañas | clic en una la elige | [La pantalla](#la-pantalla-tamaños-pestañas-foco-y-menús) |
-| Barra de menús | clic en un nombre lo abre o lo cierra, en una entrada la ejecuta, la rueda elige; un clic fuera lo cierra | [La pantalla](#la-pantalla-tamaños-pestañas-foco-y-menús) |
+| Barra de menús | clic en un nombre lo abre o lo cierra, en una fila con `▸` abre su submenú, en una entrada la ejecuta, la rueda elige; un clic fuera lo cierra | [La pantalla](#la-pantalla-tamaños-pestañas-foco-y-menús) |
 | Efectos, scope, espectro | clic les da el foco | [La pantalla](#la-pantalla-tamaños-pestañas-foco-y-menús) |
 
 Con la paleta o la línea de órdenes abiertas encima, el ratón no hace
