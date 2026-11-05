@@ -1492,7 +1492,7 @@ paleta de 256.
 | En `[interfaz]` | Para | Por defecto |
 | --- | --- | --- |
 | `ascii` | dibujar las visualizaciones (y lo que tenga alternativa) solo con ASCII, sin Braille ni bloques, para una terminal que no los pinta | según `LANG`: sin UTF-8, `true` |
-| `refresco` | cuadros por segundo de la interfaz (de 5 a 120): más, las visualizaciones van más suaves y gastan más; la entrada y el ratón no esperan al dibujo | `30` |
+| `refresco` | cuadros por segundo de la interfaz (de 5 a 120): más, las visualizaciones van más suaves y gastan más; la entrada y el ratón no esperan al dibujo, y parado y en silencio no se vuelve a dibujar lo que no cambia | `30` |
 
 | En `[dispositivos]` | Para | Por defecto |
 | --- | --- | --- |

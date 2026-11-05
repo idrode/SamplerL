@@ -2742,12 +2742,14 @@ assets.
   barra tapa la cabecera mientras está abierta. Ayuda › «Qué sabe hacer
   esta terminal».
 - **Scope y espectro del master** (`app/viz.rs`): `sync_ui_viz` pide al
-  motor la fuente del master junto con lo del script (un lote con
+  motor la fuente del master junto con lo del script, solo mientras el
+  último cuadro dibujó el scope o el espectro del master (un lote con
   `set_viz`, que entra al compás; tras cada carga, el lote del script
   solo trae lo suyo y se vuelve a pedir). El motor ya copiaba a esa cola:
   sin cambios en el hilo de audio ni publicación nueva (`no_alloc.rs` y
   `golden.rs` igual). `master_views` arma el scope (con el RMS de lo
-  último en el título) y el espectro (con su caída).
+  último en el título) y el espectro (con su caída), que se calcula al
+  dibujar (ver «Consumo de la interfaz»).
 - **Ratón**: `menu_mouse` antes que nada; luego `focus_mouse` (una
   pestaña se elige; un clic en la mezcla, los efectos, el scope o el
   espectro les da el foco; el primer clic en el editor sin el foco solo
@@ -2797,6 +2799,69 @@ Todo se ha visto con el backend de test de ratatui: falta cambiar el
 tamaño en vivo, Alt y un número dentro de tmux y en la terminal del
 usuario, el ratón en cada panel y los menús, `LANG=C` y una terminal sin
 truecolor, y el editor en su ventana con los menús.
+
+## Consumo de la interfaz
+
+Tras el rediseño, el hilo de la interfaz gastaba mucho más que antes: en
+el portátil ARM64 llegaba a un núcleo entero. Medido en la laptop de
+desarrollo (x86_64, release, 200×50, `top -H`; el hilo de audio, con la
+salida nula, igual antes y después: ~7 % sonando, ~1 % parado):
+
+| Escenario | Antes | Después |
+|---|---|---|
+| sin MIDI, sonando, ratón quieto | 14,6 % | 10,7 % |
+| sin MIDI, sonando, ratón moviéndose | 45,3 % | 11,5 % |
+| sin MIDI, parado, ratón quieto | 14,6 % | 1,0 % |
+| sin MIDI, parado, ratón moviéndose | 41,6 % | 2,0 % |
+| `--allow-midi`, sonando, ratón quieto | 36,1 % | 12,2 % |
+| `--allow-midi`, sonando, ratón moviéndose | 44,8 % | 12,5 % |
+| `--allow-midi`, parado, ratón quieto | 37,0 % | 2,7 % |
+| `--allow-midi`, parado, ratón moviéndose | 46,0 % | 3,0 % |
+
+Cuatro cambios, todos en el hilo de la interfaz (sin tocar el motor):
+
+- **El espectro, una vez por cuadro** (`App::frame_viz`, al empezar
+  `screen::draw`): antes la FFT del master y las de los espectros del
+  script iban en cada `tick`, que es cada vuelta del bucle (con MIDI la
+  espera baja a 2 ms: ~300 FFT por segundo para ~26 cuadros), y copiaban
+  las 16 384 muestras del historial a un `Vec` nuevo. Ahora el `tick`
+  solo vacía las colas; la FFT mira las últimas 2048 muestras del
+  historial sin copiarlo, y la caída de las barras es por cuadro de
+  verdad. El master solo se pide al motor mientras se ve su scope o su
+  espectro (`master_shown`, de los paneles del último cuadro); al
+  apagarse, su historial se olvida.
+- **El ratón que solo se mueve no es entrada** (`only_motion` en
+  `main.rs`): la captura del ratón pide a la terminal todos los
+  movimientos (hace falta para arrastrar), y cada uno forzaba un dibujo
+  completo fuera del ritmo de cuadros.
+- **La FFT con todo calculado una vez** (`spectrum::Analyzer`: ventana,
+  tabla de giros en f64, búferes y bordes de las bandas): de ~190 µs a
+  ~53 µs por espectro.
+- **En reposo no se redibuja lo mismo** (`app/idle.rs`): parado, sin
+  entrada y sin nada que suene, el bucle se salta los cuadros mientras la
+  huella de lo que se ve (`idle_key`: medidores como se dibujan, compás,
+  paso, tempo, mensaje, error, cargas y mensajes MIDI) no cambie. La
+  marcha, las notas tenidas, las grabaciones y los avisos de saturación
+  la anulan; la ventana del editor siempre dibuja. Un cuadro cada 500 ms
+  igualmente (`IDLE_REFRESH`), por si cambia algo que no está en la
+  huella.
+
+### Decisiones
+
+- El master se apaga cuando no se ve, aunque al volver a verlo el lote
+  entre al compás (hasta un compás con «esperando audio del master»): así
+  lo pidió el usuario, y el motor no copia para nada.
+- En reposo, un cuadro cada medio segundo en vez de ninguno: lo que no
+  entre en la huella se ve como mucho medio segundo tarde, por menos de
+  un 1 % de CPU.
+- Sigue pendiente: la caída de los medidores es por `tick`, no por
+  cuadro, así que con MIDI bajan más deprisa.
+
+### Sin probar en el portátil ARM64
+
+Medido solo en x86_64: falta repetir la tabla en el Asahi (con y sin
+`--allow-midi`, el ratón quieto y moviéndose, parado y sonando) y
+comprobar que el binario es el de `target/release`.
 
 ## Audio de prueba y problemas conocidos
 

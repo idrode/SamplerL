@@ -340,7 +340,7 @@ const INTERFACE_KEYS: &[(&str, &str, &str)] = &[
     ),
     (
         "refresco",
-        "cuadros por segundo de la interfaz (de 5 a 120): más, las visualizaciones van más suaves y gastan más; la entrada y el ratón no esperan al dibujo",
+        "cuadros por segundo de la interfaz (de 5 a 120): más, las visualizaciones van más suaves y gastan más; la entrada y el ratón no esperan al dibujo, y parado y en silencio no se vuelve a dibujar lo que no cambia",
         "`30`",
     ),
 ];
