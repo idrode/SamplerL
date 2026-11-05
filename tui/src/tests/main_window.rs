@@ -35,15 +35,17 @@ fn with_the_editor_outside_the_views_take_the_whole_window() {
     assert_eq!(find(&buffer, "┌ sample · drums"), Some((0, 3)), "{screen}");
     assert_eq!(buffer[(119, 3)].symbol(), "┐");
 
-    // Con una sola ventana, el editor a la izquierda (la mitad) y el
-    // sample a la derecha.
+    // Con una sola ventana, el sample arriba y el editor abajo, a lo
+    // ancho.
     let (_, mut single, _engine) = open("main_window_single", Some(SONG));
     let buffer = draw(&mut single, 120, 40);
     let screen = text(&buffer);
-    assert_eq!(find(&buffer, "┌ song.lua"), Some((0, 3)), "{screen}");
+    let editor = find(&buffer, "┌ song.lua").expect(&screen);
     assert!(screen.contains("bpm(120)"), "{screen}");
     let at = find(&buffer, "┌ sample · drums").unwrap();
-    assert_eq!(at.0, 60);
+    assert_eq!(at, (0, 3));
+    assert_eq!(editor.0, 0);
+    assert!(editor.1 > at.1, "{screen}");
 }
 
 #[test]

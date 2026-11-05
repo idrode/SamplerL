@@ -168,7 +168,7 @@ fn the_panel_draws_at_several_sizes() {
             "{w}×{h}\n{screen}"
         );
         // El tracker y el sample no se ven: el piano roll está en su sitio.
-        assert!(!screen.contains(" tracker "), "{w}×{h}\n{screen}");
+        assert!(!screen.contains("┌ tracker"), "{w}×{h}\n{screen}");
     }
     // Sin el piano roll, como siempre.
     let (_, mut app, _engine) = open("roll_sizes_none", Some(ROLL_SONG));
@@ -531,7 +531,7 @@ fn cell_of(app: &mut App, _buffer: &mut Buffer, col: usize, pitch: i32) -> (u16,
 #[test]
 fn the_mouse_places_moves_lengthens_and_deletes_notes() {
     let (path, mut app, _engine) = roll_on("roll_mouse", ROLL_SONG, 0);
-    let mut screen = draw(&mut app, 120, 40);
+    let mut screen = draw(&mut app, 120, 60);
     // Arrastrar la cabeza: un semitono arriba y dos pasos después.
     let (x, y) = cell_of(&mut app, &mut screen, 12, A2);
     let (x2, y2) = cell_of(&mut app, &mut screen, 13, A2 + 1);
@@ -540,7 +540,7 @@ fn the_mouse_places_moves_lengthens_and_deletes_notes() {
     click(&mut app, MouseAction::Up, x2, y2);
     let s = assert_edited(&app, ROLL_SONG, "a2 . c3+e3", ". a#2 c3+e3");
     // Arrastrar la cola de una nota larga: más larga.
-    let mut screen = draw(&mut app, 120, 40);
+    let mut screen = draw(&mut app, 120, 60);
     let (x, y) = cell_of(&mut app, &mut screen, 5, C3);
     let (x2, _) = cell_of(&mut app, &mut screen, 6, C3);
     click(&mut app, MouseAction::Down, x, y);
@@ -548,7 +548,7 @@ fn the_mouse_places_moves_lengthens_and_deletes_notes() {
     click(&mut app, MouseAction::Up, x2, y);
     let s = assert_edited(&app, &s, "c3 _ . e3", "c3 _ _ e3");
     // Un clic en un hueco pone una nota; el derecho la quita.
-    let mut screen = draw(&mut app, 120, 40);
+    let mut screen = draw(&mut app, 120, 60);
     let (x, y) = cell_of(&mut app, &mut screen, 2, E3);
     click(&mut app, MouseAction::Down, x, y);
     click(&mut app, MouseAction::Up, x, y);

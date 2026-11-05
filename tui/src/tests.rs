@@ -195,9 +195,10 @@ fn lua_errors_show_in_the_editor_and_keep_playing() {
     // En rojo, en el borde del editor.
     let (x, y) = find(&buffer, "✗ error en").unwrap();
     assert_eq!(buffer[(x, y)].fg, Color::Red);
-    // La esquina del editor (bajo los menús, la cabecera y la regla).
-    assert_eq!(buffer[(0, 3)].symbol(), "┌");
-    assert_eq!(buffer[(0, 3)].fg, Color::Red);
+    // La esquina del editor (ahora abajo).
+    let editor = app.last_grid().unwrap().editor.unwrap();
+    assert_eq!(buffer[(editor.x, editor.y)].symbol(), "┌");
+    assert_eq!(buffer[(editor.x, editor.y)].fg, Color::Red);
     // Y en la cabecera.
     let (x, y) = find(&buffer, "✗ error l.3").unwrap();
     assert_eq!((y, buffer[(x, y)].fg), (1, Color::Red));
@@ -745,13 +746,14 @@ fn the_error_line_is_highlighted_in_the_editor() {
     app.editor
         .move_cursor(ratatui_textarea::CursorMove::Jump(0, 0));
     let buffer = draw(&mut app, 120, 40);
-    // Línea 3 en la fila 6 de la pantalla (menús, cabecera, regla, borde
-    // y 2), en todo su ancho dentro del editor; ninguna otra.
-    assert_eq!(error_rows(&buffer, 5), vec![6]);
+    // Línea 3 en la tercera fila del editor (su borde y 2), en todo su
+    // ancho dentro del editor; ninguna otra.
+    let row = app.last_grid().unwrap().editor.unwrap().y + 3;
+    assert_eq!(error_rows(&buffer, 5), vec![row]);
     let (x, _) = find(&buffer, "track(\"drums\"").unwrap();
-    assert_eq!(buffer[(x, 6)].bg, ui::error_line());
-    assert_eq!(buffer[(x, 6)].symbol(), "t");
-    assert_ne!(buffer[(70, 6)].bg, ui::error_line(), "fuera del editor");
+    assert_eq!(buffer[(x, row)].bg, ui::error_line());
+    assert_eq!(buffer[(x, row)].symbol(), "t");
+    assert_ne!(buffer[(x, row - 3)].bg, ui::error_line(), "fuera del editor");
 
     // Sin error, sin resaltado.
     replace_all(&mut app, SONG);
@@ -1160,9 +1162,10 @@ fn completion_filters_by_prefix_while_typing() {
     // El popup sale junto al cursor, con la firma y la descripción.
     let buffer = draw(&mut app, 120, 40);
     let screen = text(&buffer);
-    let (x, y) = find(&buffer, "completar").unwrap();
+    let (x, _) = find(&buffer, "completar").unwrap();
     let (_, cursor_row) = find(&buffer, "5 trac").unwrap();
-    assert_eq!(y, cursor_row + 1, "{screen}");
+    // Con el editor abajo, encima de la línea del cursor.
+    assert_eq!(buffer[(x - 2, cursor_row - 1)].symbol(), "└", "{screen}");
     assert!(x < 20, "{screen}");
     assert!(
         screen.contains("track(nombre, cortes) / track(nombre) → pista"),

@@ -24,7 +24,6 @@ pub fn needs(view: &ViewModel) -> Needs {
         editor: !view.editor_outside,
         roll: view.roll.is_some(),
         mixer_width: ui::MixerPanel::width(view.tracks.len()),
-        fx_height: ui::fx_panel_height(view),
         dock_want: 0,
         menu: view.menu_bar,
         master_viz: view.master_viz,
@@ -32,6 +31,7 @@ pub fn needs(view: &ViewModel) -> Needs {
         viz: view.viz.iter().any(|p| p.line.is_none()),
         sidechain: view.sidechain.is_some(),
         clash: view.clash_table.is_some(),
+        ..Needs::default()
     }
 }
 
@@ -126,7 +126,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     if let Some(area) = grid.ruler {
         Ruler(&view).render(area, frame.buffer_mut());
     }
-    let popup = match grid.editor {
+    // Lo que flota, primero en la lista del foco: el ratón lo encuentra
+    // antes que lo que tapa.
+    for (area, panel) in grid.overlays() {
+        panels.focus.push((area, panel));
+    }
+    let mut popup = match grid.editor.filter(|_| !grid.floating) {
         Some(area) => {
             panels.focus.push((area, Panel::Code));
             ui::draw_editor(frame, app, &view, area)
@@ -189,6 +194,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
     if let Some(area) = grid.keys {
         KeysLine(&view).render(area, frame.buffer_mut());
+    }
+    // Encima de todo lo demás: el editor flotante (tapa sin borrar lo de
+    // detrás, que ya está dibujado).
+    if let Some(area) = grid.editor.filter(|_| grid.floating) {
+        frame.render_widget(ratatui::widgets::Clear, area);
+        popup = ui::draw_editor(frame, app, &view, area);
     }
     app.set_roll_area(roll_area);
     app.set_lanes_area(lanes_area);
@@ -344,7 +355,7 @@ fn draw_panel(
             ui::OccupancyPanel(view).render(area, buf);
             panels.occupancy = ui::OccupancyLayout::new(view, area);
         }
-        Panel::Code | Panel::Wave => {}
+        Panel::Code | Panel::Wave | Panel::Files => {}
     }
 }
 

@@ -20,6 +20,8 @@ pub enum Panel {
     Scope,
     Spectrum,
     Occupancy,
+    /// El explorador de archivos (Alt-0).
+    Files,
 }
 
 impl Panel {
@@ -36,9 +38,12 @@ impl Panel {
         Panel::Occupancy,
     ];
 
-    /// Su número (el de Alt-n y el de su título).
+    /// Su número (el de Alt-n y el de su título; el explorador, el 0).
     pub fn number(self) -> usize {
-        Self::NUMBERED.iter().position(|p| *p == self).unwrap() + 1
+        Self::NUMBERED
+            .iter()
+            .position(|p| *p == self)
+            .map_or(0, |i| i + 1)
     }
 
     /// Nombre corto, para títulos y pestañas.
@@ -53,6 +58,7 @@ impl Panel {
             Panel::Scope => "scope",
             Panel::Spectrum => "espectro",
             Panel::Occupancy => "ocupación",
+            Panel::Files => "archivos",
         }
     }
 
@@ -68,6 +74,7 @@ impl Panel {
             Panel::Scope => "sco",
             Panel::Spectrum => "esp",
             Panel::Occupancy => "ocu",
+            Panel::Files => "arch",
         }
     }
 

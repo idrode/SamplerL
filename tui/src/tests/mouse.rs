@@ -42,11 +42,11 @@ fn a_click_follows_the_scroll() {
     let buffer = draw(&mut app, 120, 40);
     let (top, _) = app.editor.scroll_offset();
     assert!(top > 40, "desplazado: {top}");
-    click_on(&mut app, &buffer, "-- línea 70", 3);
-    assert_eq!(app.editor.cursor(), (69 + SONG.lines().count(), 3));
+    click_on(&mut app, &buffer, "-- línea 75", 3);
+    assert_eq!(app.editor.cursor(), (74 + SONG.lines().count(), 3));
 
     // La rueda desplaza (tres líneas cada paso).
-    let (x, y) = find(&buffer, "-- línea 70").unwrap();
+    let (x, y) = find(&buffer, "-- línea 75").unwrap();
     app.mouse(MouseAction::ScrollUp, x, y);
     app.mouse(MouseAction::ScrollUp, x, y);
     draw(&mut app, 120, 40);
@@ -131,7 +131,7 @@ fn a_click_on_a_long_line_scrolled_sideways() {
         .move_cursor(ratatui_textarea::CursorMove::Jump(row as u16, 400));
     let buffer = draw(&mut app, 120, 40);
     let (_, left) = app.editor.scroll_offset();
-    assert!(left > 100, "desplazado a la derecha: {left}");
+    assert!(left > 50, "desplazado a la derecha: {left}");
     click_on(&mut app, &buffer, "fin", 1);
     assert_eq!(app.editor.cursor(), (row, long.chars().count() - 2));
 }

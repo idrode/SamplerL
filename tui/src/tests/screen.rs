@@ -19,16 +19,18 @@ fn small_has_the_wave_on_top_and_the_rest_in_tabs() {
     assert!(line(&screen, 0).starts_with("■ parado"), "{screen}");
     assert!(line(&screen, 1).starts_with("▱▱▱▱"), "{screen}");
     assert!(line(&screen, 23).starts_with("EDITOR"), "{screen}");
-    // El editor a la izquierda, la onda a la derecha y debajo las pestañas
-    // con el tracker elegido (el primero).
-    assert_eq!(find(&buffer, "┌ song.lua"), Some((0, 2)), "{screen}");
-    assert_eq!(find(&buffer, "┌ sample").map(|p| p.0), Some(40), "{screen}");
-    let (_, strip) = find(&buffer, " 3 trk ").expect(&screen);
-    let (x, _) = find(&buffer, " 4 mez").expect(&screen);
+    // La onda arriba, debajo las pestañas con el tracker elegido (el
+    // primero) y el editor abajo, a lo ancho (sin explorador: no cabe).
+    assert_eq!(find(&buffer, "┌ sample"), Some((0, 2)), "{screen}");
+    let (_, strip) = find(&buffer, " 3 tracker ").expect(&screen);
+    let (x, _) = find(&buffer, " 4 mezcla").expect(&screen);
     assert_eq!(buffer[(x + 1, strip)].fg, theme::get().dim);
     let (tx, ty) = find(&buffer, "┌ tracker").expect(&screen);
-    assert_eq!((tx, ty), (40, strip + 1), "{screen}");
+    assert_eq!((tx, ty), (0, strip + 1), "{screen}");
     assert!(!screen.contains("┌ mezclador"), "{screen}");
+    let (ex, ey) = find(&buffer, "┌ song.lua").expect(&screen);
+    assert!(ex == 0 && ey > ty, "{screen}");
+    assert!(!screen.contains("archivos"), "{screen}");
 }
 
 #[test]
@@ -46,26 +48,25 @@ fn medium_has_the_tracker_beside_the_mixer_and_the_effects_in_tabs() {
 }
 
 #[test]
-fn wide_has_three_columns_the_reference_and_the_effects_below() {
+fn wide_has_the_sound_a_column_for_the_master_and_the_editor_below() {
     let (_, mut app, _engine) = open("screen_wide", Some(SONG));
     let buffer = draw(&mut app, 180, 50);
     let screen = text(&buffer);
-    let (ex, _) = find(&buffer, "┌ song.lua").expect(&screen);
-    let (sx, _) = find(&buffer, "┌ sample").expect(&screen);
+    let (sx, sy) = find(&buffer, "┌ sample").expect(&screen);
     let (mx, my) = find(&buffer, "┌ mezclador").expect(&screen);
-    assert!(ex < sx && sx < mx, "{screen}");
-    // La referencia, con las teclas del editor una por fila.
-    let (rx, ry) = find(&buffer, "┌ referencia · EDITOR").expect(&screen);
-    assert_eq!(rx, mx);
-    assert!(ry > my);
-    assert!(
-        screen.contains("Ctrl-S        guardar y cargar"),
-        "{screen}"
-    );
-    // Los efectos, a lo ancho abajo.
+    let (ex, ey) = find(&buffer, "┌ song.lua").expect(&screen);
+    assert!(sx < mx && sy == my, "{screen}");
+    // El editor abajo, a todo el ancho del centro.
+    assert!(ex == sx && ey > my, "{screen}");
+    // La columna de la derecha: mezclador, scope y espectro del master.
+    let (cx, cy) = find(&buffer, "┌ 7 scope").expect(&screen);
+    let (px, py) = find(&buffer, "┌ 8 espectro").expect(&screen);
+    assert!(cx == mx && px == mx && my < cy && cy < py, "{screen}");
+    // Los efectos, en su pestaña (la primera).
+    let (_, strip) = find(&buffer, " 5 efectos ").expect(&screen);
     assert_eq!(
-        find(&buffer, "┌ efectos por pista").map(|p| p.0),
-        Some(0),
+        find(&buffer, "┌ efectos por pista").map(|p| p.1),
+        Some(strip + 1),
         "{screen}"
     );
 }
@@ -84,7 +85,6 @@ fn ascii_draws_the_ruler_and_the_tabs_without_unicode_blocks() {
     let (_, mut app, _engine) = open("screen_ascii", Some(SONG));
     theme::set_ascii(true);
     let screen = text(&draw(&mut app, 60, 20));
-    theme::set_ascii(false);
     assert!(line(&screen, 1).starts_with("----------------"), "{screen}");
     assert!(!screen.contains('▰') && !screen.contains('▱'), "{screen}");
     // Ni cajas ni bloques ni flechas.
@@ -96,7 +96,10 @@ fn ascii_draws_the_ruler_and_the_tabs_without_unicode_blocks() {
     // corto.
     assert!(screen.contains(" 3 trk "), "{screen}");
     // Las que no caben, con la marca (en ASCII, `>`).
-    assert!(screen.lines().nth(6).unwrap().ends_with('>'), "{screen}");
+    let screen = text(&draw(&mut app, 44, 20));
+    theme::set_ascii(false);
+    let strip = screen.lines().find(|l| l.contains(" 3 trk ")).unwrap();
+    assert!(strip.ends_with('>'), "{screen}");
 }
 
 #[test]
@@ -162,10 +165,11 @@ fn the_master_scope_and_spectrum_need_nothing_in_the_script() {
             .any(|c| ('\u{2801}'..='\u{28ff}').contains(&c)),
         "el scope en Braille: {screen}"
     );
-    // En el tamaño mediano, en sus pestañas.
+    // En el tamaño mediano, el scope en su pestaña y el espectro en su
+    // panel, junto a las pestañas.
     let screen = text(&draw(&mut app, 120, 40));
     assert!(
-        screen.contains(" 7 scope ") && screen.contains(" 8 espectro "),
+        screen.contains(" 7 scope ") && screen.contains("┌8 espectro"),
         "{screen}"
     );
 }
@@ -196,20 +200,20 @@ fn the_master_is_only_copied_while_its_panels_are_seen() {
     // Sin dibujar (o sin su panel a la vista), el motor no copia el master.
     play(&mut app, &mut engine, 20);
     assert!(app.view().master_views.is_empty());
-    // En el tamaño mediano, el scope y el espectro son pestañas: con otra
+    // En el tamaño pequeño, el scope y el espectro son pestañas: con otra
     // elegida no se ven.
     app.show_tab(crate::layout::Tab::Panel(crate::focus::Panel::Mixer));
-    draw(&mut app, 120, 40);
+    draw(&mut app, 80, 24);
     play(&mut app, &mut engine, 20);
     assert!(app.view().master_views.is_empty());
     // Con la del espectro, sí.
     app.show_tab(crate::layout::Tab::Panel(crate::focus::Panel::Spectrum));
-    draw(&mut app, 120, 40);
+    draw(&mut app, 80, 24);
     play(&mut app, &mut engine, 20);
     assert_eq!(app.view().master_views.len(), 2);
     // Al dejar de verse se apaga y se olvida lo que había.
     app.show_tab(crate::layout::Tab::Panel(crate::focus::Panel::Mixer));
-    draw(&mut app, 120, 40);
+    draw(&mut app, 80, 24);
     play(&mut app, &mut engine, 1);
     assert!(app.view().master_views.is_empty());
 }
@@ -243,7 +247,7 @@ fn pantalla_ascii() {
 #[test]
 fn the_tab_strip_scrolls_to_show_the_chosen_tab() {
     let (_, mut app, _engine) = open("screen_tabs_scroll", Some(SONG));
-    let screen = text(&draw(&mut app, 80, 24));
+    let screen = text(&draw(&mut app, 40, 24));
     assert!(screen.contains('›'), "hay más a la derecha: {screen}");
     // Alt-8 (espectro): su pestaña se ve, elegida.
     app.handle(Input {
@@ -251,7 +255,7 @@ fn the_tab_strip_scrolls_to_show_the_chosen_tab() {
         alt: true,
         ..Input::default()
     });
-    let buffer = draw(&mut app, 80, 24);
+    let buffer = draw(&mut app, 40, 24);
     let screen = text(&buffer);
     let (x, y) = find(&buffer, " 8 esp").unwrap_or_else(|| panic!("{screen}"));
     assert_eq!(buffer[(x + 1, y)].bg, theme::get().accent, "{screen}");

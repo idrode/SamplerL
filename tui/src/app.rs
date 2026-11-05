@@ -4339,6 +4339,12 @@ impl App {
             })
     }
 
+    /// La rejilla del último cuadro dibujado (el ratón y los tests la
+    /// miran).
+    pub fn last_grid(&self) -> Option<&crate::layout::Grid> {
+        self.grid.as_ref()
+    }
+
     /// La rejilla con la que se dibujó el último cuadro (la pone el
     /// dibujo).
     pub fn set_grid(&mut self, grid: crate::layout::Grid) {

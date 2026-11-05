@@ -45,9 +45,13 @@ fn the_16_rows_show_as_soon_as_they_fit_in_both_windows() {
     pump(&mut main, &mut editor);
     let (_, mut single, _engine) = open("tracker_rows_single", Some(SONG));
     let all: Vec<usize> = (0..16).collect();
-    for app in [&mut main, &mut single] {
+    for (app, sizes) in [
+        (&mut main, &[(120u16, 40u16), (120, 44), (180, 50), (250, 60)][..]),
+        // Con el editor abajo hace falta más alto.
+        (&mut single, &[(180, 56), (250, 60)][..]),
+    ] {
         // Mediano y ancho con sitio: las 16 filas y al sample lo suyo.
-        for (width, height) in [(120u16, 40u16), (120, 44), (180, 50), (250, 60)] {
+        for &(width, height) in sizes {
             let screen = text(&draw(app, width, height));
             assert_eq!(tracker_rows(&screen), all, "{width}×{height}\n{screen}");
             assert!(sample_height(&screen) >= 6, "{width}×{height}\n{screen}");

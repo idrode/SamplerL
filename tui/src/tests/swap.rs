@@ -120,9 +120,10 @@ fn the_editor_comes_back_from_its_window_with_its_cursor_and_history() {
     let socket = link::socket_path(&socket_dir(&path), &path);
     assert!(!socket.exists());
     let buffer = draw(&mut main, 120, 40);
+    let editor = main.last_grid().unwrap().editor.unwrap();
     assert_eq!(
         super::find(&buffer, "┌ song.lua"),
-        Some((0, 3)),
+        Some((editor.x, editor.y)),
         "{}",
         text(&buffer)
     );

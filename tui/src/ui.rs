@@ -2617,10 +2617,13 @@ fn group_column(group: &crate::model::GroupView, width: usize) -> Vec<Line<'stat
     lines
 }
 
-/// Alto del panel de efectos: nombre, volumen, nivel y hasta 4 efectos.
+/// Alto del panel de efectos: nombre, volumen, nivel y hasta 4 efectos
+/// (los tests dibujan el panel suelto con este alto).
+#[cfg(test)]
 pub const FX_PANEL_HEIGHT: u16 = 3 + engine::MAX_FX as u16 + 2;
 /// Alto del panel de efectos: una fila más si alguna pista tiene efectos
 /// por corte (así siempre cabe al menos su línea resumida).
+#[cfg(test)]
 pub fn fx_panel_height(view: &ViewModel) -> u16 {
     FX_PANEL_HEIGHT + u16::from(view.tracks.iter().any(|t| !t.slice_fx.is_empty()))
 }

@@ -84,6 +84,10 @@ impl App {
                     }
                 }
             }
+            Panel::Files => {
+                self.close_cursors();
+                self.chosen_focus = Some(panel);
+            }
             Panel::Mixer | Panel::Fx | Panel::Scope | Panel::Spectrum => {
                 self.close_cursors();
                 self.chosen_focus = Some(panel);

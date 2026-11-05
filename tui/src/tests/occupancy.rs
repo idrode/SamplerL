@@ -235,10 +235,10 @@ fn with_the_editor_outside_the_main_window_shows_it_in_its_tab() {
     for (width, height) in [(120, 40), (80, 24)] {
         let buffer = draw(&mut main, width, height);
         let screen = text(&buffer);
-        // De lado a lado (no hay editor).
-        let (x, y) = find(&buffer, "┌ ocupación").unwrap_or_else(|| panic!("{screen}"));
+        // Desde el borde izquierdo (no hay editor; a la derecha puede ir
+        // el espectro del master).
+        let (x, _) = find(&buffer, "┌ ocupación").unwrap_or_else(|| panic!("{screen}"));
         assert_eq!(x, 0, "{screen}");
-        assert_eq!(buffer[(width - 1, y)].symbol(), "┐", "{screen}");
         assert!(screen.contains("┌ sample"), "{screen}");
     }
 }

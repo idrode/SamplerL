@@ -27,7 +27,7 @@ fn the_fx_panel_shows_groups_and_macros() {
         view.macros,
         [("brillo".to_string(), 0.5), ("eco".to_string(), 0.0)]
     );
-    let screen = text(&draw(&mut app, 160, 45));
+    let screen = text(&draw(&mut app, 180, 70));
     assert!(screen.contains("▣ bateria ← drums, kick"), "{screen}");
     assert!(screen.contains("· ▣ bateria"), "{screen}");
     assert!(screen.contains("vol 0.80"), "{screen}");

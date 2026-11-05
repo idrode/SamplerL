@@ -275,9 +275,10 @@ fn inline_goes_beside_its_line_of_code() {
     play(&mut app, &mut engine, 20);
     let buffer = draw(&mut app, 140, 40);
     let screen = text(&buffer);
-    // En la fila de su línea (la 5.ª del texto: los menús, la cabecera, la
-    // regla, el borde y cuatro más), a la derecha del editor.
-    let row: String = screen.lines().nth(8).unwrap().chars().take(70).collect();
+    // En la fila de su línea (la 5.ª del texto: el borde del editor y
+    // cuatro más), a la derecha del código.
+    let top = app.last_grid().unwrap().editor.unwrap().y as usize;
+    let row: String = screen.lines().nth(top + 5).unwrap().to_string();
     assert!(row.contains("scope · tono"), "{screen}");
     // Sin tapar su propia línea.
     assert!(

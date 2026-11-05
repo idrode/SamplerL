@@ -56,7 +56,7 @@ fn words_lines_and_pages_move_and_shift_selects() {
     let long: String = (1..=100).map(|i| format!("-- {i}\n")).collect();
     replace_all(&mut app, &long);
     app.editor.move_cursor(ratatui_textarea::CursorMove::Top);
-    draw(&mut app, 130, 40);
+    draw(&mut app, 130, 60);
     app.handle(special(Key::PageDown));
     let page = app.editor.cursor().0;
     assert!(page > 10, "AvPág baja una pantalla ({page})");
@@ -64,7 +64,7 @@ fn words_lines_and_pages_move_and_shift_selects() {
     assert_eq!(app.editor.cursor().0, 2 * page);
     assert_eq!(selected(&app).map(|s| s.lines().count()), Some(page));
     for _ in 0..2 {
-        draw(&mut app, 130, 40);
+        draw(&mut app, 130, 60);
         app.handle(special(Key::PageUp));
     }
     // (Ya arriba del todo, RePág deja el cursor en la pantalla de arriba,
