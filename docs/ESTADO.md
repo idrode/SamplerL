@@ -3033,6 +3033,93 @@ los demás pintan cada cuadro: a la mitad de bytes, la mitad de trabajo
 para ellos). No conviene para mirar el scope o el espectro con detalle
 (van a 7,5 cuadros por segundo) ni para la onda en puntos.
 
+**Después** (todo lo anterior, `bajo_consumo` apagado; la misma
+medición que la de antes, una tanda de 10 s por escenario):
+
+| Escenario | Tamaño | ui antes | ui después | audio antes | audio después | kB/s |
+|---|---|---|---|---|---|---|
+| parado | 80×24 | 0,3 % | 0,3 % | 0,4 % | 0,3 % | 0,1 |
+| sonando | 80×24 | 3,0 % | 2,5 % | 7,0 % | 6,8 % | 6,4 |
+| visual | 80×24 | 4,7 % | 4,2 % | 7,0 % | 7,0 % | 16,0 |
+| sonando, ratón | 80×24 | 3,3 % | 2,7 % | 6,9 % | 7,0 % | 6,4 |
+| parado, ratón | 80×24 | 0,5 % | 0,3 % | 0,3 % | 0,3 % | 0,1 |
+| parado | 120×40 | 0,7 % | 0,7 % | 0,4 % | 0,4 % | 0,4 |
+| sonando | 120×40 | 6,2 % | 5,3 % | 7,0 % | 6,9 % | 18,5 |
+| visual | 120×40 | 7,9 % | 7,0 % | 7,2 % | 7,1 % | 27,7 |
+| sonando, ratón | 120×40 | 6,2 % | 5,5 % | 6,9 % | 7,0 % | 18,5 |
+| parado, ratón | 120×40 | 0,7 % | 0,6 % | 0,4 % | 0,3 % | 0,2 |
+| parado | 240×70 | 1,2 % | 1,2 % | 0,4 % | 0,3 % | 0,4 |
+| sonando | 240×70 | 10,1 % | 10,1 % | 6,7 % | 7,1 % | 37,6 |
+| visual | 240×70 | 14,5 % | 14,2 % | 7,1 % | 7,2 % | 83,5 |
+| sonando, ratón | 240×70 | 10,6 % | 10,0 % | 7,0 % | 7,1 % | 37,6 |
+| parado, ratón | 240×70 | 1,0 % | 0,9 % | 0,3 % | 0,3 % | 0,2 |
+| `--allow-midi`, parado | 80×24 | 0,7 % | 0,6 % | 0,4 % | 0,3 % | 0,1 |
+| `--allow-midi`, sonando | 80×24 | 3,3 % | 2,8 % | 7,2 % | 7,0 % | 6,3 |
+| `--allow-midi`, sonando, ratón | 80×24 | 3,3 % | 2,8 % | 7,1 % | 7,0 % | 6,4 |
+| `--allow-midi`, parado | 240×70 | 1,6 % | 1,5 % | 0,3 % | 0,3 % | 0,2 |
+| `--allow-midi`, sonando | 240×70 | 10,8 % | 10,4 % | 7,1 % | 7,0 % | 37,9 |
+| `--allow-midi`, sonando, ratón | 240×70 | 10,7 % | 10,5 % | 7,1 % | 7,0 % | 38,1 |
+
+Y alternando los dos binarios (mediana de 3), con la canción larga:
+
+| Escenario | Tamaño | ui antes | ui después |
+|---|---|---|---|
+| sonando | 80×24 | 3,0 % | 2,5 % |
+| visual | 80×24 | 4,9 % | 4,2 % |
+| larga | 80×24 | 5,6 % | 3,3 % |
+| sonando | 240×70 | 10,7 % | 9,9 % |
+| visual | 240×70 | 14,6 % | 14,0 % |
+| larga | 240×70 | 14,1 % | 12,1 % |
+
+Banco, µs por cuadro (núcleo de rendimiento), antes → después:
+`cancion` sonando 80×24 97 → 79, 120×40 236 → 198, 240×70 452 → 415;
+`visual` 80×24 189 → 157, 240×70 739 → 611; `larga` 80×24 214 → 104,
+240×70 646 → 504. Con `bajo_consumo`, un segundo de interfaz a 240×70:
+`cancion` 12,4 ms, `visual` 7,7 ms (sin él, 12,4 y 18,3).
+
+**Comparado con x86_64**: allí, sonando a 200×50, el hilo de la interfaz
+quedó en ~11 % y el de audio en ~7 % (otra canción). En el M2, a 240×70,
+~10 % y ~7 %: lo mismo en porcentaje, pero en núcleos de eficiencia a
+baja frecuencia, que es donde el planificador los deja; en trabajo, el
+M2 hace un cuadro de 240×70 en ~0,4 ms en un núcleo de rendimiento. El
+ARM64 no tiene un coste propio grande: lo único que salió más caro que
+en x86_64 fue la carga con barrera del `LazyLock` del diezmado (arriba).
+
+**Lo que se probó y no ayudó** (no entra):
+
+- `lto = "fat"` y `codegen-units = 1`: el audio igual (1,61 s el `sh101`
+  solo) y la interfaz ~5 % menos en el banco, a cambio de un minuto más
+  por cada build de release. No compensa en el portátil de desarrollo.
+- `-C target-cpu=native`: lo mismo bit a bit y en tiempo (1,61 s y
+  1,62 s). Las voces son recurrencias (filtros, osciladores, envolventes)
+  que no se pueden vectorizar sin cambiar los bits; lo vectorizable
+  (copias, mezclas, rellenos) ya va en NEON con el objetivo genérico.
+- `panic = "abort"`: no se prueba, rompería el dibujo a prueba de fallos
+  (`catch_unwind`).
+- Saltarse los cuadros iguales sonando (como en reposo): no hay; el
+  número de dB del master cambia en cada cuadro. Cambiarlo es cambiar lo
+  que se ve: para eso está `bajo_consumo`.
+- Quitar la consulta del `LazyLock` de la interpolación sinc: una por
+  frame entre 16 vecinos o más, por debajo de lo que se puede medir.
+
+**Lo que sigue caro**:
+
+- Dibujar la pantalla entera en cada cuadro sonando. El diff de ratatui
+  (calcula el ancho Unicode de cada celda, la compara y vacía el búfer)
+  cuesta ~160 µs a 240×70, tenga o no cambios, y no se toca sin cambiar
+  ratatui. Los widgets: el editor (ratatui-textarea) ~50-70 µs, el
+  tracker ~37 µs (~77 con ocho pistas), la onda ~25, los efectos ~23-39,
+  el espectro del master ~21. Todo escala con el área y con los cuadros
+  por segundo: el remedio es `bajo_consumo` o una terminal más pequeña.
+- La voz analógica (`sh101`), ~0,8 % de un núcleo de rendimiento por voz
+  con `quality = 2` (el de siempre); con `quality = 1`, un 37 % menos.
+  Con varias voces o `subharm{ voices = 6 }` (la receta de MPE: 2,7 %),
+  es lo que más pesa del audio.
+- Lo que no se mide aquí: el emulador de terminal (kitty pinta cada
+  cuadro: a 240×70 sonando, 38 kB/s; con las visualizaciones, 84 kB/s) y
+  la salida de audio real (cpal con PipeWire; sus xruns no se pueden ver
+  con la salida nula).
+
 ## Explorador y editor abajo
 
 Continuación del rediseño de la interfaz, pedida por el usuario con un

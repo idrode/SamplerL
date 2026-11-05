@@ -867,3 +867,17 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
     («which-key»). Diseño en la sección 12 de
     [docs/DISENO-TUI.md](DISENO-TUI.md); detalle en «Explorador y editor
     abajo» de [docs/ESTADO.md](ESTADO.md).
+21. ✅ **Consumo en ARM64** (pedida por el usuario, en el MacBook con
+    Asahi; sigue la optimización de «Consumo de la interfaz»): medición
+    reproducible por hilo y de los bytes a la terminal
+    (`scripts/medir-consumo.py`), banco del cuadro (`tests::consumo`) y
+    comparación bit a bit del audio entre dos binarios
+    (`scripts/comparar-audio.sh`, porque golden.rs solo corre en x86_64);
+    arreglados los coeficientes del diezmado leídos de un `LazyLock` en
+    cada muestra, los avisos de la notación recalculados en cada cuadro,
+    la copia del historial del master para el scope y el RMS, y la
+    biblioteca de bloques releída dos veces por segundo; y un modo de bajo
+    consumo opcional (`[interfaz] bajo_consumo`). Falta: medir el
+    emulador de terminal y la batería, y probar con `--allow-audio` (los
+    xruns de la salida real). Detalle en «Consumo de la interfaz» de
+    [docs/ESTADO.md](ESTADO.md).
