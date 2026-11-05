@@ -2981,6 +2981,19 @@ las 26 canciones deterministas de `scripts/ejemplos/` y
   (mediana de tres, alternando los binarios): `larga` a 80×24, el hilo
   de la interfaz de 3,5 % a 2,7 %; a 240×70 no se distingue del ruido
   (9,3 % y 9,2 %).
+- **El scope y el RMS del master, sin copiar el historial**
+  (`App::master_views`, `viz::scope::build`): en cada cuadro con el
+  master a la vista se copiaban sus 16 384 muestras a un `Vec`, se
+  buscaba el disparo en la copia y se sumaban en cadena los cuadrados de
+  un tercio de segundo (cada suma espera a la anterior: Rust no
+  reordena la coma flotante). Ahora el disparo recorre las dos mitades
+  del `VecDeque` y la suma de cuadrados va en ocho sumas parciales, que
+  el compilador vectoriza (NEON en ARM64); lo mismo los scopes por pista.
+  El RMS que se lee puede cambiar en la última décima respecto a antes
+  (otro orden de suma, más exacto); el audio no se toca. `App::view` a
+  240×70 sonando, de ~38 a ~22 µs; el banco, `cancion` 240×70 de 435 a
+  419 µs y 120×40 de 220 a 200, `visual` 240×70 de 643 a 618 y 80×24 de
+  169 a 158. En vivo, por debajo del ruido.
 
 ## Explorador y editor abajo
 

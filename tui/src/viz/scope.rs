@@ -4,6 +4,8 @@
 //! la onda se queda quieta) y se dibuja con Braille (2×4 puntos por celda)
 //! en el `Canvas` de ratatui; en ASCII, con `*`.
 
+use std::collections::VecDeque;
+
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
@@ -23,20 +25,42 @@ const HYSTERESIS: f32 = 0.01;
 /// de subida (de menos de −`HYSTERESIS` a 0 o más) que deja la ventana
 /// entera detrás; sin ninguno, `None`.
 pub fn trigger(samples: &[f32], window: usize) -> Option<usize> {
-    if samples.len() < window + 2 {
+    trigger_in(samples, &[], window)
+}
+
+/// [`trigger`] sobre `a` seguido de `b` (las dos mitades de un
+/// `VecDeque`, sin copiarlas a un búfer contiguo).
+fn trigger_in(a: &[f32], b: &[f32], window: usize) -> Option<usize> {
+    let len = a.len() + b.len();
+    if len < window + 2 {
         return None;
     }
-    let last = samples.len() - window;
+    let last = len - window;
+    let (mut before, tail_a, tail_b) = match a.split_first() {
+        Some((first, rest)) => (*first, rest, b),
+        None => {
+            let (first, rest) = b.split_first()?;
+            (*first, &[][..], rest)
+        }
+    };
     let mut armed = false;
     let mut found = None;
+    let mut i = 1;
     // Desde el principio, para saber si venía de abajo; el último vale.
-    for i in 1..=last {
-        if samples[i - 1] < -HYSTERESIS {
-            armed = true;
-        }
-        if armed && samples[i - 1] < 0.0 && samples[i] >= 0.0 {
-            found = Some(i);
-            armed = false;
+    'scan: for part in [tail_a, tail_b] {
+        for &now in part {
+            if i > last {
+                break 'scan;
+            }
+            if before < -HYSTERESIS {
+                armed = true;
+            }
+            if armed && before < 0.0 && now >= 0.0 {
+                found = Some(i);
+                armed = false;
+            }
+            before = now;
+            i += 1;
         }
     }
     found
@@ -52,9 +76,11 @@ pub struct ScopeView {
     pub triggered: bool,
 }
 
-/// La vista de `history` (lo último de su fuente).
-pub fn build(history: &[f32], title: String, size: u16) -> ScopeView {
-    let (start, triggered) = match trigger(history, WINDOW) {
+/// La vista de `history` (lo último de su fuente). Sin copiar el
+/// historial: solo la ventana que se dibuja.
+pub fn build(history: &VecDeque<f32>, title: String, size: u16) -> ScopeView {
+    let (a, b) = history.as_slices();
+    let (start, triggered) = match trigger_in(a, b, WINDOW) {
         Some(i) => (i, true),
         None => (history.len().saturating_sub(WINDOW), false),
     };
@@ -62,7 +88,7 @@ pub fn build(history: &[f32], title: String, size: u16) -> ScopeView {
     ScopeView {
         title,
         size,
-        samples: history[start..end].to_vec(),
+        samples: history.range(start..end).copied().collect(),
         triggered,
     }
 }
@@ -150,7 +176,7 @@ mod tests {
         let mut firsts = Vec::new();
         for frame in 0..10 {
             let history = sine(period, 8192, frame * 801 + 13);
-            let view = build(&history, String::new(), 6);
+            let view = build(&history.into(), String::new(), 6);
             assert!(view.triggered);
             firsts.push(view.samples[..8].to_vec());
         }
@@ -170,7 +196,7 @@ mod tests {
     #[test]
     fn without_a_crossing_it_shows_the_latest() {
         let flat = vec![0.3f32; 5000];
-        let view = build(&flat, String::new(), 6);
+        let view = build(&flat.clone().into(), String::new(), 6);
         assert!(!view.triggered);
         assert_eq!(view.samples.len(), WINDOW);
         assert!(trigger(&flat[..100], WINDOW).is_none());

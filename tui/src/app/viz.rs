@@ -143,9 +143,8 @@ impl App {
             }
             VizKind::Scope => {
                 let history = self.viz_history(&spec.source)?;
-                let samples: Vec<f32> = history.iter().copied().collect();
                 Some(VizView::Scope(crate::viz::scope::build(
-                    &samples,
+                    history,
                     spec.title(),
                     spec.size,
                 )))
@@ -242,12 +241,15 @@ impl App {
         else {
             return Vec::new();
         };
-        let (a, b) = history.as_slices();
-        let samples: Vec<f32> = a.iter().chain(b).copied().collect();
         // Nivel eficaz de lo último (mono, tras el limitador): sin
-        // ponderación, así que no es sonoridad (LUFS), solo una idea.
-        let recent = &samples[samples.len().saturating_sub(self.sample_rate as usize / 3)..];
-        let rms = (recent.iter().map(|s| s * s).sum::<f32>() / recent.len().max(1) as f32).sqrt();
+        // ponderación, así que no es sonoridad (LUFS), solo una idea. Sin
+        // copiar el historial (16 384 muestras en cada cuadro).
+        let count = history.len().min(self.sample_rate as usize / 3);
+        let (a, b) = history.as_slices();
+        // Las últimas `count`: el final de `a` (si `b` no llega) y `b`.
+        let b = &b[b.len().saturating_sub(count)..];
+        let a = &a[a.len().saturating_sub(count - b.len())..];
+        let rms = ((squares(a) + squares(b)) / count.max(1) as f32).sqrt();
         let rms = if rms > 0.0 {
             format!("RMS {:+.1} dB", 20.0 * rms.log10())
         } else {
@@ -255,7 +257,7 @@ impl App {
         };
         vec![
             VizView::Scope(crate::viz::scope::build(
-                &samples,
+                history,
                 format!("7 scope · master · {rms}"),
                 4,
             )),
@@ -370,6 +372,21 @@ impl App {
         let laps = def.bars.len().max(1) as u64;
         Some(((lap % laps) as usize * def.length.max(1) + step) % cycle as usize)
     }
+}
+
+/// La suma de los cuadrados de `samples`, con ocho sumas parciales
+/// independientes: así el compilador la vectoriza (una sola suma va en
+/// cadena, cada término esperando al anterior).
+fn squares(samples: &[f32]) -> f32 {
+    let mut lanes = [0.0f32; 8];
+    let chunks = samples.chunks_exact(8);
+    let rest: f32 = chunks.remainder().iter().map(|s| s * s).sum();
+    for chunk in chunks {
+        for (lane, s) in lanes.iter_mut().zip(chunk) {
+            *lane += s * s;
+        }
+    }
+    lanes.iter().sum::<f32>() + rest
 }
 
 /// Las últimas [`crate::viz::spectrum::SIZE`] muestras de `history` (las
