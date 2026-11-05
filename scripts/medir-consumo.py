@@ -278,6 +278,7 @@ def main():
     p.add_argument("--csv")
     p.add_argument("--hilos", action="store_true", help="enseña cada hilo")
     p.add_argument("--midi", action="store_true", help="con --allow-midi (la espera del bucle baja a 2 ms)")
+    p.add_argument("--bloques", type=int, default=0, help="siembra la biblioteca global con tantos bloques")
     args = p.parse_args()
 
     if not os.path.exists(os.path.join(ROOT, "renders/synth_break.wav")):
@@ -301,6 +302,15 @@ def main():
         }
     )
     env.pop("TMUX", None)
+    blocks = os.path.join(home, "config", "sampler", "blocks")
+    os.makedirs(blocks, exist_ok=True)
+    for i in range(args.bloques):
+        with open(os.path.join(blocks, f"bloque{i:03}.lua"), "w") as f:
+            f.write(
+                f"-- nombre: bloque{i:03}\n-- descripción: un bloque de prueba\n-- etiquetas: prueba, ghost\n\n"
+                f'track("${{ghost}}", amen:slice_at(${{3}}))\n'
+                f'  :steps(". x@0.2 . x@0.1  . x@0.2 . .  . x@0.2 . x@0.1  . . x@0.2 .")\n'
+            )
     rows_out = []
     header = (
         f"{'escenario':<13} {'tamaño':>7} {'ui %':>6} {'audio %':>7} {'otros %':>7} "

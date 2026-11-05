@@ -239,6 +239,9 @@ pub struct Library {
     pub blocks: Vec<Block>,
     /// Lo que no se pudo leer (no impide usar los demás).
     pub warnings: Vec<String>,
+    /// La huella de las carpetas en la última lectura (ver
+    /// [`Library::refresh`]).
+    stamp: Option<u64>,
 }
 
 impl Library {
@@ -261,8 +264,51 @@ impl Library {
         }
     }
 
+    /// Vuelve a leer las carpetas si algo cambió en ellas (un archivo
+    /// `.lua` nuevo, borrado, renombrado o con otra fecha o tamaño): mirar
+    /// las fechas es mucho más barato que leer y analizar cada bloque, y la
+    /// interfaz lo pregunta dos veces por segundo. Dice si releyó.
+    pub fn refresh(&mut self) -> bool {
+        if self.stamp.is_some() && self.stamp == Some(self.current_stamp()) {
+            return false;
+        }
+        self.reload();
+        true
+    }
+
+    /// La huella de lo que hay en las carpetas: nombre, fecha y tamaño de
+    /// cada `.lua`.
+    fn current_stamp(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        for scope in [Scope::Project, Scope::Global] {
+            let Some(dir) = self.dir(scope) else {
+                continue;
+            };
+            dir.hash(&mut h);
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                continue;
+            };
+            let mut files: Vec<(PathBuf, Option<std::time::SystemTime>, u64)> = entries
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| p.extension().is_some_and(|e| e == "lua"))
+                .map(|p| {
+                    let meta = std::fs::metadata(&p).ok();
+                    let modified = meta.as_ref().and_then(|m| m.modified().ok());
+                    let len = meta.map_or(0, |m| m.len());
+                    (p, modified, len)
+                })
+                .collect();
+            files.sort();
+            files.hash(&mut h);
+        }
+        h.finish()
+    }
+
     /// Vuelve a leer las carpetas.
     pub fn reload(&mut self) {
+        self.stamp = Some(self.current_stamp());
         self.blocks.clear();
         self.warnings.clear();
         for scope in [Scope::Project, Scope::Global] {

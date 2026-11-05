@@ -4471,8 +4471,9 @@ impl App {
         if self.last_external_check.elapsed() >= EXTERNAL_CHECK {
             self.last_external_check = Instant::now();
             self.check_external();
-            // Los bloques pueden cambiar fuera (otro editor, git...).
-            self.blocks.reload();
+            // Los bloques pueden cambiar fuera (otro editor, git...); solo
+            // se releen si cambia algún archivo.
+            self.blocks.refresh();
         }
         self.flush_midi();
         self.flush_expression();

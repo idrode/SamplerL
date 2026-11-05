@@ -2994,6 +2994,15 @@ las 26 canciones deterministas de `scripts/ejemplos/` y
   240×70 sonando, de ~38 a ~22 µs; el banco, `cancion` 240×70 de 435 a
   419 µs y 120×40 de 220 a 200, `visual` 240×70 de 643 a 618 y 80×24 de
   169 a 158. En vivo, por debajo del ruido.
+- **La biblioteca de bloques, releída solo si cambia**
+  (`blocks::Library::refresh`): cada 500 ms, `tick` releía y analizaba
+  todos los bloques de las dos carpetas, también parado (por si cambian
+  fuera: otro editor, git). Ahora mira el nombre, la fecha y el tamaño de
+  cada `.lua` y solo relee si la huella cambia. La medición usa una
+  configuración vacía, así que no se veía: con `--bloques 300` (300
+  bloques en la biblioteca global), parado a 80×24, el hilo de la
+  interfaz de 1,3 % a 0,4 % (el de sin bloques es 0,2-0,3 %); sonando,
+  de 3,6 % a 2,6 %.
 
 ## Explorador y editor abajo
 
