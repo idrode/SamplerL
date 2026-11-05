@@ -314,8 +314,11 @@ pub struct App {
     analyzer: crate::viz::spectrum::Analyzer,
     /// Lo que enseña cada `spectrum` (con su caída), por su índice.
     viz_spectra: Vec<Vec<f32>>,
-    /// El espectro del master de su panel (con su caída).
+    /// El espectro del master de su panel (con su caída), cómo se dibuja
+    /// (`[interfaz] espectro`) y, en espectrograma, los últimos cuadros.
     master_spectrum: Vec<f32>,
+    spectrum_look: crate::viz::master::Look,
+    master_spectrogram: std::collections::VecDeque<Vec<f32>>,
     /// Cuadros por segundo (`[interfaz] refresco`).
     refresh_hz: u32,
     /// Mandos MIDI asignados (los del proyecto o, sin ellos, los de la
@@ -539,6 +542,8 @@ impl App {
             analyzer: crate::viz::spectrum::Analyzer::new(),
             viz_spectra: Vec::new(),
             master_spectrum: Vec::new(),
+            spectrum_look: Default::default(),
+            master_spectrogram: Default::default(),
             refresh_hz: crate::config::DEFAULT_REFRESH,
             learned: Vec::new(),
             knob_picker: None,
@@ -694,6 +699,10 @@ impl App {
         self.files.width = config.interface.explorer_width;
         self.editor_rows = config.interface.editor_rows;
         crate::theme::set_wave_bars(config.interface.wave_bars);
+        if self.spectrum_look != config.interface.spectrum {
+            self.spectrum_look = config.interface.spectrum;
+            self.master_spectrogram.clear();
+        }
         self.editor_terminal = config.editor_terminal.clone();
         self.devices_terminal = config.devices_terminal.clone();
         self.mouse_enabled = config.editor.mouse;
@@ -4696,6 +4705,7 @@ impl App {
             files: self.files_needs(),
             editor_layout: self.editor_layout(),
             master_views: self.master_views(),
+            master_spectrum: self.master_spectrum_view(),
             palette: self.palette.as_ref().map(|p| {
                 let matches = self.palette_matches();
                 PaletteView {

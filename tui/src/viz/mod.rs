@@ -8,6 +8,7 @@
 use ratatui::widgets::Widget;
 
 pub mod grid;
+pub mod master;
 pub mod scope;
 pub mod spectrum;
 pub mod wheel;

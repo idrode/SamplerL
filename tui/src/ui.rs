@@ -1464,7 +1464,7 @@ pub fn wave_dots(wave: &Waveform, width: u16, rows: u16) -> Vec<u8> {
     let subs = 2 * w;
     for s in 0..subs {
         let (lo, hi) = wave.range(s as f64 / subs as f64, (s + 1) as f64 / subs as f64);
-        let (lo, hi) = (lo.min(0.0).max(-1.0), hi.max(0.0).min(1.0));
+        let (lo, hi) = (lo.clamp(-1.0, 0.0), hi.clamp(0.0, 1.0));
         let top = ((1.0 - hi) / 2.0 * dots).floor() as usize;
         let bottom = ((1.0 - lo) / 2.0 * dots).ceil() as usize;
         let (top, bottom) = if bottom <= top + 1 {

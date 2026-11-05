@@ -9,8 +9,10 @@ use crate::viz::{Placed, VizKind, VizSource, VizSpec, VizView, grid};
 use super::App;
 use crate::focus::Panel;
 
-/// Bandas del espectro del master de su panel.
-const MASTER_BANDS: usize = 32;
+/// Bandas del espectro del master de su panel (se interpolan al ancho).
+const MASTER_BANDS: usize = 64;
+/// Cuadros que guarda el espectrograma (dos por columna de 180).
+pub(super) const SPECTROGRAM_FRAMES: usize = 360;
 
 impl App {
     /// Pone las visualizaciones `specs` y enciende en el motor las colas de
@@ -224,6 +226,7 @@ impl App {
             }
             if !wanted[engine::VIZ_MASTER] {
                 self.master_spectrum.clear();
+                self.master_spectrogram.clear();
             }
             self.viz_sent = wanted;
         }
@@ -262,6 +265,24 @@ impl App {
                 levels: self.master_spectrum.clone(),
             }),
         ]
+    }
+
+    /// El espectro del master para su panel (`None` hasta que llega audio).
+    pub(super) fn master_spectrum_view(&self) -> Option<crate::viz::master::MasterSpectrumView> {
+        if self.master_spectrum.is_empty() {
+            return None;
+        }
+        let spectrogram = self.spectrum_look == crate::viz::master::Look::Spectrogram;
+        Some(crate::viz::master::MasterSpectrumView {
+            style: self.spectrum_look,
+            levels: self.master_spectrum.clone(),
+            history: if spectrogram {
+                self.master_spectrogram.iter().cloned().collect()
+            } else {
+                Vec::new()
+            },
+            rate: self.sample_rate,
+        })
     }
 
     /// Lo último que ha llegado de la fuente de `source`.
@@ -303,6 +324,17 @@ impl App {
             if !history.is_empty() {
                 let fresh = self.analyzer.analyze(last(history), rate, MASTER_BANDS);
                 crate::viz::spectrum::fall(&mut self.master_spectrum, fresh);
+                // El espectrograma: un cuadro más (reutiliza el más viejo).
+                if self.spectrum_look == crate::viz::master::Look::Spectrogram {
+                    let mut frame = if self.master_spectrogram.len() >= SPECTROGRAM_FRAMES {
+                        self.master_spectrogram.pop_front().unwrap_or_default()
+                    } else {
+                        Vec::with_capacity(MASTER_BANDS)
+                    };
+                    frame.clear();
+                    frame.extend_from_slice(&self.master_spectrum);
+                    self.master_spectrogram.push_back(frame);
+                }
             }
         }
         self.viz_spectra.resize(self.viz.len(), Vec::new());

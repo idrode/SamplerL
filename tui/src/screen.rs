@@ -362,6 +362,15 @@ fn draw_panel(
             }
             None => empty(view, panel, "sin pistas", area, buf),
         },
+        Panel::Spectrum if view.master_spectrum.is_some() => {
+            let spectrum = view.master_spectrum.as_ref().unwrap();
+            let title = format!(" {} · master · {} ", panel.title(), spectrum.style.name());
+            crate::viz::master::MasterSpectrumPanel {
+                view: spectrum,
+                block: ui::panel_block(view, panel).title(title),
+            }
+            .render(area, buf);
+        }
         Panel::Scope | Panel::Spectrum => match master_viz(view, panel) {
             // Tan alto como su sitio.
             Some(viz) => {

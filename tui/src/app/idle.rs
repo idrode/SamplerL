@@ -26,6 +26,17 @@ impl App {
         {
             return None;
         }
+        // El espectro del master cae despacio (un poco por cuadro dibujado):
+        // hasta que llegue a nada, se sigue dibujando; el espectrograma,
+        // hasta que lo que se ve esté vacío.
+        if self.master_spectrum.iter().any(|&l| l > 0.0)
+            || self
+                .master_spectrogram
+                .iter()
+                .any(|f| f.iter().any(|&l| l > 0.0))
+        {
+            return None;
+        }
         let now = Instant::now();
         let holding = |until: &Option<Instant>| until.is_some_and(|u| now < u);
         if holding(&self.clipping_until)

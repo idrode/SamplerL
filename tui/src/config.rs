@@ -364,6 +364,8 @@ pub struct InterfaceConfig {
     /// La onda de los samples en barras (`onda = "barras"`) en vez de en
     /// puntos.
     pub wave_bars: bool,
+    /// Cómo se dibuja el espectro del master (`espectro`).
+    pub spectrum: crate::viz::master::Look,
 }
 
 impl Default for InterfaceConfig {
@@ -375,6 +377,7 @@ impl Default for InterfaceConfig {
             explorer_width: 0,
             editor_rows: 0,
             wave_bars: false,
+            spectrum: crate::viz::master::Look::Fill,
         }
     }
 }
@@ -417,6 +420,7 @@ const INTERFACE_NAMES: &[&str] = &[
     "ancho_explorador",
     "alto_editor",
     "onda",
+    "espectro",
 ];
 
 /// Claves de `[interfaz]` (para la guía).
@@ -451,6 +455,11 @@ const INTERFACE_KEYS: &[(&str, &str, &str)] = &[
         "onda",
         "cómo se dibuja la onda de los samples (en su panel, en la ventana sin editor y en la vista previa del explorador): `\"puntos\"` (Braille, 2×4 puntos por celda: cuatro veces más alto que las barras) o `\"barras\"` (bloques, el dibujo de antes). Con `ascii`, siempre barras en ASCII",
         "`\"puntos\"`",
+    ),
+    (
+        "espectro",
+        "cómo se dibuja el espectro del master en su panel: `\"relleno\"` o `\"linea\"` (puntos Braille), `\"barras\"` (bloques: lo que menos gasta) o `\"espectrograma\"` (el historial, que se desplaza a la izquierda, con la intensidad en la densidad de los puntos y en el color). Siempre con escala logarítmica y su eje de frecuencias",
+        "`\"relleno\"`",
     ),
 ];
 
@@ -1141,6 +1150,12 @@ impl Config {
                                     EDITOR_ROWS.start(),
                                     EDITOR_ROWS.end()
                                 )),
+                            },
+                            "espectro" => match value.as_str().and_then(crate::viz::master::Look::from_name) {
+                                Some(look) => config.interface.spectrum = look,
+                                None => config.warnings.push(
+                                    "[interfaz] espectro: \"relleno\", \"linea\", \"barras\" o \"espectrograma\"".into(),
+                                ),
                             },
                             "onda" => match value.as_str() {
                                 Some("puntos") => config.interface.wave_bars = false,

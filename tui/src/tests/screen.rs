@@ -169,9 +169,89 @@ fn the_master_scope_and_spectrum_need_nothing_in_the_script() {
     // panel, junto a las pestañas.
     let screen = text(&draw(&mut app, 120, 40));
     assert!(
-        screen.contains(" 7 scope ") && screen.contains("┌8 espectro"),
+        screen.contains(" 7 scope ") && screen.contains("┌ 8 espectro · master · relleno"),
         "{screen}"
     );
+}
+
+#[test]
+fn the_master_spectrum_panel_draws_dots_an_axis_and_a_spectrogram() {
+    use crate::config::Config;
+    let (_, mut app, mut engine) = open("screen_master_spectrum", Some(SONG));
+    draw(&mut app, 120, 40);
+    play(&mut app, &mut engine, 16);
+    // Un cuadro dibujado cada octavo de paso (los golpes son cortos): lo
+    // que suena sube y cae despacio.
+    for _ in 0..32 {
+        offline::render(&mut engine, STEP / 8, 2);
+        app.tick();
+        draw(&mut app, 120, 40);
+    }
+    let buffer = draw(&mut app, 120, 40);
+    let screen = text(&buffer);
+    let area = app.last_grid().unwrap().spectrum.unwrap();
+    let inner = |buffer: &Buffer| -> String {
+        (area.y + 1..area.bottom() - 1)
+            .map(|y| {
+                (area.x + 1..area.right() - 1)
+                    .map(|x| buffer[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let plot = inner(&buffer);
+    // Puntos, y el eje de frecuencias en la última fila.
+    assert!(
+        plot.chars().any(|c| ('\u{2801}'..='\u{28ff}').contains(&c)),
+        "{screen}"
+    );
+    let axis = plot.lines().last().unwrap();
+    assert!(
+        axis.contains("100") && axis.contains("1k") && axis.contains("10k"),
+        "{axis}"
+    );
+    // En barras (lo que menos gasta), bloques y no puntos.
+    app.set_config(&Config::parse(
+        "[interfaz]\nespectro = \"barras\"\n",
+        true,
+        "c",
+    ));
+    let plot = inner(&draw(&mut app, 120, 40));
+    assert!(
+        !plot.chars().any(|c| ('\u{2801}'..='\u{28ff}').contains(&c)),
+        "{plot}"
+    );
+    assert!(plot.contains('█') || plot.contains('▄'), "{plot}");
+    // En espectrograma, el historial crece con cada cuadro dibujado.
+    app.set_config(&Config::parse(
+        "[interfaz]\nespectro = \"espectrograma\"\n",
+        true,
+        "c",
+    ));
+    for _ in 0..30 {
+        offline::render(&mut engine, STEP / 8, 2);
+        app.tick();
+        draw(&mut app, 120, 40);
+    }
+    let view = app.view().master_spectrum.unwrap();
+    assert_eq!(view.history.len(), 30);
+    let buffer = draw(&mut app, 120, 40);
+    let screen = text(&buffer);
+    assert!(screen.contains("espectro · master · espectrog"), "{screen}");
+    let plot = inner(&buffer);
+    // Lo más nuevo, a la derecha: la columna de la izquierda, vacía.
+    let left: String = plot.lines().map(|l| l.chars().next().unwrap()).collect();
+    assert!(left.trim().is_empty(), "{plot}");
+    assert!(
+        plot.chars().any(|c| ('\u{2801}'..='\u{28ff}').contains(&c)),
+        "{plot}"
+    );
+    // En ASCII, sin Braille.
+    theme::set_ascii(true);
+    let plot = inner(&draw(&mut app, 120, 40));
+    theme::set_ascii(false);
+    assert!(plot.is_ascii(), "{plot}");
 }
 
 #[test]

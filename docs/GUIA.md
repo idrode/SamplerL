@@ -1521,6 +1521,7 @@ paleta de 256.
 | `ancho_explorador` | columnas del explorador (de 10 a 200; nunca más de dos quintos del ancho); `0`, las de siempre (26). Se guarda al arrastrar su borde o al cambiarlo con `<`/`>` o Ctrl-Alt-←→ | `0` |
 | `alto_editor` | filas del editor abajo (de 4 a 200; siempre deja al menos 6 al sonido); `0`, un tercio del alto. Se guarda al arrastrar su borde de arriba o al cambiarlo con Ctrl-Alt-↑↓ | `0` |
 | `onda` | cómo se dibuja la onda de los samples (en su panel, en la ventana sin editor y en la vista previa del explorador): `"puntos"` (Braille, 2×4 puntos por celda: cuatro veces más alto que las barras) o `"barras"` (bloques, el dibujo de antes). Con `ascii`, siempre barras en ASCII | `"puntos"` |
+| `espectro` | cómo se dibuja el espectro del master en su panel: `"relleno"` o `"linea"` (puntos Braille), `"barras"` (bloques: lo que menos gasta) o `"espectrograma"` (el historial, que se desplaza a la izquierda, con la intensidad en la densidad de los puntos y en el color). Siempre con escala logarítmica y su eje de frecuencias | `"relleno"` |
 
 | En `[dispositivos]` | Para | Por defecto |
 | --- | --- | --- |

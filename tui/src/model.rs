@@ -38,6 +38,8 @@ pub struct ViewModel {
     /// scope primero).
     pub master_viz: bool,
     pub master_views: Vec<crate::viz::VizView>,
+    /// El espectro del master de su panel fijo.
+    pub master_spectrum: Option<crate::viz::master::MasterSpectrumView>,
     /// Con el modo vim, el suyo (`NORMAL` o `INSERT`).
     pub vim: Option<&'static str>,
     /// El archivo cambió fuera del editor (se ofrece recargar).
