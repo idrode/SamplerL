@@ -361,6 +361,9 @@ pub struct InterfaceConfig {
     pub explorer_width: u16,
     /// Filas del editor abajo (`alto_editor`; 0, un tercio).
     pub editor_rows: u16,
+    /// La onda de los samples en barras (`onda = "barras"`) en vez de en
+    /// puntos.
+    pub wave_bars: bool,
 }
 
 impl Default for InterfaceConfig {
@@ -371,6 +374,7 @@ impl Default for InterfaceConfig {
             explorer: true,
             explorer_width: 0,
             editor_rows: 0,
+            wave_bars: false,
         }
     }
 }
@@ -412,6 +416,7 @@ const INTERFACE_NAMES: &[&str] = &[
     "explorador",
     "ancho_explorador",
     "alto_editor",
+    "onda",
 ];
 
 /// Claves de `[interfaz]` (para la guía).
@@ -441,6 +446,11 @@ const INTERFACE_KEYS: &[(&str, &str, &str)] = &[
         "alto_editor",
         "filas del editor abajo (de 4 a 200; siempre deja al menos 6 al sonido); `0`, un tercio del alto. Se guarda al arrastrar su borde de arriba o al cambiarlo con Ctrl-Alt-↑↓",
         "`0`",
+    ),
+    (
+        "onda",
+        "cómo se dibuja la onda de los samples (en su panel, en la ventana sin editor y en la vista previa del explorador): `\"puntos\"` (Braille, 2×4 puntos por celda: cuatro veces más alto que las barras) o `\"barras\"` (bloques, el dibujo de antes). Con `ascii`, siempre barras en ASCII",
+        "`\"puntos\"`",
     ),
 ];
 
@@ -1131,6 +1141,13 @@ impl Config {
                                     EDITOR_ROWS.start(),
                                     EDITOR_ROWS.end()
                                 )),
+                            },
+                            "onda" => match value.as_str() {
+                                Some("puntos") => config.interface.wave_bars = false,
+                                Some("barras") => config.interface.wave_bars = true,
+                                _ => config
+                                    .warnings
+                                    .push("[interfaz] onda: \"puntos\" o \"barras\"".into()),
                             },
                             _ => config.warnings.push(format!(
                                 "[interfaz] «{key}» no existe (hay: {})",

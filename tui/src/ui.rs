@@ -1449,10 +1449,102 @@ fn slice_column(track: &crate::model::TrackView, i: usize, width: u16) -> Option
     (column >= 0.0 && column < width as f64).then_some(column as u16)
 }
 
+/// Los puntos Braille de una onda en `width`×`rows` celdas: dos columnas
+/// de puntos por celda (cada una con su trozo del sample) y cuatro filas,
+/// encendidos de lo más bajo a lo más alto de su trozo (con el centro
+/// dentro: como las barras, desde el 0); un trozo en silencio es un punto
+/// en el centro. Un byte por celda, fila a fila, con los bits de Braille
+/// (el carácter es `U+2800 + bits`).
+pub fn wave_dots(wave: &Waveform, width: u16, rows: u16) -> Vec<u8> {
+    // Bit de cada punto: [columna][fila].
+    const BIT: [[u8; 4]; 2] = [[0x01, 0x02, 0x04, 0x40], [0x08, 0x10, 0x20, 0x80]];
+    let (w, h) = (width as usize, rows as usize);
+    let mut cells = vec![0u8; w * h];
+    let dots = (h * 4) as f32;
+    let subs = 2 * w;
+    for s in 0..subs {
+        let (lo, hi) = wave.range(s as f64 / subs as f64, (s + 1) as f64 / subs as f64);
+        let (lo, hi) = (lo.min(0.0).max(-1.0), hi.max(0.0).min(1.0));
+        let top = ((1.0 - hi) / 2.0 * dots).floor() as usize;
+        let bottom = ((1.0 - lo) / 2.0 * dots).ceil() as usize;
+        let (top, bottom) = if bottom <= top + 1 {
+            // Silencio (o casi): el punto del centro.
+            let centre = (h * 4).saturating_sub(1) / 2;
+            (centre, centre + 1)
+        } else {
+            (top, bottom.min(h * 4))
+        };
+        for d in top..bottom {
+            cells[(d / 4) * w + s / 2] |= BIT[s % 2][d % 4];
+        }
+    }
+    cells
+}
+
+/// El carácter Braille con esos puntos.
+pub fn braille(bits: u8) -> char {
+    char::from_u32(0x2800 + bits as u32).unwrap_or(' ')
+}
+
+/// La columna izquierda de puntos entera: la marca de un corte en la onda
+/// de puntos.
+const MARK_DOTS: u8 = 0x01 | 0x02 | 0x04 | 0x40;
+
+/// La forma de onda (en puntos Braille o, con `[interfaz] onda =
+/// "barras"` o sin Unicode, en barras), las marcas de los cortes y el
+/// corte que suena resaltado.
+fn draw_wave(track: &crate::model::TrackView, inner: Rect, buf: &mut Buffer) {
+    if theme::wave_dots() {
+        draw_wave_dots(track, inner, buf);
+    } else {
+        draw_wave_bars(track, inner, buf);
+    }
+}
+
+/// La onda en puntos: cada marca de corte, una columna de puntos de arriba
+/// abajo en su color, junto a los de la onda.
+fn draw_wave_dots(track: &crate::model::TrackView, inner: Rect, buf: &mut Buffer) {
+    let columns = inner.width as usize;
+    let playing = track
+        .playing_slice
+        .and_then(|i| track.slices.get(i))
+        .map(|r| (shown_fraction(track, r.start), shown_fraction(track, r.end)));
+    let marks: Vec<usize> = (0..track.slices.len())
+        .filter_map(|i| slice_column(track, i, inner.width))
+        .map(usize::from)
+        .collect();
+    let cells = wave_dots(&track.waveform, inner.width, inner.height);
+    for x in 0..columns {
+        let from = x as f64 / columns as f64;
+        let to = (x + 1) as f64 / columns as f64;
+        let lit = playing.is_some_and(|(a, b)| from < b && to > a);
+        let mark = marks.contains(&x);
+        let color = if mark {
+            slice_color()
+        } else if lit {
+            accent()
+        } else {
+            wave_color()
+        };
+        for y in 0..inner.height as usize {
+            let mut bits = cells[y * columns + x];
+            if mark {
+                bits |= MARK_DOTS;
+            }
+            if bits == 0 {
+                continue;
+            }
+            buf[(inner.x + x as u16, inner.y + y as u16)]
+                .set_char(braille(bits))
+                .set_fg(color);
+        }
+    }
+}
+
 /// La forma de onda en barras (una por columna, de lo más bajo a lo más
 /// alto de su trozo, con octavos de celda en los bordes), las marcas de
 /// los cortes y el corte que suena resaltado.
-fn draw_wave(track: &crate::model::TrackView, inner: Rect, buf: &mut Buffer) {
+fn draw_wave_bars(track: &crate::model::TrackView, inner: Rect, buf: &mut Buffer) {
     let columns = inner.width as usize;
     let playing = track
         .playing_slice
@@ -1496,6 +1588,17 @@ fn draw_wave(track: &crate::model::TrackView, inner: Rect, buf: &mut Buffer) {
 /// cortes: el mismo dibujo que la onda de las pistas.
 pub fn draw_waveform(wave: &Waveform, area: Rect, buf: &mut Buffer, color: Color) {
     let columns = area.width as usize;
+    if theme::wave_dots() {
+        let cells = wave_dots(wave, area.width, area.height);
+        for (i, &bits) in cells.iter().enumerate() {
+            if bits != 0 {
+                buf[(area.x + (i % columns) as u16, area.y + (i / columns) as u16)]
+                    .set_char(braille(bits))
+                    .set_fg(color);
+            }
+        }
+        return;
+    }
     for x in 0..columns {
         let from = x as f64 / columns as f64;
         let to = (x + 1) as f64 / columns as f64;

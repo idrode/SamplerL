@@ -693,6 +693,7 @@ impl App {
         self.files.shown = config.interface.explorer;
         self.files.width = config.interface.explorer_width;
         self.editor_rows = config.interface.editor_rows;
+        crate::theme::set_wave_bars(config.interface.wave_bars);
         self.editor_terminal = config.editor_terminal.clone();
         self.devices_terminal = config.devices_terminal.clone();
         self.mouse_enabled = config.editor.mouse;

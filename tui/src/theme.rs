@@ -212,6 +212,19 @@ thread_local! {
     static THEME: Cell<Theme> = Cell::new(Theme::default());
     /// Dibujar sin Braille ni bloques: solo ASCII (ver [`set_ascii`]).
     static ASCII: Cell<bool> = const { Cell::new(false) };
+    /// La onda de los samples en barras de bloques en vez de puntos
+    /// Braille (`[interfaz] onda = "barras"`).
+    static WAVE_BARS: Cell<bool> = const { Cell::new(false) };
+}
+
+/// La onda de los samples en barras (`true`) o en puntos.
+pub fn set_wave_bars(on: bool) {
+    WAVE_BARS.with(|a| a.set(on));
+}
+
+/// Si la onda va en puntos Braille: lo pedido y que haya Unicode.
+pub fn wave_dots() -> bool {
+    !ascii() && !WAVE_BARS.with(Cell::get)
 }
 
 /// Las visualizaciones (y lo que tenga alternativa) solo con ASCII, para

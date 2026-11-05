@@ -57,6 +57,8 @@ fn with_the_editor_outside_the_views_take_the_whole_window() {
 
 #[test]
 fn the_big_waveform_numbers_the_slices_on_their_own_row() {
+    // En barras (`[interfaz] onda = "barras"`).
+    crate::theme::set_wave_bars(true);
     let mut view = waveform_view(Some(1));
     view.selected_slice = Some(0);
     // 80 de ancho útil y 10 de alto: números, 8 filas de onda y los ms.
@@ -95,6 +97,14 @@ fn the_big_waveform_numbers_the_slices_on_their_own_row() {
     // Muy bajo, como el panel pequeño (números encima de la onda).
     let buffer = draw_widget(ui::BigSamplePanel(&waveform_view(None)), 82, 5);
     assert_eq!(buffer[(41, 1)].symbol(), "2");
+    // En puntos (lo de siempre), la misma fila de números y los ms.
+    crate::theme::set_wave_bars(false);
+    let buffer = draw_widget(ui::BigSamplePanel(&view), 82, 12);
+    let screen = text(&buffer);
+    assert_eq!(buffer[(41, 1)].symbol(), "2");
+    assert!(screen.contains('⡇') || screen.contains('⣿'), "{screen}");
+    let times: String = (1..81u16).map(|x| buffer[(x, 10)].symbol()).collect();
+    assert!(times.starts_with("0 "), "{times:?}");
 }
 
 /// Una vista de tracker con `n` pistas de 16 pasos (golpe en el paso 0).
