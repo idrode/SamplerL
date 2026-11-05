@@ -27,14 +27,10 @@ impl App {
             return None;
         }
         // El espectro del master cae despacio (un poco por cuadro dibujado):
-        // hasta que llegue a nada, se sigue dibujando; el espectrograma,
-        // hasta que lo que se ve esté vacío.
-        if self.master_spectrum.iter().any(|&l| l > 0.0)
-            || self
-                .master_spectrogram
-                .iter()
-                .any(|f| f.iter().any(|&l| l > 0.0))
-        {
+        // hasta que llegue a nada, se sigue dibujando. El espectrograma,
+        // en reposo, se queda quieto con lo último (desplazarlo en silencio
+        // gastaría un núcleo para nada).
+        if self.master_spectrum.iter().any(|&l| l > 0.0) {
             return None;
         }
         let now = Instant::now();

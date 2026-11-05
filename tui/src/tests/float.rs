@@ -159,3 +159,19 @@ fn the_mouse_does_not_reach_what_it_covers() {
         .unwrap();
     assert!(!grid.covered(crate::focus::Panel::Wave, outside, wave.y + 2));
 }
+
+/// Para ver el editor flotante sin terminal:
+/// `cargo test -p tui pantalla_flotante -- --ignored --nocapture`.
+#[test]
+#[ignore = "solo para ver la pantalla"]
+fn pantalla_flotante() {
+    let (_, mut app, mut engine) = open("pantalla_flotante", Some(SONG));
+    offline::render(&mut engine, 5 * STEP + 100, 2);
+    app.tick();
+    draw(&mut app, 120, 40);
+    app.handle(alt('w'));
+    println!("120×40 flotante\n{}\n", text(&draw(&mut app, 120, 40)));
+    app.handle(alt('w'));
+    app.handle(alt('z'));
+    println!("120×40 maximizado\n{}\n", text(&draw(&mut app, 120, 40)));
+}
