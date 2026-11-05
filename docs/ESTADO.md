@@ -2881,6 +2881,12 @@ por eso las cifras no se comparan tal cual con las de x86_64. Para
 comparar trabajo, el banco `tests::consumo` (abajo) y el tiempo del
 render offline.
 
+Las cifras en vivo cambian de una tanda a otra con el mismo binario (a
+240×70 sonando, de 5 % a 10 % según lo que haga el resto del sistema):
+para comparar dos binarios, `--bin antes,ahora --repeticiones 3` los
+alterna y da la mediana, y aun así solo se distinguen diferencias de
+más del 20 %. El banco es la medida fina.
+
 **Antes** (HEAD `e8a50c8`; ui, el hilo principal; audio, el de la
 salida nula; ningún otro hilo pasa del 0,1 %):
 
@@ -2963,6 +2969,18 @@ las 26 canciones deterministas de `scripts/ejemplos/` y
   hilo a los de rendimiento. La otra tabla con `LazyLock`, la de la
   interpolación sinc, se lee una vez por frame entre 16 vecinos o más:
   ahí no compensa.
+- **Los avisos de la notación, en caché** (`App::diagnostics`):
+  `diagnose::steps_diagnostics` releía en cada cuadro todas las cadenas
+  de `steps` y `melody` del texto para los avisos del pie del editor.
+  Ahora se guardan con la huella del texto y de las etiquetas conocidas,
+  y solo se recalculan si cambian. Con la canción corta eran ~18 µs por
+  cuadro; con `scripts/consumo/larga.lua` (118 líneas, ocho pistas, como
+  las canciones del usuario), ~110 µs, la cosa más cara de `App::view`.
+  Banco, µs por cuadro sonando: `larga` a 80×24 de 214 a 105 (−51 %), a
+  240×70 de 646 a 533 (−17 %); `cancion` a 80×24 de 97 a 80. En vivo
+  (mediana de tres, alternando los binarios): `larga` a 80×24, el hilo
+  de la interfaz de 3,5 % a 2,7 %; a 240×70 no se distingue del ruido
+  (9,3 % y 9,2 %).
 
 ## Explorador y editor abajo
 

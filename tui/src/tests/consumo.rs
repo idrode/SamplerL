@@ -46,6 +46,8 @@ struct Run {
     frames: usize,
     /// Celdas cambiadas por panel (con `CONSUMO_DIFF`).
     changed: std::collections::BTreeMap<String, usize>,
+    /// Cuadros iguales al anterior (con `CONSUMO_DIFF`).
+    same: usize,
 }
 
 fn run(song: &Path, width: u16, height: u16, frames: usize, playing: bool) -> Run {
@@ -72,6 +74,7 @@ fn run(song: &Path, width: u16, height: u16, frames: usize, playing: bool) -> Ru
         bytes: 0,
         frames: 0,
         changed: Default::default(),
+        same: 0,
     };
     // Unos cuadros para que todo se asiente (cargas, el master que se pide).
     let warm = 60;
@@ -102,6 +105,9 @@ fn run(song: &Path, width: u16, height: u16, frames: usize, playing: bool) -> Ru
         if diff {
             let drawn = completed.buffer.clone();
             if let Some(prev) = prev.as_ref().filter(|_| i >= warm) {
+                if drawn == *prev {
+                    out.same += 1;
+                }
                 for y in 0..height {
                     for x in 0..width {
                         if drawn[(x, y)] != prev[(x, y)] {
@@ -148,11 +154,16 @@ fn consumo() {
         "{:<8} {:<8} {:>7} {:>9} {:>9} {:>9} {:>9} {:>8}",
         "canción", "estado", "tamaño", "tick µs", "widgets", "diff+esc", "total", "B/cuadro"
     );
-    for (name, file) in [("cancion", "cancion.lua"), ("visual", "visual.lua")] {
+    let diff = std::env::var_os("CONSUMO_DIFF").is_some();
+    for (name, file) in [
+        ("cancion", "cancion.lua"),
+        ("visual", "visual.lua"),
+        ("larga", "larga.lua"),
+    ] {
         let song = root.join("scripts/consumo").join(file);
         for (width, height) in [(80, 24), (120, 40), (200, 50), (240, 70)] {
             for playing in [false, true] {
-                if !playing && name == "visual" {
+                if !playing && name != "cancion" {
                     continue;
                 }
                 let r = run(&song, width, height, frames, playing);
@@ -168,6 +179,9 @@ fn consumo() {
                     us(r.tick + r.widgets + r.flush),
                     r.bytes / r.frames,
                 );
+                if diff {
+                    println!("    cuadros iguales al anterior: {} de {}", r.same, r.frames);
+                }
                 let mut changed: Vec<_> = r.changed.iter().collect();
                 changed.sort_by_key(|e| std::cmp::Reverse(*e.1));
                 for (panel, n) in changed {

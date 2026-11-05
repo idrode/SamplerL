@@ -249,6 +249,10 @@ pub struct App {
     wave_zoom: Option<zoom::WaveZoom>,
     /// Resumen de la onda del trozo con zoom (se recalcula si cambia).
     zoom_cache: std::cell::RefCell<Option<zoom::ZoomedWave>>,
+    /// Los avisos de la notación del último texto (`steps_diagnostics`
+    /// relee todas las cadenas: con una canción de cien líneas, más de
+    /// 100 µs en cada cuadro), con la huella del texto y las etiquetas.
+    diagnostics_cache: std::cell::RefCell<Option<(u64, Vec<diagnose::Diagnostic>)>>,
     /// El ratón en el editor (`[editor] raton`).
     mouse_enabled: bool,
     /// El modo vim (`[editor] modo = "vim"`): su modo y lo que lleva entre
@@ -504,6 +508,7 @@ impl App {
             slice_drag: None,
             wave_zoom: None,
             zoom_cache: Default::default(),
+            diagnostics_cache: Default::default(),
             mouse_enabled: true,
             vim: None,
             vim_exit: vim::DEFAULT_EXIT,
@@ -2655,6 +2660,27 @@ impl App {
         )
     }
 
+    /// Los avisos de la notación de `steps("...")` y `melody("...")` del
+    /// texto del editor; se recalculan solo si cambia el texto o las
+    /// etiquetas conocidas.
+    fn diagnostics(&self) -> Vec<diagnose::Diagnostic> {
+        use std::hash::{Hash, Hasher};
+        let labels = self.known_labels();
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        self.editor.lines().hash(&mut h);
+        labels.hash(&mut h);
+        let key = h.finish();
+        let mut cache = self.diagnostics_cache.borrow_mut();
+        match &*cache {
+            Some((k, diagnostics)) if *k == key => diagnostics.clone(),
+            _ => {
+                let diagnostics = diagnose::steps_diagnostics(self.editor.lines(), &labels);
+                *cache = Some((key, diagnostics.clone()));
+                diagnostics
+            }
+        }
+    }
+
     /// Etiquetas de corte conocidas: las de lo último cargado, las del
     /// proyecto y las que el texto pone con `:name()` (aún sin cargar).
     fn known_labels(&self) -> Vec<String> {
@@ -4704,7 +4730,7 @@ impl App {
                 line: error_line(&e.message, &name),
                 message: e.message.clone(),
             }),
-            diagnostics: diagnose::steps_diagnostics(self.editor.lines(), &self.known_labels()),
+            diagnostics: self.diagnostics(),
             highlights: self.highlights(),
             help: (self.mode == Mode::Edit
                 && self.palette.is_none()

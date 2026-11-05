@@ -18,13 +18,16 @@ mientras la interfaz corre de verdad.
 Uso:
   scripts/medir-consumo.py [--segundos 10] [--tamanos 80x24,200x50]
                            [--escenarios parado,sonando,visual,raton]
-                           [--bin target/release/tui] [--csv salida.csv]
+                           [--bin target/release/tui[,otro/tui]] [--repeticiones 3]
+                           [--midi] [--hilos] [--csv salida.csv]
 
 Escenarios:
   parado   la canción cargada y parada con Ctrl-Espacio, sin tocar nada
   sonando  la canción tal como se carga (suena sola): el break y el bajo (scripts/consumo/cancion.lua)
   visual   sonando, con scope y espectro por pista además de los del master
            (scripts/consumo/visual.lua)
+  larga    sonando, con el texto de una canción de 120 líneas y ocho pistas
+           (scripts/consumo/larga.lua)
   raton    sonando, con el ratón moviéndose sin botón a 60 eventos por segundo
   raton-parado  parado, con el ratón moviéndose
 """
@@ -36,6 +39,7 @@ import re
 import select
 import shutil
 import signal
+import statistics
 import struct
 import subprocess
 import sys
@@ -180,9 +184,12 @@ def mouse_mover(term, cols, rows, stop):
         time.sleep(1 / 60)
 
 
-def measure(args, scenario, cols, rows, env):
-    script = "scripts/consumo/visual.lua" if scenario == "visual" else "scripts/consumo/cancion.lua"
-    argv = [args.bin, "--edit", script] + (["--allow-midi"] if args.midi else [])
+def measure(args, binary, scenario, cols, rows, env):
+    script = {
+        "visual": "scripts/consumo/visual.lua",
+        "larga": "scripts/consumo/larga.lua",
+    }.get(scenario, "scripts/consumo/cancion.lua")
+    argv = [binary, "--edit", script] + (["--allow-midi"] if args.midi else [])
     term = Pty(argv, cols, rows, env)
     time.sleep(args.arranque)
     # Al cargar, la canción ya suena: parado es Ctrl-Espacio (paro).
@@ -257,7 +264,17 @@ def main():
     p.add_argument("--arranque", type=float, default=3.0)
     p.add_argument("--tamanos", default="80x24,200x50")
     p.add_argument("--escenarios", default="parado,sonando,visual,raton,raton-parado")
-    p.add_argument("--bin", default=os.path.join(ROOT, "target/release/tui"))
+    p.add_argument(
+        "--bin",
+        default=os.path.join(ROOT, "target/release/tui"),
+        help="binario, o varios separados por comas para compararlos (se alternan)",
+    )
+    p.add_argument(
+        "--repeticiones",
+        type=int,
+        default=1,
+        help="veces que se mide cada caso (alternando los binarios); sale la mediana",
+    )
     p.add_argument("--csv")
     p.add_argument("--hilos", action="store_true", help="enseña cada hilo")
     p.add_argument("--midi", action="store_true", help="con --allow-midi (la espera del bucle baja a 2 ms)")
@@ -289,30 +306,46 @@ def main():
         f"{'escenario':<13} {'tamaño':>7} {'ui %':>6} {'audio %':>7} {'otros %':>7} "
         f"{'kB/s':>8} {'cuadros/s':>9}  núcleo lento ui/audio"
     )
+    bins = args.bin.split(",")
+    if len(bins) > 1:
+        header = f"{'binario':<28} " + header
     print(header)
+    share = lambda v: "-" if v is None else f"{v:.0f} %"
     try:
         for size in args.tamanos.split(","):
             cols, rows = (int(v) for v in size.split("x"))
             for scenario in args.escenarios.split(","):
-                r = measure(args, scenario, cols, rows, env)
-                rows_out.append(r)
-                share = lambda v: "-" if v is None else f"{v:.0f} %"
-                print(
-                    f"{r['escenario']:<13} {r['tamano']:>7} {r['ui']:6.1f} {r['audio']:7.1f} {r['otros']:7.1f} "
-                    f"{r['kB/s']:8.1f} {r['cuadros/s']:9.1f}  {share(r['lentos_ui'])} / {share(r['lentos_audio'])}",
-                    flush=True,
-                )
-                if args.hilos:
-                    for k, v in sorted(r["hilos"].items()):
-                        print(f"    {k:<24} {v:6.2f} %")
+                # La frecuencia que elige el gobernador cambia con lo demás
+                # del sistema: los binarios se alternan y sale la mediana.
+                runs = {b: [] for b in bins}
+                for _ in range(args.repeticiones):
+                    for b in bins:
+                        runs[b].append(measure(args, b, scenario, cols, rows, env))
+                for b in bins:
+                    rs = runs[b]
+                    med = lambda key: statistics.median(r[key] for r in rs)
+                    r = dict(rs[0])
+                    for key in ("ui", "audio", "otros", "total", "kB/s", "cuadros/s"):
+                        r[key] = med(key)
+                    r["bin"] = b
+                    rows_out.append(r)
+                    label = f"{os.path.relpath(b, ROOT):<28} " if len(bins) > 1 else ""
+                    print(
+                        f"{label}{r['escenario']:<13} {r['tamano']:>7} {r['ui']:6.1f} {r['audio']:7.1f} {r['otros']:7.1f} "
+                        f"{r['kB/s']:8.1f} {r['cuadros/s']:9.1f}  {share(r['lentos_ui'])} / {share(r['lentos_audio'])}",
+                        flush=True,
+                    )
+                    if args.hilos:
+                        for k, v in sorted(r["hilos"].items()):
+                            print(f"    {k:<24} {v:6.2f} %")
     finally:
         shutil.rmtree(home, ignore_errors=True)
     if args.csv:
         with open(args.csv, "w") as f:
-            f.write("escenario,tamano,midi,ui,audio,otros,kBps,cuadros\n")
+            f.write("binario,escenario,tamano,midi,ui,audio,otros,kBps,cuadros\n")
             for r in rows_out:
                 f.write(
-                    f"{r['escenario']},{r['tamano']},{int(args.midi)},{r['ui']:.2f},{r['audio']:.2f},{r['otros']:.2f},{r['kB/s']:.2f},{r['cuadros/s']:.2f}\n"
+                    f"{r['bin']},{r['escenario']},{r['tamano']},{int(args.midi)},{r['ui']:.2f},{r['audio']:.2f},{r['otros']:.2f},{r['kB/s']:.2f},{r['cuadros/s']:.2f}\n"
                 )
 
 
