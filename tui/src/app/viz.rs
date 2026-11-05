@@ -7,6 +7,7 @@ use crate::roll;
 use crate::viz::{Placed, VizKind, VizSource, VizSpec, VizView, grid};
 
 use super::App;
+use crate::focus::Panel;
 
 /// Bandas del espectro del master de su panel.
 const MASTER_BANDS: usize = 32;
@@ -178,19 +179,30 @@ impl App {
         }
     }
 
-    /// Las fuentes que pide la interfaz por su cuenta: el master, para el
-    /// scope y el espectro de sus paneles (no en la ventana del editor,
-    /// que no tiene motor).
+    /// Las fuentes que pide la interfaz por su cuenta: el master, mientras
+    /// se ve el scope o el espectro de sus paneles (en el último cuadro;
+    /// nunca en la ventana del editor, que no tiene motor).
     fn ui_viz(&self) -> [bool; engine::VIZ_SOURCES] {
         let mut on = [false; engine::VIZ_SOURCES];
-        on[engine::VIZ_MASTER] = !self.editor_window();
+        on[engine::VIZ_MASTER] = self.master_shown();
         on
+    }
+
+    /// Si en el último cuadro se vio el scope o el espectro del master.
+    fn master_shown(&self) -> bool {
+        !self.editor_window()
+            && self
+                .panels
+                .focus
+                .iter()
+                .any(|(_, p)| matches!(p, Panel::Scope | Panel::Spectrum))
     }
 
     /// Enciende en el motor lo que piden el script y la interfaz juntos, si
     /// no es lo que ya tiene (tras cada carga, el lote del script deja solo
     /// lo suyo). Entra al compás, como cualquier lote; no cambia el audio:
-    /// el motor solo copia a sus colas.
+    /// el motor solo copia a sus colas. Lo de una fuente que se apaga se
+    /// olvida: al volver, no sale lo de antes.
     pub(super) fn sync_ui_viz(&mut self) {
         let script = self.viz_flags(&self.viz);
         let ui = self.ui_viz();
@@ -201,6 +213,18 @@ impl App {
         let mut batch = engine::Batch::new();
         batch.set_viz(wanted);
         if self.controller.apply(batch).is_ok() {
+            let sources = self
+                .viz_history
+                .iter_mut()
+                .zip(self.viz_sent.iter().zip(wanted));
+            for (history, (&was, now)) in sources {
+                if was && !now {
+                    history.clear();
+                }
+            }
+            if !wanted[engine::VIZ_MASTER] {
+                self.master_spectrum.clear();
+            }
             self.viz_sent = wanted;
         }
     }
@@ -250,7 +274,8 @@ impl App {
     }
 
     /// Vacía las colas del motor de las fuentes encendidas en su historial
-    /// (en cada `tick`).
+    /// (en cada `tick`: es poco, y así las colas nunca se llenan). Los
+    /// espectros se calculan al dibujar ([`App::frame_viz`]).
     pub(super) fn tick_viz(&mut self) {
         let mut fresh = std::mem::take(&mut self.viz_scratch);
         for source in 0..engine::VIZ_SOURCES {
@@ -265,17 +290,23 @@ impl App {
             history.drain(..extra);
         }
         self.viz_scratch = fresh;
-        // El del master de su panel.
-        if self.viz_sent[engine::VIZ_MASTER] {
+    }
+
+    /// Los espectros, una vez por cuadro dibujado (con su caída, que es por
+    /// cuadro): el del master si se ve su panel y los del script. Una FFT
+    /// por espectro y cuadro, aunque el bucle dé más vueltas (con MIDI
+    /// mira la entrada cada 2 ms).
+    pub fn frame_viz(&mut self) {
+        let rate = self.sample_rate;
+        let mut tail = std::mem::take(&mut self.viz_tail);
+        if self.viz_sent[engine::VIZ_MASTER] && self.master_shown() {
             let history = &self.viz_history[engine::VIZ_MASTER];
             if !history.is_empty() {
-                let (a, b) = history.as_slices();
-                let samples: Vec<f32> = a.iter().chain(b).copied().collect();
-                let fresh = crate::viz::spectrum::analyze(&samples, self.sample_rate, MASTER_BANDS);
+                last_samples(history, &mut tail);
+                let fresh = crate::viz::spectrum::analyze(&tail, rate, MASTER_BANDS);
                 crate::viz::spectrum::fall(&mut self.master_spectrum, &fresh);
             }
         }
-        // Los espectros, con su caída (un cuadro por `tick`).
         self.viz_spectra.resize(self.viz.len(), Vec::new());
         for i in 0..self.viz.len() {
             let spec = &self.viz[i];
@@ -285,11 +316,11 @@ impl App {
             let Some(history) = self.viz_history(&spec.source) else {
                 continue;
             };
-            let (a, b) = history.as_slices();
-            let samples: Vec<f32> = a.iter().chain(b).copied().collect();
-            let fresh = crate::viz::spectrum::analyze(&samples, self.sample_rate, spec.bands);
+            last_samples(history, &mut tail);
+            let fresh = crate::viz::spectrum::analyze(&tail, rate, spec.bands);
             crate::viz::spectrum::fall(&mut self.viz_spectra[i], &fresh);
         }
+        self.viz_tail = tail;
     }
 
     /// La columna del ciclo de `def` que se oye (como el cursor del piano
@@ -307,4 +338,12 @@ impl App {
         let laps = def.bars.len().max(1) as u64;
         Some(((lap % laps) as usize * def.length.max(1) + step) % cycle as usize)
     }
+}
+
+/// Las últimas [`crate::viz::spectrum::SIZE`] muestras de `history` (las
+/// que mira la FFT) en `out`, sin copiar el resto.
+fn last_samples(history: &std::collections::VecDeque<f32>, out: &mut Vec<f32>) {
+    out.clear();
+    let from = history.len().saturating_sub(crate::viz::spectrum::SIZE);
+    out.extend(history.range(from..).copied());
 }

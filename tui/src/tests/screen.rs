@@ -147,7 +147,9 @@ fn the_master_scope_and_spectrum_need_nothing_in_the_script() {
     let (_, mut app, mut engine) = open("screen_master_viz", Some(SONG));
     assert!(app.view().viz.is_empty(), "el script no pide ninguna");
     assert!(app.view().master_views.is_empty());
-    // La interfaz enciende la cola del master: entra al compás.
+    // Al verse sus paneles, la interfaz enciende la cola del master: entra
+    // al compás.
+    draw(&mut app, 180, 50);
     play(&mut app, &mut engine, 20);
     let views = app.view().master_views;
     assert_eq!(views.len(), 2, "scope y espectro");
@@ -171,6 +173,7 @@ fn the_master_scope_and_spectrum_need_nothing_in_the_script() {
 #[test]
 fn a_reload_keeps_the_master_for_its_panels() {
     let (_, mut app, mut engine) = open("screen_master_reload", Some(SONG));
+    draw(&mut app, 180, 50);
     play(&mut app, &mut engine, 20);
     // Otra carga con una visualización de pista: el lote del script solo
     // trae la suya; la interfaz vuelve a pedir la del master.
@@ -185,6 +188,30 @@ fn a_reload_keeps_the_master_for_its_panels() {
     let after = app.view().master_views;
     assert_eq!(after.len(), 2);
     assert!(before != after, "el scope del master sigue moviéndose");
+}
+
+#[test]
+fn the_master_is_only_copied_while_its_panels_are_seen() {
+    let (_, mut app, mut engine) = open("screen_master_hidden", Some(SONG));
+    // Sin dibujar (o sin su panel a la vista), el motor no copia el master.
+    play(&mut app, &mut engine, 20);
+    assert!(app.view().master_views.is_empty());
+    // En el tamaño mediano, el scope y el espectro son pestañas: con otra
+    // elegida no se ven.
+    app.show_tab(crate::layout::Tab::Panel(crate::focus::Panel::Mixer));
+    draw(&mut app, 120, 40);
+    play(&mut app, &mut engine, 20);
+    assert!(app.view().master_views.is_empty());
+    // Con la del espectro, sí.
+    app.show_tab(crate::layout::Tab::Panel(crate::focus::Panel::Spectrum));
+    draw(&mut app, 120, 40);
+    play(&mut app, &mut engine, 20);
+    assert_eq!(app.view().master_views.len(), 2);
+    // Al dejar de verse se apaga y se olvida lo que había.
+    app.show_tab(crate::layout::Tab::Panel(crate::focus::Panel::Mixer));
+    draw(&mut app, 120, 40);
+    play(&mut app, &mut engine, 1);
+    assert!(app.view().master_views.is_empty());
 }
 
 #[test]

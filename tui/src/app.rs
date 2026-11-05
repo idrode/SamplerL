@@ -305,6 +305,9 @@ pub struct App {
     /// vaciar las colas sin reservar en cada `tick`.
     viz_history: [std::collections::VecDeque<f32>; engine::VIZ_SOURCES],
     viz_scratch: Vec<f32>,
+    /// Lo último de una fuente, para su espectro (sin reservar en cada
+    /// cuadro).
+    viz_tail: Vec<f32>,
     /// Lo que enseña cada `spectrum` (con su caída), por su índice.
     viz_spectra: Vec<Vec<f32>>,
     /// El espectro del master de su panel (con su caída).
@@ -512,6 +515,7 @@ impl App {
             viz_sent: [false; engine::VIZ_SOURCES],
             viz_history: std::array::from_fn(|_| std::collections::VecDeque::new()),
             viz_scratch: Vec::new(),
+            viz_tail: Vec::new(),
             viz_spectra: Vec::new(),
             master_spectrum: Vec::new(),
             refresh_hz: crate::config::DEFAULT_REFRESH,

@@ -149,6 +149,8 @@ fn spectrum_peaks_where_the_tone_is_and_draws_bars() {
         ..spec(VizKind::Spectrum, VizSource::Master, 5)
     }]);
     play(&mut app, &mut engine, 20);
+    // El espectro se calcula al dibujar el cuadro.
+    app.frame_viz();
     let VizView::Spectrum(spectrum) = &app.view().viz[0].view else {
         panic!("spectrum")
     };
@@ -387,4 +389,23 @@ fn pantalla_viz_inline() {
     let mut app = App::open(&path, controller, RATE).unwrap();
     play(&mut app, &mut engine, 20);
     println!("{}", text(&draw(&mut app, 140, 30)));
+}
+
+#[test]
+fn the_master_spectrum_moves_once_per_frame_not_per_tick() {
+    let (mut app, mut engine) = open_tone("viz_master_frames");
+    draw(&mut app, 180, 50);
+    play(&mut app, &mut engine, 20);
+    draw(&mut app, 180, 50);
+    let levels = |app: &App| match &app.view().master_views[1] {
+        crate::viz::VizView::Spectrum(s) => s.levels.clone(),
+        other => panic!("espectro: {other:?}"),
+    };
+    let before = levels(&app);
+    assert!(!before.is_empty());
+    // Muchas vueltas del bucle sin dibujar: el espectro no se recalcula.
+    play(&mut app, &mut engine, 4);
+    assert_eq!(levels(&app), before);
+    draw(&mut app, 180, 50);
+    assert_ne!(levels(&app), before);
 }

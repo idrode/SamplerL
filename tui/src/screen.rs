@@ -87,6 +87,7 @@ pub fn grid_of(view: &ViewModel, screen: Rect) -> layout::Grid {
 
 /// Dibuja la ventana principal.
 pub fn draw(frame: &mut Frame, app: &mut App) {
+    app.frame_viz();
     let view = app.view();
     let screen = frame.area();
     let grid = grid_of(&view, screen);
