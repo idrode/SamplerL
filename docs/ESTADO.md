@@ -2857,11 +2857,95 @@ Cuatro cambios, todos en el hilo de la interfaz (sin tocar el motor):
 - Sigue pendiente: la caída de los medidores es por `tick`, no por
   cuadro, así que con MIDI bajan más deprisa.
 
-### Sin probar en el portátil ARM64
+### En ARM64 (Asahi)
 
-Medido solo en x86_64: falta repetir la tabla en el Asahi (con y sin
-`--allow-midi`, el ratón quieto y moviéndose, parado y sonando) y
-comprobar que el binario es el de `target/release`.
+Medido en un MacBook Pro M2 (13 pulgadas, 2022) con Asahi Linux (Arch
+Linux ARM, núcleo 7.2), release, sin `--allow-audio` (salida nula). El
+emulador de la sesión es kitty 0.49, pero la medición no pasa por él:
+`scripts/medir-consumo.py` arranca la interfaz en un pseudoterminal de
+tamaño fijo, cuenta lo que escribe (lo que kitty tendría que pintar) y
+lee la CPU de cada hilo de `/proc` durante 10 s por escenario. La
+canción es `scripts/consumo/cancion.lua` (el break sintético y un bajo
+`sh101`); «visual», `scripts/consumo/visual.lua` (además, scope y
+espectro por pista). Al cargar, la canción ya suena: «parado» es tras
+Ctrl-Espacio. El ratón, 60 movimientos por segundo sin botón.
+
+**Cómo leer los %**: es tiempo de un núcleo, y en el M2 depende mucho
+de dónde y a qué frecuencia corre. Con poca carga, el planificador deja
+los dos hilos en los núcleos de eficiencia (el 98-100 % del tiempo, ver
+la última columna) y schedutil los baja hacia 600 MHz: el mismo trabajo
+cuenta unas cuatro o cinco veces más que en un núcleo de rendimiento a
+3,2 GHz. Por eso el hilo de audio marca ~7 % sonando cuando el mismo
+render offline, a toda máquina, gasta ~1 % (90 s de audio en 0,9 s), y
+por eso las cifras no se comparan tal cual con las de x86_64. Para
+comparar trabajo, el banco `tests::consumo` (abajo) y el tiempo del
+render offline.
+
+**Antes** (HEAD `e8a50c8`; ui, el hilo principal; audio, el de la
+salida nula; ningún otro hilo pasa del 0,1 %):
+
+| Escenario | Tamaño | ui | audio | kB/s a la terminal | cuadros/s |
+|---|---|---|---|---|---|
+| parado | 80×24 | 0,3 % | 0,4 % | 0,1 | 1,9 |
+| sonando | 80×24 | 3,0 % | 7,0 % | 6,3 | 28,4 |
+| visual | 80×24 | 4,7 % | 7,0 % | 16,1 | 27,9 |
+| sonando, ratón | 80×24 | 3,3 % | 6,9 % | 6,3 | 28,6 |
+| parado, ratón | 80×24 | 0,5 % | 0,3 % | 0,1 | 2,0 |
+| parado | 120×40 | 0,7 % | 0,4 % | 0,4 | 2,7 |
+| sonando | 120×40 | 6,2 % | 7,0 % | 18,5 | 27,5 |
+| visual | 120×40 | 7,9 % | 7,2 % | 27,7 | 27,0 |
+| sonando, ratón | 120×40 | 6,2 % | 6,9 % | 18,3 | 27,6 |
+| parado, ratón | 120×40 | 0,7 % | 0,4 % | 0,2 | 2,0 |
+| parado | 240×70 | 1,2 % | 0,4 % | 0,4 | 2,8 |
+| sonando | 240×70 | 10,1 % | 6,7 % | 37,2 | 27,1 |
+| visual | 240×70 | 14,5 % | 7,1 % | 82,9 | 25,6 |
+| sonando, ratón | 240×70 | 10,6 % | 7,0 % | 37,3 | 26,6 |
+| parado, ratón | 240×70 | 1,0 % | 0,3 % | 0,2 | 1,9 |
+| `--allow-midi`, parado | 80×24 | 0,7 % | 0,4 % | 0,1 | 2,0 |
+| `--allow-midi`, sonando | 80×24 | 3,3 % | 7,2 % | 6,4 | 28,7 |
+| `--allow-midi`, sonando, ratón | 80×24 | 3,3 % | 7,1 % | 6,4 | 28,8 |
+| `--allow-midi`, parado | 240×70 | 1,6 % | 0,3 % | 0,2 | 2,9 |
+| `--allow-midi`, sonando | 240×70 | 10,8 % | 7,1 % | 37,6 | 26,6 |
+| `--allow-midi`, sonando, ratón | 240×70 | 10,7 % | 7,1 % | 37,9 | 26,5 |
+
+Lo que ya hacía bien la optimización de x86_64: parado no se redibuja
+(2-3 cuadros por segundo, el de seguridad y poco más), el ratón que
+solo se mueve no cuesta nada y el MIDI no dispara la interfaz. Lo que
+cuesta es sonar: ~27 cuadros por segundo, y el hilo de la interfaz
+crece con el área (de 3 % a 80×24 a 10 % a 240×70).
+
+**Banco del cuadro** (`cargo test --release -p tui consumo -- --ignored
+--nocapture`, `tui/src/tests/consumo.rs`): el bucle de `run_terminal`
+sin terminal (el motor offline al ritmo de los cuadros, `tick` y
+`Terminal::draw` con el backend de crossterm sobre un sumidero que
+cuenta bytes), en un núcleo de rendimiento. µs por cuadro, antes:
+
+| Canción | Estado | Tamaño | widgets | diff y escritura | total | bytes por cuadro |
+|---|---|---|---|---|---|---|
+| cancion | parado | 80×24 | 74 | 23 | 97 | 25 |
+| cancion | sonando | 80×24 | 75 | 22 | 98 | 216 |
+| cancion | sonando | 120×40 | 180 | 54 | 236 | 631 |
+| cancion | sonando | 200×50 | 229 | 103 | 333 | 1185 |
+| cancion | parado | 240×70 | 215 | 152 | 367 | 25 |
+| cancion | sonando | 240×70 | 288 | 163 | 452 | 1383 |
+| visual | sonando | 80×24 | 162 | 25 | 189 | 584 |
+| visual | sonando | 240×70 | 545 | 190 | 739 | 3342 |
+
+El reparto de los widgets a 240×70 sonando (medido aparte con un
+cronómetro por panel, sin dejarlo en el código): `App::view` 56, el
+editor 52, el tracker 37, la onda 25, los efectos 23, el espectro del
+master (`frame_viz`) 21 y lo demás (cabecera, regla, pestañas, teclas)
+~75. Ningún panel se lleva la mayor parte: es dibujar todas las celdas
+en cada cuadro. Con `CONSUMO_DIFF=1` el banco cuenta las celdas que
+cambian: a 240×70 sonando, ~290 por cuadro (tracker 122, espectro 69,
+scope 64, onda 18, mezclador 14), a unos 5 bytes por celda; casi todo es
+movimiento de verdad, no repintado de más.
+
+**El audio** (render offline de 128 compases, 180 s, en un núcleo de
+rendimiento): el break solo, 0,26 s; el `sh101` solo, 1,61 s (con
+`quality = 1`, 1,02 s). La voz analógica es casi todo el hilo de audio
+de esta canción: ~190 ns por frame, con el oscilador, el sub y el filtro
+al doble y el diezmado.
 
 ## Explorador y editor abajo
 
