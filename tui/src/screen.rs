@@ -34,6 +34,8 @@ pub fn needs(view: &ViewModel) -> Needs {
         explorer: view.files.0,
         explorer_overlay: view.files.1,
         explorer_width: view.files.2,
+        editor_place: view.editor_layout.0,
+        editor_rows: view.editor_layout.1,
         ..Needs::default()
     }
 }

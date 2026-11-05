@@ -392,6 +392,13 @@ pub struct App {
     preview_cache: HashMap<PathBuf, Arc<Sample>>,
     /// El explorador de archivos (ver `files`).
     files: files::Explorer,
+    /// El editor: dónde va, su alto acoplado (0: un tercio), a dónde vuelve
+    /// al dejar de estar maximizado y el borde que se arrastra (ver
+    /// `dock`).
+    editor_place: crate::layout::EditorPlace,
+    editor_rows: u16,
+    editor_restore: crate::layout::EditorPlace,
+    edge_drag: Option<dock::EdgeDrag>,
     /// Cursor del tracker para editar los efectos de los pasos, y el paso
     /// que se edita en la línea de órdenes (ver `tracker_edit`).
     tracker_edit: Option<tracker_edit::TrackerCursor>,
@@ -568,6 +575,10 @@ impl App {
             browser: None,
             preview_cache: HashMap::new(),
             files: Default::default(),
+            editor_place: Default::default(),
+            editor_rows: 0,
+            editor_restore: Default::default(),
+            edge_drag: None,
             tracker_edit: None,
             chosen_focus: None,
             menu: None,
@@ -678,6 +689,7 @@ impl App {
         self.refresh_hz = config.interface.refresh;
         self.files.shown = config.interface.explorer;
         self.files.width = config.interface.explorer_width;
+        self.editor_rows = config.interface.editor_rows;
         self.editor_terminal = config.editor_terminal.clone();
         self.devices_terminal = config.devices_terminal.clone();
         self.mouse_enabled = config.editor.mouse;
@@ -3537,6 +3549,11 @@ impl App {
             Action::RollBack => self.reclaim_roll_window(),
             Action::Focus(panel) => self.set_focus(panel),
             Action::ToggleExplorer => self.toggle_explorer(),
+            Action::EditorTaller => self.resize_editor(1),
+            Action::EditorShorter => self.resize_editor(-1),
+            Action::Wider => self.widen(true),
+            Action::Narrower => self.widen(false),
+            Action::MaximizeEditor => self.toggle_maximized(),
             Action::OpenMenu => self.toggle_menu(),
             Action::TerminalInfo => self.terminal_info(),
             Action::Quit => {
@@ -4668,6 +4685,7 @@ impl App {
             menu: self.menu_view(),
             master_viz: !self.editor_window(),
             files: self.files_needs(),
+            editor_layout: self.editor_layout(),
             master_views: self.master_views(),
             palette: self.palette.as_ref().map(|p| {
                 let matches = self.palette_matches();

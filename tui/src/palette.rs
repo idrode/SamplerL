@@ -101,6 +101,11 @@ pub enum Action {
     /// Lleva el foco a un panel (Alt-0…9).
     Focus(crate::focus::Panel),
     ToggleExplorer,
+    EditorTaller,
+    EditorShorter,
+    Wider,
+    Narrower,
+    MaximizeEditor,
     OpenMenu,
     TerminalInfo,
     Quit,
@@ -717,6 +722,36 @@ pub const ACTIONS: &[ActionDef] = &[
         name: "Explorador de archivos",
         description: "Muestra o esconde el árbol de la carpeta del proyecto a la izquierda; en una terminal estrecha, lo abre encima",
         keys: "Alt-E",
+    },
+    ActionDef {
+        action: Action::EditorTaller,
+        name: "Editor más alto",
+        description: "Una fila más para el editor de abajo (o el flotante); el sonido se aprieta. También arrastrando su borde de arriba",
+        keys: "Ctrl-Alt-↑",
+    },
+    ActionDef {
+        action: Action::EditorShorter,
+        name: "Editor más bajo",
+        description: "Una fila menos para el editor de abajo (o el flotante)",
+        keys: "Ctrl-Alt-↓",
+    },
+    ActionDef {
+        action: Action::Wider,
+        name: "Más ancho",
+        description: "El editor flotante, si flota; si no, el explorador de archivos: dos columnas más",
+        keys: "Ctrl-Alt-→",
+    },
+    ActionDef {
+        action: Action::Narrower,
+        name: "Menos ancho",
+        description: "El editor flotante, si flota; si no, el explorador de archivos: dos columnas menos",
+        keys: "Ctrl-Alt-←",
+    },
+    ActionDef {
+        action: Action::MaximizeEditor,
+        name: "Maximizar el editor",
+        description: "El editor ocupa todo el centro (los paneles del sonido no se ven; el audio sigue); otra vez lo devuelve a su sitio",
+        keys: "Alt-Z",
     },
     ActionDef {
         action: Action::OpenMenu,

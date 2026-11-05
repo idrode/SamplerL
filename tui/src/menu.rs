@@ -80,7 +80,8 @@ pub fn menu_of(action: Action) -> Option<Menu> {
         | JumpSection | LoopSection | FollowTimeline | ToggleVariant | Panic | PanicPause
         | PlayMode => Menu::Transport,
         SidechainView | LanesView | Occupancy | PianoRoll | Highlight | ResetMeters
-        | AnalyzeMasking | Focus(_) | ToggleExplorer => Menu::View,
+        | AnalyzeMasking | Focus(_) | ToggleExplorer | EditorTaller | EditorShorter | Wider
+        | Narrower | MaximizeEditor => Menu::View,
         EditorWindow | EditorBack | RollWindow | RollBack | Devices | RefreshDevices
         | DevicesWindow | DevicesBack => Menu::Windows,
         TerminalInfo => Menu::Help,

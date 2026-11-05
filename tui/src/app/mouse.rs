@@ -84,8 +84,11 @@ impl App {
         if self.menu_mouse(action, column, row) {
             return;
         }
-        // El explorador de archivos (y el arrastre de su borde).
-        if self.nothing_on_top() && self.files_mouse(action, column, row) {
+        // Los bordes que se arrastran (el del editor) y el explorador de
+        // archivos (y el arrastre de su borde).
+        if self.nothing_on_top()
+            && (self.dock_mouse(action, column, row) || self.files_mouse(action, column, row))
+        {
             return;
         }
         // Las pestañas del dock, y el foco al panel que se pulsa.

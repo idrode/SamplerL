@@ -30,6 +30,8 @@ pub struct ViewModel {
     /// El explorador de archivos: si se quiere ver, si va encima, su
     /// ancho y la vista previa del sample (con el foco en él).
     pub files: (bool, bool, u16, Option<crate::files_panel::Preview>),
+    /// Dónde va el editor y su alto acoplado.
+    pub editor_layout: (crate::layout::EditorPlace, u16),
     /// El menú abierto.
     pub menu: Option<crate::menu::MenuView>,
     /// Scope y espectro del master en su panel, y lo que dibujan (el

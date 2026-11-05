@@ -2532,6 +2532,7 @@ mod clipboard;
 mod config;
 mod devices;
 mod devices_panel;
+mod dock;
 mod files;
 mod focus;
 mod formant;

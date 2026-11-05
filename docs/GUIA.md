@@ -1002,6 +1002,11 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Foco: ocupación | Lleva el foco a la vista de ocupación con su cursor; Esc vuelve | Alt-9 |
 | Foco: archivos | Lleva el foco a el explorador de archivos (si no se veía, aparece); Esc vuelve | Alt-0 |
 | Explorador de archivos | Muestra o esconde el árbol de la carpeta del proyecto a la izquierda; en una terminal estrecha, lo abre encima | Alt-E |
+| Editor más alto | Una fila más para el editor de abajo (o el flotante); el sonido se aprieta. También arrastrando su borde de arriba | Ctrl-Alt-↑ |
+| Editor más bajo | Una fila menos para el editor de abajo (o el flotante) | Ctrl-Alt-↓ |
+| Más ancho | El editor flotante, si flota; si no, el explorador de archivos: dos columnas más | Ctrl-Alt-→ |
+| Menos ancho | El editor flotante, si flota; si no, el explorador de archivos: dos columnas menos | Ctrl-Alt-← |
+| Maximizar el editor | El editor ocupa todo el centro (los paneles del sonido no se ven; el audio sigue); otra vez lo devuelve a su sitio | Alt-Z |
 | Menús | Abre la barra de menús: ←→ menú, ↑↓ entrada, Enter ejecuta, la letra subrayada abre su menú | F10 |
 | Qué sabe hacer esta terminal | Dice si hay truecolor, Unicode, teclas al soltar y ratón, y dónde está la configuración | — |
 | Salir | Sale (pide confirmación si hay cambios sin guardar) | Ctrl-Q |
@@ -1400,6 +1405,11 @@ paleta de 256.
 | `foco_ocupacion` | Foco: ocupación | `alt-9` |
 | `foco_archivos` | Foco: archivos | `alt-0` |
 | `explorador_archivos` | Explorador de archivos | `alt-e` |
+| `editor_mas_alto` | Editor más alto | `ctrl-alt-up` |
+| `editor_menos_alto` | Editor más bajo | `ctrl-alt-down` |
+| `mas_ancho` | Más ancho | `ctrl-alt-right` |
+| `menos_ancho` | Menos ancho | `ctrl-alt-left` |
+| `maximizar_editor` | Maximizar el editor | `alt-z` |
 | `modo_tocar` | Modo tocar | `esc` |
 | `deshacer` | Deshacer | `ctrl-z`, `ctrl-u` |
 | `rehacer` | Rehacer | `ctrl-r` |
@@ -1498,7 +1508,8 @@ paleta de 256.
 | `ascii` | dibujar las visualizaciones (y lo que tenga alternativa) solo con ASCII, sin Braille ni bloques, para una terminal que no los pinta | según `LANG`: sin UTF-8, `true` |
 | `refresco` | cuadros por segundo de la interfaz (de 5 a 120): más, las visualizaciones van más suaves y gastan más; la entrada y el ratón no esperan al dibujo, y parado y en silencio no se vuelve a dibujar lo que no cambia | `30` |
 | `explorador` | el explorador de archivos a la izquierda (en una terminal de menos de 100 columnas se esconde solo y Alt-E lo abre encima); se guarda al cambiarlo con Alt-E | `true` |
-| `ancho_explorador` | columnas del explorador (de 10 a 200; nunca más de dos quintos del ancho); `0`, las de siempre (26). Se guarda al arrastrar su borde o al cambiarlo con `<`/`>` | `0` |
+| `ancho_explorador` | columnas del explorador (de 10 a 200; nunca más de dos quintos del ancho); `0`, las de siempre (26). Se guarda al arrastrar su borde o al cambiarlo con `<`/`>` o Ctrl-Alt-←→ | `0` |
+| `alto_editor` | filas del editor abajo (de 4 a 200; siempre deja al menos 6 al sonido); `0`, un tercio del alto. Se guarda al arrastrar su borde de arriba o al cambiarlo con Ctrl-Alt-↑↓ | `0` |
 
 | En `[dispositivos]` | Para | Por defecto |
 | --- | --- | --- |

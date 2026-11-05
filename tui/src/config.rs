@@ -125,6 +125,31 @@ pub const BINDABLE: &[(&str, Bound, &[&str])] = &[
         Bound::Action(Action::ToggleExplorer),
         &["alt-e"],
     ),
+    (
+        "editor_mas_alto",
+        Bound::Action(Action::EditorTaller),
+        &["ctrl-alt-up"],
+    ),
+    (
+        "editor_menos_alto",
+        Bound::Action(Action::EditorShorter),
+        &["ctrl-alt-down"],
+    ),
+    (
+        "mas_ancho",
+        Bound::Action(Action::Wider),
+        &["ctrl-alt-right"],
+    ),
+    (
+        "menos_ancho",
+        Bound::Action(Action::Narrower),
+        &["ctrl-alt-left"],
+    ),
+    (
+        "maximizar_editor",
+        Bound::Action(Action::MaximizeEditor),
+        &["alt-z"],
+    ),
     ("modo_tocar", Bound::Action(Action::PlayMode), &["esc"]),
     (
         "deshacer",
@@ -309,6 +334,8 @@ pub struct InterfaceConfig {
     /// (`ancho_explorador`; 0, el de siempre).
     pub explorer: bool,
     pub explorer_width: u16,
+    /// Filas del editor abajo (`alto_editor`; 0, un tercio).
+    pub editor_rows: u16,
 }
 
 impl Default for InterfaceConfig {
@@ -318,9 +345,13 @@ impl Default for InterfaceConfig {
             refresh: DEFAULT_REFRESH,
             explorer: true,
             explorer_width: 0,
+            editor_rows: 0,
         }
     }
 }
+
+/// Las filas que se aceptan en `[interfaz] alto_editor`.
+pub const EDITOR_ROWS: std::ops::RangeInclusive<u16> = 4..=200;
 
 /// Los anchos que se aceptan en `[interfaz] ancho_explorador`.
 pub const EXPLORER_WIDTHS: std::ops::RangeInclusive<u16> = 10..=200;
@@ -350,7 +381,13 @@ impl InterfaceConfig {
 }
 
 /// Los nombres de las claves de `[interfaz]` (para el aviso).
-const INTERFACE_NAMES: &[&str] = &["ascii", "refresco", "explorador", "ancho_explorador"];
+const INTERFACE_NAMES: &[&str] = &[
+    "ascii",
+    "refresco",
+    "explorador",
+    "ancho_explorador",
+    "alto_editor",
+];
 
 /// Claves de `[interfaz]` (para la guía).
 #[cfg(test)]
@@ -372,7 +409,12 @@ const INTERFACE_KEYS: &[(&str, &str, &str)] = &[
     ),
     (
         "ancho_explorador",
-        "columnas del explorador (de 10 a 200; nunca más de dos quintos del ancho); `0`, las de siempre (26). Se guarda al arrastrar su borde o al cambiarlo con `<`/`>`",
+        "columnas del explorador (de 10 a 200; nunca más de dos quintos del ancho); `0`, las de siempre (26). Se guarda al arrastrar su borde o al cambiarlo con `<`/`>` o Ctrl-Alt-←→",
+        "`0`",
+    ),
+    (
+        "alto_editor",
+        "filas del editor abajo (de 4 a 200; siempre deja al menos 6 al sonido); `0`, un tercio del alto. Se guarda al arrastrar su borde de arriba o al cambiarlo con Ctrl-Alt-↑↓",
         "`0`",
     ),
 ];
@@ -454,10 +496,11 @@ pub struct KeyCombo {
 }
 
 impl KeyCombo {
-    /// Lee `ctrl-s`, `alt-x`, `shift-ctrl-space`: modificadores `ctrl-`,
-    /// `alt-` y `shift-` y una letra, un número, `space`, `f1`-`f12` o
-    /// `esc`. Sin `ctrl-` ni `alt-` solo valen las F y Esc (una letra o
-    /// un espacio solos escribirían texto).
+    /// Lee `ctrl-s`, `alt-x`, `shift-ctrl-space`, `ctrl-alt-up`:
+    /// modificadores `ctrl-`, `alt-` y `shift-` y una letra, un número,
+    /// `space`, `f1`-`f12`, `esc` o una flecha (`up`, `down`, `left`,
+    /// `right`). Sin `ctrl-` ni `alt-` solo valen las F y Esc (una letra o
+    /// un espacio solos escribirían texto, y las flechas son del panel).
     pub fn parse(text: &str) -> Result<KeyCombo, String> {
         let lower = text.trim().to_lowercase();
         let (mut ctrl, mut alt, mut shift) = (false, false, false);
@@ -475,6 +518,26 @@ impl KeyCombo {
             } else {
                 break;
             }
+        }
+        let arrow = match rest {
+            "up" | "arriba" => Some(Key::Up),
+            "down" | "abajo" => Some(Key::Down),
+            "left" | "izquierda" => Some(Key::Left),
+            "right" | "derecha" => Some(Key::Right),
+            _ => None,
+        };
+        if let Some(key) = arrow {
+            if !ctrl && !alt {
+                return Err(format!(
+                    "«{text}»: una flecha sin ctrl- ni alt- es del panel que tiene el foco"
+                ));
+            }
+            return Ok(KeyCombo {
+                key,
+                ctrl,
+                alt,
+                shift,
+            });
         }
         let key = match rest {
             "esc" => Key::Esc,
@@ -542,6 +605,10 @@ impl KeyCombo {
             Key::Char(c) => out.push(c.to_ascii_uppercase()),
             Key::F(n) => out.push_str(&format!("F{n}")),
             Key::Esc => out.push_str("Esc"),
+            Key::Up => out.push('↑'),
+            Key::Down => out.push('↓'),
+            Key::Left => out.push('←'),
+            Key::Right => out.push('→'),
             _ => out.push('?'),
         }
         out
@@ -1027,6 +1094,17 @@ impl Config {
                                     "[interfaz] ancho_explorador: 0 o columnas, de {} a {}",
                                     EXPLORER_WIDTHS.start(),
                                     EXPLORER_WIDTHS.end()
+                                )),
+                            },
+                            "alto_editor" => match value.as_integer() {
+                                Some(0) => config.interface.editor_rows = 0,
+                                Some(n) if n > 0 && EDITOR_ROWS.contains(&(n as u16)) => {
+                                    config.interface.editor_rows = n as u16
+                                }
+                                _ => config.warnings.push(format!(
+                                    "[interfaz] alto_editor: 0 o filas, de {} a {}",
+                                    EDITOR_ROWS.start(),
+                                    EDITOR_ROWS.end()
                                 )),
                             },
                             _ => config.warnings.push(format!(
@@ -1908,7 +1986,15 @@ brillo = "red"
             [
                 "[teclas] cargar: F1 es siempre la paleta de comandos",
                 "[teclas] explorador: Alt-S ya es de guardar; no se usa",
-                "[teclas] «inventada» no existe (hay: paleta, guardar, cargar, marcha, cue, ir_al_error, ir_a_linea, buscar, buscar_siguiente, buscar_anterior, siguiente_pista, recargar, ordenes, completar, salir, menu, foco_codigo, foco_sample, foco_tracker, foco_mezcla, foco_efectos, foco_lanes, foco_scope, foco_espectro, foco_ocupacion, foco_archivos, explorador_archivos, modo_tocar, deshacer, rehacer, explorador, tap_tempo, macros, metronomo, exportar, seccion_siguiente, seccion_anterior, repetir_seccion, variante, resaltado, ocupacion, piano_roll, editar_roll, panico, pausa_panico)",
+                format!(
+                    "[teclas] «inventada» no existe (hay: {})",
+                    BINDABLE
+                        .iter()
+                        .map(|(n, _, _)| *n)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+                .as_str(),
                 "[teclas] salir: «q»: una letra sin ctrl- ni alt- escribiría texto",
                 "[teclas] Ctrl-G era de ir_al_error; ahora es de marcha",
                 "[colores] tenue: color no válido",
