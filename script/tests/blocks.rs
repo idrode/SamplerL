@@ -266,7 +266,10 @@ fn refresh_rereads_only_when_a_file_changes() {
     // Cambiado en su sitio (otro tamaño): se relee.
     std::fs::write(global.join("ghost.lua"), GHOST.replace("Ghost", "Fantasma")).unwrap();
     assert!(library.refresh());
-    assert_eq!(library.blocks[0].description, "Fantasma notes en contratiempos");
+    assert_eq!(
+        library.blocks[0].description,
+        "Fantasma notes en contratiempos"
+    );
     // Uno del proyecto y el borrado del global.
     std::fs::write(project.join("dos.lua"), "-- nombre: dos\nbpm(1)\n").unwrap();
     std::fs::remove_file(global.join("ghost.lua")).unwrap();

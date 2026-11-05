@@ -1738,7 +1738,11 @@ mod tests {
         let c = Config::parse("[interfaz]\nbajo_consumo = true\n", false, "c");
         assert!(c.interface.low_power && c.warnings.is_empty());
         assert_eq!(c.interface.frame_rate(), LOW_POWER_REFRESH);
-        let c = Config::parse("[interfaz]\nbajo_consumo = true\nrefresco = 10\n", false, "c");
+        let c = Config::parse(
+            "[interfaz]\nbajo_consumo = true\nrefresco = 10\n",
+            false,
+            "c",
+        );
         assert_eq!(c.interface.frame_rate(), 10);
         assert_eq!(Config::default().interface.frame_rate(), DEFAULT_REFRESH);
         let c = Config::parse("[interfaz]\nbajo_consumo = 1\n", false, "c");

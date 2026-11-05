@@ -452,5 +452,9 @@ fn low_power_redraws_the_visualizations_every_other_frame_without_braille() {
     app.set_config(&crate::config::Config::parse("", true, "c"));
     assert_eq!(app.frame_interval().as_millis(), 1000 / 30);
     let screen = text(&draw(&mut app, 140, 40));
-    assert!(screen.chars().any(|c| ('\u{2801}'..='\u{28ff}').contains(&c)));
+    assert!(
+        screen
+            .chars()
+            .any(|c| ('\u{2801}'..='\u{28ff}').contains(&c))
+    );
 }

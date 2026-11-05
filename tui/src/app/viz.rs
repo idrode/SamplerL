@@ -402,8 +402,8 @@ impl App {
 /// cadena, cada término esperando al anterior).
 fn squares(samples: &[f32]) -> f32 {
     let mut lanes = [0.0f32; 8];
-    let chunks = samples.chunks_exact(8);
-    let rest: f32 = chunks.remainder().iter().map(|s| s * s).sum();
+    let (chunks, rest) = samples.as_chunks::<8>();
+    let rest: f32 = rest.iter().map(|s| s * s).sum();
     for chunk in chunks {
         for (lane, s) in lanes.iter_mut().zip(chunk) {
             *lane += s * s;

@@ -205,7 +205,10 @@ fn consumo() {
                     us(r.tick + r.widgets + r.flush) * fps as f64 / 1000.0,
                 );
                 if diff {
-                    println!("    cuadros iguales al anterior: {} de {}", r.same, r.frames);
+                    println!(
+                        "    cuadros iguales al anterior: {} de {}",
+                        r.same, r.frames
+                    );
                 }
                 let mut changed: Vec<_> = r.changed.iter().collect();
                 changed.sort_by_key(|e| std::cmp::Reverse(*e.1));
