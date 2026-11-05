@@ -234,7 +234,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         });
         draw_menu_bar(&view, bar, frame.buffer_mut());
         let area = crate::menu::dropdown_area(screen, bar, menu);
-        frame.render_widget(crate::menu::Dropdown(menu), area);
+        crate::menu::Dropdown(menu).draw(screen, area, frame.buffer_mut());
     }
     app.set_grid(grid);
     if crate::theme::ascii() {

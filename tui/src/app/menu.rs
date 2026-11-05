@@ -24,45 +24,63 @@ impl App {
         let state = self.menu?;
         Some(MenuView {
             open: state.menu,
-            items: menu::items(Menu::ALL[state.menu], &self.keys),
+            items: menu::rows(Menu::ALL[state.menu], &self.keys),
             selected: state.item,
+            sub: state.sub,
         })
     }
 
-    /// Una tecla con el menú abierto: ←→ de menú en menú, ↑↓ de entrada en
-    /// entrada, Enter ejecuta, Esc o F10 cierran; la letra de un menú lo
-    /// abre y otra letra va a la siguiente entrada que empieza por ella.
+    /// Una tecla con el menú abierto: ←→ de menú en menú (→ abre el
+    /// submenú de la fila elegida y ← lo cierra), ↑↓ de entrada en entrada,
+    /// Enter ejecuta (o abre el submenú), Esc cierra el submenú o el menú y
+    /// F10 lo cierra todo; la letra de un menú (con Alt) lo abre y otra
+    /// letra va a la siguiente entrada que empieza por ella.
     pub(super) fn handle_menu(&mut self, input: Input) -> Flow {
         let Some(mut state) = self.menu else {
             return Flow::Continue;
         };
-        let items = menu::items(Menu::ALL[state.menu], &self.keys);
-        let count = items.len().max(1);
+        let rows = menu::rows(Menu::ALL[state.menu], &self.keys);
+        let row = rows.get(state.item);
+        let has_sub = row.is_some_and(|r| !r.sub.is_empty());
+        // La lista activa: el submenú abierto o las filas.
+        let level: &[menu::MenuItem] = match (state.sub, row) {
+            (Some(_), Some(r)) if has_sub => &r.sub,
+            _ => &rows,
+        };
+        let count = level.len().max(1);
+        let at = state.sub.unwrap_or(state.item);
+        let set = |state: &mut MenuState, i: usize| match state.sub {
+            Some(_) => state.sub = Some(i),
+            None => state.item = i,
+        };
         let menus = Menu::ALL.len();
+        let other_menu = |m: usize| MenuState {
+            menu: m,
+            item: 0,
+            sub: None,
+        };
         match input.key {
-            Key::Esc | Key::F(10) => {
+            Key::F(10) => {
                 self.menu = None;
                 return Flow::Continue;
             }
-            Key::Left => {
-                state = MenuState {
-                    menu: (state.menu + menus - 1) % menus,
-                    item: 0,
-                }
+            Key::Esc if state.sub.is_some() => state.sub = None,
+            Key::Esc => {
+                self.menu = None;
+                return Flow::Continue;
             }
-            Key::Right => {
-                state = MenuState {
-                    menu: (state.menu + 1) % menus,
-                    item: 0,
-                }
-            }
-            Key::Up => state.item = (state.item + count - 1) % count,
-            Key::Down => state.item = (state.item + 1) % count,
-            Key::Home => state.item = 0,
-            Key::End => state.item = count - 1,
+            Key::Left if state.sub.is_some() => state.sub = None,
+            Key::Left => state = other_menu((state.menu + menus - 1) % menus),
+            Key::Right if state.sub.is_none() && has_sub => state.sub = Some(0),
+            Key::Right => state = other_menu((state.menu + 1) % menus),
+            Key::Up => set(&mut state, (at + count - 1) % count),
+            Key::Down => set(&mut state, (at + 1) % count),
+            Key::Home => set(&mut state, 0),
+            Key::End => set(&mut state, count - 1),
+            Key::Enter if state.sub.is_none() && has_sub => state.sub = Some(0),
             Key::Enter => {
                 self.menu = None;
-                return match items.get(state.item) {
+                return match level.get(at) {
                     Some(item) => self.run_menu_item(item.bound),
                     None => Flow::Continue,
                 };
@@ -70,12 +88,12 @@ impl App {
             Key::Char(c) if !input.ctrl => {
                 let c = c.to_ascii_lowercase();
                 let letter_menu = Menu::ALL.iter().position(|m| m.letter() == c);
-                let next_item = (1..=items.len())
-                    .map(|d| (state.item + d) % items.len())
-                    .find(|&i| initial(&items[i].name) == Some(c));
+                let next_item = (1..=level.len())
+                    .map(|d| (at + d) % level.len())
+                    .find(|&i| initial(&level[i].name) == Some(c));
                 match (input.alt, next_item, letter_menu) {
-                    (false, Some(i), _) => state.item = i,
-                    (_, _, Some(m)) => state = MenuState { menu: m, item: 0 },
+                    (false, Some(i), _) => set(&mut state, i),
+                    (_, _, Some(m)) => state = other_menu(m),
                     _ => {}
                 }
             }
@@ -124,24 +142,55 @@ impl App {
         let dropdown = view
             .as_ref()
             .map(|v| (menu::dropdown_area(screen, bar, v), v));
-        let hit = menu::hit(bar, dropdown.as_ref().map(|(a, v)| (*a, *v)), x, y);
+        let hit = menu::hit(screen, bar, dropdown.as_ref().map(|(a, v)| (*a, *v)), x, y);
         match (action, hit) {
             (MouseAction::Down, Some(MenuHit::Bar(i))) => {
                 self.menu = match self.menu {
                     Some(s) if s.menu == i => None,
-                    _ => Some(MenuState { menu: i, item: 0 }),
+                    _ => Some(MenuState {
+                        menu: i,
+                        item: 0,
+                        sub: None,
+                    }),
                 };
                 true
             }
             (MouseAction::Down, Some(MenuHit::Item(i))) => {
-                let bound = view.and_then(|v| v.items.get(i).map(|item| item.bound));
+                let row = view.and_then(|v| v.items.get(i).cloned());
+                match row {
+                    // Un submenú: se abre (o se cierra) a su lado.
+                    Some(row) if !row.sub.is_empty() => {
+                        if let Some(state) = &mut self.menu {
+                            let open = state.item == i && state.sub.is_some();
+                            state.item = i;
+                            state.sub = (!open).then_some(0);
+                        }
+                    }
+                    Some(row) => {
+                        self.menu = None;
+                        self.run_menu_item(row.bound);
+                    }
+                    None => {}
+                }
+                true
+            }
+            (MouseAction::Down, Some(MenuHit::Sub(i))) => {
+                let bound = view.and_then(|v| {
+                    v.items
+                        .get(v.selected)
+                        .and_then(|r| r.sub.get(i))
+                        .map(|item| item.bound)
+                });
                 self.menu = None;
                 if let Some(bound) = bound {
                     self.run_menu_item(bound);
                 }
                 true
             }
-            (MouseAction::ScrollUp | MouseAction::ScrollDown, Some(MenuHit::Item(_))) => {
+            (
+                MouseAction::ScrollUp | MouseAction::ScrollDown,
+                Some(MenuHit::Item(_) | MenuHit::Sub(_)),
+            ) => {
                 let count = view.map_or(1, |v| v.items.len().max(1));
                 if let Some(state) = &mut self.menu {
                     state.item = if action == MouseAction::ScrollUp {

@@ -163,3 +163,38 @@ fn a_click_gives_the_focus_and_a_tab_click_shows_its_tab() {
     click(&mut app, ex, ey);
     assert_eq!(app.view().focus, Panel::Code);
 }
+
+#[test]
+fn alt_0_focuses_the_explorer_and_esc_comes_back_from_each_new_place() {
+    let (_, mut app, _engine) = open("focus_files", Some(SONG));
+    draw(&mut app, 120, 40);
+    // Desde el editor.
+    app.handle(alt('0'));
+    assert_eq!(app.focus(), Panel::Files);
+    assert!(
+        app.view().message.starts_with("ARCHIVOS"),
+        "{}",
+        app.view().message
+    );
+    // Las letras son del árbol: no llegan al editor.
+    let before = app.text_for_test();
+    app.handle(key('j'));
+    app.handle(key('k'));
+    assert_eq!(app.text_for_test(), before);
+    app.handle(esc());
+    assert_eq!(app.focus(), Panel::Code);
+    // Desde el modo tocar, Esc vuelve al modo tocar.
+    app.handle(esc());
+    assert_eq!(app.focus(), Panel::Wave);
+    app.handle(alt('0'));
+    app.handle(esc());
+    assert_eq!(app.focus(), Panel::Wave);
+    // Con el editor flotante, Alt-1 le da el foco como siempre.
+    app.handle(alt('w'));
+    app.handle(alt('1'));
+    assert_eq!(app.focus(), Panel::Code);
+    // Los atajos de siempre siguen con el foco en el árbol.
+    app.handle(alt('0'));
+    app.handle(alt('4'));
+    assert_eq!(app.focus(), Panel::Mixer);
+}

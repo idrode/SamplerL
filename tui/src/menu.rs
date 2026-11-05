@@ -82,7 +82,7 @@ pub fn menu_of(action: Action) -> Option<Menu> {
         SidechainView | LanesView | Occupancy | PianoRoll | Highlight | ResetMeters
         | AnalyzeMasking | Focus(_) | ToggleExplorer | EditorTaller | EditorShorter | Wider
         | Narrower | MaximizeEditor | FloatEditor | FloatUp | FloatDown | FloatLeft
-        | FloatRight => Menu::View,
+        | FloatRight | WaveStyle | SpectrumStyle => Menu::View,
         EditorWindow | EditorBack | RollWindow | RollBack | Devices | RefreshDevices
         | DevicesWindow | DevicesBack => Menu::Windows,
         TerminalInfo => Menu::Help,
@@ -90,12 +90,67 @@ pub fn menu_of(action: Action) -> Option<Menu> {
     })
 }
 
-/// Una entrada de un menú: lo que hace, su nombre y su tecla.
+/// Una entrada de un menú: lo que hace, su nombre y su tecla; o, con
+/// `sub`, un submenú con esas entradas (y entonces `bound` no se usa).
 #[derive(Debug, Clone, PartialEq)]
 pub struct MenuItem {
     pub bound: Bound,
     pub name: String,
     pub keys: String,
+    pub sub: Vec<MenuItem>,
+}
+
+/// El submenú de cada acción dentro de su menú (`None`: en el menú
+/// mismo).
+pub fn submenu_of(action: Action) -> Option<&'static str> {
+    use Action::*;
+    Some(match action {
+        SaveBlock | InsertBlock | UpdateBlock | DeleteBlock => "Bloques",
+        YankSlot | PasteSlot => "Ranuras",
+        Freeze | Unfreeze => "Congelar",
+        GotoLine | Find | FindNext | FindPrevious | TextStart | TextEnd => "Buscar e ir",
+        LabelSlice | SliceNotes | SliceEarlier | SliceLater | ClearSliceAdjust | NextSlice
+        | PreviousSlice | SplitSlice | JoinSlice => "Cortes",
+        ZoomIn | ZoomOut | ZoomReset => "Zoom de la onda",
+        MidiLearn | MidiKnobs | ExportKnobs => "Mandos MIDI",
+        NextSection | PreviousSection | JumpSection | LoopSection | FollowTimeline => "Secciones",
+        Focus(_) => "Foco",
+        EditorTaller | EditorShorter | Wider | Narrower | MaximizeEditor | FloatEditor
+        | FloatUp | FloatDown | FloatLeft | FloatRight => "Editor",
+        WaveStyle | SpectrumStyle => "Dibujo",
+        EditorWindow | EditorBack => "Ventana del editor",
+        RollWindow | RollBack => "Ventana del piano roll",
+        Devices | RefreshDevices | DevicesWindow | DevicesBack => "Dispositivos",
+        _ => return None,
+    })
+}
+
+/// Las filas del desplegable de `menu`: las entradas sueltas y, donde
+/// aparece la primera de un submenú, el submenú con todas las suyas.
+pub fn rows(menu: Menu, keys: &Keymap) -> Vec<MenuItem> {
+    let mut rows: Vec<MenuItem> = Vec::new();
+    for item in items(menu, keys) {
+        let group = match item.bound {
+            Bound::Action(a) => submenu_of(a),
+            Bound::Palette => None,
+        };
+        match group {
+            Some(name) => match rows
+                .iter_mut()
+                .find(|r| !r.sub.is_empty() && r.name == name)
+            {
+                Some(row) => row.sub.push(item),
+                None => rows.push(MenuItem {
+                    bound: item.bound,
+                    name: name.into(),
+                    keys: "▸".into(),
+                    sub: vec![item],
+                }),
+            },
+            None => rows.push(item),
+        }
+    }
+    rows
 }
 
 /// Las entradas de `menu`, en el orden de la paleta (Ayuda empieza por la
@@ -107,6 +162,7 @@ pub fn items(menu: Menu, keys: &Keymap) -> Vec<MenuItem> {
             bound: Bound::Palette,
             name: "Paleta de comandos".into(),
             keys: keys.describe(Bound::Palette),
+            sub: Vec::new(),
         });
     }
     let entries = crate::palette::entries_with(None, keys);
@@ -119,6 +175,7 @@ pub fn items(menu: Menu, keys: &Keymap) -> Vec<MenuItem> {
             bound: Bound::Action(def.action),
             name: def.name.into(),
             keys,
+            sub: Vec::new(),
         });
     }
     items
@@ -127,17 +184,60 @@ pub fn items(menu: Menu, keys: &Keymap) -> Vec<MenuItem> {
 /// El menú abierto.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct MenuState {
-    /// Cuál (índice en [`Menu::ALL`]) y la entrada elegida.
+    /// Cuál (índice en [`Menu::ALL`]), la fila elegida y, con su submenú
+    /// abierto, la entrada elegida en él.
     pub menu: usize,
     pub item: usize,
+    pub sub: Option<usize>,
 }
 
 /// Lo que se dibuja del menú abierto.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MenuView {
     pub open: usize,
+    /// Las filas (ver [`rows`]).
     pub items: Vec<MenuItem>,
     pub selected: usize,
+    /// El submenú abierto de la fila elegida: su entrada elegida.
+    pub sub: Option<usize>,
+}
+
+/// El submenú abierto de `view` (sus entradas y la elegida).
+fn open_sub(view: &MenuView) -> Option<(&[MenuItem], usize)> {
+    let sub = view.sub?;
+    let row = view.items.get(view.selected)?;
+    (!row.sub.is_empty()).then_some((&row.sub[..], sub))
+}
+
+/// Dónde va el submenú abierto de `view`, al lado de su fila del
+/// desplegable de `area` (a la derecha si cabe; si no, a la izquierda).
+pub fn sub_area(screen: Rect, area: Rect, view: &MenuView) -> Option<Rect> {
+    let (items, _) = open_sub(view)?;
+    let names = items
+        .iter()
+        .map(|i| i.name.chars().count())
+        .max()
+        .unwrap_or(0);
+    let keys = items
+        .iter()
+        .map(|i| i.keys.chars().count())
+        .max()
+        .unwrap_or(0);
+    let width = ((names + keys + 5) as u16).min(screen.width);
+    let row = area.y + 1 + (view.selected - first_shown(view, area)) as u16;
+    let y = row.saturating_sub(1).max(screen.y);
+    let height = (items.len() as u16 + 2).min(screen.bottom().saturating_sub(y));
+    let x = if area.right() + width <= screen.right() {
+        area.right()
+    } else {
+        area.x.saturating_sub(width)
+    };
+    Some(Rect {
+        x,
+        y,
+        width,
+        height,
+    })
 }
 
 /// Dónde va el nombre de cada menú en la barra de la fila `area`.
@@ -248,56 +348,84 @@ impl Widget for MenuBar<'_> {
     }
 }
 
-/// El desplegable del menú abierto.
+/// El desplegable del menú abierto (y su submenú, si hay uno abierto, en
+/// `sub_area`).
 pub struct Dropdown<'a>(pub &'a MenuView);
+
+impl Dropdown<'_> {
+    /// Dibuja el desplegable en `area` y el submenú abierto a su lado.
+    pub fn draw(&self, screen: Rect, area: Rect, buf: &mut Buffer) {
+        let view = self.0;
+        entries(
+            &view.items,
+            view.selected,
+            first_shown(view, area),
+            view.sub.is_none(),
+            area,
+            buf,
+        );
+        if let (Some((items, selected)), Some(rect)) =
+            (open_sub(view), sub_area(screen, area, view))
+        {
+            entries(items, selected, 0, true, rect, buf);
+        }
+    }
+}
 
 impl Widget for Dropdown<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let view = self.0;
-        let theme = crate::theme::get();
-        Clear.render(area, buf);
-        let block = Block::bordered().border_style(Style::new().fg(theme.border_focus));
-        let inner = block.inner(area);
-        block.render(area, buf);
-        let first = first_shown(view, area);
-        for (row, (i, item)) in view
-            .items
-            .iter()
-            .enumerate()
-            .skip(first)
-            .take(inner.height as usize)
-            .enumerate()
-        {
-            let y = inner.y + row as u16;
-            let style = if i == view.selected {
-                Style::new().fg(Color::Black).bg(theme.accent)
-            } else {
-                Style::new()
-            };
-            let keys = item.keys.chars().count() as u16;
-            let room = inner.width.saturating_sub(keys + 2) as usize;
-            let name: String = item.name.chars().take(room).collect();
-            buf.set_style(
-                Rect {
-                    y,
-                    height: 1,
-                    ..inner
-                },
-                style,
-            );
-            buf.set_string(inner.x + 1, y, name, style);
-            if keys + 2 <= inner.width {
-                buf.set_string(
-                    inner.right() - keys - 1,
-                    y,
-                    &item.keys,
-                    style.fg(if i == view.selected {
-                        Color::Black
-                    } else {
-                        theme.dim
-                    }),
-                );
-            }
+        let screen = buf.area;
+        self.draw(screen, area, buf);
+    }
+}
+
+/// Una lista de entradas con borde en `area`, desde la `first`, con la
+/// `selected` resaltada (en el acento si es la lista activa; si no, con el
+/// fondo de la cabecera).
+fn entries(
+    items: &[MenuItem],
+    selected: usize,
+    first: usize,
+    active: bool,
+    area: Rect,
+    buf: &mut Buffer,
+) {
+    let theme = crate::theme::get();
+    Clear.render(area, buf);
+    let block = Block::bordered().border_style(Style::new().fg(theme.border_focus));
+    let inner = block.inner(area);
+    block.render(area, buf);
+    for (row, (i, item)) in items
+        .iter()
+        .enumerate()
+        .skip(first)
+        .take(inner.height as usize)
+        .enumerate()
+    {
+        let y = inner.y + row as u16;
+        let lit = i == selected && active;
+        let style = if lit {
+            Style::new().fg(Color::Black).bg(theme.accent)
+        } else if i == selected {
+            Style::new().bg(theme.header).bold()
+        } else {
+            Style::new()
+        };
+        let keys = item.keys.chars().count() as u16;
+        let room = inner.width.saturating_sub(keys + 2) as usize;
+        let name: String = item.name.chars().take(room).collect();
+        buf.set_style(
+            Rect {
+                y,
+                height: 1,
+                ..inner
+            },
+            style,
+        );
+        buf.set_string(inner.x + 1, y, name, style);
+        if keys + 2 <= inner.width {
+            let color = if lit { Color::Black } else { theme.dim };
+            buf.set_string(inner.right() - keys - 1, y, &item.keys, style.fg(color));
         }
     }
 }
@@ -307,14 +435,32 @@ impl Widget for Dropdown<'_> {
 pub enum MenuHit {
     /// El nombre del menú `i` en la barra.
     Bar(usize),
-    /// La entrada `i` del desplegable.
+    /// La fila `i` del desplegable.
     Item(usize),
+    /// La entrada `i` del submenú abierto.
+    Sub(usize),
 }
 
 /// Lo que pulsa el ratón en (`x`, `y`), con la barra en `bar` y el
 /// desplegable (si hay uno abierto) en `dropdown`.
-pub fn hit(bar: Rect, dropdown: Option<(Rect, &MenuView)>, x: u16, y: u16) -> Option<MenuHit> {
+pub fn hit(
+    screen: Rect,
+    bar: Rect,
+    dropdown: Option<(Rect, &MenuView)>,
+    x: u16,
+    y: u16,
+) -> Option<MenuHit> {
     let at = ratatui::layout::Position::new(x, y);
+    if let Some((area, view)) = dropdown
+        && let Some(rect) = sub_area(screen, area, view)
+    {
+        let inner = Block::bordered().inner(rect);
+        if inner.contains(at) {
+            let i = (y - inner.y) as usize;
+            let count = open_sub(view).map_or(0, |(items, _)| items.len());
+            return (i < count).then_some(MenuHit::Sub(i));
+        }
+    }
     if let Some((area, view)) = dropdown {
         let inner = Block::bordered().inner(area);
         if inner.contains(at) {
@@ -349,6 +495,36 @@ mod tests {
     }
 
     #[test]
+    fn rows_group_the_submenus_where_their_first_entry_was() {
+        let keys = Keymap::default();
+        let view = rows(Menu::View, &keys);
+        let foco = view.iter().find(|r| r.name == "Foco").unwrap();
+        assert_eq!(foco.keys, "▸");
+        assert_eq!(foco.sub.len(), 10);
+        assert!(
+            foco.sub
+                .iter()
+                .any(|i| i.name == "Foco: archivos" && i.keys == "Alt-0")
+        );
+        let editor = view.iter().find(|r| r.name == "Editor").unwrap();
+        assert!(
+            editor
+                .sub
+                .iter()
+                .any(|i| i.name == "Editor flotante" && i.keys == "Alt-W")
+        );
+        // Lo que no va en un submenú, suelto; y nada se pierde.
+        assert!(
+            view.iter()
+                .any(|r| r.name == "Explorador de archivos" && r.sub.is_empty())
+        );
+        for menu in Menu::ALL {
+            let flat: usize = rows(menu, &keys).iter().map(|r| r.sub.len().max(1)).sum();
+            assert_eq!(flat, items(menu, &keys).len(), "{}", menu.name());
+        }
+    }
+
+    #[test]
     fn items_carry_their_keys() {
         let keys = Keymap::default();
         let file = items(Menu::File, &keys);
@@ -367,23 +543,43 @@ mod tests {
         let bar = Rect::new(0, 0, 120, 1);
         let names = bar_layout(bar);
         assert_eq!(names[0], Rect::new(0, 0, 9, 1));
-        assert_eq!(hit(bar, None, 3, 0), Some(MenuHit::Bar(0)));
-        assert_eq!(hit(bar, None, names[2].x, 0), Some(MenuHit::Bar(2)));
-        let view = MenuView {
-            open: 2,
-            items: items(Menu::Track, &Keymap::default()),
-            selected: 0,
-        };
         let screen = Rect::new(0, 0, 120, 40);
+        assert_eq!(hit(screen, bar, None, 3, 0), Some(MenuHit::Bar(0)));
+        assert_eq!(hit(screen, bar, None, names[2].x, 0), Some(MenuHit::Bar(2)));
+        let mut view = MenuView {
+            open: 2,
+            items: rows(Menu::Track, &Keymap::default()),
+            selected: 0,
+            sub: None,
+        };
         let area = dropdown_area(screen, bar, &view);
         assert_eq!((area.x, area.y), (names[2].x, 1));
         assert_eq!(
-            hit(bar, Some((area, &view)), area.x + 2, area.y + 1),
+            hit(screen, bar, Some((area, &view)), area.x + 2, area.y + 1),
             Some(MenuHit::Item(0))
         );
         assert_eq!(
-            hit(bar, Some((area, &view)), area.x + 2, area.y + 3),
+            hit(screen, bar, Some((area, &view)), area.x + 2, area.y + 3),
             Some(MenuHit::Item(2))
+        );
+        // Con un submenú abierto, a su derecha y alineado con su fila.
+        let cortes = view.items.iter().position(|r| r.name == "Cortes").unwrap();
+        view.selected = cortes;
+        view.sub = Some(0);
+        let wide = Rect::new(0, 0, 250, 40);
+        let sub = sub_area(wide, area, &view).unwrap();
+        assert_eq!((sub.x, sub.y), (area.right(), area.y + cortes as u16));
+        let screen = wide;
+        assert_eq!(
+            hit(screen, bar, Some((area, &view)), sub.x + 2, sub.y + 2),
+            Some(MenuHit::Sub(1))
+        );
+        // Sin sitio a la derecha, a la izquierda (dentro de la pantalla).
+        let narrow = Rect::new(0, 0, area.right() + 5, 40);
+        let left = sub_area(narrow, area, &view).unwrap();
+        assert!(
+            left.x < area.x && left.right() <= narrow.right(),
+            "{left:?}"
         );
     }
 }

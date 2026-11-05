@@ -336,7 +336,7 @@ pub fn draw_editor_window(frame: &mut Frame, app: &mut App) {
         }
         .render(bar, frame.buffer_mut());
         let area = crate::menu::dropdown_area(screen, bar, open);
-        frame.render_widget(crate::menu::Dropdown(open), area);
+        crate::menu::Dropdown(open).draw(screen, area, frame.buffer_mut());
     }
     app.set_grid(grid);
     if crate::theme::ascii() {

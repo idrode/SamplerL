@@ -3572,6 +3572,28 @@ impl App {
             Action::FloatDown => self.move_float(0, 1),
             Action::FloatLeft => self.move_float(-1, 0),
             Action::FloatRight => self.move_float(1, 0),
+            Action::WaveStyle => {
+                let bars = !crate::theme::wave_bars();
+                crate::theme::set_wave_bars(bars);
+                self.message = if bars {
+                    "onda en barras".into()
+                } else if crate::theme::ascii() {
+                    "onda en puntos (en ASCII se ven barras)".into()
+                } else {
+                    "onda en puntos".into()
+                };
+            }
+            Action::SpectrumStyle => {
+                use crate::viz::master::Look;
+                self.spectrum_look = match self.spectrum_look {
+                    Look::Fill => Look::Line,
+                    Look::Line => Look::Bars,
+                    Look::Bars => Look::Spectrogram,
+                    Look::Spectrogram => Look::Fill,
+                };
+                self.master_spectrogram.clear();
+                self.message = format!("espectro: {}", self.spectrum_look.name());
+            }
             Action::OpenMenu => self.toggle_menu(),
             Action::TerminalInfo => self.terminal_info(),
             Action::Quit => {

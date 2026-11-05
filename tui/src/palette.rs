@@ -111,6 +111,8 @@ pub enum Action {
     FloatDown,
     FloatLeft,
     FloatRight,
+    WaveStyle,
+    SpectrumStyle,
     OpenMenu,
     TerminalInfo,
     Quit,
@@ -787,6 +789,18 @@ pub const ACTIONS: &[ActionDef] = &[
         name: "Mover el flotante a la derecha",
         description: "Dos columnas a la derecha",
         keys: "Alt-Shift-→",
+    },
+    ActionDef {
+        action: Action::WaveStyle,
+        name: "Onda: puntos o barras",
+        description: "Dibuja la onda de los samples con puntos Braille o con barras de bloques en esta sesión (la de siempre, `[interfaz] onda`)",
+        keys: "",
+    },
+    ActionDef {
+        action: Action::SpectrumStyle,
+        name: "Espectro: otro dibujo",
+        description: "El espectro del master en relleno, en línea, en barras o como espectrograma, por turno, en esta sesión (el de siempre, `[interfaz] espectro`)",
+        keys: "",
     },
     ActionDef {
         action: Action::OpenMenu,

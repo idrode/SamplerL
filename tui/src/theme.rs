@@ -222,6 +222,11 @@ pub fn set_wave_bars(on: bool) {
     WAVE_BARS.with(|a| a.set(on));
 }
 
+/// Si se ha pedido la onda en barras.
+pub fn wave_bars() -> bool {
+    WAVE_BARS.with(Cell::get)
+}
+
 /// Si la onda va en puntos Braille: lo pedido y que haya Unicode.
 pub fn wave_dots() -> bool {
     !ascii() && !WAVE_BARS.with(Cell::get)

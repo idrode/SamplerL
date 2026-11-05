@@ -147,3 +147,75 @@ fn the_mouse_opens_a_menu_runs_an_entry_and_closes_it_outside() {
     assert!(app.view().menu.is_none());
     assert_eq!(app.view().selected, before);
 }
+
+#[test]
+fn submenus_open_with_the_right_arrow_or_enter_and_close_with_the_left_or_esc() {
+    let (_, mut app, _engine) = open("menu_sub_keys", Some(SONG));
+    draw(&mut app, 120, 40);
+    app.handle(f(10));
+    app.handle(alt('v'));
+    let view = app.view().menu.unwrap();
+    let editor = view.items.iter().position(|r| r.name == "Editor").unwrap();
+    for _ in 0..editor {
+        app.handle(special(Key::Down));
+    }
+    // → abre el submenú; ← lo cierra sin cerrar el menú.
+    app.handle(special(Key::Right));
+    assert_eq!(app.view().menu.unwrap().sub, Some(0));
+    let buffer = draw(&mut app, 120, 40);
+    let screen = text(&buffer);
+    assert!(
+        screen.contains("Editor flotante") && screen.contains("Alt-W"),
+        "{screen}"
+    );
+    app.handle(special(Key::Left));
+    let menu = app.view().menu.unwrap();
+    assert_eq!((menu.sub, Menu::ALL[menu.open]), (None, Menu::View));
+    // Enter también lo abre, y Enter en una entrada la ejecuta.
+    app.handle(special(Key::Enter));
+    let flotante = app.view().menu.unwrap().items[editor]
+        .sub
+        .iter()
+        .position(|i| i.name == "Editor flotante")
+        .unwrap();
+    for _ in 0..flotante {
+        app.handle(special(Key::Down));
+    }
+    app.handle(special(Key::Enter));
+    assert!(app.view().menu.is_none());
+    draw(&mut app, 120, 40);
+    assert!(app.last_grid().unwrap().floating);
+    // Esc con el submenú abierto cierra solo el submenú.
+    app.handle(f(10));
+    app.handle(alt('v'));
+    for _ in 0..editor {
+        app.handle(special(Key::Down));
+    }
+    app.handle(special(Key::Right));
+    app.handle(esc());
+    assert!(app.view().menu.is_some_and(|m| m.sub.is_none()));
+}
+
+#[test]
+fn the_mouse_opens_a_submenu_beside_its_row_and_runs_its_entry() {
+    let (_, mut app, _engine) = open("menu_sub_mouse", Some(SONG));
+    let buffer = draw(&mut app, 120, 40);
+    let (x, y) = find(&buffer, " Ver ").unwrap();
+    click(&mut app, x + 1, y);
+    let buffer = draw(&mut app, 120, 40);
+    let (x, y) = find(&buffer, "Foco ").unwrap_or_else(|| panic!("{}", text(&buffer)));
+    click(&mut app, x, y);
+    assert!(app.view().menu.unwrap().sub.is_some());
+    let buffer = draw(&mut app, 120, 40);
+    let screen = text(&buffer);
+    let (fx, fy) = find(&buffer, "Foco: archivos").unwrap_or_else(|| panic!("{screen}"));
+    // Al lado de su fila, no encima.
+    assert!(fx > x + 4, "{screen}");
+    assert!(
+        screen.lines().nth(fy as usize).unwrap().contains("Alt-0"),
+        "{screen}"
+    );
+    click(&mut app, fx, fy);
+    assert!(app.view().menu.is_none());
+    assert_eq!(app.focus(), crate::focus::Panel::Files);
+}
