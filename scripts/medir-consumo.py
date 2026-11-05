@@ -279,6 +279,11 @@ def main():
     p.add_argument("--hilos", action="store_true", help="enseña cada hilo")
     p.add_argument("--midi", action="store_true", help="con --allow-midi (la espera del bucle baja a 2 ms)")
     p.add_argument("--bloques", type=int, default=0, help="siembra la biblioteca global con tantos bloques")
+    p.add_argument(
+        "--config",
+        default="",
+        help='el config.toml de la medición, p. ej. "[interfaz]\\nbajo_consumo = true"',
+    )
     args = p.parse_args()
 
     if not os.path.exists(os.path.join(ROOT, "renders/synth_break.wav")):
@@ -304,6 +309,9 @@ def main():
     env.pop("TMUX", None)
     blocks = os.path.join(home, "config", "sampler", "blocks")
     os.makedirs(blocks, exist_ok=True)
+    if args.config:
+        with open(os.path.join(home, "config", "sampler", "config.toml"), "w") as f:
+            f.write(args.config.replace("\\n", "\n") + "\n")
     for i in range(args.bloques):
         with open(os.path.join(blocks, f"bloque{i:03}.lua"), "w") as f:
             f.write(

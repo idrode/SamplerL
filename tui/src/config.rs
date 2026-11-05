@@ -366,6 +366,8 @@ pub struct InterfaceConfig {
     pub wave_bars: bool,
     /// Cómo se dibuja el espectro del master (`espectro`).
     pub spectrum: crate::viz::master::Look,
+    /// Modo de bajo consumo (`bajo_consumo`): ver [`LOW_POWER_REFRESH`].
+    pub low_power: bool,
 }
 
 impl Default for InterfaceConfig {
@@ -378,6 +380,7 @@ impl Default for InterfaceConfig {
             editor_rows: 0,
             wave_bars: false,
             spectrum: crate::viz::master::Look::Fill,
+            low_power: false,
         }
     }
 }
@@ -392,6 +395,12 @@ pub const EXPLORER_WIDTHS: std::ops::RangeInclusive<u16> = 10..=200;
 pub const DEFAULT_REFRESH: u32 = 30;
 pub const REFRESH: std::ops::RangeInclusive<u32> = 5..=120;
 
+/// Con `bajo_consumo`, el refresco como mucho: la mitad de lo de siempre.
+/// Además, las visualizaciones se recalculan uno de cada dos cuadros, la
+/// onda va en barras, el scope y las ruedas sin Braille, y el espectro
+/// del master no tiene sitio fijo (es una pestaña).
+pub const LOW_POWER_REFRESH: u32 = 15;
+
 /// Si el sistema dice que la terminal es UTF-8 (`LC_ALL`, `LC_CTYPE` o
 /// `LANG`, el primero que haya): sin eso, mejor ASCII.
 pub fn utf8_locale() -> bool {
@@ -405,6 +414,16 @@ pub fn utf8_locale() -> bool {
 }
 
 impl InterfaceConfig {
+    /// Los cuadros por segundo que se dibujan: los de `refresco` o, con
+    /// `bajo_consumo`, como mucho [`LOW_POWER_REFRESH`].
+    pub fn frame_rate(&self) -> u32 {
+        if self.low_power {
+            self.refresh.min(LOW_POWER_REFRESH)
+        } else {
+            self.refresh
+        }
+    }
+
     /// Dibujar en ASCII: lo que diga la configuración o, si no dice nada,
     /// sin un `LANG` UTF-8.
     pub fn ascii(&self) -> bool {
@@ -421,6 +440,7 @@ const INTERFACE_NAMES: &[&str] = &[
     "alto_editor",
     "onda",
     "espectro",
+    "bajo_consumo",
 ];
 
 /// Claves de `[interfaz]` (para la guía).
@@ -460,6 +480,11 @@ const INTERFACE_KEYS: &[(&str, &str, &str)] = &[
         "espectro",
         "cómo se dibuja el espectro del master en su panel: `\"relleno\"` o `\"linea\"` (puntos Braille), `\"barras\"` (bloques: lo que menos gasta) o `\"espectrograma\"` (el historial, que se desplaza a la izquierda, con la intensidad en la densidad de los puntos y en el color). Siempre con escala logarítmica y su eje de frecuencias",
         "`\"relleno\"`",
+    ),
+    (
+        "bajo_consumo",
+        "menos CPU y menos trabajo para la terminal (para la batería de un portátil): como mucho 15 cuadros por segundo, el scope y los espectros recalculados uno de cada dos cuadros, la onda en barras, el scope y las ruedas sin Braille, y el espectro del master como pestaña en vez de fijo. La entrada y el audio no cambian",
+        "`false`",
     ),
 ];
 
@@ -1157,6 +1182,12 @@ impl Config {
                                     "[interfaz] espectro: \"relleno\", \"linea\", \"barras\" o \"espectrograma\"".into(),
                                 ),
                             },
+                            "bajo_consumo" => match value.as_bool() {
+                                Some(on) => config.interface.low_power = on,
+                                None => config
+                                    .warnings
+                                    .push("[interfaz] bajo_consumo: true o false".into()),
+                            },
                             "onda" => match value.as_str() {
                                 Some("puntos") => config.interface.wave_bars = false,
                                 Some("barras") => config.interface.wave_bars = true,
@@ -1702,6 +1733,16 @@ mod tests {
         let c = Config::parse("[interfaz]\nrefresco = 500\nzz = 1\n", false, "c");
         assert_eq!(c.interface.refresh, DEFAULT_REFRESH);
         assert_eq!(c.warnings.len(), 2, "{:?}", c.warnings);
+        // Bajo consumo: el refresco, como mucho el suyo (uno más bajo se
+        // queda).
+        let c = Config::parse("[interfaz]\nbajo_consumo = true\n", false, "c");
+        assert!(c.interface.low_power && c.warnings.is_empty());
+        assert_eq!(c.interface.frame_rate(), LOW_POWER_REFRESH);
+        let c = Config::parse("[interfaz]\nbajo_consumo = true\nrefresco = 10\n", false, "c");
+        assert_eq!(c.interface.frame_rate(), 10);
+        assert_eq!(Config::default().interface.frame_rate(), DEFAULT_REFRESH);
+        let c = Config::parse("[interfaz]\nbajo_consumo = 1\n", false, "c");
+        assert!(!c.interface.low_power && c.warnings.len() == 1);
     }
 
     #[test]

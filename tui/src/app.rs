@@ -325,6 +325,12 @@ pub struct App {
     master_spectrogram: std::collections::VecDeque<Vec<f32>>,
     /// Cuadros por segundo (`[interfaz] refresco`).
     refresh_hz: u32,
+    /// `[interfaz] bajo_consumo`; con él, si este cuadro recalcula las
+    /// visualizaciones (uno de cada dos) y lo que se vio en el último que
+    /// las recalculó (las de las pistas y las del master).
+    low_power: bool,
+    viz_turn: bool,
+    viz_cache: std::cell::RefCell<Option<(Vec<crate::viz::Placed>, Vec<crate::viz::VizView>)>>,
     /// Mandos MIDI asignados (los del proyecto o, sin ellos, los de la
     /// configuración), la lista para asignar uno, el que espera su CC, la
     /// lista de mandos abierta y el último CC que llegó.
@@ -550,6 +556,9 @@ impl App {
             spectrum_look: Default::default(),
             master_spectrogram: Default::default(),
             refresh_hz: crate::config::DEFAULT_REFRESH,
+            low_power: false,
+            viz_turn: true,
+            viz_cache: Default::default(),
             learned: Vec::new(),
             knob_picker: None,
             learning: None,
@@ -699,7 +708,10 @@ impl App {
         if let Some(ascii) = config.interface.ascii {
             crate::theme::set_ascii(ascii);
         }
-        self.refresh_hz = config.interface.refresh;
+        self.refresh_hz = config.interface.frame_rate();
+        self.low_power = config.interface.low_power;
+        crate::theme::set_low_power(self.low_power);
+        self.viz_cache.replace(None);
         self.files.shown = config.interface.explorer;
         self.files.width = config.interface.explorer_width;
         self.editor_rows = config.interface.editor_rows;
@@ -4513,6 +4525,7 @@ impl App {
 
     /// Modelo de vista para los paneles.
     pub fn view(&self) -> ViewModel {
+        let (viz_views, master_views) = self.frame_viz_views();
         let name = self.file_name();
         let status = self.status;
         let transport = status.map_or(TransportView::default(), |s| TransportView {
@@ -4721,7 +4734,7 @@ impl App {
                 .as_ref()
                 .map(|s| s.view(self.host.song())),
             lanes: self.lanes_view(),
-            viz: self.viz_views(),
+            viz: viz_views,
             devices: self.devices_popup(),
             vim: self.vim.as_ref().map(vim::Vim::label),
             timeline,
@@ -4753,7 +4766,8 @@ impl App {
             master_viz: !self.editor_window(),
             files: self.files_needs(),
             editor_layout: self.editor_layout(),
-            master_views: self.master_views(),
+            master_views,
+            low_power: self.low_power,
             master_spectrum: self.master_spectrum_view(),
             palette: self.palette.as_ref().map(|p| {
                 let matches = self.palette_matches();

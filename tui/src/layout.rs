@@ -113,6 +113,9 @@ pub struct Needs {
     pub menu: bool,
     /// Scope y espectro del master.
     pub master_viz: bool,
+    /// Bajo consumo (`[interfaz] bajo_consumo`): el espectro del master
+    /// sin sitio fijo, como pestaña (es lo que más se mueve en pantalla).
+    pub low_power: bool,
     /// Las vistas que se abren a mano y van a las pestañas.
     pub occupancy: bool,
     pub viz: bool,
@@ -617,7 +620,10 @@ fn medium(g: &mut Grid, sound: Rect, needs: &Needs) {
     if sound.height < MEDIUM_SOUND {
         return small(g, sound, needs);
     }
-    let fixed_spectrum = needs.master_viz && sound.width >= SPECTRUM_BESIDE && sound.height >= 18;
+    let fixed_spectrum = needs.master_viz
+        && !needs.low_power
+        && sound.width >= SPECTRUM_BESIDE
+        && sound.height >= 18;
     let dock_min = if fixed_spectrum { SPECTRUM_ROWS } else { 6 };
     let wave = if needs.editor { 8 } else { sound.height / 2 };
     let (wave, seq, dock_area) = stack(sound, wave, dock_min, needs.dock_want);
@@ -665,15 +671,19 @@ fn wide(g: &mut Grid, sound: Rect, needs: &Needs) {
     g.mixer = some(mixer);
     let r = if needs.master_viz {
         let (scope, r) = take_top(r, 7.min(r.height / 2));
-        let spectrum = if r.height > 2 * SPECTRUM_ROWS + 4 {
-            2 * SPECTRUM_ROWS
-        } else {
-            r.height
-        };
-        let (spectrum, r) = take_top(r, spectrum);
         g.scope = some(scope);
-        g.spectrum = some(spectrum);
-        r
+        if needs.low_power {
+            r
+        } else {
+            let spectrum = if r.height > 2 * SPECTRUM_ROWS + 4 {
+                2 * SPECTRUM_ROWS
+            } else {
+                r.height
+            };
+            let (spectrum, r) = take_top(r, spectrum);
+            g.spectrum = some(spectrum);
+            r
+        }
     } else {
         r
     };
@@ -684,6 +694,9 @@ fn wide(g: &mut Grid, sound: Rect, needs: &Needs) {
     g.wave = some(wave);
     g.tracker = some(seq);
     let mut tabs = vec![Tab::Panel(Panel::Fx), Tab::Panel(Panel::Lanes)];
+    if needs.master_viz && needs.low_power {
+        tabs.push(Tab::Panel(Panel::Spectrum));
+    }
     extra_tabs(needs, &mut tabs);
     g.dock = dock(dock_area, tabs);
 }
@@ -929,6 +942,22 @@ mod tests {
         assert!(g.explorer.is_none());
         assert_eq!(g.editor.unwrap().x, 0);
         assert_eq!(g.wave.unwrap().x, 0);
+    }
+
+    #[test]
+    fn low_power_puts_the_master_spectrum_in_a_tab() {
+        let low = Needs {
+            low_power: true,
+            ..needs()
+        };
+        for screen in [Rect::new(0, 0, 120, 40), Rect::new(0, 0, 180, 50)] {
+            let g = grid(screen, &low);
+            check(screen, &g);
+            assert!(g.spectrum.is_none(), "{screen:?}");
+            assert!(g.docked(Tab::Panel(Panel::Spectrum)), "{screen:?}");
+        }
+        // En el ancho, el scope sigue en su columna.
+        assert!(grid(Rect::new(0, 0, 180, 50), &low).scope.is_some());
     }
 
     #[test]

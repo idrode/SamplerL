@@ -37,6 +37,8 @@ pub struct ViewModel {
     /// Scope y espectro del master en su panel, y lo que dibujan (el
     /// scope primero).
     pub master_viz: bool,
+    /// `[interfaz] bajo_consumo` (ver `layout::Needs::low_power`).
+    pub low_power: bool,
     pub master_views: Vec<crate::viz::VizView>,
     /// El espectro del master de su panel fijo.
     pub master_spectrum: Option<crate::viz::master::MasterSpectrumView>,

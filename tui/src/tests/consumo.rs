@@ -50,9 +50,16 @@ struct Run {
     same: usize,
 }
 
-fn run(song: &Path, width: u16, height: u16, frames: usize, playing: bool) -> Run {
+fn run(song: &Path, size: (u16, u16), frames: usize, playing: bool, low_power: bool) -> Run {
+    let (width, height) = size;
     let (controller, mut engine) = new_engine(RATE);
     let mut app = App::open(song, controller, RATE).unwrap();
+    let config = if low_power {
+        "[interfaz]\nbajo_consumo = true\n"
+    } else {
+        ""
+    };
+    app.set_config(&crate::config::Config::parse(config, true, "consumo"));
     if !playing {
         app.toggle_transport();
     }
@@ -65,7 +72,7 @@ fn run(song: &Path, width: u16, height: u16, frames: usize, playing: bool) -> Ru
         },
     )
     .unwrap();
-    let per_frame = RATE as usize / crate::config::DEFAULT_REFRESH.max(1) as usize;
+    let per_frame = RATE as usize * app.frame_interval().as_micros() as usize / 1_000_000;
     let mut block = vec![0.0f32; 512 * 2];
     let mut out = Run {
         tick: Duration::ZERO,
@@ -151,14 +158,26 @@ fn consumo() {
         .and_then(|v| v.parse().ok())
         .unwrap_or(300);
     println!(
-        "{:<8} {:<8} {:>7} {:>9} {:>9} {:>9} {:>9} {:>8}",
-        "canción", "estado", "tamaño", "tick µs", "widgets", "diff+esc", "total", "B/cuadro"
+        "{:<10} {:<8} {:>7} {:>9} {:>9} {:>9} {:>9} {:>8} {:>9}",
+        "canción",
+        "estado",
+        "tamaño",
+        "tick µs",
+        "widgets",
+        "diff+esc",
+        "total",
+        "B/cuadro",
+        "ms por s"
     );
     let diff = std::env::var_os("CONSUMO_DIFF").is_some();
-    for (name, file) in [
-        ("cancion", "cancion.lua"),
-        ("visual", "visual.lua"),
-        ("larga", "larga.lua"),
+    // `-bc`: con `[interfaz] bajo_consumo` (15 cuadros por segundo en vez
+    // de 30: «ms por s» es lo que cuesta un segundo de interfaz).
+    for (name, file, low_power) in [
+        ("cancion", "cancion.lua", false),
+        ("visual", "visual.lua", false),
+        ("larga", "larga.lua", false),
+        ("cancion-bc", "cancion.lua", true),
+        ("visual-bc", "visual.lua", true),
     ] {
         let song = root.join("scripts/consumo").join(file);
         for (width, height) in [(80, 24), (120, 40), (200, 50), (240, 70)] {
@@ -166,10 +185,15 @@ fn consumo() {
                 if !playing && name != "cancion" {
                     continue;
                 }
-                let r = run(&song, width, height, frames, playing);
+                let r = run(&song, (width, height), frames, playing, low_power);
+                let fps = if low_power {
+                    crate::config::LOW_POWER_REFRESH
+                } else {
+                    crate::config::DEFAULT_REFRESH
+                };
                 let us = |d: Duration| d.as_secs_f64() * 1e6 / r.frames as f64;
                 println!(
-                    "{:<8} {:<8} {:>7} {:>9.0} {:>9.0} {:>9.0} {:>9.0} {:>8}",
+                    "{:<10} {:<8} {:>7} {:>9.0} {:>9.0} {:>9.0} {:>9.0} {:>8} {:>9.1}",
                     name,
                     if playing { "sonando" } else { "parado" },
                     format!("{width}x{height}"),
@@ -178,6 +202,7 @@ fn consumo() {
                     us(r.flush),
                     us(r.tick + r.widgets + r.flush),
                     r.bytes / r.frames,
+                    us(r.tick + r.widgets + r.flush) * fps as f64 / 1000.0,
                 );
                 if diff {
                     println!("    cuadros iguales al anterior: {} de {}", r.same, r.frames);

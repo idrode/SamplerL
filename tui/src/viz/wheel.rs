@@ -109,7 +109,7 @@ impl Widget for WheelPanel<'_> {
             return;
         }
         let strongest = w.strongest();
-        if crate::theme::ascii() {
+        if crate::theme::plain_viz() {
             // Una línea: cada nota con tantas `#` como suena.
             let text: String = (0..12)
                 .map(|i| {
@@ -229,7 +229,7 @@ impl Widget for SpiralPanel<'_> {
             let r = 0.15 + 0.75 * turn / TURNS as f64 + 0.12 * s.samples[i] as f64;
             (r * angle.cos(), r * angle.sin())
         };
-        if crate::theme::ascii() {
+        if crate::theme::plain_viz() {
             let (w, h) = (inner.width as f64, inner.height as f64);
             for i in (0..n).step_by((n / 400).max(1)) {
                 let (x, y) = point(i);

@@ -410,3 +410,47 @@ fn the_master_spectrum_moves_once_per_frame_not_per_tick() {
     draw(&mut app, 180, 50);
     assert_ne!(levels(&app), before);
 }
+
+#[test]
+fn low_power_redraws_the_visualizations_every_other_frame_without_braille() {
+    let (mut app, mut engine) = open_tone("viz_low_power");
+    app.set_config(&crate::config::Config::parse(
+        "[interfaz]\nbajo_consumo = true\n",
+        true,
+        "c",
+    ));
+    assert_eq!(app.frame_interval().as_millis(), 1000 / 15);
+    app.set_viz(vec![spec(VizKind::Scope, VizSource::Master, 6)]);
+    play(&mut app, &mut engine, 20);
+    // Un cuadro recalcula y el siguiente repite lo mismo, aunque el audio
+    // haya seguido.
+    let samples = |app: &mut App| {
+        app.frame_viz();
+        let VizView::Scope(scope) = &app.view().viz[0].view else {
+            panic!("scope")
+        };
+        scope.samples.clone()
+    };
+    let mut frames = Vec::new();
+    for _ in 0..4 {
+        play(&mut app, &mut engine, 1);
+        frames.push(samples(&mut app));
+    }
+    let same = |a: usize, b: usize| frames[a] == frames[b];
+    assert!(same(0, 1) != same(1, 2), "uno de cada dos");
+    assert!(same(0, 1) == same(2, 3));
+    // Sin Braille en el scope ni en la onda.
+    let screen = text(&draw(&mut app, 140, 40));
+    assert!(screen.contains("scope · master"), "{screen}");
+    assert!(
+        !screen
+            .chars()
+            .any(|c| ('\u{2801}'..='\u{28ff}').contains(&c)),
+        "con Braille: {screen}"
+    );
+    // Al quitarlo, como siempre.
+    app.set_config(&crate::config::Config::parse("", true, "c"));
+    assert_eq!(app.frame_interval().as_millis(), 1000 / 30);
+    let screen = text(&draw(&mut app, 140, 40));
+    assert!(screen.chars().any(|c| ('\u{2801}'..='\u{28ff}').contains(&c)));
+}

@@ -21,15 +21,10 @@ pub const WINDOW: usize = 2048;
 /// como disparo (sin esto, el ruido dispara en cualquier sitio).
 const HYSTERESIS: f32 = 0.01;
 
-/// Dónde empieza la ventana de `window` muestras: el último cruce por cero
-/// de subida (de menos de −`HYSTERESIS` a 0 o más) que deja la ventana
-/// entera detrás; sin ninguno, `None`.
-pub fn trigger(samples: &[f32], window: usize) -> Option<usize> {
-    trigger_in(samples, &[], window)
-}
-
-/// [`trigger`] sobre `a` seguido de `b` (las dos mitades de un
-/// `VecDeque`, sin copiarlas a un búfer contiguo).
+/// Dónde empieza la ventana de `window` muestras de `a` seguido de `b`
+/// (las dos mitades de un `VecDeque`, sin copiarlas a un búfer contiguo):
+/// el último cruce por cero de subida (de menos de −`HYSTERESIS` a 0 o
+/// más) que deja la ventana entera detrás; sin ninguno, `None`.
 fn trigger_in(a: &[f32], b: &[f32], window: usize) -> Option<usize> {
     let len = a.len() + b.len();
     if len < window + 2 {
@@ -112,7 +107,7 @@ impl Widget for ScopePanel<'_> {
         if inner.width == 0 || inner.height == 0 || s.samples.is_empty() {
             return;
         }
-        if crate::theme::ascii() {
+        if crate::theme::plain_viz() {
             ascii(s, inner, buf);
             return;
         }
@@ -199,6 +194,13 @@ mod tests {
         let view = build(&flat.clone().into(), String::new(), 6);
         assert!(!view.triggered);
         assert_eq!(view.samples.len(), WINDOW);
-        assert!(trigger(&flat[..100], WINDOW).is_none());
+        assert!(trigger_in(&flat[..100], &[], WINDOW).is_none());
+        // Partido en dos mitades, lo mismo que entero.
+        let sine = sine(437.3, 8192, 0);
+        let whole = trigger_in(&sine, &[], WINDOW);
+        assert!(whole.is_some());
+        for cut in [0, 1, 3000, 8191] {
+            assert_eq!(trigger_in(&sine[..cut], &sine[cut..], WINDOW), whole);
+        }
     }
 }

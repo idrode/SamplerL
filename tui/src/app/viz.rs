@@ -82,6 +82,24 @@ impl App {
     }
 
     /// Lo que se dibuja de cada visualización.
+    /// Las visualizaciones de las pistas y las del master para este cuadro:
+    /// en bajo consumo, las del último que las recalculó si a este no le
+    /// toca (ver [`App::frame_viz`]).
+    pub(super) fn frame_viz_views(&self) -> (Vec<Placed>, Vec<VizView>) {
+        if !self.low_power {
+            return (self.viz_views(), self.master_views());
+        }
+        let mut cache = self.viz_cache.borrow_mut();
+        match &*cache {
+            Some(views) if !self.viz_turn => views.clone(),
+            _ => {
+                let views = (self.viz_views(), self.master_views());
+                *cache = Some(views.clone());
+                views
+            }
+        }
+    }
+
     pub(super) fn viz_views(&self) -> Vec<Placed> {
         // En la ventana del editor, las que dibuja la principal.
         if let Some(remote) = self.remote_viz() {
@@ -320,6 +338,11 @@ impl App {
     /// por espectro y cuadro, aunque el bucle dé más vueltas (con MIDI
     /// mira la entrada cada 2 ms).
     pub fn frame_viz(&mut self) {
+        // En bajo consumo, uno de cada dos cuadros: en el otro, lo de antes.
+        self.viz_turn = !self.low_power || !self.viz_turn;
+        if !self.viz_turn {
+            return;
+        }
         let rate = self.sample_rate;
         if self.viz_sent[engine::VIZ_MASTER] && self.master_shown() {
             let history = &self.viz_history[engine::VIZ_MASTER];

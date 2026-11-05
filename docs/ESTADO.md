@@ -3004,6 +3004,35 @@ las 26 canciones deterministas de `scripts/ejemplos/` y
   interfaz de 1,3 % a 0,4 % (el de sin bloques es 0,2-0,3 %); sonando,
   de 3,6 % a 2,6 %.
 
+**Modo de bajo consumo** (`[interfaz] bajo_consumo = true`, apagado por
+defecto): con todo lo anterior, sonando sigue costando dibujar la
+pantalla entera 30 veces por segundo (el número de dB del master, con su
+décima, cambia en cada cuadro: sonando no hay cuadros iguales que
+saltarse, ver `CONSUMO_DIFF` en el banco). El modo:
+
+- dibuja como mucho a 15 cuadros por segundo (`LOW_POWER_REFRESH`; un
+  `refresco` más bajo se respeta);
+- recalcula el scope, los espectros y las demás visualizaciones uno de
+  cada dos cuadros (`App::frame_viz` y `App::frame_viz_views`, con lo
+  del último en `viz_cache`);
+- dibuja la onda en barras y el scope y las ruedas sin Braille
+  (`theme::set_low_power`, `theme::plain_viz`);
+- y deja el espectro del master sin sitio fijo, como una pestaña más
+  (`layout::Needs::low_power`), con lo que su FFT solo corre si se mira.
+
+La entrada no espera más (cada tecla sigue dibujando en el acto) y el
+audio no cambia. Medido: banco, lo que cuesta un segundo de interfaz
+sonando a 240×70, de 12,5 a 5,7 ms (`cancion`) y de 18,4 a 7,7 ms
+(`visual`); en vivo (mediana de 3), a 240×70 los bytes a la terminal de
+38 a 14 kB/s (`cancion`) y de 88 a 23 kB/s (`visual`), y el hilo de la
+interfaz de 6,0 % a 4,7 % y de 7,5 % a 4,5 %; a 80×24, de 2,0 % a 1,1 %.
+
+Cuándo conviene: con batería, con la terminal grande o con las
+visualizaciones abiertas, o si el emulador de terminal gasta (kitty y
+los demás pintan cada cuadro: a la mitad de bytes, la mitad de trabajo
+para ellos). No conviene para mirar el scope o el espectro con detalle
+(van a 7,5 cuadros por segundo) ni para la onda en puntos.
+
 ## Explorador y editor abajo
 
 Continuación del rediseño de la interfaz, pedida por el usuario con un

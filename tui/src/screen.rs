@@ -27,6 +27,7 @@ pub fn needs(view: &ViewModel) -> Needs {
         dock_want: 0,
         menu: view.menu_bar,
         master_viz: view.master_viz,
+        low_power: view.low_power,
         occupancy: view.occupancy.is_some(),
         viz: view.viz.iter().any(|p| p.line.is_none()),
         sidechain: view.sidechain.is_some(),

@@ -1628,6 +1628,7 @@ paleta de 256.
 | `alto_editor` | filas del editor abajo (de 4 a 200; siempre deja al menos 6 al sonido); `0`, un tercio del alto. Se guarda al arrastrar su borde de arriba o al cambiarlo con Ctrl-Alt-↑↓ | `0` |
 | `onda` | cómo se dibuja la onda de los samples (en su panel, en la ventana sin editor y en la vista previa del explorador): `"puntos"` (Braille, 2×4 puntos por celda: cuatro veces más alto que las barras) o `"barras"` (bloques, el dibujo de antes). Con `ascii`, siempre barras en ASCII | `"puntos"` |
 | `espectro` | cómo se dibuja el espectro del master en su panel: `"relleno"` o `"linea"` (puntos Braille), `"barras"` (bloques: lo que menos gasta) o `"espectrograma"` (el historial, que se desplaza a la izquierda, con la intensidad en la densidad de los puntos y en el color). Siempre con escala logarítmica y su eje de frecuencias | `"relleno"` |
+| `bajo_consumo` | menos CPU y menos trabajo para la terminal (para la batería de un portátil): como mucho 15 cuadros por segundo, el scope y los espectros recalculados uno de cada dos cuadros, la onda en barras, el scope y las ruedas sin Braille, y el espectro del master como pestaña en vez de fijo. La entrada y el audio no cambian | `false` |
 
 | En `[dispositivos]` | Para | Por defecto |
 | --- | --- | --- |
