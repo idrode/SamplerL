@@ -115,6 +115,16 @@ pub const BINDABLE: &[(&str, Bound, &[&str])] = &[
         Bound::Action(Action::Focus(crate::focus::Panel::Occupancy)),
         &["alt-9"],
     ),
+    (
+        "foco_archivos",
+        Bound::Action(Action::Focus(crate::focus::Panel::Files)),
+        &["alt-0"],
+    ),
+    (
+        "explorador_archivos",
+        Bound::Action(Action::ToggleExplorer),
+        &["alt-e"],
+    ),
     ("modo_tocar", Bound::Action(Action::PlayMode), &["esc"]),
     (
         "deshacer",
@@ -295,6 +305,10 @@ pub struct InterfaceConfig {
     pub ascii: Option<bool>,
     /// Cuadros por segundo (`refresco`).
     pub refresh: u32,
+    /// El explorador de archivos a la izquierda (`explorador`) y su ancho
+    /// (`ancho_explorador`; 0, el de siempre).
+    pub explorer: bool,
+    pub explorer_width: u16,
 }
 
 impl Default for InterfaceConfig {
@@ -302,9 +316,14 @@ impl Default for InterfaceConfig {
         InterfaceConfig {
             ascii: None,
             refresh: DEFAULT_REFRESH,
+            explorer: true,
+            explorer_width: 0,
         }
     }
 }
+
+/// Los anchos que se aceptan en `[interfaz] ancho_explorador`.
+pub const EXPLORER_WIDTHS: std::ops::RangeInclusive<u16> = 10..=200;
 
 /// Cuadros por segundo por defecto y su rango.
 pub const DEFAULT_REFRESH: u32 = 30;
@@ -330,6 +349,9 @@ impl InterfaceConfig {
     }
 }
 
+/// Los nombres de las claves de `[interfaz]` (para el aviso).
+const INTERFACE_NAMES: &[&str] = &["ascii", "refresco", "explorador", "ancho_explorador"];
+
 /// Claves de `[interfaz]` (para la guía).
 #[cfg(test)]
 const INTERFACE_KEYS: &[(&str, &str, &str)] = &[
@@ -342,6 +364,16 @@ const INTERFACE_KEYS: &[(&str, &str, &str)] = &[
         "refresco",
         "cuadros por segundo de la interfaz (de 5 a 120): más, las visualizaciones van más suaves y gastan más; la entrada y el ratón no esperan al dibujo, y parado y en silencio no se vuelve a dibujar lo que no cambia",
         "`30`",
+    ),
+    (
+        "explorador",
+        "el explorador de archivos a la izquierda (en una terminal de menos de 100 columnas se esconde solo y Alt-E lo abre encima); se guarda al cambiarlo con Alt-E",
+        "`true`",
+    ),
+    (
+        "ancho_explorador",
+        "columnas del explorador (de 10 a 200; nunca más de dos quintos del ancho); `0`, las de siempre (26). Se guarda al arrastrar su borde o al cambiarlo con `<`/`>`",
+        "`0`",
     ),
 ];
 
@@ -980,8 +1012,26 @@ impl Config {
                                     REFRESH.end()
                                 )),
                             },
+                            "explorador" => match value.as_bool() {
+                                Some(on) => config.interface.explorer = on,
+                                None => config
+                                    .warnings
+                                    .push("[interfaz] explorador: true o false".into()),
+                            },
+                            "ancho_explorador" => match value.as_integer() {
+                                Some(0) => config.interface.explorer_width = 0,
+                                Some(n) if n > 0 && EXPLORER_WIDTHS.contains(&(n as u16)) => {
+                                    config.interface.explorer_width = n as u16
+                                }
+                                _ => config.warnings.push(format!(
+                                    "[interfaz] ancho_explorador: 0 o columnas, de {} a {}",
+                                    EXPLORER_WIDTHS.start(),
+                                    EXPLORER_WIDTHS.end()
+                                )),
+                            },
                             _ => config.warnings.push(format!(
-                                "[interfaz] «{key}» no existe (hay: ascii, refresco)"
+                                "[interfaz] «{key}» no existe (hay: {})",
+                                INTERFACE_NAMES.join(", ")
                             )),
                         }
                     }
@@ -1314,6 +1364,75 @@ pub fn with_learned(text: &str, learned: &[script::learn::Learned]) -> String {
     out
 }
 
+/// Guarda `values` (clave y valor ya en TOML) en `[section]` de `path` sin
+/// tocar lo demás (comentarios incluidos): cambia la línea de cada clave
+/// o la añade al final de la sección (o la sección al final). En un
+/// temporal y luego en su sitio; si no cambia nada, no escribe.
+pub fn save_keys(path: &Path, section: &str, values: &[(&str, String)]) -> std::io::Result<()> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(e),
+    };
+    let updated = with_keys(&text, section, values);
+    if updated == text {
+        return Ok(());
+    }
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let tmp = path.with_extension("toml.tmp");
+    std::fs::write(&tmp, updated)?;
+    std::fs::rename(&tmp, path)
+}
+
+/// El texto de un `config.toml` con `values` puestos en `[section]`.
+pub fn with_keys(text: &str, section: &str, values: &[(&str, String)]) -> String {
+    let header = |line: &str| {
+        let line = line.split('#').next().unwrap_or("").trim();
+        line.starts_with('[')
+            .then(|| line.trim_matches(['[', ']']).trim().to_string())
+    };
+    let key_of = |line: &str| {
+        line.split_once('=')
+            .map(|(k, _)| k.trim().trim_matches('"').to_string())
+    };
+    let mut lines: Vec<String> = text.lines().map(String::from).collect();
+    let start = match lines
+        .iter()
+        .position(|l| header(l).as_deref() == Some(section))
+    {
+        Some(start) => start,
+        None => {
+            if lines.last().is_some_and(|l| !l.trim().is_empty()) {
+                lines.push(String::new());
+            }
+            lines.push(format!("[{section}]"));
+            lines.len() - 1
+        }
+    };
+    for (key, value) in values {
+        let end = lines[start + 1..]
+            .iter()
+            .position(|l| header(l).is_some())
+            .map_or(lines.len(), |i| start + 1 + i);
+        let entry = format!("{key} = {value}");
+        match (start + 1..end).find(|&i| key_of(&lines[i]).as_deref() == Some(key)) {
+            Some(i) => lines[i] = entry,
+            None => {
+                let at = (start + 1..end)
+                    .rev()
+                    .find(|&i| !lines[i].trim().is_empty())
+                    .map_or(start + 1, |i| i + 1);
+                lines.insert(at, entry);
+            }
+        }
+    }
+    let mut out = lines.join("\n");
+    out.push('\n');
+    out
+}
+
 /// Guarda lo elegido en `[dispositivos]` de `path` sin tocar lo demás
 /// (comentarios incluidos): cambia o quita las líneas de esas claves, o
 /// añade la sección al final. Se escribe entero en un temporal y se cambia
@@ -1601,6 +1720,38 @@ mod tests {
     }
 
     #[test]
+    fn with_keys_changes_or_adds_keys_and_keeps_the_rest() {
+        let text = "# mío\n[interfaz]\nascii = false # sí\nexplorador = true\n\n[teclas]\nguardar = \"alt-s\"\n";
+        let out = with_keys(
+            text,
+            "interfaz",
+            &[
+                ("explorador", "false".into()),
+                ("ancho_explorador", "30".into()),
+            ],
+        );
+        assert_eq!(
+            out,
+            "# mío\n[interfaz]\nascii = false # sí\nexplorador = false\nancho_explorador = 30\n\n[teclas]\nguardar = \"alt-s\"\n"
+        );
+        let out = with_keys(
+            "[teclas]\nguardar = \"alt-s\"\n",
+            "interfaz",
+            &[("explorador", "true".into())],
+        );
+        assert_eq!(
+            out,
+            "[teclas]\nguardar = \"alt-s\"\n\n[interfaz]\nexplorador = true\n"
+        );
+        assert_eq!(
+            with_keys("", "interfaz", &[("a", "1".into())]),
+            "[interfaz]\na = 1\n"
+        );
+        let c = Config::parse(&out, false, "c");
+        assert!(c.warnings.is_empty(), "{:?}", c.warnings);
+    }
+
+    #[test]
     fn save_devices_writes_the_file() {
         let dir = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../target/tmp"))
             .join("config_save_devices");
@@ -1757,7 +1908,7 @@ brillo = "red"
             [
                 "[teclas] cargar: F1 es siempre la paleta de comandos",
                 "[teclas] explorador: Alt-S ya es de guardar; no se usa",
-                "[teclas] «inventada» no existe (hay: paleta, guardar, cargar, marcha, cue, ir_al_error, ir_a_linea, buscar, buscar_siguiente, buscar_anterior, siguiente_pista, recargar, ordenes, completar, salir, menu, foco_codigo, foco_sample, foco_tracker, foco_mezcla, foco_efectos, foco_lanes, foco_scope, foco_espectro, foco_ocupacion, modo_tocar, deshacer, rehacer, explorador, tap_tempo, macros, metronomo, exportar, seccion_siguiente, seccion_anterior, repetir_seccion, variante, resaltado, ocupacion, piano_roll, editar_roll, panico, pausa_panico)",
+                "[teclas] «inventada» no existe (hay: paleta, guardar, cargar, marcha, cue, ir_al_error, ir_a_linea, buscar, buscar_siguiente, buscar_anterior, siguiente_pista, recargar, ordenes, completar, salir, menu, foco_codigo, foco_sample, foco_tracker, foco_mezcla, foco_efectos, foco_lanes, foco_scope, foco_espectro, foco_ocupacion, foco_archivos, explorador_archivos, modo_tocar, deshacer, rehacer, explorador, tap_tempo, macros, metronomo, exportar, seccion_siguiente, seccion_anterior, repetir_seccion, variante, resaltado, ocupacion, piano_roll, editar_roll, panico, pausa_panico)",
                 "[teclas] salir: «q»: una letra sin ctrl- ni alt- escribiría texto",
                 "[teclas] Ctrl-G era de ir_al_error; ahora es de marcha",
                 "[colores] tenue: color no válido",

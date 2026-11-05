@@ -9,6 +9,8 @@ mod devices_window;
 mod diagnose;
 mod editing;
 mod expression;
+mod files;
+mod files_panel;
 mod focus;
 mod highlight;
 mod history;

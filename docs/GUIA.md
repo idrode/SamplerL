@@ -1000,6 +1000,8 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Foco: scope | Lleva el foco a el scope del master; Esc vuelve | Alt-7 |
 | Foco: espectro | Lleva el foco a el espectro del master; Esc vuelve | Alt-8 |
 | Foco: ocupación | Lleva el foco a la vista de ocupación con su cursor; Esc vuelve | Alt-9 |
+| Foco: archivos | Lleva el foco a el explorador de archivos (si no se veía, aparece); Esc vuelve | Alt-0 |
+| Explorador de archivos | Muestra o esconde el árbol de la carpeta del proyecto a la izquierda; en una terminal estrecha, lo abre encima | Alt-E |
 | Menús | Abre la barra de menús: ←→ menú, ↑↓ entrada, Enter ejecuta, la letra subrayada abre su menú | F10 |
 | Qué sabe hacer esta terminal | Dice si hay truecolor, Unicode, teclas al soltar y ratón, y dónde está la configuración | — |
 | Salir | Sale (pide confirmación si hay cambios sin guardar) | Ctrl-Q |
@@ -1396,6 +1398,8 @@ paleta de 256.
 | `foco_scope` | Foco: scope | `alt-7` |
 | `foco_espectro` | Foco: espectro | `alt-8` |
 | `foco_ocupacion` | Foco: ocupación | `alt-9` |
+| `foco_archivos` | Foco: archivos | `alt-0` |
+| `explorador_archivos` | Explorador de archivos | `alt-e` |
 | `modo_tocar` | Modo tocar | `esc` |
 | `deshacer` | Deshacer | `ctrl-z`, `ctrl-u` |
 | `rehacer` | Rehacer | `ctrl-r` |
@@ -1493,6 +1497,8 @@ paleta de 256.
 | --- | --- | --- |
 | `ascii` | dibujar las visualizaciones (y lo que tenga alternativa) solo con ASCII, sin Braille ni bloques, para una terminal que no los pinta | según `LANG`: sin UTF-8, `true` |
 | `refresco` | cuadros por segundo de la interfaz (de 5 a 120): más, las visualizaciones van más suaves y gastan más; la entrada y el ratón no esperan al dibujo, y parado y en silencio no se vuelve a dibujar lo que no cambia | `30` |
+| `explorador` | el explorador de archivos a la izquierda (en una terminal de menos de 100 columnas se esconde solo y Alt-E lo abre encima); se guarda al cambiarlo con Alt-E | `true` |
+| `ancho_explorador` | columnas del explorador (de 10 a 200; nunca más de dos quintos del ancho); `0`, las de siempre (26). Se guarda al arrastrar su borde o al cambiarlo con `<`/`>` | `0` |
 
 | En `[dispositivos]` | Para | Por defecto |
 | --- | --- | --- |

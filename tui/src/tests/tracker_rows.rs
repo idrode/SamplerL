@@ -46,7 +46,10 @@ fn the_16_rows_show_as_soon_as_they_fit_in_both_windows() {
     let (_, mut single, _engine) = open("tracker_rows_single", Some(SONG));
     let all: Vec<usize> = (0..16).collect();
     for (app, sizes) in [
-        (&mut main, &[(120u16, 40u16), (120, 44), (180, 50), (250, 60)][..]),
+        (
+            &mut main,
+            &[(120u16, 40u16), (120, 44), (180, 50), (250, 60)][..],
+        ),
         // Con el editor abajo hace falta más alto.
         (&mut single, &[(180, 56), (250, 60)][..]),
     ] {

@@ -98,8 +98,9 @@ pub enum Action {
     DevicesWindow,
     DevicesBack,
     ToggleVim,
-    /// Lleva el foco a un panel (Alt-1…9).
+    /// Lleva el foco a un panel (Alt-0…9).
     Focus(crate::focus::Panel),
+    ToggleExplorer,
     OpenMenu,
     TerminalInfo,
     Quit,
@@ -704,6 +705,18 @@ pub const ACTIONS: &[ActionDef] = &[
         name: "Foco: ocupación",
         description: "Lleva el foco a la vista de ocupación con su cursor; Esc vuelve",
         keys: "Alt-9",
+    },
+    ActionDef {
+        action: Action::Focus(crate::focus::Panel::Files),
+        name: "Foco: archivos",
+        description: "Lleva el foco a el explorador de archivos (si no se veía, aparece); Esc vuelve",
+        keys: "Alt-0",
+    },
+    ActionDef {
+        action: Action::ToggleExplorer,
+        name: "Explorador de archivos",
+        description: "Muestra o esconde el árbol de la carpeta del proyecto a la izquierda; en una terminal estrecha, lo abre encima",
+        keys: "Alt-E",
     },
     ActionDef {
         action: Action::OpenMenu,

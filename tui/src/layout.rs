@@ -513,7 +513,11 @@ fn explorer(g: &mut Grid, body: Rect, needs: &Needs) -> Rect {
 
 /// El alto del editor acoplado en un centro de `height` filas.
 pub fn editor_rows(height: u16, wanted: u16) -> u16 {
-    let wanted = if wanted == 0 { (height / 3).max(8) } else { wanted };
+    let wanted = if wanted == 0 {
+        (height / 3).max(8)
+    } else {
+        wanted
+    };
     let max = height.saturating_sub(SOUND_MIN).max(EDITOR_MIN);
     wanted.clamp(EDITOR_MIN, max).min(height)
 }
@@ -714,7 +718,10 @@ mod tests {
         for (r, _) in g.overlays() {
             let body = g.body.unwrap();
             assert!(
-                r.x >= body.x && r.y >= body.y && r.right() <= body.right() && r.bottom() <= body.bottom(),
+                r.x >= body.x
+                    && r.y >= body.y
+                    && r.right() <= body.right()
+                    && r.bottom() <= body.bottom(),
                 "{r:?} fuera de {body:?}"
             );
         }
@@ -832,7 +839,10 @@ mod tests {
     fn small_hides_the_explorer_and_puts_the_editor_below() {
         let g = grid(Rect::new(0, 0, 80, 24), &needs());
         assert_eq!(g.size, Size::Small);
-        assert!(g.menu.is_none(), "a 80 columnas la barra de menús no ocupa fila");
+        assert!(
+            g.menu.is_none(),
+            "a 80 columnas la barra de menús no ocupa fila"
+        );
         assert!(g.explorer.is_none(), "a 80 columnas no cabe el explorador");
         let (editor, wave) = (g.editor.unwrap(), g.wave.unwrap());
         assert_eq!((editor.x, editor.width), (0, 80));
@@ -1020,7 +1030,9 @@ mod tests {
         assert!(g.floating);
         // El sonido llena el centro, como sin editor.
         let docked = grid(screen, &needs());
-        assert!(g.dock.as_ref().unwrap().area.bottom() > docked.dock.as_ref().unwrap().area.bottom());
+        assert!(
+            g.dock.as_ref().unwrap().area.bottom() > docked.dock.as_ref().unwrap().area.bottom()
+        );
         // Tapa lo de debajo.
         let wave = g.wave.unwrap();
         let inside = (editor.x + 1, editor.y + 1);

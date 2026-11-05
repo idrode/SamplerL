@@ -238,7 +238,8 @@ fn with_the_editor_outside_the_main_window_shows_it_in_its_tab() {
         // Desde el borde izquierdo (no hay editor; a la derecha puede ir
         // el espectro del master).
         let (x, _) = find(&buffer, "┌ ocupación").unwrap_or_else(|| panic!("{screen}"));
-        assert_eq!(x, 0, "{screen}");
+        let left = main.last_grid().unwrap().explorer.map_or(0, |r| r.right());
+        assert_eq!(x, left, "{screen}");
         assert!(screen.contains("┌ sample"), "{screen}");
     }
 }

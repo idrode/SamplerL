@@ -31,8 +31,14 @@ fn with_the_editor_outside_the_views_take_the_whole_window() {
         "{screen}"
     );
     assert!(!screen.contains("bpm(120)"), "{screen}");
-    // El sample, de lado a lado, bajo los menús, la cabecera y la regla.
-    assert_eq!(find(&buffer, "┌ sample · drums"), Some((0, 3)), "{screen}");
+    // El sample, de lado a lado (a la derecha del explorador), bajo los
+    // menús, la cabecera y la regla.
+    let left = main.last_grid().unwrap().explorer.unwrap().right();
+    assert_eq!(
+        find(&buffer, "┌ sample · drums"),
+        Some((left, 3)),
+        "{screen}"
+    );
     assert_eq!(buffer[(119, 3)].symbol(), "┐");
 
     // Con una sola ventana, el sample arriba y el editor abajo, a lo
@@ -43,8 +49,9 @@ fn with_the_editor_outside_the_views_take_the_whole_window() {
     let editor = find(&buffer, "┌ song.lua").expect(&screen);
     assert!(screen.contains("bpm(120)"), "{screen}");
     let at = find(&buffer, "┌ sample · drums").unwrap();
-    assert_eq!(at, (0, 3));
-    assert_eq!(editor.0, 0);
+    let left = single.last_grid().unwrap().explorer.unwrap().right();
+    assert_eq!(at, (left, 3));
+    assert_eq!(editor.0, left);
     assert!(editor.1 > at.1, "{screen}");
 }
 

@@ -11,7 +11,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
 use crate::app::App;
 use crate::model::{
     BlockPickerView, BrowserView, ClashTableView, CompletionView, PaletteView, SlotsView,
-    TimelineView, ViewModel, fx_text, fx_text_named,
+    TimelineView, ViewModel, Waveform, fx_text, fx_text_named,
 };
 use crate::theme;
 
@@ -1488,6 +1488,25 @@ fn draw_wave(track: &crate::model::TrackView, inner: Rect, buf: &mut Buffer) {
             buf[(inner.x + x as u16, inner.y + y as u16)]
                 .set_char(symbol)
                 .set_fg(color);
+        }
+    }
+}
+
+/// Un sample entero en `area` (la vista previa del explorador), sin
+/// cortes: el mismo dibujo que la onda de las pistas.
+pub fn draw_waveform(wave: &Waveform, area: Rect, buf: &mut Buffer, color: Color) {
+    let columns = area.width as usize;
+    for x in 0..columns {
+        let from = x as f64 / columns as f64;
+        let to = (x + 1) as f64 / columns as f64;
+        let (lo, hi) = wave.range(from, to);
+        let cells = wave_bar(lo.min(0.0), hi.max(0.0), area.height);
+        for (y, cell) in cells.into_iter().enumerate() {
+            if let Some(c) = cell {
+                buf[(area.x + x as u16, area.y + y as u16)]
+                    .set_char(c)
+                    .set_fg(color);
+            }
         }
     }
 }

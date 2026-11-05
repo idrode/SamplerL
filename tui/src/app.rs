@@ -23,10 +23,12 @@ use crate::palette::{self, Action, Item};
 
 mod cue;
 mod devices;
+mod dock;
 #[cfg(test)]
 pub use devices::devices_command;
 #[cfg(test)]
 pub use roll::roll_command;
+mod files;
 mod focus;
 mod freeze;
 mod idle;
@@ -203,11 +205,12 @@ struct Browser {
     selected: usize,
     /// WAV de la carpeta de muestras (rutas relativas).
     files: Vec<String>,
-    /// Samples ya leídos para la preescucha (por ruta).
-    loaded: HashMap<String, Arc<Sample>>,
     /// Lo que se sabe del elegido (duración, error al leerlo...).
     info: String,
 }
+
+/// Samples leídos para la preescucha que se guardan como mucho.
+const PREVIEW_CACHE: usize = 32;
 
 /// Número de ranuras rápidas.
 pub const SLOTS: usize = 9;
@@ -384,6 +387,11 @@ pub struct App {
     midi_events: u64,
     /// Explorador de samples abierto.
     browser: Option<Browser>,
+    /// Samples ya leídos para la preescucha (por ruta), de los dos
+    /// exploradores.
+    preview_cache: HashMap<PathBuf, Arc<Sample>>,
+    /// El explorador de archivos (ver `files`).
+    files: files::Explorer,
     /// Cursor del tracker para editar los efectos de los pasos, y el paso
     /// que se edita en la línea de órdenes (ver `tracker_edit`).
     tracker_edit: Option<tracker_edit::TrackerCursor>,
@@ -558,6 +566,8 @@ impl App {
             editor_terminal: None,
             socket_dir: None,
             browser: None,
+            preview_cache: HashMap::new(),
+            files: Default::default(),
             tracker_edit: None,
             chosen_focus: None,
             menu: None,
@@ -666,6 +676,8 @@ impl App {
             crate::theme::set_ascii(ascii);
         }
         self.refresh_hz = config.interface.refresh;
+        self.files.shown = config.interface.explorer;
+        self.files.width = config.interface.explorer_width;
         self.editor_terminal = config.editor_terminal.clone();
         self.devices_terminal = config.devices_terminal.clone();
         self.mouse_enabled = config.editor.mouse;
@@ -1203,32 +1215,41 @@ impl App {
             return;
         };
         let path = self.sample_folder().join(&file);
-        let rate = self.sample_rate;
-        let Some(browser) = &mut self.browser else {
-            return;
+        let info = match self.preview_file(&path) {
+            Ok(sample) => format!(
+                "{file} · {:.2} s",
+                sample.frames() as f64 / sample.sample_rate() as f64
+            ),
+            Err(e) => format!("{file}: {e}"),
         };
-        let sample = match browser.loaded.get(&file) {
+        if let Some(browser) = &mut self.browser {
+            browser.info = info;
+        }
+    }
+
+    /// Lee el sample de `path` (o lo saca de la caché) y lo preescucha
+    /// entero en la voz aparte, sin tocar las pistas. Lo usan el
+    /// explorador de samples y el de archivos.
+    pub(crate) fn preview_file(&mut self, path: &Path) -> Result<Arc<Sample>, String> {
+        let sample = match self.preview_cache.get(path) {
             Some(sample) => sample.clone(),
-            None => match Sample::load_wav(&path, rate) {
-                Ok(sample) => {
-                    let sample = Arc::new(sample);
-                    browser.loaded.insert(file.clone(), sample.clone());
-                    sample
+            None => {
+                let sample =
+                    Arc::new(Sample::load_wav(path, self.sample_rate).map_err(|e| e.to_string())?);
+                // Una caché pequeña: lo que se va escuchando al recorrer.
+                if self.preview_cache.len() >= PREVIEW_CACHE {
+                    self.preview_cache.clear();
                 }
-                Err(e) => {
-                    browser.info = format!("{file}: {e}");
-                    return;
-                }
-            },
+                self.preview_cache
+                    .insert(path.to_path_buf(), sample.clone());
+                sample
+            }
         };
-        browser.info = format!(
-            "{file} · {:.2} s",
-            sample.frames() as f64 / sample.sample_rate() as f64
-        );
         let whole = engine::Slices::grid(&sample, 1);
         if let Err(e) = self.controller.preview_slice(&sample, &whole, 0) {
             self.message = format!("motor: {e}");
         }
+        Ok(sample)
     }
 
     /// Tecla con el explorador abierto.
@@ -1267,11 +1288,8 @@ impl App {
             Key::Char('k') if input.ctrl => {
                 if let Some(file) = matches.get(browser.selected).cloned() {
                     self.browser_preview();
-                    if let Some(sample) = self
-                        .browser
-                        .as_ref()
-                        .and_then(|b| b.loaded.get(&file).cloned())
-                    {
+                    let path = self.sample_folder().join(&file);
+                    if let Some(sample) = self.preview_cache.get(&path).cloned() {
                         let _ = self.controller.stop_preview();
                         self.browser = None;
                         self.analyze_key(file, sample);
@@ -3518,6 +3536,7 @@ impl App {
             Action::RollWindow => self.launch_roll_window(),
             Action::RollBack => self.reclaim_roll_window(),
             Action::Focus(panel) => self.set_focus(panel),
+            Action::ToggleExplorer => self.toggle_explorer(),
             Action::OpenMenu => self.toggle_menu(),
             Action::TerminalInfo => self.terminal_info(),
             Action::Quit => {
@@ -4073,6 +4092,10 @@ impl App {
         if let Some(flow) = self.lanes_key(&input) {
             return flow;
         }
+        // Con el foco en el explorador de archivos, sus teclas.
+        if let Some(flow) = self.handle_files(&input) {
+            return flow;
+        }
         // Con el foco en un panel sin cursor (mezcla, efectos...), sus
         // teclas.
         if let Some(flow) = self.handle_chosen_focus(&input) {
@@ -4341,6 +4364,7 @@ impl App {
 
     /// La rejilla del último cuadro dibujado (el ratón y los tests la
     /// miran).
+    #[cfg(test)]
     pub fn last_grid(&self) -> Option<&crate::layout::Grid> {
         self.grid.as_ref()
     }
@@ -4643,6 +4667,7 @@ impl App {
             menu_bar: true,
             menu: self.menu_view(),
             master_viz: !self.editor_window(),
+            files: self.files_needs(),
             master_views: self.master_views(),
             palette: self.palette.as_ref().map(|p| {
                 let matches = self.palette_matches();

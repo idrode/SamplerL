@@ -135,7 +135,8 @@ fn in_the_main_window_it_goes_to_its_tab_below_the_tracker() {
         assert!(!screen.contains("bpm(120)"), "{screen}");
         let (x, y) = find(&buffer, "┌ sidechain").unwrap_or_else(|| panic!("{screen}"));
         let (_, ty) = find(&buffer, "┌ tracker").unwrap();
-        assert_eq!(x, 0, "{screen}");
+        let left = main.last_grid().unwrap().explorer.map_or(0, |r| r.right());
+        assert_eq!(x, left, "{screen}");
         assert!(y > ty, "{screen}");
         assert!(screen.contains("← kick"), "{screen}");
     }

@@ -729,6 +729,11 @@ track("drums", amen):steps(". . . .  . . . .  . . . .  . . . ."):gain(0.5)
     assert!((audio[200] - 0.25).abs() < 1e-3, "{}", audio[200]);
 }
 
+/// La columna `x` dentro del editor del último dibujo.
+fn in_editor(app: &App, x: u16) -> u16 {
+    app.last_grid().unwrap().editor.unwrap().x + x
+}
+
 /// Filas del buffer con el fondo de línea de error en la columna `x`.
 fn error_rows(buffer: &Buffer, x: u16) -> Vec<u16> {
     (0..buffer.area.height)
@@ -749,16 +754,21 @@ fn the_error_line_is_highlighted_in_the_editor() {
     // Línea 3 en la tercera fila del editor (su borde y 2), en todo su
     // ancho dentro del editor; ninguna otra.
     let row = app.last_grid().unwrap().editor.unwrap().y + 3;
-    assert_eq!(error_rows(&buffer, 5), vec![row]);
+    assert_eq!(error_rows(&buffer, in_editor(&app, 5)), vec![row]);
     let (x, _) = find(&buffer, "track(\"drums\"").unwrap();
     assert_eq!(buffer[(x, row)].bg, ui::error_line());
     assert_eq!(buffer[(x, row)].symbol(), "t");
-    assert_ne!(buffer[(x, row - 3)].bg, ui::error_line(), "fuera del editor");
+    assert_ne!(
+        buffer[(x, row - 3)].bg,
+        ui::error_line(),
+        "fuera del editor"
+    );
 
     // Sin error, sin resaltado.
     replace_all(&mut app, SONG);
     app.handle(ctrl('s'));
-    assert!(error_rows(&draw(&mut app, 120, 40), 5).is_empty());
+    let buffer = draw(&mut app, 120, 40);
+    assert!(error_rows(&buffer, in_editor(&app, 5)).is_empty());
 }
 
 #[test]
@@ -775,7 +785,7 @@ fn the_error_line_follows_the_scroll() {
     // El cursor está al final: el editor se desplaza y el error se ve.
     let buffer = draw(&mut app, 120, 40);
     let screen = text(&buffer);
-    let rows = error_rows(&buffer, 5);
+    let rows = error_rows(&buffer, in_editor(&app, 5));
     assert_eq!(rows.len(), 1, "{screen}");
     let line: String = screen.lines().nth(rows[0] as usize).unwrap().into();
     assert!(line.contains("63 bpm(9999)"), "{line}");
@@ -783,11 +793,11 @@ fn the_error_line_follows_the_scroll() {
     // Con el cursor arriba, la línea 63 queda fuera de la vista: nada.
     app.editor.move_cursor(ratatui_textarea::CursorMove::Top);
     let buffer = draw(&mut app, 120, 40);
-    assert!(error_rows(&buffer, 5).is_empty());
+    assert!(error_rows(&buffer, in_editor(&app, 5)).is_empty());
     // Ctrl-G la trae a la vista otra vez.
     app.handle(ctrl('g'));
     let buffer = draw(&mut app, 120, 40);
-    assert_eq!(error_rows(&buffer, 5).len(), 1);
+    assert_eq!(error_rows(&buffer, in_editor(&app, 5)).len(), 1);
 }
 
 fn f(n: u8) -> Input {
@@ -1166,7 +1176,7 @@ fn completion_filters_by_prefix_while_typing() {
     let (_, cursor_row) = find(&buffer, "5 trac").unwrap();
     // Con el editor abajo, encima de la línea del cursor.
     assert_eq!(buffer[(x - 2, cursor_row - 1)].symbol(), "└", "{screen}");
-    assert!(x < 20, "{screen}");
+    assert!(x < in_editor(&app, 20), "{screen}");
     assert!(
         screen.contains("track(nombre, cortes) / track(nombre) → pista"),
         "{screen}"
@@ -2522,6 +2532,7 @@ mod clipboard;
 mod config;
 mod devices;
 mod devices_panel;
+mod files;
 mod focus;
 mod formant;
 mod freeze;

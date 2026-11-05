@@ -31,6 +31,9 @@ pub fn needs(view: &ViewModel) -> Needs {
         viz: view.viz.iter().any(|p| p.line.is_none()),
         sidechain: view.sidechain.is_some(),
         clash: view.clash_table.is_some(),
+        explorer: view.files.0,
+        explorer_overlay: view.files.1,
+        explorer_width: view.files.2,
         ..Needs::default()
     }
 }
@@ -113,6 +116,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         }
         app.set_roll_area(None);
         app.set_lanes_area(None);
+        app.clear_files_layout();
         app.panels = panels;
         return;
     }
@@ -125,6 +129,16 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
     if let Some(area) = grid.ruler {
         Ruler(&view).render(area, frame.buffer_mut());
+    }
+    // El explorador en su columna.
+    match grid.explorer {
+        Some(area) if !grid.explorer_overlay => {
+            panels.focus.push((area, Panel::Files));
+            let files = app.place_files(area);
+            crate::files_panel::FilesPanel(&files).render(area, frame.buffer_mut());
+        }
+        Some(_) => {}
+        None => app.clear_files_layout(),
     }
     // Lo que flota, primero en la lista del foco: el ratón lo encuentra
     // antes que lo que tapa.
@@ -195,8 +209,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     if let Some(area) = grid.keys {
         KeysLine(&view).render(area, frame.buffer_mut());
     }
-    // Encima de todo lo demás: el editor flotante (tapa sin borrar lo de
-    // detrás, que ya está dibujado).
+    // Encima de lo demás: el explorador abierto a mano en una terminal
+    // estrecha y, encima de todo, el editor flotante (tapan sin borrar lo
+    // de detrás, que ya está dibujado).
+    if let Some(area) = grid.explorer.filter(|_| grid.explorer_overlay) {
+        let files = app.place_files(area);
+        crate::files_panel::FilesPanel(&files).render(area, frame.buffer_mut());
+    }
     if let Some(area) = grid.editor.filter(|_| grid.floating) {
         frame.render_widget(ratatui::widgets::Clear, area);
         popup = ui::draw_editor(frame, app, &view, area);
@@ -247,13 +266,13 @@ fn ascii_of(c: char) -> Option<char> {
             '+'
         }
         '─' | '━' | '╌' | '┄' | '−' | '–' => '-',
-        '│' | '┃' | '┊' | '┆' | '╎' => '|',
+        '│' | '┃' | '┊' | '┆' | '╎' | '▏' => '|',
         '█' | '▇' | '▆' | '▓' | '■' | '▰' | '▙' | '▛' | '▜' | '▟' => '#',
         '▅' | '▄' | '▃' | '▒' | '▌' | '▐' | '▚' | '▞' => '=',
         '▂' | '▁' | '░' | '▱' | '▖' | '▗' | '▘' | '▝' => '.',
         '▀' | '▔' => '\'',
         '▶' | '▸' | '›' | '→' | '»' => '>',
-        '◀' | '‹' | '←' | '«' | '⏮' => '<',
+        '◀' | '◂' | '‹' | '←' | '«' | '⏮' => '<',
         '▲' | '↑' => '^',
         '▼' | '↓' => 'v',
         '·' | '•' | '●' | '◉' | '◇' | '◆' | '▣' => '*',
@@ -288,8 +307,19 @@ fn take_strip(area: Rect) -> (Rect, Rect) {
     (strip, body)
 }
 
-/// La onda del sample: la grande si hay alto, la compacta si no.
+/// La onda del sample: la grande si hay alto, la compacta si no; con el
+/// foco en el explorador, la del sample que se preescucha.
 fn draw_wave(view: &ViewModel, area: Rect, buf: &mut Buffer) {
+    if let Some(preview) = &view.files.3 {
+        let block = ui::panel_block(view, Panel::Wave).title(format!(
+            " sample · vista previa · {} · {} ",
+            preview.name, preview.info
+        ));
+        let inner = block.inner(area);
+        block.render(area, buf);
+        ui::draw_waveform(&preview.waveform, inner, buf, ui::wave_color());
+        return;
+    }
     if area.height >= 9 {
         ui::BigSamplePanel(view).render(area, buf);
     } else {
