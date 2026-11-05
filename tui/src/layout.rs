@@ -477,8 +477,9 @@ pub fn grid(screen: Rect, needs: &Needs) -> Grid {
 pub const EXPLORER_WIDTH: u16 = 26;
 pub const EXPLORER_MIN: u16 = 14;
 /// Desde este ancho de terminal el explorador va a su columna; por debajo
-/// se esconde (y se abre encima con su tecla).
-pub const EXPLORER_SCREEN: u16 = 100;
+/// se esconde (y se abre encima con su tecla). Es más que el del tamaño
+/// mediano: al estrechar, lo primero que se va es el explorador.
+pub const EXPLORER_SCREEN: u16 = 120;
 /// Alto mínimo del editor acoplado (borde y dos líneas) y lo que deja
 /// como mínimo al sonido.
 pub const EDITOR_MIN: u16 = 4;
@@ -513,8 +514,10 @@ fn explorer(g: &mut Grid, body: Rect, needs: &Needs) -> Rect {
 
 /// El alto del editor acoplado en un centro de `height` filas.
 pub fn editor_rows(height: u16, wanted: u16) -> u16 {
+    // Sin pedir, un tercio (al menos 8, salvo en una terminal muy baja,
+    // donde no pasa de dos quintos).
     let wanted = if wanted == 0 {
-        (height / 3).max(8)
+        (height / 3).max(8.min(height * 2 / 5))
     } else {
         wanted
     };
@@ -575,7 +578,7 @@ fn small(g: &mut Grid, sound: Rect, needs: &Needs) {
     // La onda: bordes y dos filas (una si no hay alto).
     let wave = if sound.height >= 14 {
         6
-    } else if sound.height >= 9 {
+    } else if sound.height >= 7 {
         4
     } else {
         MIN_PANEL

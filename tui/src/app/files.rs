@@ -98,9 +98,14 @@ impl App {
         }
     }
 
-    /// Lo que dibuja el panel en `area` (lo llama el dibujo): desplaza el
-    /// árbol para que se vea la fila elegida y apunta dónde quedó.
-    pub fn place_files(&mut self, area: Rect) -> FilesView {
+    /// Lo que dibuja el panel en `area` (lo llama el dibujo; `overlay`:
+    /// encima de lo demás): desplaza el árbol para que se vea la fila
+    /// elegida y apunta dónde quedó. Si cabe en su columna, deja de ir
+    /// encima (al volver a estrechar la terminal no reaparece solo).
+    pub fn place_files(&mut self, area: Rect, overlay: bool) -> FilesView {
+        if !overlay {
+            self.files.overlay = false;
+        }
         self.ensure_files();
         let mut view = self.files_view();
         let layout = FilesLayout::new(&view, area);

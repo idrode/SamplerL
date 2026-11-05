@@ -438,7 +438,7 @@ const INTERFACE_KEYS: &[(&str, &str, &str)] = &[
     ),
     (
         "explorador",
-        "el explorador de archivos a la izquierda (en una terminal de menos de 100 columnas se esconde solo y Alt-E lo abre encima); se guarda al cambiarlo con Alt-E",
+        "el explorador de archivos a la izquierda (en una terminal de menos de 120 columnas se esconde solo y Alt-E lo abre encima); se guarda al cambiarlo con Alt-E",
         "`true`",
     ),
     (

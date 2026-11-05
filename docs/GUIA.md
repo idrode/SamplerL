@@ -1519,7 +1519,7 @@ paleta de 256.
 | --- | --- | --- |
 | `ascii` | dibujar las visualizaciones (y lo que tenga alternativa) solo con ASCII, sin Braille ni bloques, para una terminal que no los pinta | según `LANG`: sin UTF-8, `true` |
 | `refresco` | cuadros por segundo de la interfaz (de 5 a 120): más, las visualizaciones van más suaves y gastan más; la entrada y el ratón no esperan al dibujo, y parado y en silencio no se vuelve a dibujar lo que no cambia | `30` |
-| `explorador` | el explorador de archivos a la izquierda (en una terminal de menos de 100 columnas se esconde solo y Alt-E lo abre encima); se guarda al cambiarlo con Alt-E | `true` |
+| `explorador` | el explorador de archivos a la izquierda (en una terminal de menos de 120 columnas se esconde solo y Alt-E lo abre encima); se guarda al cambiarlo con Alt-E | `true` |
 | `ancho_explorador` | columnas del explorador (de 10 a 200; nunca más de dos quintos del ancho); `0`, las de siempre (26). Se guarda al arrastrar su borde o al cambiarlo con `<`/`>` o Ctrl-Alt-←→ | `0` |
 | `alto_editor` | filas del editor abajo (de 4 a 200; siempre deja al menos 6 al sonido); `0`, un tercio del alto. Se guarda al arrastrar su borde de arriba o al cambiarlo con Ctrl-Alt-↑↓ | `0` |
 | `onda` | cómo se dibuja la onda de los samples (en su panel, en la ventana sin editor y en la vista previa del explorador): `"puntos"` (Braille, 2×4 puntos por celda: cuatro veces más alto que las barras) o `"barras"` (bloques, el dibujo de antes). Con `ascii`, siempre barras en ASCII | `"puntos"` |

@@ -207,13 +207,19 @@ impl Widget for MasterSpectrumPanel<'_> {
         } else {
             inner
         };
+        // Con menos de tres filas, el espectrograma no se lee: relleno.
+        let style = if s.style == Look::Spectrogram && plot.height < 3 {
+            Look::Fill
+        } else {
+            s.style
+        };
         let cell = |buf: &mut Buffer, i: usize, c: char, color: Color| {
             let w = plot.width as usize;
             buf[(plot.x + (i % w) as u16, plot.y + (i / w) as u16)]
                 .set_char(c)
                 .set_fg(color);
         };
-        match s.style {
+        match style {
             Look::Spectrogram => {
                 let (cells, peak) = spectrogram(&s.history, plot.width, plot.height);
                 for (i, (&bits, &p)) in cells.iter().zip(&peak).enumerate() {
@@ -238,10 +244,10 @@ impl Widget for MasterSpectrumPanel<'_> {
             Look::Bars => bars(&s.levels, plot, buf, ascii),
             Look::Fill | Look::Line if ascii => bars(&s.levels, plot, buf, true),
             Look::Fill | Look::Line => {
-                let (cells, edge) = dots(&s.levels, plot.width, plot.height, s.style == Look::Fill);
+                let (cells, edge) = dots(&s.levels, plot.width, plot.height, style == Look::Fill);
                 for (i, (&bits, &top)) in cells.iter().zip(&edge).enumerate() {
                     if bits != 0 {
-                        let color = if top || s.style == Look::Line {
+                        let color = if top || style == Look::Line {
                             accent()
                         } else {
                             wave_color()

@@ -119,6 +119,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         app.set_lanes_area(None);
         app.clear_files_layout();
         app.panels = panels;
+        // La rejilla también: el ratón no debe llegar a lo que ya no se ve.
+        app.set_grid(grid);
         return;
     }
 
@@ -135,7 +137,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     match grid.explorer {
         Some(area) if !grid.explorer_overlay => {
             panels.focus.push((area, Panel::Files));
-            let files = app.place_files(area);
+            let files = app.place_files(area, false);
             crate::files_panel::FilesPanel(&files).render(area, frame.buffer_mut());
         }
         Some(_) => {}
@@ -214,7 +216,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // estrecha y, encima de todo, el editor flotante (tapan sin borrar lo
     // de detrás, que ya está dibujado).
     if let Some(area) = grid.explorer.filter(|_| grid.explorer_overlay) {
-        let files = app.place_files(area);
+        let files = app.place_files(area, true);
         crate::files_panel::FilesPanel(&files).render(area, frame.buffer_mut());
     }
     if let Some(area) = grid.editor.filter(|_| grid.floating) {

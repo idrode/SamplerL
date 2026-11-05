@@ -124,6 +124,93 @@ fn no_size_breaks_the_drawing() {
     }
 }
 
+#[test]
+fn no_size_breaks_the_drawing_with_the_explorer_on_top_floating_or_maximized() {
+    let (_, mut app, mut engine) = open("screen_sizes_new", Some(SONG));
+    offline::render(&mut engine, 3 * STEP, 2);
+    app.tick();
+    let alt = |c| Input {
+        key: Key::Char(c),
+        alt: true,
+        ..Input::default()
+    };
+    // Explorador encima (a 80), editor flotante y maximizado, en ASCII y no.
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    crate::safe_draw::draw(&mut terminal, |frame| ui::draw(frame, &mut app));
+    app.handle(alt('e'));
+    for setup in [None, Some('w'), Some('z'), Some('z')] {
+        if let Some(c) = setup {
+            app.handle(alt(c));
+        }
+        for ascii in [false, true] {
+            theme::set_ascii(ascii);
+            for (width, height) in [
+                (1u16, 1u16),
+                (39, 9),
+                (40, 10),
+                (60, 16),
+                (80, 24),
+                (99, 29),
+                (100, 30),
+                (120, 40),
+                (180, 50),
+                (300, 90),
+            ] {
+                let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+                let outcome =
+                    crate::safe_draw::draw(&mut terminal, |frame| ui::draw(frame, &mut app));
+                assert_eq!(
+                    outcome,
+                    crate::safe_draw::Outcome::Drawn,
+                    "{width}×{height} {setup:?} ascii {ascii}"
+                );
+                if ascii && width >= 40 && height >= 10 {
+                    let screen = text(terminal.backend().buffer());
+                    assert!(
+                        !screen
+                            .chars()
+                            .any(|c| ('\u{2800}'..='\u{28ff}').contains(&c)),
+                        "{width}×{height}: {screen}"
+                    );
+                }
+            }
+        }
+        theme::set_ascii(false);
+    }
+}
+
+#[test]
+fn shrinking_takes_away_the_explorer_first_then_the_fixed_spectrum_then_the_tracker() {
+    let (_, mut app, _engine) = open("screen_shrink", Some(SONG));
+    let at = |app: &mut App, w, h| {
+        draw(app, w, h);
+        app.last_grid().unwrap().clone()
+    };
+    let g = at(&mut app, 120, 40);
+    assert!(g.explorer.is_some() && g.spectrum.is_some() && g.tracker.is_some());
+    // Más estrecha: fuera el explorador; lo demás sigue.
+    let g = at(&mut app, 119, 40);
+    assert!(g.explorer.is_none() && g.spectrum.is_some() && g.tracker.is_some());
+    // Más baja: el espectro y el tracker, a las pestañas.
+    let g = at(&mut app, 99, 29);
+    assert!(g.spectrum.is_none() && g.tracker.is_none());
+    let dock = g.dock.unwrap();
+    assert_eq!(
+        dock.tabs[0],
+        crate::layout::Tab::Panel(crate::focus::Panel::Tracker)
+    );
+    assert!(
+        dock.tabs
+            .contains(&crate::layout::Tab::Panel(crate::focus::Panel::Spectrum))
+    );
+    // Diminuta: solo la línea que dice que el audio sigue.
+    let g = at(&mut app, 39, 9);
+    assert!(g.editor.is_none() && g.wave.is_none() && g.explorer.is_none());
+    // Al volver a ensanchar, el explorador vuelve a su columna.
+    let g = at(&mut app, 120, 40);
+    assert!(g.explorer.is_some() && !g.explorer_overlay);
+}
+
 /// Para ver la ventana en sus tres tamaños sin terminal:
 /// `cargo test -p tui pantalla_tamanos -- --ignored --nocapture`.
 #[test]
