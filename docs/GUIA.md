@@ -1007,6 +1007,11 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Más ancho | El editor flotante, si flota; si no, el explorador de archivos: dos columnas más | Ctrl-Alt-→ |
 | Menos ancho | El editor flotante, si flota; si no, el explorador de archivos: dos columnas menos | Ctrl-Alt-← |
 | Maximizar el editor | El editor ocupa todo el centro (los paneles del sonido no se ven; el audio sigue); otra vez lo devuelve a su sitio | Alt-Z |
+| Editor flotante | El editor flota encima de los paneles (que se siguen viendo detrás); se mueve arrastrando su título y cambia de tamaño por sus bordes de abajo y de la derecha; otra vez lo devuelve abajo. No es la ventana aparte (`--split`) | Alt-W |
+| Mover el flotante arriba | Una fila arriba | Alt-Shift-↑ |
+| Mover el flotante abajo | Una fila abajo | Alt-Shift-↓ |
+| Mover el flotante a la izquierda | Dos columnas a la izquierda | Alt-Shift-← |
+| Mover el flotante a la derecha | Dos columnas a la derecha | Alt-Shift-→ |
 | Menús | Abre la barra de menús: ←→ menú, ↑↓ entrada, Enter ejecuta, la letra subrayada abre su menú | F10 |
 | Qué sabe hacer esta terminal | Dice si hay truecolor, Unicode, teclas al soltar y ratón, y dónde está la configuración | — |
 | Salir | Sale (pide confirmación si hay cambios sin guardar) | Ctrl-Q |
@@ -1410,6 +1415,11 @@ paleta de 256.
 | `mas_ancho` | Más ancho | `ctrl-alt-right` |
 | `menos_ancho` | Menos ancho | `ctrl-alt-left` |
 | `maximizar_editor` | Maximizar el editor | `alt-z` |
+| `editor_flotante` | Editor flotante | `alt-w` |
+| `flotante_arriba` | Mover el flotante arriba | `alt-shift-up` |
+| `flotante_abajo` | Mover el flotante abajo | `alt-shift-down` |
+| `flotante_izquierda` | Mover el flotante a la izquierda | `alt-shift-left` |
+| `flotante_derecha` | Mover el flotante a la derecha | `alt-shift-right` |
 | `modo_tocar` | Modo tocar | `esc` |
 | `deshacer` | Deshacer | `ctrl-z`, `ctrl-u` |
 | `rehacer` | Rehacer | `ctrl-r` |

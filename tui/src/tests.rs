@@ -2534,6 +2534,7 @@ mod devices;
 mod devices_panel;
 mod dock;
 mod files;
+mod float;
 mod focus;
 mod formant;
 mod freeze;

@@ -91,28 +91,48 @@ impl App {
         {
             return;
         }
-        // Las pestañas del dock, y el foco al panel que se pulsa.
-        if action == MouseAction::Down && self.nothing_on_top() && self.focus_mouse(column, row) {
-            return;
-        }
-        // El piano roll, si se ve aquí y el ratón está encima (o arrastra).
-        if let Some(area) = self.roll.area.filter(|_| self.local_roll_view_shown())
-            && self.roll_mouse(action, column, row, area)
+        // Sobre el editor flotante, el ratón es solo suyo: no llega a lo
+        // que tapa (el primer clic, sin el foco, solo se lo da).
+        let on_float = self.grid.as_ref().is_some_and(|g| {
+            g.floating
+                && g.editor
+                    .is_some_and(|r| r.contains(ratatui::layout::Position::new(column, row)))
+        });
+        if on_float
+            && action == MouseAction::Down
+            && self.nothing_on_top()
+            && self.focus() != crate::focus::Panel::Code
         {
+            self.set_focus(crate::focus::Panel::Code);
             return;
         }
-        // El panel de las lanes, si se ve y el ratón está encima (o arrastra
-        // un punto).
-        if self.lanes_mouse(action, column, row) {
-            return;
-        }
-        // El tracker, la vista de ocupación y el mezclador.
-        if self.slice_drag.is_none() && self.panels_mouse(action, column, row) {
-            return;
-        }
-        if self.slice_drag.is_some() || self.on_sample(action, column, row) {
-            self.mouse_sample(action, column);
-            return;
+        // (Arrastrar y soltar siguen llegando a lo que se arrastraba.)
+        if !on_float || matches!(action, MouseAction::Drag | MouseAction::Up) {
+            // Las pestañas del dock, y el foco al panel que se pulsa.
+            if action == MouseAction::Down && self.nothing_on_top() && self.focus_mouse(column, row)
+            {
+                return;
+            }
+            // El piano roll, si se ve aquí y el ratón está encima (o
+            // arrastra).
+            if let Some(area) = self.roll.area.filter(|_| self.local_roll_view_shown())
+                && self.roll_mouse(action, column, row, area)
+            {
+                return;
+            }
+            // El panel de las lanes, si se ve y el ratón está encima (o
+            // arrastra un punto).
+            if self.lanes_mouse(action, column, row) {
+                return;
+            }
+            // El tracker, la vista de ocupación y el mezclador.
+            if self.slice_drag.is_none() && self.panels_mouse(action, column, row) {
+                return;
+            }
+            if self.slice_drag.is_some() || self.on_sample(action, column, row) {
+                self.mouse_sample(action, column);
+                return;
+            }
         }
         if self.mode != Mode::Edit || !self.pastes_in_editor() {
             self.drag_from = None;

@@ -150,6 +150,31 @@ pub const BINDABLE: &[(&str, Bound, &[&str])] = &[
         Bound::Action(Action::MaximizeEditor),
         &["alt-z"],
     ),
+    (
+        "editor_flotante",
+        Bound::Action(Action::FloatEditor),
+        &["alt-w"],
+    ),
+    (
+        "flotante_arriba",
+        Bound::Action(Action::FloatUp),
+        &["alt-shift-up"],
+    ),
+    (
+        "flotante_abajo",
+        Bound::Action(Action::FloatDown),
+        &["alt-shift-down"],
+    ),
+    (
+        "flotante_izquierda",
+        Bound::Action(Action::FloatLeft),
+        &["alt-shift-left"],
+    ),
+    (
+        "flotante_derecha",
+        Bound::Action(Action::FloatRight),
+        &["alt-shift-right"],
+    ),
     ("modo_tocar", Bound::Action(Action::PlayMode), &["esc"]),
     (
         "deshacer",

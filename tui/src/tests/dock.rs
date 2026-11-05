@@ -28,7 +28,7 @@ fn editor(app: &App) -> ratatui::layout::Rect {
 }
 
 #[test]
-fn ctrl_alt_up_and_down_change_the_height_within_its_limits() {
+pub fn ctrl_alt_up_and_down_change_the_height_within_its_limits() {
     let (_, mut app, _engine) = open("dock_keys", Some(SONG));
     draw(&mut app, 120, 40);
     let start = editor(&app).height;
@@ -155,7 +155,7 @@ fn the_height_comes_from_the_config_and_is_saved_there() {
 #[test]
 fn arrows_with_ctrl_alt_can_be_rebound() {
     let config = Config::parse(
-        "[teclas]\neditor_mas_alto = \"alt-shift-up\"\nmenos_ancho = \"left\"\n",
+        "[teclas]\neditor_mas_alto = \"ctrl-alt-k\"\nmenos_ancho = \"left\"\n",
         true,
         "c",
     );
@@ -169,12 +169,7 @@ fn arrows_with_ctrl_alt_can_be_rebound() {
     app.set_config(&config);
     draw(&mut app, 120, 40);
     let start = editor(&app).height;
-    app.handle(Input {
-        key: Key::Up,
-        alt: true,
-        shift: true,
-        ..Input::default()
-    });
+    app.handle(ctrl_alt(Key::Char('k')));
     draw(&mut app, 120, 40);
     assert_eq!(editor(&app).height, start + 1);
 }

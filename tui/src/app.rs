@@ -399,6 +399,8 @@ pub struct App {
     editor_rows: u16,
     editor_restore: crate::layout::EditorPlace,
     edge_drag: Option<dock::EdgeDrag>,
+    /// Dónde flotó el editor la última vez (Alt-W lo vuelve a poner ahí).
+    last_float: Option<ratatui::layout::Rect>,
     /// Cursor del tracker para editar los efectos de los pasos, y el paso
     /// que se edita en la línea de órdenes (ver `tracker_edit`).
     tracker_edit: Option<tracker_edit::TrackerCursor>,
@@ -579,6 +581,7 @@ impl App {
             editor_rows: 0,
             editor_restore: Default::default(),
             edge_drag: None,
+            last_float: None,
             tracker_edit: None,
             chosen_focus: None,
             menu: None,
@@ -3554,6 +3557,11 @@ impl App {
             Action::Wider => self.widen(true),
             Action::Narrower => self.widen(false),
             Action::MaximizeEditor => self.toggle_maximized(),
+            Action::FloatEditor => self.toggle_float(),
+            Action::FloatUp => self.move_float(0, -1),
+            Action::FloatDown => self.move_float(0, 1),
+            Action::FloatLeft => self.move_float(-1, 0),
+            Action::FloatRight => self.move_float(1, 0),
             Action::OpenMenu => self.toggle_menu(),
             Action::TerminalInfo => self.terminal_info(),
             Action::Quit => {
