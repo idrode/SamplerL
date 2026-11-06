@@ -1634,6 +1634,11 @@ paleta de 256.
 | `anterior` | a la nota anterior | `shift-tab` |
 | `salir` | suelta las teclas (el piano roll se sigue viendo) | `esc` |
 
+| En `[script]` | Para | Por defecto |
+| --- | --- | --- |
+| `memoria` | MB de memoria que puede usar el script en una carga (de 16 a 4096): si los pasa (un bucle que guarda sin parar), la carga se corta con un error y sigue sonando lo anterior. Una canción normal usa menos de 1 MB | `256` |
+| `tiempo` | segundos que puede tardar una carga (de 0.5 a 60): si los pasa (un bucle infinito), se corta igual. Una canción normal tarda milisegundos | `2` |
+
 | En `[voces]` | Para | Por defecto |
 | --- | --- | --- |
 | `limite` | notas de instrumento y voces de sintetizador que suenan a la vez entre todas las pistas (de 1 a 256); al llegar, una nota nueva roba la más antigua de cualquier pista (con el fundido mínimo). Aparte va el límite de cada pista (`voices` en el script) | `64` |
@@ -2690,7 +2695,11 @@ track("bajo", synth("sub", {})):melody(raiz .. " _ _ _  _ _ _ _  . . . .  . . . 
 El script se ejecuta entero en cada carga. Cada llamada construye el modelo
 de la canción; nada suena hasta que la carga termina bien (ver la sección
 5). Solo están las librerías `math`, `string`, `table` y `utf8` (no `io` ni
-`os`), y un script que tarda más de 2 s se corta.
+`os`), y una carga tiene dos límites: un script que tarda más de 2 s o
+que usa más de 256 MB de memoria se corta con su error (y la línea donde
+iba, si se sabe), y sigue sonando lo anterior. Una canción normal usa
+menos de 1 MB y tarda milisegundos; los dos se cambian en `[script]`
+(`memoria`, en MB, y `tiempo`, en segundos; ver «Configuración»).
 
 El resto de esta sección se genera a partir del registro de la API
 (`script/src/api.rs`), el mismo que usa el autocompletado del editor. Para
@@ -4419,7 +4428,9 @@ track("drums")
   con la mitad del cambio.
 - **Si hay un error, sigue sonando lo anterior.** Sintaxis, una función mal
   llamada, notación inválida, un corte que no existe, un archivo que no
-  está, un bucle infinito (se corta a los 2 s): no se envía nada al motor.
+  está, un bucle infinito (se corta a los 2 s) o uno que guarda sin parar
+  (se corta en 256 MB): no se envía nada al motor. Los dos límites se
+  cambian en `[script]` de `config.toml`.
   El error aparece en el editor (borde rojo, mensaje al pie y la línea con
   fondo rojo); Ctrl-G lleva a ella. Al corregir y guardar, el cambio entra
   en el compás siguiente.

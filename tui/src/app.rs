@@ -765,6 +765,7 @@ impl App {
         self.highlight_delay_ms = config.highlight.delay_ms;
         self.set_occupancy(config.occupancy.visible);
         self.apply_roll_config(&config.roll);
+        config.script.apply(&mut self.host);
         if let Err(e) = self.controller.set_voice_limit(config.voices.limit) {
             self.message = format!("motor: {e}");
         }

@@ -194,6 +194,171 @@ fn errors_keep_the_previous_pattern_playing() {
     assert_eq!(host.song().unwrap().tracks.len(), 2);
 }
 
+/// Los límites del script (memoria y tiempo): lo que se desboca se corta
+/// pronto, con su error y su línea, sigue sonando lo anterior y la carga
+/// siguiente entra bien. Cubre también la memoria que se reserva desde
+/// las funciones de Rust (`scale` crea sus tablas en el intérprete).
+#[test]
+fn runaway_scripts_hit_the_limits_and_the_previous_keeps_playing() {
+    let (dir, mut host, mut controller, mut engine) = setup("limits");
+    let limit = Duration::from_millis(500);
+    load(&mut host, &mut controller, &dir, SONG_A).unwrap();
+    controller.start().unwrap();
+    let mut audio = render_left(&mut engine, BAR / 2);
+
+    let ms = Duration::from_millis;
+    // (script, límite de memoria en MB, de tiempo, lo que dice el error)
+    let bad: [(&str, usize, Duration, &str); 5] = [
+        // Cadenas grandes que se guardan.
+        (
+            "local t = {}\nwhile true do t[#t + 1] = string.rep(\"x\", 100000) .. #t end\n",
+            32,
+            limit,
+            "el script usa más de 32 MB de memoria",
+        ),
+        // Tablas que crea Rust (cada `scale` es una tabla nueva).
+        (
+            "local t = {}\nwhile true do t[#t + 1] = scale(\"minor\", \"c\") end\n",
+            4,
+            ms(5000),
+            "el script usa más de 4 MB de memoria",
+        ),
+        // Concatenar en un bucle.
+        (
+            "local s = \"\"\nwhile true do s = s .. string.rep(\"y\", 100000) end\n",
+            32,
+            limit,
+            "el script usa más de 32 MB de memoria",
+        ),
+        // Instrucciones caras sin guardar nada: solo el tiempo las corta.
+        (
+            "local s = string.rep(\"z\", 100000)\nwhile true do local _ = s:upper() end\n",
+            32,
+            limit,
+            "tarda más de 0.5 s",
+        ),
+        ("\nwhile true do end\n", 32, limit, "tarda más de 0.5 s"),
+    ];
+    for (src, mb, time, expected) in bad {
+        host.set_memory_limit(mb << 20);
+        host.set_time_limit(time);
+        let start = std::time::Instant::now();
+        let err = load(&mut host, &mut controller, &dir, src).unwrap_err();
+        let took = start.elapsed();
+        assert!(
+            err.contains(expected),
+            "\"{err}\" sin \"{expected}\"\n{src}"
+        );
+        assert!(
+            err.contains("song.lua:2:"),
+            "sin la línea: \"{err}\"\n{src}"
+        );
+        assert!(err.contains("[script]"), "sin el ajuste: \"{err}\"");
+        assert!(took < time + ms(400), "{src}: tardó {took:?}");
+    }
+    audio.extend(render_left(&mut engine, BAR / 2 + BAR));
+
+    // Lo que suena es lo de antes, como si no hubiera habido nada.
+    let (mut controller2, mut engine2) = new_engine(RATE);
+    let mut host2 = ScriptHost::new(RATE);
+    load(&mut host2, &mut controller2, &dir, SONG_A).unwrap();
+    controller2.start().unwrap();
+    assert_eq!(audio, render_left(&mut engine2, 2 * BAR));
+
+    // Y la carga siguiente, buena, entra.
+    let only_kick = r#"
+local amen = sample("break.wav"):slice(2)
+track("kick", amen):steps("x . . .  x . . .  . . . .  . . . .")
+"#;
+    load(&mut host, &mut controller, &dir, only_kick).unwrap();
+    assert_eq!(host.song().unwrap().tracks.len(), 1);
+    assert!(host.memory_peak() < 1 << 20);
+}
+
+/// Con el límite de memoria de siempre, el que reserva sin parar también
+/// se corta (y no se lleva por delante el proceso).
+#[test]
+fn the_default_memory_limit_holds() {
+    let (dir, mut host, mut controller, _engine) = setup("limits_default");
+    let err = load(
+        &mut host,
+        &mut controller,
+        &dir,
+        "local t = {}\nwhile true do t[#t + 1] = string.rep(\"x\", 10000000) .. #t end\n",
+    )
+    .unwrap_err();
+    let mb = script::DEFAULT_MEMORY_LIMIT >> 20;
+    assert!(err.contains(&format!("más de {mb} MB")), "{err}");
+}
+
+/// Lo que cuesta comprobar el tiempo cada N instrucciones, en un bucle de
+/// Lua que solo hace cuentas (lo peor para el hook): `cargo test
+/// --release -p script --test lua medida_del_hook -- --ignored
+/// --nocapture`.
+#[test]
+#[ignore = "medida: cargo test --release -p script --test lua medida_del_hook -- --ignored --nocapture"]
+fn medida_del_hook() {
+    use mlua::debug::DebugEvent;
+    use mlua::{HookTriggers, Lua, VmState};
+    // Cuentas sin llamadas (lo peor para el hook de instrucciones) y
+    // llamadas sin nada más (lo peor para el de llamadas).
+    const LOOP: &str = "local s = 0 for i = 1, 30000000 do s = s + i % 7 end return s";
+    const CALLS: &str = "local function f(x) return x + 1 end local s = 0 for i = 1, 10000000 do s = f(s) end return s";
+    let run = |src: &str, every: Option<u32>, calls: bool| {
+        let lua = Lua::new();
+        if let Some(n) = every {
+            let deadline = std::time::Instant::now() + Duration::from_secs(60);
+            let line = std::rc::Rc::new(std::cell::Cell::new(0usize));
+            let peak = std::rc::Rc::new(std::cell::Cell::new(0usize));
+            let mut triggers = HookTriggers::new().every_nth_instruction(n);
+            if calls {
+                triggers = triggers.on_calls();
+            }
+            let half = 128usize << 20;
+            lua.set_hook(triggers, move |lua, debug| {
+                let used = lua.used_memory();
+                if debug.event() == DebugEvent::Count {
+                    if let Some(l) = debug.current_line() {
+                        line.set(l);
+                    }
+                    peak.set(peak.get().max(used));
+                    if std::time::Instant::now() > deadline {
+                        return Ok(VmState::Yield);
+                    }
+                } else if used > half
+                    && let Some(Some(l)) = lua.inspect_stack(1, |d| d.current_line())
+                {
+                    line.set(l);
+                }
+                Ok(VmState::Continue)
+            })
+            .unwrap();
+        }
+        (0..5)
+            .map(|_| {
+                let start = std::time::Instant::now();
+                let _: i64 = lua.load(src).eval().unwrap();
+                start.elapsed()
+            })
+            .min()
+            .unwrap()
+    };
+    for (name, src) in [("cuentas", LOOP), ("llamadas", CALLS)] {
+        let base = run(src, None, false);
+        println!("{name}: sin hook {:.1} ms", base.as_secs_f64() * 1e3);
+        let pct = |t: Duration| 100.0 * (t.as_secs_f64() / base.as_secs_f64() - 1.0);
+        for n in [100u32, 1000, 10_000] {
+            let t = run(src, Some(n), false);
+            let c = run(src, Some(n), true);
+            println!(
+                "  cada {n:>6}: +{:.1} %; y en cada llamada: +{:.1} %",
+                pct(t),
+                pct(c)
+            );
+        }
+    }
+}
+
 #[test]
 fn reload_reuses_loaded_samples_and_keeps_track_slots() {
     let (dir, mut host, mut controller, mut engine) = setup("slots");

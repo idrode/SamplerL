@@ -219,6 +219,67 @@ fn every_example_runs_and_matches_the_guide() {
     assert_eq!(link, Path::new("../../renders/synth_break.wav"));
 }
 
+/// Lo que usa el intérprete (el pico) y lo que tarda cada script de la
+/// guía, del tutorial y de las recetas, para elegir los límites del script:
+/// `cargo test --release -p script --test guide medida_de_los_limites --
+/// --ignored --nocapture`.
+#[test]
+#[ignore = "medida: cargo test --release -p script --test guide medida_de_los_limites -- --ignored --nocapture"]
+fn medida_de_los_limites() {
+    let dir = samples("limits");
+    let mut scripts: Vec<(String, String)> = [GUIDE, TUTORIAL]
+        .into_iter()
+        .flat_map(|file| lua_blocks(&doc(file)))
+        .map(|(line, b)| (format!("bloque l.{line}"), b))
+        .collect();
+    let mut examples: Vec<PathBuf> = std::fs::read_dir(format!("{ROOT}/scripts/ejemplos"))
+        .unwrap()
+        .chain(std::fs::read_dir(format!("{ROOT}/scripts/consumo")).unwrap())
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|e| e == "lua"))
+        .collect();
+    examples.sort();
+    for path in examples {
+        let source = std::fs::read_to_string(&path).unwrap();
+        scripts.push((
+            path.file_name().unwrap().to_string_lossy().into_owned(),
+            source,
+        ));
+    }
+    let mut rows = Vec::new();
+    for (name, source) in &scripts {
+        let (mut controller, _engine) = new_engine(RATE);
+        let mut host = ScriptHost::new(RATE);
+        host.set_sample_dir(Some(dir.to_path_buf()));
+        host.set_seed(Some(1));
+        let start = std::time::Instant::now();
+        let ok = host.load(&mut controller, source, name, &dir).is_ok();
+        rows.push((host.memory_peak(), start.elapsed(), name.clone(), ok));
+    }
+    rows.sort_by_key(|r| std::cmp::Reverse(r.0));
+    let n = rows.len();
+    println!("{n} scripts; los que más memoria usan:");
+    for (peak, took, name, ok) in rows.iter().take(8) {
+        println!(
+            "  {:8.1} KB  {:7.1} ms  {name}{}",
+            *peak as f64 / 1024.0,
+            took.as_secs_f64() * 1e3,
+            if *ok { "" } else { " (con error)" }
+        );
+    }
+    let mut peaks: Vec<usize> = rows.iter().map(|r| r.0).collect();
+    peaks.sort_unstable();
+    let mut times: Vec<f64> = rows.iter().map(|r| r.1.as_secs_f64() * 1e3).collect();
+    times.sort_by(f64::total_cmp);
+    println!(
+        "memoria: mediana {:.1} KB, máximo {:.1} KB; tiempo: mediana {:.1} ms, máximo {:.1} ms",
+        peaks[n / 2] as f64 / 1024.0,
+        peaks[n - 1] as f64 / 1024.0,
+        times[n / 2],
+        times[n - 1]
+    );
+}
+
 #[test]
 fn the_api_section_of_the_guide_comes_from_the_registry() {
     let guide = std::fs::read_to_string(format!("{ROOT}/docs/GUIA.md")).unwrap();

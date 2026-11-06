@@ -332,6 +332,37 @@ const ROLL_CONFIG_KEYS: &[(&str, &str, &str)] = &[
     ),
 ];
 
+/// `[script]`: los límites de una carga del script.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ScriptConfig {
+    /// Memoria del intérprete de Lua, en MB (`memoria`).
+    pub memory_mb: usize,
+    /// Tiempo de una carga (`tiempo`).
+    pub time_limit: std::time::Duration,
+}
+
+impl Default for ScriptConfig {
+    fn default() -> Self {
+        ScriptConfig {
+            memory_mb: script::DEFAULT_MEMORY_LIMIT >> 20,
+            time_limit: script::DEFAULT_TIME_LIMIT,
+        }
+    }
+}
+
+impl ScriptConfig {
+    /// Pone estos límites a `host`.
+    pub fn apply(&self, host: &mut script::ScriptHost) {
+        host.set_memory_limit(self.memory_mb << 20);
+        host.set_time_limit(self.time_limit);
+    }
+}
+
+/// Los MB que se aceptan en `[script] memoria`.
+pub const SCRIPT_MEMORY_MB: std::ops::RangeInclusive<usize> = 16..=4096;
+/// Los segundos que se aceptan en `[script] tiempo`.
+pub const SCRIPT_SECONDS: std::ops::RangeInclusive<f64> = 0.5..=60.0;
+
 /// `[voces]`: cuántas voces suenan a la vez.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct VoicesConfig {
@@ -513,6 +544,21 @@ const INTERFACE_KEYS: &[(&str, &str, &str)] = &[
         "bajo_consumo",
         "menos CPU y menos trabajo para la terminal (para la batería de un portátil): como mucho 15 cuadros por segundo, el scope y el espectro del master como mucho a la mitad (`visuales_hz` hasta 7), las visualizaciones del script recalculadas uno de cada dos cuadros, la onda en barras y el scope y las ruedas sin Braille. La entrada y el audio no cambian",
         "`false`",
+    ),
+];
+
+/// Claves de `[script]` (para la guía).
+#[cfg(test)]
+const SCRIPT_KEYS: &[(&str, &str, &str)] = &[
+    (
+        "memoria",
+        "MB de memoria que puede usar el script en una carga (de 16 a 4096): si los pasa (un bucle que guarda sin parar), la carga se corta con un error y sigue sonando lo anterior. Una canción normal usa menos de 1 MB",
+        "`256`",
+    ),
+    (
+        "tiempo",
+        "segundos que puede tardar una carga (de 0.5 a 60): si los pasa (un bucle infinito), se corta igual. Una canción normal tarda milisegundos",
+        "`2`",
     ),
 ];
 
@@ -941,6 +987,8 @@ pub struct Config {
     pub occupancy: OccupancyConfig,
     /// `[voces]`: el límite de voces a la vez.
     pub voices: VoicesConfig,
+    /// `[script]`: la memoria y el tiempo de una carga.
+    pub script: ScriptConfig,
     /// `[interfaz]`: ASCII y refresco.
     pub interface: InterfaceConfig,
     /// `[roll]` y `[roll.teclas]`: el piano roll.
@@ -1139,6 +1187,40 @@ impl Config {
                     }
                 }
                 "roll" => config.parse_roll(inner),
+                "script" => {
+                    for (key, value) in inner {
+                        match key.as_str() {
+                            "memoria" => match value
+                                .as_integer()
+                                .filter(|n| SCRIPT_MEMORY_MB.contains(&(*n as usize)) && *n > 0)
+                            {
+                                Some(n) => config.script.memory_mb = n as usize,
+                                None => config.warnings.push(format!(
+                                    "[script] memoria: MB, de {} a {}",
+                                    SCRIPT_MEMORY_MB.start(),
+                                    SCRIPT_MEMORY_MB.end()
+                                )),
+                            },
+                            "tiempo" => match value
+                                .as_float()
+                                .or_else(|| value.as_integer().map(|n| n as f64))
+                                .filter(|s| SCRIPT_SECONDS.contains(s))
+                            {
+                                Some(s) => {
+                                    config.script.time_limit = std::time::Duration::from_secs_f64(s)
+                                }
+                                None => config.warnings.push(format!(
+                                    "[script] tiempo: segundos, de {} a {}",
+                                    SCRIPT_SECONDS.start(),
+                                    SCRIPT_SECONDS.end()
+                                )),
+                            },
+                            _ => config.warnings.push(format!(
+                                "[script] «{key}» no existe (hay: memoria, tiempo)"
+                            )),
+                        }
+                    }
+                }
                 "voces" => {
                     for (key, value) in inner {
                         let limit = value
@@ -1462,6 +1544,10 @@ fn guide_markdown() -> String {
     for (name, _, keys, what) in crate::roll_keys::ROLL_KEYS {
         let keys: Vec<String> = keys.iter().map(|k| format!("`{k}`")).collect();
         out.push_str(&format!("| `{name}` | {what} | {} |\n", keys.join(", ")));
+    }
+    out.push_str("\n| En `[script]` | Para | Por defecto |\n| --- | --- | --- |\n");
+    for (name, what, default) in SCRIPT_KEYS {
+        out.push_str(&format!("| `{name}` | {what} | {default} |\n"));
     }
     out.push_str("\n| En `[voces]` | Para | Por defecto |\n| --- | --- | --- |\n");
     for (name, what, default) in VOICES_KEYS {
@@ -1806,6 +1892,22 @@ mod tests {
         assert_eq!(Config::default().interface.frame_rate(), DEFAULT_REFRESH);
         let c = Config::parse("[interfaz]\nbajo_consumo = 1\n", false, "c");
         assert!(!c.interface.low_power && c.warnings.len() == 1);
+    }
+
+    #[test]
+    fn the_script_section() {
+        let c = Config::parse("[script]\nmemoria = 64\ntiempo = 0.5\n", false, "c");
+        assert_eq!(c.script.memory_mb, 64);
+        assert_eq!(c.script.time_limit, std::time::Duration::from_millis(500));
+        assert!(c.warnings.is_empty(), "{:?}", c.warnings);
+        // Un entero también vale como segundos.
+        let c = Config::parse("[script]\ntiempo = 5\n", false, "c");
+        assert_eq!(c.script.time_limit, std::time::Duration::from_secs(5));
+        // Fuera de rango, o una clave que no existe: el de siempre y aviso.
+        let c = Config::parse("[script]\nmemoria = 0\ntiempo = 600\nzz = 1\n", false, "c");
+        assert_eq!(c.script, ScriptConfig::default());
+        assert_eq!(c.warnings.len(), 3, "{:?}", c.warnings);
+        assert_eq!(ScriptConfig::default().memory_mb, 256);
     }
 
     #[test]

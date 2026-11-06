@@ -76,3 +76,41 @@ fn the_theme_colors_what_is_drawn() {
     assert_eq!(buffer[(x, y)].fg, Color::Indexed(208));
     theme::set(theme::Theme::default());
 }
+
+/// `[script]`: un script que reserva sin parar se corta en el límite de la
+/// configuración, con su error en el editor; sigue sonando lo anterior y
+/// la carga siguiente entra.
+#[test]
+fn the_script_limits_come_from_the_config() {
+    let (_, mut app, mut engine) = open("config_script_limits", Some(SONG));
+    app.set_config(&Config::parse(
+        "[script]\nmemoria = 16\ntiempo = 1\n",
+        true,
+        "config.toml",
+    ));
+    offline::render(&mut engine, 4 * STEP, 2);
+    app.tick();
+    assert!(app.view().transport.running, "suena al abrir");
+    let before = app.view().tracks.len();
+    let bomb = format!(
+        "{SONG}\nlocal t = {{}}\nwhile true do t[#t + 1] = string.rep(\"x\", 100000) .. #t end\n"
+    );
+    replace_all(&mut app, &bomb);
+    app.load();
+    let error = app.view().error.expect("el error en el editor");
+    assert!(
+        error.message.contains("más de 16 MB") && error.message.contains("[script] memoria"),
+        "{}",
+        error.message
+    );
+    assert!(error.line.is_some(), "con su línea: {}", error.message);
+    // Sigue sonando lo de antes.
+    offline::render(&mut engine, 4 * STEP, 2);
+    app.tick();
+    assert!(app.view().transport.running);
+    assert_eq!(app.view().tracks.len(), before);
+    // Y lo siguiente, bueno, entra.
+    replace_all(&mut app, SONG);
+    app.load();
+    assert!(app.view().error.is_none(), "{:?}", app.view().error);
+}

@@ -886,3 +886,9 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
     `--allow-audio` (los xruns de la salida real) y, si se quiere, abrir
     las visualizaciones en una ventana aparte (diseño y coste en
     «Consumo de la interfaz» de [docs/ESTADO.md](ESTADO.md)).
+22. ✅ **Seguridad del script y del guardado** (de la auditoría,
+    [docs/AUDITORIA.md](AUDITORIA.md)): un script que se desboca ya no
+    tumba el programa: límite de memoria del intérprete (256 MB) y de
+    tiempo (2 s, comprobado cada 1000 instrucciones), configurables en
+    `[script]`, con el error y su línea en el editor y lo anterior
+    sonando. Detalle en «Límites del script» de [docs/ESTADO.md](ESTADO.md).

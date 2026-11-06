@@ -51,7 +51,7 @@ ROADMAP.
   - Tests en `engine/tests/notation.rs` (incluido que un patrón en notación renderiza igual que el construido con `Step`).
 - **Paso 5 (Lua hecho)** en el crate `script` (`mlua` 0.12 con Lua 5.4 `vendored`; compila con el gcc del sistema). Depende de `engine`; `tui` depende de los dos.
   - `ScriptHost::load(controller, fuente, nombre, carpeta)` / `load_file(controller, ruta)`: evalúa el script en un Lua nuevo, construye el modelo `Song { bpm, tracks: Vec<TrackDef> }` y lo envía con `Controller::apply` como un lote: todo entra junto en el siguiente compás. `ScriptHost::song()` es el último modelo válido (lo leerán las vistas).
-  - Si algo falla, no se envía nada y sigue sonando lo anterior. Esto incluye sintaxis, errores de ejecución, notación, corte inexistente, archivo que no existe, pista no definida, BPM fuera de rango, más de 8 pistas o un script que tarda más de 2 s (`set_time_limit`; se corta con un hook cada 10000 instrucciones).
+  - Si algo falla, no se envía nada y sigue sonando lo anterior. Esto incluye sintaxis, errores de ejecución, notación, corte inexistente, archivo que no existe, pista no definida, BPM fuera de rango, más de 8 pistas o un script que tarda más de 2 s o usa más de 256 MB (`set_time_limit` y `set_memory_limit`, `[script]` en la configuración; ver «Límites del script»).
   - Errores con archivo y línea: `song.lua:3: steps: paso 11 ("5^"): falta el número después de ^`.
   - API: `bpm(n)`, `sample(ruta)` (relativa a la carpeta del script), `:slice(n)` (detector por defecto; `:count()` da los cortes), `:slice_at(i)` (solo el corte i, desde 1; en el patrón es `1`/`x`), `track(nombre, sliced)` define o redefine una pista, `track(nombre)` la recupera. Métodos de pista, encadenables: `:steps("...")` en mini-notación, `:gain(g)`, `:fx(nombre, {params})`, `:every(n, fn)` y `:chance(p, efecto[, valor])`.
   - `:fx`: `"filter"` (`type` = `"lowpass"`/`"highpass"`, `cutoff`, `q`), `"lowpass"`/`"highpass"` (`cutoff`, `q`), `"bitcrush"` (`bits` = 8, `downsample` = 1). Una clave desconocida da error (para detectar erratas).
@@ -3511,6 +3511,109 @@ y parado, arrastrar los bordes del editor y del explorador y el flotante
 con el ratón de verdad, Alt-E/Alt-0/Alt-W/Alt-Z y Ctrl-Alt-flechas dentro
 de tmux y en su terminal, los puntos Braille en su fuente, el espectro
 con un barrido de cutoff, y la terminal pequeña y `LANG=C`.
+
+## Límites del script
+
+Hallazgo A1 de `docs/AUDITORIA.md`: un script que reservaba memoria sin
+parar tumbaba el programa entero (con el audio). No había límite de
+memoria, y el de tiempo solo se miraba cada 10 000 instrucciones: una
+instrucción cara (`string.rep`, concatenar) hace mucho trabajo entre dos
+comprobaciones. Medido en la auditoría: `while true do t[#t+1] =
+string.rep("x", 1e7) .. #t end` llegó a 6 GB (el tope puesto con
+`RLIMIT_AS`) y abortó el proceso a los 62,8 s.
+
+Ahora una carga tiene dos límites, y pasado cualquiera de los dos el
+script se corta con su error y sigue sonando lo anterior
+(`ScriptHost::load` no toca el motor hasta que la evaluación termina bien;
+el intérprete es nuevo en cada carga, así que lo que reservó se suelta al
+fallar y la carga siguiente empieza de cero):
+
+- **Memoria** (`script/src/lib.rs`, `ScriptHost::set_memory_limit`;
+  `DEFAULT_MEMORY_LIMIT`, **256 MB**): el asignador del intérprete de mlua
+  (`Lua::set_memory_limit`) falla en cuanto una reserva pasaría del límite
+  y Lua lo convierte en un error (`Error::MemoryError`, también dentro de
+  una función de Rust: `is_memory_error` lo busca dentro de
+  `CallbackError`). Cuenta todo lo que vive en el intérprete: cadenas,
+  tablas, cierres y lo que crean las funciones de Rust con la API de Lua
+  (las tablas de `scale`, las cadenas de los generadores). **No** cuenta lo
+  que guarda Rust: los samples (`sample()`), los patrones y los modelos;
+  eso tiene sus propios topes (8 pistas, 256 compases, 64 lanes...).
+- **Tiempo** (`set_time_limit`; `DEFAULT_TIME_LIMIT`, 2 s): el hook se
+  dispara ahora cada **1000** instrucciones (`HOOK_INSTRUCTIONS`); además
+  de mirar el reloj, apunta la línea en curso (para el mensaje) y el pico
+  de memoria (`ScriptHost::memory_peak`).
+
+Los dos se configuran en `config.toml`, `[script] memoria` (MB, de 16 a
+4096) y `[script] tiempo` (segundos, de 0,5 a 60) (`config::ScriptConfig`,
+que los pone a la interfaz en `App::set_config` y a las órdenes sin
+interfaz, como el render, `--analyze-masking` y `--script`, en
+`main::script_host`). Los mensajes llevan la línea si el hook llegó a verla
+y el ajuste que hay que cambiar: `cancion.lua:14: el script usa más de 256
+MB de memoria (el límite es [script] memoria)` y `cancion.lua:2: el script
+tarda más de 2.0 s (¿bucle infinito?; el límite es [script] tiempo)`.
+
+**Medidas** (x86_64, release):
+
+- **Lo que usan los scripts de verdad**
+  (`cargo test --release -p script --test guide medida_de_los_limites --
+  --ignored --nocapture`): los 162 de la guía, del tutorial, de
+  `scripts/ejemplos/` y de `scripts/consumo/`, mediana 33 KB y máximo 37
+  KB de pico (casi todo, las funciones de la API ya cargadas), en 4 ms de
+  mediana y 30 ms como mucho. 256 MB son unas 7000 veces el mayor: deja
+  sitio a un script que genere patrones a lo grande sin acercarse a lo
+  que una máquina de 8-16 GB nota. Con 256 MB, el script de la auditoría
+  se corta en 0,85 s con 275 MB de RSS en todo el proceso (antes, 62,8 s
+  y 6 GB, y el proceso abortaba).
+- **Lo que cuesta comprobar el tiempo**
+  (`cargo test --release -p script --test lua medida_del_hook --
+  --ignored --nocapture`; un bucle de 30 millones de vueltas que solo
+  hace cuentas, lo peor para el hook, y otro de 10 millones de llamadas):
+
+  | Hook | Cuentas | Llamadas |
+  |---|---|---|
+  | sin hook | 484 ms | 215 ms |
+  | cada 10 000 instrucciones (antes) | +70 % | +172 % |
+  | cada 1000 (ahora) | +78 % | +181 % |
+  | cada 100 | +106 % | +239 % |
+  | cada 1000 y en cada llamada | +76 % | +730 % |
+
+  Casi todo el coste es tener un hook (con uno puesto, Lua 5.4 pasa cada
+  instrucción por el trazado), y ya estaba. Bajar de 10 000 a 1000 añade
+  8 o 9 puntos más sobre el bucle sin hook, en scripts que pasan casi todo su
+  tiempo en Rust (la carga normal tarda milisegundos). Con 1000, una
+  instrucción cara (`s:upper()` de 100 KB, en debug) se corta antes de los
+  0,5 s del test. A 100 cuesta un tercio más sin ganar nada que se note.
+
+Decisiones:
+
+- **256 MB por defecto**: dentro de lo propuesto (128-512), con mucho
+  margen sobre lo medido y lejos de lo que pone en peligro la máquina.
+- **1000 instrucciones** y no menos: lo que se gana en precisión no
+  compensa el coste en los scripts con cuentas.
+- **Sin hook en las llamadas** para saber la línea siempre: multiplica por
+  ocho el coste de un script con muchas llamadas. La consecuencia: si el
+  script se queda sin memoria antes de las primeras 1000 instrucciones
+  (por ejemplo, unas pocas reservas de decenas de MB), el error sale sin
+  línea. En Lua 5.4 el manejador de errores no se llama en los errores de
+  memoria, así que no hay otra forma barata de saberla.
+- **Un solo límite por carga**, no por función: el intérprete es nuevo en
+  cada carga.
+
+Lo que sigue sin cortarse: una sola función de C que tarde mucho sin
+reservar memoria, como un patrón de `string.find` con vuelta atrás
+(`string.rep("a", 3000):find(".-.-.-b")` no acabó en 120 s): el hook solo
+corre entre instrucciones de Lua. En la interfaz congela el hilo de la
+interfaz (el audio sigue: va en el suyo). Quitarlo pediría envolver las
+funciones de patrones de `string`; no se ha hecho.
+
+Tests: `runaway_scripts_hit_the_limits_and_the_previous_keeps_playing`
+(`script/tests/lua.rs`: cadenas que se guardan, tablas que crea Rust,
+concatenar en un bucle, instrucciones caras y un bucle vacío, cada uno
+cortado a tiempo y con su línea; lo que suena es idéntico a no haber
+cargado nada, y la carga siguiente entra), `the_default_memory_limit_holds`,
+`the_script_section` (`config.rs`) y `the_script_limits_come_from_the_config`
+(`tui/src/tests/config.rs`: en la interfaz, con el error en el editor y el
+transporte en marcha).
 
 ## Audio de prueba y problemas conocidos
 

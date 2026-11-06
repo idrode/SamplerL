@@ -85,8 +85,12 @@ use mlua::{
 
 /// Tiempo máximo de evaluación de un script por defecto.
 pub const DEFAULT_TIME_LIMIT: Duration = Duration::from_secs(2);
-/// Cada cuántas instrucciones de Lua se comprueba el tiempo.
-const HOOK_INSTRUCTIONS: u32 = 10_000;
+/// Memoria máxima del intérprete de Lua en una carga, por defecto (ver
+/// «Límites del script» en `docs/ESTADO.md`).
+pub const DEFAULT_MEMORY_LIMIT: usize = 256 << 20;
+/// Cada cuántas instrucciones de Lua se comprueba el tiempo (y se apunta
+/// la línea y el pico de memoria).
+const HOOK_INSTRUCTIONS: u32 = 1_000;
 /// Se mezcla con la semilla de la carga para el generador de `mutate` y
 /// `shuffle` sin semilla propia.
 const PATTERN_SEED: u64 = 0x5eed_0f9a_77e2_a5c3;
@@ -578,6 +582,17 @@ impl ScriptError {
     }
 }
 
+/// Si el error (o lo que lo causó, dentro de las llamadas a Rust) es que
+/// el intérprete se quedó sin la memoria del límite.
+fn is_memory_error(error: &mlua::Error) -> bool {
+    match error {
+        mlua::Error::MemoryError(_) => true,
+        mlua::Error::CallbackError { cause, .. } => is_memory_error(cause),
+        mlua::Error::WithContext { cause, .. } => is_memory_error(cause),
+        _ => false,
+    }
+}
+
 /// Primera posición del script (`archivo:línea`) en una traza de mlua,
 /// saltando las funciones de Rust (`[C]`).
 fn script_location(traceback: &str) -> Option<String> {
@@ -646,6 +661,11 @@ struct Stretched {
 pub struct ScriptHost {
     sample_rate: u32,
     time_limit: Duration,
+    /// Memoria máxima del intérprete en una carga, en bytes.
+    memory_limit: usize,
+    /// Lo más que llegó a usar el intérprete en la última carga (mirado
+    /// al comprobar el tiempo y al acabar), en bytes.
+    memory_peak: usize,
     /// Samples ya cargados, por ruta: recargar el script no vuelve a
     /// decodificar el WAV (salvo que cambie) y conserva el mismo `Arc`.
     samples: HashMap<PathBuf, (Option<SystemTime>, Arc<Sample>)>,
@@ -690,6 +710,8 @@ impl ScriptHost {
         ScriptHost {
             sample_rate,
             time_limit: DEFAULT_TIME_LIMIT,
+            memory_limit: DEFAULT_MEMORY_LIMIT,
+            memory_peak: 0,
             samples: HashMap::new(),
             slots: Default::default(),
             song: None,
@@ -916,8 +938,24 @@ impl ScriptHost {
         self.seed = seed;
     }
 
+    /// El tiempo máximo de una carga: pasado, el script se corta con un
+    /// error y sigue sonando lo anterior.
     pub fn set_time_limit(&mut self, limit: Duration) {
         self.time_limit = limit;
+    }
+
+    /// La memoria máxima del intérprete en una carga, en bytes: al pasarla,
+    /// el script se corta con un error y sigue sonando lo anterior. No
+    /// cuenta lo que guarda Rust (los samples, los patrones), que tiene
+    /// sus propios límites.
+    pub fn set_memory_limit(&mut self, bytes: usize) {
+        self.memory_limit = bytes;
+    }
+
+    /// Lo más que usó el intérprete en la última carga, en bytes
+    /// (aproximado: se mira al comprobar el tiempo y al acabar).
+    pub fn memory_peak(&self) -> usize {
+        self.memory_peak
     }
 
     /// Último modelo aplicado con éxito.
@@ -1111,15 +1149,34 @@ impl ScriptHost {
         )
         .map_err(|e| ScriptError::from_lua(&e))?;
 
-        // Cortar bucles infinitos: un script colgado tampoco rompe lo que suena.
+        // Ni la memoria ni el tiempo del script pueden tumbar el programa:
+        // pasado cualquiera de los dos límites, la carga falla con su error
+        // y sigue sonando lo anterior.
+        lua.set_memory_limit(self.memory_limit)
+            .map_err(|e| ScriptError::from_lua(&e))?;
         let deadline = Instant::now() + self.time_limit;
         let limit = self.time_limit;
+        // La última línea que pasó por el hook (para decir dónde se quedó
+        // sin memoria) y el pico de memoria visto.
+        let line = Rc::new(Cell::new(0usize));
+        let peak = Rc::new(Cell::new(0usize));
+        let (hook_line, hook_peak) = (line.clone(), peak.clone());
+        let script_name = name.to_string();
         lua.set_hook(
             HookTriggers::new().every_nth_instruction(HOOK_INSTRUCTIONS),
-            move |_, _| {
+            move |lua, debug| {
+                if let Some(l) = debug.current_line() {
+                    hook_line.set(l);
+                }
+                hook_peak.set(hook_peak.get().max(lua.used_memory()));
                 if Instant::now() > deadline {
+                    let at = match hook_line.get() {
+                        0 => String::new(),
+                        l => format!("{script_name}:{l}: "),
+                    };
                     Err(mlua::Error::runtime(format!(
-                        "el script tarda más de {:.1} s (¿bucle infinito?)",
+                        "{at}el script tarda más de {:.1} s (¿bucle infinito?; el límite es \
+                         [script] tiempo)",
                         limit.as_secs_f32()
                     )))
                 } else {
@@ -1186,7 +1243,21 @@ impl ScriptHost {
             .and_then(|()| run_bodies(&state));
         self.samples = std::mem::take(&mut *cache.borrow_mut());
         self.imported = std::mem::take(&mut imports.borrow_mut().used);
-        let versions = result.map_err(|e| ScriptError::from_lua(&e))?;
+        self.memory_peak = peak.get().max(lua.used_memory());
+        let versions = result.map_err(|e| {
+            if is_memory_error(&e) {
+                let at = match line.get() {
+                    0 => String::new(),
+                    l => format!("{name}:{l}: "),
+                };
+                ScriptError::new(format!(
+                    "{at}el script usa más de {} MB de memoria (el límite es [script] memoria)",
+                    self.memory_limit >> 20
+                ))
+            } else {
+                ScriptError::from_lua(&e)
+            }
+        })?;
 
         let priority = std::mem::take(&mut state.borrow_mut().priority);
         let groups = std::mem::take(&mut state.borrow_mut().groups);

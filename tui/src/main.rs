@@ -508,11 +508,24 @@ fn detect_tempo(path: &str) -> Result<(), BoxError> {
     Ok(())
 }
 
+/// Un `ScriptHost` con los límites de `[script]` de la configuración (la
+/// memoria y el tiempo de una carga), para las órdenes sin interfaz: el
+/// render, el análisis de choques y `--script`. La interfaz los pone al
+/// leer la configuración (`App::set_config`).
+fn script_host(sample_rate: u32) -> script::ScriptHost {
+    let mut host = script::ScriptHost::new(sample_rate);
+    let config = config::dir()
+        .map(|dir| config::Config::load(&dir.join("config.toml"), theme::truecolor()))
+        .unwrap_or_default();
+    config.script.apply(&mut host);
+    host
+}
+
 /// Carga una canción en Lua y renderiza `bars` compases a su tempo.
 /// `--script canción.lua --render salida.wav --track pista`: solo esa
 /// pista (remuestreo), por defecto lo que tarda en repetirse.
 fn render_track(path: &str, out: &str, track: &str, bars: Option<u64>) -> Result<(), BoxError> {
-    let mut host = script::ScriptHost::new(RENDER_RATE);
+    let mut host = script_host(RENDER_RATE);
     let (mut controller, _engine) = engine::new_engine(RENDER_RATE);
     let song = host
         .load_file(&mut controller, std::path::Path::new(path))?
@@ -532,7 +545,7 @@ fn render_track(path: &str, out: &str, track: &str, bars: Option<u64>) -> Result
 /// frecuencia (con los avisos de la carga delante). Todo offline, en
 /// motores aparte: nunca abre la tarjeta.
 fn masking_report(path: &std::path::Path) -> Result<String, BoxError> {
-    let mut host = script::ScriptHost::new(RENDER_RATE);
+    let mut host = script_host(RENDER_RATE);
     let (mut controller, _engine) = engine::new_engine(RENDER_RATE);
     let song = host.load_file(&mut controller, path)?.clone();
     let report = song.analyze_masking(RENDER_RATE, &engine::masking::MaskingOptions::default())?;
@@ -552,7 +565,7 @@ fn render_script(
     from: u64,
     metronome: bool,
 ) -> Result<(), BoxError> {
-    let mut host = script::ScriptHost::new(RENDER_RATE);
+    let mut host = script_host(RENDER_RATE);
     let (mut controller, mut engine) = engine::new_engine(RENDER_RATE);
     let song = host.load_file(&mut controller, std::path::Path::new(path))?;
     let bpm = song.bpm.unwrap_or(engine::DEFAULT_BPM);
@@ -634,7 +647,7 @@ fn play_script(path: &str) -> Result<(), BoxError> {
     // `open_output` ajusta la frecuencia del motor a la del dispositivo.
     let (mut controller, engine) = engine::new_engine(RENDER_RATE);
     let output = engine::open_output(engine)?;
-    let mut host = script::ScriptHost::new(output.sample_rate);
+    let mut host = script_host(output.sample_rate);
     let mut watcher = script::ScriptWatcher::new(path);
     let mut started = false;
     println!("{path}: se recarga al guardar (Ctrl-C para salir)");
