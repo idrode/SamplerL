@@ -867,3 +867,10 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
     («which-key»). Diseño en la sección 12 de
     [docs/DISENO-TUI.md](DISENO-TUI.md); detalle en «Explorador y editor
     abajo» de [docs/ESTADO.md](ESTADO.md).
+21. ✅ **Visualizaciones del master apagadas por defecto** (pedida por el
+    usuario, por el consumo): el scope y el espectro del master no se
+    calculan ni se dibujan hasta pedirlos (Alt-M, menú Ver, paleta o su
+    foco), y entonces son dos pestañas del dock con su propio refresco
+    (`[interfaz] visuales_hz`, 15). Las de Lua, como estaban. Falta, si se
+    quiere, abrirlas en una ventana aparte (diseño y coste en «Consumo de
+    la interfaz» de [docs/ESTADO.md](ESTADO.md)).

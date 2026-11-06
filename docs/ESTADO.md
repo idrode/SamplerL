@@ -2741,9 +2741,11 @@ assets.
   F10 (`menu` en `[teclas]`) los abre; sin fila propia (pequeña), la
   barra tapa la cabecera mientras está abierta. Ayuda › «Qué sabe hacer
   esta terminal».
-- **Scope y espectro del master** (`app/viz.rs`): `sync_ui_viz` pide al
-  motor la fuente del master junto con lo del script, solo mientras el
-  último cuadro dibujó el scope o el espectro del master (un lote con
+- **Scope y espectro del master** (`app/viz.rs`; apagados por defecto
+  desde «Visualizaciones apagadas por defecto», en «Consumo de la
+  interfaz»): `sync_ui_viz` pide al motor la fuente del master junto con
+  lo del script, solo mientras el último cuadro dibujó el scope o el
+  espectro del master (un lote con
   `set_viz`, que entra al compás; tras cada carga, el lote del script
   solo trae lo suyo y se vuelve a pedir). El motor ya copiaba a esa cola:
   sin cambios en el hilo de audio ni publicación nueva (`no_alloc.rs` y
@@ -2862,6 +2864,124 @@ Cuatro cambios, todos en el hilo de la interfaz (sin tocar el motor):
 Medido solo en x86_64: falta repetir la tabla en el Asahi (con y sin
 `--allow-midi`, el ratón quieto y moviéndose, parado y sonando) y
 comprobar que el binario es el de `target/release`.
+
+### Visualizaciones apagadas por defecto
+
+Las mediciones de `docs/BASE-LIGERA.md` (rama `base-ligera`) dicen que el
+salto de consumo del rediseño llega con `634f8eb` (el scope y el espectro
+del master siempre a la vista): la interfaz pasaba de ~7,8 % a ~13,4 % y
+lo escrito a la terminal sonando, de ~12,6 a ~31 KiB/s. Los arreglos de
+arriba bajaron el reposo, pero sonando quedaba ~9-10 %.
+
+**Cómo se mide** (`scripts/medir-consumo.py`): el binario de release en
+una pseudo-terminal de 200×50 o de 80×24, con una configuración vacía, la
+misma canción (un break sintético de `engine --example synth_break` en 8
+cortes, `steps("1 . . 1  . . 3 .  1 . 5 .  . 3 . 6")` a 170 BPM, que
+arranca al abrir) y **sin `--allow-audio`**: el motor avanza con la
+salida nula a ritmo real. Con audio de verdad no se ha medido: Claude
+Code no abre nunca la tarjeta (ver `CLAUDE.md`); el hilo de la interfaz
+no depende de la salida, pero falta comprobarlo con `top -H` en una
+terminal real. Se mide el hilo de la interfaz (el principal) sonando 20 s,
+luego F8 y parado 20 s, y los bytes por segundo que escribe a la
+terminal. La variación entre repeticiones es de ±0,7 puntos. El cuarto
+argumento es el tamaño y el quinto, teclas al abrir (`'\x1bm'` es
+Alt-M; `'\x1b7'`, Alt-7).
+
+| Commit | Tamaño | Visualizaciones | Interfaz sonando | Interfaz parado | Terminal sonando |
+|---|---|---|---:|---:|---:|
+| `8fb818b` (antes del rediseño) | 200×50 | — | 7,8 % | 7,5 % | 12,6 KiB/s |
+| `main` (`e8a50c8`), antes | 200×50 | siempre | 9,1 % | 0,9 % | 34,6 KiB/s |
+| `main`, antes | 80×24 | pestañas sin elegir | 3,6 % | 0,5 % | 5,3 KiB/s |
+| apagadas por defecto | 200×50 | apagadas | 7,4 % | 0,7 % | 13,7 KiB/s |
+| apagadas por defecto | 80×24 | apagadas | 3,5 % | 0,4 % | 5,3 KiB/s |
+| apagadas por defecto | 200×50 | espectro (Alt-M) | 9,1 % | 0,9 % | 28,9 KiB/s |
+| apagadas por defecto | 200×50 | scope (Alt-7) | 9,4 % | 0,9 % | 34,3 KiB/s |
+| apagadas por defecto | 80×24 | espectro (Alt-M) | 5,3 % | 0,5 % | 12,2 KiB/s |
+| `visuales_hz = 15` | 200×50 | espectro (Alt-M) | 8,7 % | 0,8 % | 21,3 KiB/s |
+| `visuales_hz = 15` | 200×50 | scope (Alt-7) | 9,0 % | 0,9 % | 24,4 KiB/s |
+| `visuales_hz = 15` | 80×24 | espectro (Alt-M) | 4,3 % | 0,6 % | 7,3 KiB/s |
+
+Dos cambios, solo en la interfaz (el motor, `no_alloc.rs` y `golden.rs`
+sin tocar):
+
+- **Apagadas hasta que se piden** (`App::master_viz`, `toggle_master_viz`;
+  `Needs::master_viz` solo si se han pedido): sin pedirlas no hay pestañas
+  ni paneles, así que `master_shown` es falso, `sync_ui_viz` no manda
+  `set_viz`, el motor no copia el master y `frame_viz` no hace la FFT. Se
+  piden con «Scope y espectro del master» (Alt-M, `visuales` en
+  `[teclas]`, menú Ver y paleta) o con su foco (Alt-7, Alt-8), y son dos
+  pestañas más del dock (`layout::master_tabs`) en todos los tamaños; el
+  alto lo piden con `screen::tab_height` (7 el scope, 9 el espectro, para
+  que quepa el espectrograma). Ya no hay paneles fijos del master en el
+  mediano ni en el ancho: la columna derecha del ancho es el mezclador y
+  la referencia. Tests: `the_master_scope_and_spectrum_are_off_until_asked_and_need_nothing_in_the_script`
+  (apagado, ni un lote ni una FFT aunque suene; desde el menú Ver, un
+  lote y FFT; Alt-M los quita, otro lote que apaga la cola y ni una FFT
+  más), `the_master_is_only_copied_while_its_panels_are_seen` (con otra
+  pestaña elegida, ni FFT) y los de la rejilla. `App::viz_cost` (solo en
+  los tests) da los lotes `set_viz` de la interfaz, las fuentes que copia
+  el motor y las FFT (`Analyzer::runs`).
+- **Su propio refresco** (`[interfaz] visuales_hz`, 15 por defecto, de 1
+  a 60): `tick_viz` cuenta las muestras del master que llegan
+  (`viz_pending`) y, cuando son las de un cuadro (`sample_rate /
+  visuales_hz`), rehace el scope (`master_cache`, del que lo saca
+  `master_views`) y marca que toca la FFT (`viz_fresh`, que gasta
+  `frame_viz`). Los cuadros de en medio dibujan lo mismo y ratatui no
+  escribe nada de esos paneles. Parado y en silencio (el historial a
+  cero, el scope ya plano y el espectro caído), no se rehace nada, para
+  que el reposo siga en reposo. Tests:
+  `the_master_scope_and_spectrum_follow_their_own_rate` (el mismo audio a
+  15 y a 60: 12 cuadros frente a 48),
+  `stopped_and_silent_the_master_spectrum_stops_computing` y
+  `the_interface_section`.
+
+Decisiones:
+
+- **Pestañas siempre, nunca paneles fijos**: lo pidió así el usuario, y
+  así solo se calcula la que se ve (el scope o el espectro, no los dos).
+  Se pierde ver el espectro a la vez que los efectos en el tamaño mediano.
+- **Alt-M y no Alt-V**: Alt-V es «una pantalla arriba» en el editor
+  (`ratatui-textarea`), y no se cambia ningún atajo. Alt-M (de master) no
+  lo usa nadie. El foco del scope o del espectro (Alt-7, Alt-8, el menú
+  Ver › Foco) también los enciende: es lo que se espera al pulsarlo.
+- **El ritmo en muestras, no en tiempo de reloj**: en vivo es lo mismo
+  (llegan a tiempo real) y en los tests es determinista (lo que se
+  renderiza). La FFT sigue yendo al dibujar, con la caída por cuadro de
+  ellas: a 15 la caída se ve más lenta que a 30.
+- **`visuales_hz` solo para el master**: las de Lua «siguen como están»
+  (lo pidió el usuario), al refresco general.
+- **No se recuerda entre sesiones**: arrancan apagadas siempre. Si se
+  quiere, sería un `[interfaz] visuales = true`.
+- **Lo que no ayudó**: con el espectro pedido, el CPU sonando baja poco
+  (de ~9,1 % a ~8,7 %, cerca del ruido); lo que baja de verdad son los
+  bytes a la terminal (un 25-40 %). Lo que queda caro sonando sin
+  visualizaciones (~7,4 % a 200×50) es dibujar la ventana entera 30 veces
+  por segundo (el tracker, los medidores, el resaltado y la cabecera
+  cambian en cada paso); bajarlo pide no rehacer los paneles que no
+  cambian, que ratatui no hace por sí solo.
+
+### Las visualizaciones en otra ventana (sin hacer)
+
+Se pidió como opcional, si encajaba en el mecanismo de la ventana del
+editor (`--split`, protocolo 8). No encaja sin más: la ventana del editor
+es el editor (recibe las visualizaciones del script por el protocolo 7,
+pero solo como añadido al código), y una ventana solo de visualizaciones
+es un proceso y una conexión nuevos, como la del piano roll
+(`--window-roll`, protocolo 6) o la de los dispositivos
+(`--window-devices`). Diseño, por si se hace:
+
+- `tui --window-viz <script>` abre una terminal nueva
+  (`[ventanas] terminal`, como las otras) con un socket propio junto al
+  de la principal; un mensaje nuevo en `link.rs` (protocolo 9) con el
+  scope y el espectro del master ya dibujados en texto (como `viz_frames`
+  para el editor) a `visuales_hz`, y de vuelta solo «cerrar» y «otro
+  dibujo del espectro».
+- La principal sigue calculando (el motor está en ella): lo que se ahorra
+  es el dibujo en la principal, no la FFT; con la ventana abierta, el
+  master cuenta como visto (`master_shown`).
+- Coste estimado: unas 500-700 líneas (la ventana y su bucle ~200, el
+  protocolo y sus tests ~250, la acción, la paleta, el menú Ventanas y la
+  guía ~150), en la línea de la ventana del piano roll.
 
 ## Explorador y editor abajo
 

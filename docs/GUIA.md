@@ -286,7 +286,7 @@ Un proyecto (`.sampler`) que no existe es siempre un error: se crea desde
 la interfaz con la orden `guardar`. A la izquierda está el
 explorador de archivos (desde 120 columnas); en el centro, arriba, la
 forma de onda del sample, el tracker y el mezclador, y pestañas con los
-efectos y lo demás junto al espectro del master; abajo, el editor; arriba
+efectos y lo demás; abajo, el editor; arriba
 del todo, los menús y la cabecera con el transporte y el master (ver «La
 pantalla: tamaños, pestañas, foco y menús», más abajo). Ctrl-S guarda y carga. El tracker
 enseña sus 16 pasos enteros en cuanto caben; en una terminal más baja se
@@ -321,22 +321,21 @@ el foco** (`EDITOR`, `TOCAR`, `MEZCLA`, `ARCHIVOS`...). En medio:
 - **Arriba, el sonido**, según el tamaño:
   - **Pequeña** (menos de 100×30): la forma de onda en pocas filas y
     debajo **pestañas** con todo lo demás (el tracker, el mezclador, los
-    efectos, las lanes, el espectro y el scope del master...). Los menús
-    no tienen fila: F10 los enseña encima de la cabecera.
+    efectos, las lanes y las vistas que se abran). Los menús no tienen
+    fila: F10 los enseña encima de la cabecera.
   - **Mediana**: arriba la barra de menús; la forma de onda, el tracker
-    con el mezclador al lado y, debajo, las pestañas (efectos, lanes,
-    scope y las vistas que se abran) con el **espectro del master** fijo a
-    su derecha.
+    con el mezclador al lado y, debajo, las pestañas (efectos, lanes y las
+    vistas que se abran) a todo el ancho.
   - **Ancha** (desde 160×45): la onda, el tracker y las pestañas, y una
-    columna a la derecha con el mezclador, el scope y el espectro del
-    master (y la **referencia** de teclas del foco si sobra sitio).
+    columna a la derecha con el mezclador y la **referencia** de teclas
+    del foco.
   - Si el editor crece y al sonido le queda poco alto, se coloca como en
     el tamaño de abajo.
 - **Diminuta** (menos de 40×10): una línea dice que la terminal es
   demasiado pequeña y que el audio sigue; las teclas siguen funcionando.
 
 Al achicar la terminal se quita, por orden: el explorador (por debajo de
-120 columnas), el espectro fijo (a una pestaña), el tracker y el
+120 columnas), el tracker y el
 mezclador (a las pestañas), la barra de menús, la regla y el mensaje, y
 por último todo menos la línea mínima.
 
@@ -471,12 +470,25 @@ números, como siempre. `[interfaz] onda = "barras"` vuelve a las barras
 de bloques, y Ver › Dibujo › «Onda: puntos o barras» lo cambia en la
 sesión.
 
-**Scope y espectro del master.** Salen sin pedirlos en el script (la
-interfaz le pide al motor que copie el master mientras se ven; no cambia
-el audio y entra al compás, así que con el transporte parado esperan). El
-título del scope lleva el nivel eficaz de lo último (`RMS -12.3 dB`, mono
-y sin ponderar: una idea del nivel, no sonoridad LUFS). El **espectro**
-tiene su panel fijo en la mediana y la ancha: con puntos, en escala
+**Scope y espectro del master.** Están **apagados** hasta que se piden, y
+apagados no cuestan nada: ni el motor copia el master, ni se calcula la
+FFT, ni se dibujan. Se piden sin tocar el script con **Alt-M** (Ver ›
+«Scope y espectro del master», o en la paleta; `visuales` en `[teclas]`)
+o dándoles el foco (Alt-7 el scope, Alt-8 el espectro), y salen como dos
+pestañas más del dock (`8 espectro` y `7 scope`), en todos los tamaños;
+Alt-M otra vez los quita. Solo se calcula la pestaña que se ve: con otra
+elegida, el motor deja de copiar el master. Al pedirlos, la interfaz le
+pide al motor que copie el master (no cambia el audio y entra al compás,
+así que con el transporte parado esperan). Van a su propio ritmo,
+`[interfaz] visuales_hz` (15 cuadros por segundo por defecto, de 1 a 60),
+aparte del refresco general (`refresco`, 30): menos, gastan menos CPU y
+escriben menos a la terminal (cuenta por SSH), y el espectro ve menos
+golpes cortos; parado y en silencio no se rehacen. Las visualizaciones
+que pide el script (`pista:scope{}`, `master():spectrum{}`, `inline =
+true`) no cambian: se encienden solo si el script las pide y siguen al
+refresco general. El título del scope lleva el nivel eficaz de lo último
+(`RMS -12.3 dB`, mono y sin ponderar: una idea del nivel, no sonoridad
+LUFS). El **espectro**, con puntos, en escala
 logarítmica de 30 Hz a 20 kHz y con el eje de frecuencias al pie (`50 100
 200 500 1k 2k 5k 10k`), sube de golpe y baja despacio, así que no
 parpadea. `[interfaz] espectro` elige `relleno` (por defecto), `linea`,
