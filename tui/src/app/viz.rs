@@ -81,6 +81,25 @@ impl App {
         on
     }
 
+    /// Las visualizaciones del script para este cuadro: en bajo consumo,
+    /// las del último que las recalculó si a este no le toca (ver
+    /// [`App::frame_viz`]). Las del master van a su ritmo por su cuenta
+    /// ([`App::master_views`]).
+    pub(super) fn frame_viz_views(&self) -> Vec<Placed> {
+        if !self.low_power {
+            return self.viz_views();
+        }
+        let mut cache = self.viz_cache.borrow_mut();
+        match &*cache {
+            Some(views) if !self.viz_turn => views.clone(),
+            _ => {
+                let views = self.viz_views();
+                *cache = Some(views.clone());
+                views
+            }
+        }
+    }
+
     /// Lo que se dibuja de cada visualización.
     pub(super) fn viz_views(&self) -> Vec<Placed> {
         // En la ventana del editor, las que dibuja la principal.
@@ -143,9 +162,8 @@ impl App {
             }
             VizKind::Scope => {
                 let history = self.viz_history(&spec.source)?;
-                let samples: Vec<f32> = history.iter().copied().collect();
                 Some(VizView::Scope(crate::viz::scope::build(
-                    &samples,
+                    history,
                     spec.title(),
                     spec.size,
                 )))
@@ -287,25 +305,29 @@ impl App {
         ]
     }
 
-    /// Hace el cuadro del scope del master con lo último.
+    /// Hace el cuadro del scope del master con lo último, sin copiar el
+    /// historial.
     fn build_master_scope(&self) -> Option<VizView> {
         let history = self
             .viz_history
             .get(engine::VIZ_MASTER)
             .filter(|h| !h.is_empty())?;
-        let (a, b) = history.as_slices();
-        let samples: Vec<f32> = a.iter().chain(b).copied().collect();
         // Nivel eficaz de lo último (mono, tras el limitador): sin
-        // ponderación, así que no es sonoridad (LUFS), solo una idea.
-        let recent = &samples[samples.len().saturating_sub(self.sample_rate as usize / 3)..];
-        let rms = (recent.iter().map(|s| s * s).sum::<f32>() / recent.len().max(1) as f32).sqrt();
+        // ponderación, así que no es sonoridad (LUFS), solo una idea. Sin
+        // copiar el historial (16 384 muestras en cada cuadro).
+        let count = history.len().min(self.sample_rate as usize / 3);
+        let (a, b) = history.as_slices();
+        // Las últimas `count`: el final de `a` (si `b` no llega) y `b`.
+        let b = &b[b.len().saturating_sub(count)..];
+        let a = &a[a.len().saturating_sub(count - b.len())..];
+        let rms = ((squares(a) + squares(b)) / count.max(1) as f32).sqrt();
         let rms = if rms > 0.0 {
             format!("RMS {:+.1} dB", 20.0 * rms.log10())
         } else {
             "RMS -∞".into()
         };
         Some(VizView::Scope(crate::viz::scope::build(
-            &samples,
+            history,
             format!("7 scope · master · {rms}"),
             4,
         )))
@@ -367,7 +389,9 @@ impl App {
             // En silencio (parado), con el scope ya plano y el espectro
             // caído del todo, no hay nada que rehacer: así el dibujo en
             // reposo sigue en reposo.
-            let silent = self.viz_history[engine::VIZ_MASTER].iter().all(|&x| x == 0.0);
+            let silent = self.viz_history[engine::VIZ_MASTER]
+                .iter()
+                .all(|&x| x == 0.0);
             let settled = self.master_spectrum.iter().all(|&l| l <= 0.0);
             if !(silent && settled && self.master_cache_silent && self.master_cache.is_some()) {
                 self.viz_fresh = true;
@@ -383,6 +407,8 @@ impl App {
     /// mira la entrada cada 2 ms).
     pub fn frame_viz(&mut self) {
         let rate = self.sample_rate;
+        // El del master, cuando le toca a su ritmo (`[interfaz]
+        // visuales_hz`, que `bajo_consumo` baja; ver `tick_viz`).
         let fresh = std::mem::take(&mut self.viz_fresh);
         if fresh && self.viz_sent[engine::VIZ_MASTER] && self.master_shown() {
             let history = &self.viz_history[engine::VIZ_MASTER];
@@ -401,6 +427,12 @@ impl App {
                     self.master_spectrogram.push_back(frame);
                 }
             }
+        }
+        // Los del script: en bajo consumo, uno de cada dos cuadros (en el
+        // otro, lo de antes; ver `frame_viz_views`).
+        self.viz_turn = !self.low_power || !self.viz_turn;
+        if !self.viz_turn {
+            return;
         }
         self.viz_spectra.resize(self.viz.len(), Vec::new());
         for i in 0..self.viz.len() {
@@ -435,6 +467,21 @@ impl App {
         let laps = def.bars.len().max(1) as u64;
         Some(((lap % laps) as usize * def.length.max(1) + step) % cycle as usize)
     }
+}
+
+/// La suma de los cuadrados de `samples`, con ocho sumas parciales
+/// independientes: así el compilador la vectoriza (una sola suma va en
+/// cadena, cada término esperando al anterior).
+fn squares(samples: &[f32]) -> f32 {
+    let mut lanes = [0.0f32; 8];
+    let (chunks, rest) = samples.as_chunks::<8>();
+    let rest: f32 = rest.iter().map(|s| s * s).sum();
+    for chunk in chunks {
+        for (lane, s) in lanes.iter_mut().zip(chunk) {
+            *lane += s * s;
+        }
+    }
+    lanes.iter().sum::<f32>() + rest
 }
 
 /// Las últimas [`crate::viz::spectrum::SIZE`] muestras de `history` (las

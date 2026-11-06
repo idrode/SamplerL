@@ -418,10 +418,10 @@ fn the_master_scope_and_spectrum_follow_their_own_rate() {
     // Las FFT y los cuadros del scope del master en 48 cuadros dibujados,
     // uno cada 800 muestras (60 por segundo a 48 kHz), a `hz` cuadros por
     // segundo de las visualizaciones.
-    let run = |hz: u32| {
-        let (mut app, mut engine) = open_tone(&format!("viz_master_rate_{hz}"));
+    let run = |name: &str, config: &str| {
+        let (mut app, mut engine) = open_tone(&format!("viz_master_rate_{name}"));
         app.set_config(&Config::parse(
-            &format!("[interfaz]\nvisuales_hz = {hz}\n"),
+            &format!("[interfaz]\n{config}\n"),
             true,
             "c",
         ));
@@ -440,12 +440,19 @@ fn the_master_scope_and_spectrum_follow_their_own_rate() {
         (app.viz_cost().2 - ffts, scopes.len())
     };
     // 48 × 800 = 38 400 muestras (0,8 s): a 15, 12 cuadros; a 60, uno
-    // por cada dibujado.
-    let (slow, slow_scopes) = run(15);
-    let (fast, fast_scopes) = run(60);
+    // por cada dibujado; con `bajo_consumo`, como mucho a 7 (la mitad de
+    // su refresco): 5 o 6.
+    let (slow, slow_scopes) = run("15", "visuales_hz = 15");
+    let (fast, fast_scopes) = run("60", "visuales_hz = 60");
+    let (low, low_scopes) = run("bajo", "visuales_hz = 60\nbajo_consumo = true");
     assert!((11..=13).contains(&slow), "{slow}");
     assert!(fast >= 46, "{fast}");
-    assert!(slow_scopes <= 13 && fast_scopes > 40, "{slow_scopes} {fast_scopes}");
+    assert!((5..=6).contains(&low), "{low}");
+    assert!(
+        slow_scopes <= 13 && fast_scopes > 40,
+        "{slow_scopes} {fast_scopes}"
+    );
+    assert!(low_scopes <= 6, "{low_scopes}");
 }
 
 #[test]
@@ -469,4 +476,52 @@ fn stopped_and_silent_the_master_spectrum_stops_computing() {
     let settled = app.viz_cost().2;
     assert_eq!(frames(&mut app, &mut engine, 60), settled);
     assert!(app.idle_key().is_some(), "en reposo");
+}
+
+#[test]
+fn low_power_redraws_the_visualizations_every_other_frame_without_braille() {
+    let (mut app, mut engine) = open_tone("viz_low_power");
+    app.set_config(&crate::config::Config::parse(
+        "[interfaz]\nbajo_consumo = true\n",
+        true,
+        "c",
+    ));
+    assert_eq!(app.frame_interval().as_millis(), 1000 / 15);
+    app.set_viz(vec![spec(VizKind::Scope, VizSource::Master, 6)]);
+    play(&mut app, &mut engine, 20);
+    // Un cuadro recalcula y el siguiente repite lo mismo, aunque el audio
+    // haya seguido.
+    let samples = |app: &mut App| {
+        app.frame_viz();
+        let VizView::Scope(scope) = &app.view().viz[0].view else {
+            panic!("scope")
+        };
+        scope.samples.clone()
+    };
+    let mut frames = Vec::new();
+    for _ in 0..4 {
+        play(&mut app, &mut engine, 1);
+        frames.push(samples(&mut app));
+    }
+    let same = |a: usize, b: usize| frames[a] == frames[b];
+    assert!(same(0, 1) != same(1, 2), "uno de cada dos");
+    assert!(same(0, 1) == same(2, 3));
+    // Sin Braille en el scope ni en la onda.
+    let screen = text(&draw(&mut app, 140, 40));
+    assert!(screen.contains("scope · master"), "{screen}");
+    assert!(
+        !screen
+            .chars()
+            .any(|c| ('\u{2801}'..='\u{28ff}').contains(&c)),
+        "con Braille: {screen}"
+    );
+    // Al quitarlo, como siempre.
+    app.set_config(&crate::config::Config::parse("", true, "c"));
+    assert_eq!(app.frame_interval().as_millis(), 1000 / 30);
+    let screen = text(&draw(&mut app, 140, 40));
+    assert!(
+        screen
+            .chars()
+            .any(|c| ('\u{2801}'..='\u{28ff}').contains(&c))
+    );
 }

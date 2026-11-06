@@ -247,3 +247,36 @@ fn the_blocks_folder_is_never_loaded_with_the_script() {
     std::fs::write(dir.join("blocks/roto.lua"), "error(\"boom\")\ntrack(").unwrap();
     assert_eq!(render(), before);
 }
+
+#[test]
+fn refresh_rereads_only_when_a_file_changes() {
+    let dir = dir("refresh");
+    let global = dir.join("global");
+    let project = dir.join("proyecto");
+    std::fs::create_dir_all(&project).unwrap();
+    let mut library = Library::open(Some(global.clone()), Some(project.clone()));
+    // Lo que la creación de la carpeta global haya cambiado, ya visto.
+    library.refresh();
+    assert!(!library.refresh(), "sin cambios no se relee");
+    // Uno nuevo, desde fuera (otro editor, git...).
+    std::fs::write(global.join("ghost.lua"), GHOST).unwrap();
+    assert!(library.refresh());
+    assert_eq!(library.blocks.len(), 1);
+    assert!(!library.refresh());
+    // Cambiado en su sitio (otro tamaño): se relee.
+    std::fs::write(global.join("ghost.lua"), GHOST.replace("Ghost", "Fantasma")).unwrap();
+    assert!(library.refresh());
+    assert_eq!(
+        library.blocks[0].description,
+        "Fantasma notes en contratiempos"
+    );
+    // Uno del proyecto y el borrado del global.
+    std::fs::write(project.join("dos.lua"), "-- nombre: dos\nbpm(1)\n").unwrap();
+    std::fs::remove_file(global.join("ghost.lua")).unwrap();
+    assert!(library.refresh());
+    let names: Vec<&str> = library.blocks.iter().map(|b| b.name.as_str()).collect();
+    assert_eq!(names, ["dos"]);
+    // Lo que no es `.lua` no cuenta.
+    std::fs::write(project.join("notas.txt"), "x").unwrap();
+    assert!(!library.refresh());
+}

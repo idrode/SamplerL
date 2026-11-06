@@ -168,6 +168,9 @@ pub(crate) struct Halfband {
     /// es siempre contigua.
     buf: [f32; 2 * HALF_LEN],
     pos: usize,
+    /// Copia de [`HALFBAND`]: leer el `LazyLock` en cada muestra es una
+    /// carga atómica (con barrera de adquisición en ARM64).
+    taps: [f32; HALF_TAPS],
 }
 
 impl Default for Halfband {
@@ -175,6 +178,7 @@ impl Default for Halfband {
         Halfband {
             buf: [0.0; 2 * HALF_LEN],
             pos: 0,
+            taps: *HALFBAND,
         }
     }
 }
@@ -197,7 +201,7 @@ impl Halfband {
     pub fn output(&self) -> f32 {
         let w = &self.buf[self.pos..self.pos + HALF_LEN];
         let c = HALF_LEN / 2;
-        let taps = &*HALFBAND;
+        let taps = &self.taps;
         let mut acc = 0.5 * w[c];
         for (i, &h) in taps.iter().enumerate() {
             let k = 2 * i + 1;

@@ -62,7 +62,10 @@ fn wide_has_the_sound_a_column_for_the_master_and_the_editor_below() {
     // el scope y el espectro del master, sin pedirlos, no están.
     let (rx, ry) = find(&buffer, "┌ referencia").expect(&screen);
     assert!(rx == mx && my < ry, "{screen}");
-    assert!(!screen.contains("scope") && !screen.contains("espectro"), "{screen}");
+    assert!(
+        !screen.contains("scope") && !screen.contains("espectro"),
+        "{screen}"
+    );
     // Los efectos, en su pestaña (la primera).
     let (_, strip) = find(&buffer, " 5 efectos ").expect(&screen);
     assert_eq!(
@@ -244,7 +247,10 @@ fn the_master_scope_and_spectrum_are_off_until_asked_and_need_nothing_in_the_scr
     // Sin pedirlos, ni pestañas ni paneles: ni un lote al motor, ni cola
     // del master, ni FFT, aunque suene.
     let screen = text(&draw(&mut app, 180, 50));
-    assert!(!screen.contains("7 scope") && !screen.contains("8 espectro"), "{screen}");
+    assert!(
+        !screen.contains("7 scope") && !screen.contains("8 espectro"),
+        "{screen}"
+    );
     play(&mut app, &mut engine, 20);
     draw(&mut app, 180, 50);
     assert_eq!(app.viz_cost(), (0, [false; engine::VIZ_SOURCES], 0));
@@ -277,7 +283,10 @@ fn the_master_scope_and_spectrum_are_off_until_asked_and_need_nothing_in_the_scr
     play(&mut app, &mut engine, 20);
     let screen = text(&draw(&mut app, 180, 50));
     assert_eq!(app.view().master_views.len(), 2, "scope y espectro");
-    assert!(screen.contains(" 8 espectro · master · relleno "), "{screen}");
+    assert!(
+        screen.contains(" 8 espectro · master · relleno "),
+        "{screen}"
+    );
     let (batches, sources, ffts) = app.viz_cost();
     assert!(batches == 1 && sources[engine::VIZ_MASTER] && ffts > 0);
     // El scope, en la suya.
@@ -308,7 +317,10 @@ fn the_master_scope_and_spectrum_are_off_until_asked_and_need_nothing_in_the_scr
     draw(&mut app, 180, 50);
     assert_eq!(app.viz_cost(), (2, [false; engine::VIZ_SOURCES], ffts));
     assert!(app.view().master_views.is_empty());
-    assert!(!screen.contains("7 scope") && !screen.contains("8 espectro"), "{screen}");
+    assert!(
+        !screen.contains("7 scope") && !screen.contains("8 espectro"),
+        "{screen}"
+    );
 }
 
 #[test]

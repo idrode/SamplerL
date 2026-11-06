@@ -249,6 +249,10 @@ pub struct App {
     wave_zoom: Option<zoom::WaveZoom>,
     /// Resumen de la onda del trozo con zoom (se recalcula si cambia).
     zoom_cache: std::cell::RefCell<Option<zoom::ZoomedWave>>,
+    /// Los avisos de la notación del último texto (`steps_diagnostics`
+    /// relee todas las cadenas: con una canción de cien líneas, más de
+    /// 100 µs en cada cuadro), con la huella del texto y las etiquetas.
+    diagnostics_cache: std::cell::RefCell<Option<(u64, Vec<diagnose::Diagnostic>)>>,
     /// El ratón en el editor (`[editor] raton`).
     mouse_enabled: bool,
     /// El modo vim (`[editor] modo = "vim"`): su modo y lo que lleva entre
@@ -335,6 +339,12 @@ pub struct App {
     master_spectrogram: std::collections::VecDeque<Vec<f32>>,
     /// Cuadros por segundo (`[interfaz] refresco`).
     refresh_hz: u32,
+    /// `[interfaz] bajo_consumo`; con él, si este cuadro recalcula las
+    /// visualizaciones del script (uno de cada dos) y lo que se vio en el
+    /// último que las recalculó (las del master van a su ritmo, `viz_hz`).
+    low_power: bool,
+    viz_turn: bool,
+    viz_cache: std::cell::RefCell<Option<Vec<crate::viz::Placed>>>,
     /// Mandos MIDI asignados (los del proyecto o, sin ellos, los de la
     /// configuración), la lista para asignar uno, el que espera su CC, la
     /// lista de mandos abierta y el último CC que llegó.
@@ -518,6 +528,7 @@ impl App {
             slice_drag: None,
             wave_zoom: None,
             zoom_cache: Default::default(),
+            diagnostics_cache: Default::default(),
             mouse_enabled: true,
             vim: None,
             vim_exit: vim::DEFAULT_EXIT,
@@ -566,6 +577,9 @@ impl App {
             master_cache_silent: false,
             master_spectrogram: Default::default(),
             refresh_hz: crate::config::DEFAULT_REFRESH,
+            low_power: false,
+            viz_turn: true,
+            viz_cache: Default::default(),
             learned: Vec::new(),
             knob_picker: None,
             learning: None,
@@ -715,8 +729,13 @@ impl App {
         if let Some(ascii) = config.interface.ascii {
             crate::theme::set_ascii(ascii);
         }
-        self.refresh_hz = config.interface.refresh;
-        self.viz_hz = config.interface.viz_hz;
+        // Los ritmos de verdad: con `bajo_consumo`, más bajos (ver
+        // `InterfaceConfig::frame_rate` y `viz_rate`).
+        self.refresh_hz = config.interface.frame_rate();
+        self.viz_hz = config.interface.viz_rate();
+        self.low_power = config.interface.low_power;
+        crate::theme::set_low_power(self.low_power);
+        self.viz_cache.replace(None);
         self.files.shown = config.interface.explorer;
         self.files.width = config.interface.explorer_width;
         self.editor_rows = config.interface.editor_rows;
@@ -2677,6 +2696,27 @@ impl App {
         )
     }
 
+    /// Los avisos de la notación de `steps("...")` y `melody("...")` del
+    /// texto del editor; se recalculan solo si cambia el texto o las
+    /// etiquetas conocidas.
+    fn diagnostics(&self) -> Vec<diagnose::Diagnostic> {
+        use std::hash::{Hash, Hasher};
+        let labels = self.known_labels();
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        self.editor.lines().hash(&mut h);
+        labels.hash(&mut h);
+        let key = h.finish();
+        let mut cache = self.diagnostics_cache.borrow_mut();
+        match &*cache {
+            Some((k, diagnostics)) if *k == key => diagnostics.clone(),
+            _ => {
+                let diagnostics = diagnose::steps_diagnostics(self.editor.lines(), &labels);
+                *cache = Some((key, diagnostics.clone()));
+                diagnostics
+            }
+        }
+    }
+
     /// Etiquetas de corte conocidas: las de lo último cargado, las del
     /// proyecto y las que el texto pone con `:name()` (aún sin cargar).
     fn known_labels(&self) -> Vec<String> {
@@ -4468,8 +4508,9 @@ impl App {
         if self.last_external_check.elapsed() >= EXTERNAL_CHECK {
             self.last_external_check = Instant::now();
             self.check_external();
-            // Los bloques pueden cambiar fuera (otro editor, git...).
-            self.blocks.reload();
+            // Los bloques pueden cambiar fuera (otro editor, git...); solo
+            // se releen si cambia algún archivo.
+            self.blocks.refresh();
         }
         self.flush_midi();
         self.flush_expression();
@@ -4509,6 +4550,7 @@ impl App {
 
     /// Modelo de vista para los paneles.
     pub fn view(&self) -> ViewModel {
+        let viz_views = self.frame_viz_views();
         let name = self.file_name();
         let status = self.status;
         let transport = status.map_or(TransportView::default(), |s| TransportView {
@@ -4717,7 +4759,7 @@ impl App {
                 .as_ref()
                 .map(|s| s.view(self.host.song())),
             lanes: self.lanes_view(),
-            viz: self.viz_views(),
+            viz: viz_views,
             devices: self.devices_popup(),
             vim: self.vim.as_ref().map(vim::Vim::label),
             timeline,
@@ -4727,7 +4769,7 @@ impl App {
                 line: error_line(&e.message, &name),
                 message: e.message.clone(),
             }),
-            diagnostics: diagnose::steps_diagnostics(self.editor.lines(), &self.known_labels()),
+            diagnostics: self.diagnostics(),
             highlights: self.highlights(),
             help: (self.mode == Mode::Edit
                 && self.palette.is_none()

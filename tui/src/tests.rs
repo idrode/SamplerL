@@ -2616,6 +2616,7 @@ mod blocks;
 mod browser;
 mod clipboard;
 mod config;
+mod consumo;
 mod devices;
 mod devices_panel;
 mod dock;

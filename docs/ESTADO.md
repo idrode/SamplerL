@@ -2804,6 +2804,16 @@ truecolor, y el editor en su ventana con los menús.
 
 ## Consumo de la interfaz
 
+Una sola sección para todo lo del consumo de la interfaz, hecho en dos
+máquinas y unido después: las cifras de cada tabla dicen si son de
+**x86_64** (la laptop de desarrollo, i7) o de **ARM64** (el MacBook M2 con
+Asahi); no se comparan tal cual entre ellas (ver «Cómo leer los %» en
+ARM64). Orden: la primera tanda (x86_64), la medición y los arreglos en
+ARM64, las visualizaciones del master apagadas por defecto (x86_64), y
+la unión de los dos trabajos con la tabla final (x86_64).
+
+### Primera tanda (x86_64)
+
 Tras el rediseño, el hilo de la interfaz gastaba mucho más que antes: en
 el portátil ARM64 llegaba a un núcleo entero. Medido en la laptop de
 desarrollo (x86_64, release, 200×50, `top -H`; el hilo de audio, con la
@@ -2859,13 +2869,273 @@ Cuatro cambios, todos en el hilo de la interfaz (sin tocar el motor):
 - Sigue pendiente: la caída de los medidores es por `tick`, no por
   cuadro, así que con MIDI bajan más deprisa.
 
-### Sin probar en el portátil ARM64
+### Medición y arreglos en ARM64 (Asahi)
 
-Medido solo en x86_64: falta repetir la tabla en el Asahi (con y sin
-`--allow-midi`, el ratón quieto y moviéndose, parado y sonando) y
-comprobar que el binario es el de `target/release`.
+Medido en un MacBook Pro M2 (13 pulgadas, 2022) con Asahi Linux (Arch
+Linux ARM, núcleo 7.2), release, sin `--allow-audio` (salida nula). El
+emulador de la sesión es kitty 0.49, pero la medición no pasa por él:
+`scripts/medir-consumo.py` arranca la interfaz en un pseudoterminal de
+tamaño fijo, cuenta lo que escribe (lo que kitty tendría que pintar) y
+lee la CPU de cada hilo de `/proc` durante 10 s por escenario. La
+canción es `scripts/consumo/cancion.lua` (el break sintético y un bajo
+`sh101`); «visual», `scripts/consumo/visual.lua` (además, scope y
+espectro por pista). Al cargar, la canción ya suena: «parado» es tras
+Ctrl-Espacio. El ratón, 60 movimientos por segundo sin botón.
 
-### Visualizaciones apagadas por defecto
+**Cómo leer los %**: es tiempo de un núcleo, y en el M2 depende mucho
+de dónde y a qué frecuencia corre. Con poca carga, el planificador deja
+los dos hilos en los núcleos de eficiencia (el 98-100 % del tiempo, ver
+la última columna) y schedutil los baja hacia 600 MHz: el mismo trabajo
+cuenta unas cuatro o cinco veces más que en un núcleo de rendimiento a
+3,2 GHz. Por eso el hilo de audio marca ~7 % sonando cuando el mismo
+render offline, a toda máquina, gasta ~1 % (90 s de audio en 0,9 s), y
+por eso las cifras no se comparan tal cual con las de x86_64. Para
+comparar trabajo, el banco `tests::consumo` (abajo) y el tiempo del
+render offline.
+
+Las cifras en vivo cambian de una tanda a otra con el mismo binario (a
+240×70 sonando, de 5 % a 10 % según lo que haga el resto del sistema):
+para comparar dos binarios, `--bin antes,ahora --repeticiones 3` los
+alterna y da la mediana, y aun así solo se distinguen diferencias de
+más del 20 %. El banco es la medida fina.
+
+**Antes** (HEAD `e8a50c8`; ui, el hilo principal; audio, el de la
+salida nula; ningún otro hilo pasa del 0,1 %):
+
+| Escenario | Tamaño | ui | audio | kB/s a la terminal | cuadros/s |
+|---|---|---|---|---|---|
+| parado | 80×24 | 0,3 % | 0,4 % | 0,1 | 1,9 |
+| sonando | 80×24 | 3,0 % | 7,0 % | 6,3 | 28,4 |
+| visual | 80×24 | 4,7 % | 7,0 % | 16,1 | 27,9 |
+| sonando, ratón | 80×24 | 3,3 % | 6,9 % | 6,3 | 28,6 |
+| parado, ratón | 80×24 | 0,5 % | 0,3 % | 0,1 | 2,0 |
+| parado | 120×40 | 0,7 % | 0,4 % | 0,4 | 2,7 |
+| sonando | 120×40 | 6,2 % | 7,0 % | 18,5 | 27,5 |
+| visual | 120×40 | 7,9 % | 7,2 % | 27,7 | 27,0 |
+| sonando, ratón | 120×40 | 6,2 % | 6,9 % | 18,3 | 27,6 |
+| parado, ratón | 120×40 | 0,7 % | 0,4 % | 0,2 | 2,0 |
+| parado | 240×70 | 1,2 % | 0,4 % | 0,4 | 2,8 |
+| sonando | 240×70 | 10,1 % | 6,7 % | 37,2 | 27,1 |
+| visual | 240×70 | 14,5 % | 7,1 % | 82,9 | 25,6 |
+| sonando, ratón | 240×70 | 10,6 % | 7,0 % | 37,3 | 26,6 |
+| parado, ratón | 240×70 | 1,0 % | 0,3 % | 0,2 | 1,9 |
+| `--allow-midi`, parado | 80×24 | 0,7 % | 0,4 % | 0,1 | 2,0 |
+| `--allow-midi`, sonando | 80×24 | 3,3 % | 7,2 % | 6,4 | 28,7 |
+| `--allow-midi`, sonando, ratón | 80×24 | 3,3 % | 7,1 % | 6,4 | 28,8 |
+| `--allow-midi`, parado | 240×70 | 1,6 % | 0,3 % | 0,2 | 2,9 |
+| `--allow-midi`, sonando | 240×70 | 10,8 % | 7,1 % | 37,6 | 26,6 |
+| `--allow-midi`, sonando, ratón | 240×70 | 10,7 % | 7,1 % | 37,9 | 26,5 |
+
+Lo que ya hacía bien la optimización de x86_64: parado no se redibuja
+(2-3 cuadros por segundo, el de seguridad y poco más), el ratón que
+solo se mueve no cuesta nada y el MIDI no dispara la interfaz. Lo que
+cuesta es sonar: ~27 cuadros por segundo, y el hilo de la interfaz
+crece con el área (de 3 % a 80×24 a 10 % a 240×70).
+
+**Banco del cuadro** (`cargo test --release -p tui consumo -- --ignored
+--nocapture`, `tui/src/tests/consumo.rs`): el bucle de `run_terminal`
+sin terminal (el motor offline al ritmo de los cuadros, `tick` y
+`Terminal::draw` con el backend de crossterm sobre un sumidero que
+cuenta bytes), en un núcleo de rendimiento. µs por cuadro, antes:
+
+| Canción | Estado | Tamaño | widgets | diff y escritura | total | bytes por cuadro |
+|---|---|---|---|---|---|---|
+| cancion | parado | 80×24 | 74 | 23 | 97 | 25 |
+| cancion | sonando | 80×24 | 75 | 22 | 98 | 216 |
+| cancion | sonando | 120×40 | 180 | 54 | 236 | 631 |
+| cancion | sonando | 200×50 | 229 | 103 | 333 | 1185 |
+| cancion | parado | 240×70 | 215 | 152 | 367 | 25 |
+| cancion | sonando | 240×70 | 288 | 163 | 452 | 1383 |
+| visual | sonando | 80×24 | 162 | 25 | 189 | 584 |
+| visual | sonando | 240×70 | 545 | 190 | 739 | 3342 |
+
+El reparto de los widgets a 240×70 sonando (medido aparte con un
+cronómetro por panel, sin dejarlo en el código): `App::view` 56, el
+editor 52, el tracker 37, la onda 25, los efectos 23, el espectro del
+master (`frame_viz`) 21 y lo demás (cabecera, regla, pestañas, teclas)
+~75. Ningún panel se lleva la mayor parte: es dibujar todas las celdas
+en cada cuadro. Con `CONSUMO_DIFF=1` el banco cuenta las celdas que
+cambian: a 240×70 sonando, ~290 por cuadro (tracker 122, espectro 69,
+scope 64, onda 18, mezclador 14), a unos 5 bytes por celda; casi todo es
+movimiento de verdad, no repintado de más.
+
+**El audio** (render offline de 128 compases, 180 s, en un núcleo de
+rendimiento): el break solo, 0,26 s; el `sh101` solo, 1,61 s (con
+`quality = 1`, 1,02 s). La voz analógica es casi todo el hilo de audio
+de esta canción: ~190 ns por frame, con el oscilador, el sub y el filtro
+al doble y el diezmado.
+
+**Causas arregladas** (una por commit; cada optimización del motor,
+comprobada con `scripts/comparar-audio.sh` contra el binario de antes:
+las 26 canciones deterministas de `scripts/ejemplos/` y
+`scripts/consumo/`, idénticas bit a bit; `no_alloc.rs` en verde):
+
+- **Los coeficientes del diezmado, copiados en cada diezmador**
+  (`synth::osc::Halfband`): `output` leía el `LazyLock` de `HALFBAND`
+  dos veces por frame y voz, y cada lectura es una carga atómica con
+  adquisición (`ldar` en ARM64, que en x86_64 es un `mov` sin más). El
+  `sh101` solo, 128 compases: de 1,61 s a 1,41 s en un núcleo de
+  rendimiento (−12 %), de 3,00 s a 2,94 s en uno de eficiencia (−2 %).
+  En vivo no se ve (el hilo de audio va en los de eficiencia: 7,0 % →
+  6,8-7,0 %, dentro del ruido); ayuda cuando una canción pesada sube el
+  hilo a los de rendimiento. La otra tabla con `LazyLock`, la de la
+  interpolación sinc, se lee una vez por frame entre 16 vecinos o más:
+  ahí no compensa.
+- **Los avisos de la notación, en caché** (`App::diagnostics`):
+  `diagnose::steps_diagnostics` releía en cada cuadro todas las cadenas
+  de `steps` y `melody` del texto para los avisos del pie del editor.
+  Ahora se guardan con la huella del texto y de las etiquetas conocidas,
+  y solo se recalculan si cambian. Con la canción corta eran ~18 µs por
+  cuadro; con `scripts/consumo/larga.lua` (118 líneas, ocho pistas, como
+  las canciones del usuario), ~110 µs, la cosa más cara de `App::view`.
+  Banco, µs por cuadro sonando: `larga` a 80×24 de 214 a 105 (−51 %), a
+  240×70 de 646 a 533 (−17 %); `cancion` a 80×24 de 97 a 80. En vivo
+  (mediana de tres, alternando los binarios): `larga` a 80×24, el hilo
+  de la interfaz de 3,5 % a 2,7 %; a 240×70 no se distingue del ruido
+  (9,3 % y 9,2 %).
+- **El scope y el RMS del master, sin copiar el historial**
+  (`App::master_views`, `viz::scope::build`): en cada cuadro con el
+  master a la vista se copiaban sus 16 384 muestras a un `Vec`, se
+  buscaba el disparo en la copia y se sumaban en cadena los cuadrados de
+  un tercio de segundo (cada suma espera a la anterior: Rust no
+  reordena la coma flotante). Ahora el disparo recorre las dos mitades
+  del `VecDeque` y la suma de cuadrados va en ocho sumas parciales, que
+  el compilador vectoriza (NEON en ARM64); lo mismo los scopes por pista.
+  El RMS que se lee puede cambiar en la última décima respecto a antes
+  (otro orden de suma, más exacto); el audio no se toca. `App::view` a
+  240×70 sonando, de ~38 a ~22 µs; el banco, `cancion` 240×70 de 435 a
+  419 µs y 120×40 de 220 a 200, `visual` 240×70 de 643 a 618 y 80×24 de
+  169 a 158. En vivo, por debajo del ruido.
+- **La biblioteca de bloques, releída solo si cambia**
+  (`blocks::Library::refresh`): cada 500 ms, `tick` releía y analizaba
+  todos los bloques de las dos carpetas, también parado (por si cambian
+  fuera: otro editor, git). Ahora mira el nombre, la fecha y el tamaño de
+  cada `.lua` y solo relee si la huella cambia. La medición usa una
+  configuración vacía, así que no se veía: con `--bloques 300` (300
+  bloques en la biblioteca global), parado a 80×24, el hilo de la
+  interfaz de 1,3 % a 0,4 % (el de sin bloques es 0,2-0,3 %); sonando,
+  de 3,6 % a 2,6 %.
+
+**Modo de bajo consumo** (`[interfaz] bajo_consumo = true`, apagado por
+defecto): con todo lo anterior, sonando sigue costando dibujar la
+pantalla entera 30 veces por segundo (el número de dB del master, con su
+décima, cambia en cada cuadro: sonando no hay cuadros iguales que
+saltarse, ver `CONSUMO_DIFF` en el banco). El modo:
+
+- dibuja como mucho a 15 cuadros por segundo (`LOW_POWER_REFRESH`; un
+  `refresco` más bajo se respeta);
+- recalcula el scope, los espectros y las demás visualizaciones uno de
+  cada dos cuadros (`App::frame_viz` y `App::frame_viz_views`, con lo
+  del último en `viz_cache`);
+- dibuja la onda en barras y el scope y las ruedas sin Braille
+  (`theme::set_low_power`, `theme::plain_viz`);
+- y dejaba el espectro del master sin sitio fijo, como una pestaña más
+  (`layout::Needs::low_power`). Tras la unión con «Visualizaciones
+  apagadas por defecto» el scope y el espectro del master son siempre
+  pestañas y van a su ritmo (`visuales_hz`): el modo ya no toca la
+  rejilla y baja ese ritmo (ver «La unión de los dos trabajos»).
+
+La entrada no espera más (cada tecla sigue dibujando en el acto) y el
+audio no cambia. Medido: banco, lo que cuesta un segundo de interfaz
+sonando a 240×70, de 12,5 a 5,7 ms (`cancion`) y de 18,4 a 7,7 ms
+(`visual`); en vivo (mediana de 3), a 240×70 los bytes a la terminal de
+38 a 14 kB/s (`cancion`) y de 88 a 23 kB/s (`visual`), y el hilo de la
+interfaz de 6,0 % a 4,7 % y de 7,5 % a 4,5 %; a 80×24, de 2,0 % a 1,1 %.
+
+Cuándo conviene: con batería, con la terminal grande o con las
+visualizaciones abiertas, o si el emulador de terminal gasta (kitty y
+los demás pintan cada cuadro: a la mitad de bytes, la mitad de trabajo
+para ellos). No conviene para mirar el scope o el espectro con detalle
+(van a 7,5 cuadros por segundo) ni para la onda en puntos.
+
+**Después** (todo lo anterior, `bajo_consumo` apagado; la misma
+medición que la de antes, una tanda de 10 s por escenario):
+
+| Escenario | Tamaño | ui antes | ui después | audio antes | audio después | kB/s |
+|---|---|---|---|---|---|---|
+| parado | 80×24 | 0,3 % | 0,3 % | 0,4 % | 0,3 % | 0,1 |
+| sonando | 80×24 | 3,0 % | 2,5 % | 7,0 % | 6,8 % | 6,4 |
+| visual | 80×24 | 4,7 % | 4,2 % | 7,0 % | 7,0 % | 16,0 |
+| sonando, ratón | 80×24 | 3,3 % | 2,7 % | 6,9 % | 7,0 % | 6,4 |
+| parado, ratón | 80×24 | 0,5 % | 0,3 % | 0,3 % | 0,3 % | 0,1 |
+| parado | 120×40 | 0,7 % | 0,7 % | 0,4 % | 0,4 % | 0,4 |
+| sonando | 120×40 | 6,2 % | 5,3 % | 7,0 % | 6,9 % | 18,5 |
+| visual | 120×40 | 7,9 % | 7,0 % | 7,2 % | 7,1 % | 27,7 |
+| sonando, ratón | 120×40 | 6,2 % | 5,5 % | 6,9 % | 7,0 % | 18,5 |
+| parado, ratón | 120×40 | 0,7 % | 0,6 % | 0,4 % | 0,3 % | 0,2 |
+| parado | 240×70 | 1,2 % | 1,2 % | 0,4 % | 0,3 % | 0,4 |
+| sonando | 240×70 | 10,1 % | 10,1 % | 6,7 % | 7,1 % | 37,6 |
+| visual | 240×70 | 14,5 % | 14,2 % | 7,1 % | 7,2 % | 83,5 |
+| sonando, ratón | 240×70 | 10,6 % | 10,0 % | 7,0 % | 7,1 % | 37,6 |
+| parado, ratón | 240×70 | 1,0 % | 0,9 % | 0,3 % | 0,3 % | 0,2 |
+| `--allow-midi`, parado | 80×24 | 0,7 % | 0,6 % | 0,4 % | 0,3 % | 0,1 |
+| `--allow-midi`, sonando | 80×24 | 3,3 % | 2,8 % | 7,2 % | 7,0 % | 6,3 |
+| `--allow-midi`, sonando, ratón | 80×24 | 3,3 % | 2,8 % | 7,1 % | 7,0 % | 6,4 |
+| `--allow-midi`, parado | 240×70 | 1,6 % | 1,5 % | 0,3 % | 0,3 % | 0,2 |
+| `--allow-midi`, sonando | 240×70 | 10,8 % | 10,4 % | 7,1 % | 7,0 % | 37,9 |
+| `--allow-midi`, sonando, ratón | 240×70 | 10,7 % | 10,5 % | 7,1 % | 7,0 % | 38,1 |
+
+Y alternando los dos binarios (mediana de 3), con la canción larga:
+
+| Escenario | Tamaño | ui antes | ui después |
+|---|---|---|---|
+| sonando | 80×24 | 3,0 % | 2,5 % |
+| visual | 80×24 | 4,9 % | 4,2 % |
+| larga | 80×24 | 5,6 % | 3,3 % |
+| sonando | 240×70 | 10,7 % | 9,9 % |
+| visual | 240×70 | 14,6 % | 14,0 % |
+| larga | 240×70 | 14,1 % | 12,1 % |
+
+Banco, µs por cuadro (núcleo de rendimiento), antes → después:
+`cancion` sonando 80×24 97 → 79, 120×40 236 → 198, 240×70 452 → 415;
+`visual` 80×24 189 → 157, 240×70 739 → 611; `larga` 80×24 214 → 104,
+240×70 646 → 504. Con `bajo_consumo`, un segundo de interfaz a 240×70:
+`cancion` 12,4 ms, `visual` 7,7 ms (sin él, 12,4 y 18,3).
+
+**Comparado con x86_64**: allí, sonando a 200×50, el hilo de la interfaz
+quedó en ~11 % y el de audio en ~7 % (otra canción). En el M2, a 240×70,
+~10 % y ~7 %: lo mismo en porcentaje, pero en núcleos de eficiencia a
+baja frecuencia, que es donde el planificador los deja; en trabajo, el
+M2 hace un cuadro de 240×70 en ~0,4 ms en un núcleo de rendimiento. El
+ARM64 no tiene un coste propio grande: lo único que salió más caro que
+en x86_64 fue la carga con barrera del `LazyLock` del diezmado (arriba).
+
+**Lo que se probó y no ayudó** (no entra):
+
+- `lto = "fat"` y `codegen-units = 1`: el audio igual (1,61 s el `sh101`
+  solo) y la interfaz ~5 % menos en el banco, a cambio de un minuto más
+  por cada build de release. No compensa en el portátil de desarrollo.
+- `-C target-cpu=native`: lo mismo bit a bit y en tiempo (1,61 s y
+  1,62 s). Las voces son recurrencias (filtros, osciladores, envolventes)
+  que no se pueden vectorizar sin cambiar los bits; lo vectorizable
+  (copias, mezclas, rellenos) ya va en NEON con el objetivo genérico.
+- `panic = "abort"`: no se prueba, rompería el dibujo a prueba de fallos
+  (`catch_unwind`).
+- Saltarse los cuadros iguales sonando (como en reposo): no hay; el
+  número de dB del master cambia en cada cuadro. Cambiarlo es cambiar lo
+  que se ve: para eso está `bajo_consumo`.
+- Quitar la consulta del `LazyLock` de la interpolación sinc: una por
+  frame entre 16 vecinos o más, por debajo de lo que se puede medir.
+
+**Lo que sigue caro**:
+
+- Dibujar la pantalla entera en cada cuadro sonando. El diff de ratatui
+  (calcula el ancho Unicode de cada celda, la compara y vacía el búfer)
+  cuesta ~160 µs a 240×70, tenga o no cambios, y no se toca sin cambiar
+  ratatui. Los widgets: el editor (ratatui-textarea) ~50-70 µs, el
+  tracker ~37 µs (~77 con ocho pistas), la onda ~25, los efectos ~23-39,
+  el espectro del master ~21. Todo escala con el área y con los cuadros
+  por segundo: el remedio es `bajo_consumo` o una terminal más pequeña.
+- La voz analógica (`sh101`), ~0,8 % de un núcleo de rendimiento por voz
+  con `quality = 2` (el de siempre); con `quality = 1`, un 37 % menos.
+  Con varias voces o `subharm{ voices = 6 }` (la receta de MPE: 2,7 %),
+  es lo que más pesa del audio.
+- Lo que no se mide aquí: el emulador de terminal (kitty pinta cada
+  cuadro: a 240×70 sonando, 38 kB/s; con las visualizaciones, 84 kB/s) y
+  la salida de audio real (cpal con PipeWire; sus xruns no se pueden ver
+  con la salida nula).
+
+### Visualizaciones apagadas por defecto (x86_64)
 
 Las mediciones de `docs/BASE-LIGERA.md` (rama `base-ligera`) dicen que el
 salto de consumo del rediseño llega con `634f8eb` (el scope y el espectro
@@ -2883,9 +3153,10 @@ Code no abre nunca la tarjeta (ver `CLAUDE.md`); el hilo de la interfaz
 no depende de la salida, pero falta comprobarlo con `top -H` en una
 terminal real. Se mide el hilo de la interfaz (el principal) sonando 20 s,
 luego F8 y parado 20 s, y los bytes por segundo que escribe a la
-terminal. La variación entre repeticiones es de ±0,7 puntos. El cuarto
-argumento es el tamaño y el quinto, teclas al abrir (`'\x1bm'` es
-Alt-M; `'\x1b7'`, Alt-7).
+terminal. La variación entre repeticiones es de ±0,7 puntos. (Esta tabla
+se hizo con la primera versión del script, con el tamaño y las teclas
+como argumentos sueltos; tras la unión son `--tamanos` y `--teclas`, en
+la versión del ARM64, y el escenario `espectro` manda Alt-M.)
 
 | Commit | Tamaño | Visualizaciones | Interfaz sonando | Interfaz parado | Terminal sonando |
 |---|---|---|---:|---:|---:|
@@ -2959,6 +3230,110 @@ Decisiones:
   por segundo (el tracker, los medidores, el resaltado y la cabecera
   cambian en cada paso); bajarlo pide no rehacer los paneles que no
   cambian, que ratatui no hace por sí solo.
+
+### La unión de los dos trabajos
+
+Los dos trabajos se hicieron a la vez en dos máquinas (las
+visualizaciones apagadas en x86_64, en `main`; la medición, los arreglos
+y `bajo_consumo` en ARM64, en `origin/main`) y se unieron con un merge
+normal. Lo que tocaban los dos y cómo quedó:
+
+- **`scripts/medir-consumo.py`**: la versión del ARM64 (escenarios,
+  `--tamanos`, `--bin` con varios binarios alternados y mediana,
+  `--repeticiones`, `--config`, `--bloques`, las preguntas de la
+  terminal), con lo de la de x86_64: `--teclas` (al abrir, con escapes:
+  `'\x1bm'` es Alt-M) y un escenario `espectro` (sonando, con Alt-M).
+  `scripts/consumo/*.lua` sin cambios salvo el comentario de `visual.lua`
+  (sus visualizaciones son las de Lua; las del master se piden aparte).
+- **El scope del master**: la caché a su ritmo de x86_64
+  (`master_cache`, rehecha en `tick_viz` cada `sample_rate / visuales_hz`
+  muestras), construida como en ARM64, sin copiar el historial
+  (`scope::build` sobre el `VecDeque` y el RMS en sumas parciales).
+- **`visuales_hz` y `bajo_consumo`, sin lógica repetida**: un solo sitio
+  dice a qué ritmo va cada cosa, `InterfaceConfig::frame_rate` (el
+  refresco general: `refresco`, o como mucho 15 con `bajo_consumo`) y
+  `InterfaceConfig::viz_rate` (el del scope y el espectro del master:
+  `visuales_hz`, o con `bajo_consumo` como mucho la mitad del refresco,
+  7). `App::set_config` los copia en `refresh_hz` y `viz_hz`, y nada más
+  mira `bajo_consumo` para eso. Cada visualización tiene un solo freno:
+  las del master, el reloj de muestras (`tick_viz`/`frame_viz`, sin el
+  «uno de cada dos» del ARM64, que las habría frenado dos veces); las del
+  script, el «uno de cada dos cuadros» de `bajo_consumo` (`viz_turn`,
+  `frame_viz_views`, con `viz_cache` solo para ellas), como en ARM64. Lo
+  demás del modo (la onda en barras, el scope y las ruedas sin Braille)
+  sigue igual.
+- **La rejilla**: la de x86_64. El scope y el espectro del master son
+  siempre pestañas, así que `Needs::low_power` (que quitaba el espectro
+  fijo en bajo consumo) sobraba y se quitó con su test
+  (`low_power_puts_the_master_spectrum_in_a_tab`), y `ViewModel::low_power`
+  con él.
+- **`[interfaz]`**: `refresco`, `visuales_hz` y `bajo_consumo`, cada uno
+  con su nombre, en una sola prueba (`the_interface_section`, con
+  `viz_rate`).
+- **Los tests**: se quedan todos (miden cosas distintas): los de
+  x86_64 (apagado sin `SetViz` ni FFT, el menú Ver, el ritmo propio, el
+  silencio), el de ARM64 de las visualizaciones del script en bajo
+  consumo, y el de ritmo ahora también con `bajo_consumo` (de 60 baja a
+  7: 5 o 6 cuadros en 0,8 s).
+- **El motor**: el cambio del diezmado (`synth::osc::Halfband`) entra:
+  `golden.rs` igual y `scripts/comparar-audio.sh` contra el binario de
+  antes de la unión, 27 canciones iguales bit a bit (8 compases; las dos
+  con azar sin semilla no se comparan).
+
+**Tabla final** (x86_64, la laptop de desarrollo; `scripts/medir-consumo.py
+--bin x86,arm,union --repeticiones 3 --segundos 10`, mediana de 3, sin
+`--allow-audio`; hilo de la interfaz y kB/s a la terminal). «x86» es
+`main` antes de la unión (visualizaciones apagadas, `visuales_hz`);
+«arm», `origin/main` (arreglos de ARM64 y `bajo_consumo`, el master
+siempre a la vista); «unión», el resultado. En «espectro», Alt-M en «arm»
+no hace nada: en 80×24 su espectro es una pestaña sin elegir y no se
+dibuja, así que no se compara con los otros dos. El hilo de audio, ~7,7 %
+sonando en los tres.
+
+| Escenario | Tamaño | x86 | arm | unión |
+|---|---|---|---|---|
+| parado | 80×24 | 0,5 % · 0,1 | 0,5 % · 0,1 | 0,5 % · 0,1 |
+| sonando | 80×24 | 3,9 % · 6,4 | 3,5 % · 6,3 | 3,5 % · 6,3 |
+| visual (Lua) | 80×24 | 6,3 % · 15,7 | 5,6 % · 15,8 | 5,7 % · 15,7 |
+| espectro (Alt-M) | 80×24 | 4,7 % · 7,9 | (3,5 % · 6,3) | 4,0 % · 7,9 |
+| parado | 200×50 | 0,9 % · 0,3 | 1,2 % · 0,4 | 0,8 % · 0,3 |
+| sonando | 200×50 | 8,2 % · 14,0 | 9,0 % · 32,5 | 7,8 % · 13,8 |
+| visual (Lua) | 200×50 | 11,4 % · 44,7 | 12,2 % · 62,0 | 10,9 % · 44,9 |
+| espectro (Alt-M) | 200×50 | 9,0 % · 21,9 | 9,1 % · 32,7 | 8,7 % · 22,0 |
+
+Con `bajo_consumo = true` (`--config`), «arm» frente a «unión» (en
+«arm», bajo consumo pone el espectro del master en una pestaña sin
+elegir: «espectro» no lo dibuja):
+
+| Escenario | Tamaño | arm | unión |
+|---|---|---|---|
+| parado | 80×24 | 0,5 % · 0,1 | 0,5 % · 0,1 |
+| sonando | 80×24 | 2,0 % · 5,5 | 1,9 % · 5,5 |
+| visual (Lua) | 80×24 | 2,5 % · 3,9 | 2,6 % · 3,9 |
+| espectro (Alt-M) | 80×24 | (1,9 % · 5,5) | 2,2 % · 4,8 |
+| parado | 200×50 | 2,5 % · 0,9 | 0,9 % · 0,3 |
+| sonando | 200×50 | 4,5 % · 12,8 | 4,2 % · 11,3 |
+| visual (Lua) | 200×50 | 5,4 % · 17,2 | 5,2 % · 15,7 |
+| espectro (Alt-M) | 200×50 | (4,6 % · 12,8) | 4,6 % · 15,0 |
+
+Lectura: la unión no es peor que lo mejor de cada lado en ningún caso
+comparable (las diferencias de menos de medio punto son ruido). Sonando
+a 200×50 gana lo de x86_64 (el master apagado: de 32,5 a 13,8 kB/s) y a
+80×24 lo de ARM64 (los avisos en caché y el scope sin copia: 3,9 % →
+3,5 %). Con `bajo_consumo`, parado a 200×50 la unión gasta menos que
+«arm» (0,9 % frente a 2,5 %, y 2 cuadros por segundo frente a 6,8): en
+«arm» el espectro del master seguía calculándose en reposo.
+
+Decisiones de la unión:
+
+- **`bajo_consumo` baja `visuales_hz` en vez de añadir otro freno**: así
+  cada cosa tiene un solo ritmo y se lee en un sitio. La mitad del
+  refresco es lo que hacía el «uno de cada dos cuadros» del ARM64.
+- **Las de Lua, con el «uno de cada dos» del ARM64 en bajo consumo**: no
+  tienen un reloj de muestras propio (las de rejilla no tienen audio) y
+  el freno por cuadros ya existía y estaba probado.
+- **Sin `Needs::low_power`**: la rejilla ya no depende del modo; un
+  ajuste menos que mantener.
 
 ### Las visualizaciones en otra ventana (sin hacer)
 

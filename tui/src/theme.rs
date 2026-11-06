@@ -215,6 +215,19 @@ thread_local! {
     /// La onda de los samples en barras de bloques en vez de puntos
     /// Braille (`[interfaz] onda = "barras"`).
     static WAVE_BARS: Cell<bool> = const { Cell::new(false) };
+    /// `[interfaz] bajo_consumo`: sin Braille en la onda, el scope ni las
+    /// ruedas.
+    static LOW_POWER: Cell<bool> = const { Cell::new(false) };
+}
+
+/// El modo de bajo consumo (`[interfaz] bajo_consumo`).
+pub fn set_low_power(on: bool) {
+    LOW_POWER.with(|a| a.set(on));
+}
+
+/// El scope y las ruedas sin Braille: con ASCII o en bajo consumo.
+pub fn plain_viz() -> bool {
+    ascii() || LOW_POWER.with(Cell::get)
 }
 
 /// La onda de los samples en barras (`true`) o en puntos.
@@ -229,7 +242,7 @@ pub fn wave_bars() -> bool {
 
 /// Si la onda va en puntos Braille: lo pedido y que haya Unicode.
 pub fn wave_dots() -> bool {
-    !ascii() && !WAVE_BARS.with(Cell::get)
+    !ascii() && !WAVE_BARS.with(Cell::get) && !LOW_POWER.with(Cell::get)
 }
 
 /// Las visualizaciones (y lo que tenga alternativa) solo con ASCII, para

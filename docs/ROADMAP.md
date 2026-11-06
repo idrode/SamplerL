@@ -867,10 +867,22 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
     («which-key»). Diseño en la sección 12 de
     [docs/DISENO-TUI.md](DISENO-TUI.md); detalle en «Explorador y editor
     abajo» de [docs/ESTADO.md](ESTADO.md).
-21. ✅ **Visualizaciones del master apagadas por defecto** (pedida por el
-    usuario, por el consumo): el scope y el espectro del master no se
-    calculan ni se dibujan hasta pedirlos (Alt-M, menú Ver, paleta o su
-    foco), y entonces son dos pestañas del dock con su propio refresco
-    (`[interfaz] visuales_hz`, 15). Las de Lua, como estaban. Falta, si se
-    quiere, abrirlas en una ventana aparte (diseño y coste en «Consumo de
-    la interfaz» de [docs/ESTADO.md](ESTADO.md)).
+21. ✅ **Consumo de la interfaz, en x86_64 y en ARM64** (pedida por el
+    usuario; sigue la optimización de «Consumo de la interfaz»): medición
+    reproducible por hilo y de los bytes a la terminal
+    (`scripts/medir-consumo.py`, con escenarios, tamaños, `--config` y
+    `--teclas`), banco del cuadro (`tests::consumo`) y comparación bit a
+    bit del audio entre dos binarios (`scripts/comparar-audio.sh`, porque
+    golden.rs solo corre en x86_64). El scope y el espectro del master
+    apagados hasta pedirlos (Alt-M, menú Ver, paleta o su foco), como
+    pestañas del dock con su propio refresco (`[interfaz] visuales_hz`,
+    15); las de Lua, como estaban. Arreglados en ARM64 los coeficientes
+    del diezmado leídos de un `LazyLock` en cada muestra, los avisos de la
+    notación recalculados en cada cuadro, la copia del historial del
+    master para el scope y el RMS, y la biblioteca de bloques releída dos
+    veces por segundo. Y un modo de bajo consumo opcional (`[interfaz]
+    bajo_consumo`), que baja el refresco y el de las visualizaciones.
+    Falta: medir el emulador de terminal y la batería, probar con
+    `--allow-audio` (los xruns de la salida real) y, si se quiere, abrir
+    las visualizaciones en una ventana aparte (diseño y coste en
+    «Consumo de la interfaz» de [docs/ESTADO.md](ESTADO.md)).
