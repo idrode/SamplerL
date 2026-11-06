@@ -1,20 +1,23 @@
 #!/usr/bin/env python3
 """Mide la CPU por hilo de `tui --edit` y los bytes que escribe a la terminal.
 
-Uso: scripts/medir-consumo.py <binario> <carpeta con cancion.lua> [segundos] [COLxFIL]
+Uso: scripts/medir-consumo.py <binario> <carpeta con cancion.lua> [segundos] [COLxFIL] [teclas]
 
 Abre la interfaz en una pseudo-terminal (200x50 si no se dice otra), sin --allow-audio (el
 motor avanza con la salida nula, a ritmo real, sin abrir la tarjeta), con
 HOME y XDG_CONFIG_HOME en una carpeta vacía para no leer tu configuración.
 La canción arranca sola al abrirse: mide «al abrir» (en marcha), pulsa F8
 (marcha/paro) y mide «tras F8» (parado). El estado entre corchetes es el
-último que la interfaz escribió en pantalla. El hilo «(principal)» es el de
+último que la interfaz escribió en pantalla. `teclas` se manda al abrir,
+antes de medir, con los escapes de Python (`'\\x1bm'` es Alt-M: el scope y
+el espectro del master). El hilo «(principal)» es el de
 la interfaz; el otro con CPU es la salida nula del motor.
 """
 import os, pty, sys, time, fcntl, termios, struct, select, signal, tempfile
 
 binp, song = os.path.abspath(sys.argv[1]), os.path.abspath(sys.argv[2])
 secs = float(sys.argv[3]) if len(sys.argv) > 3 else 20
+keys = (sys.argv[5] if len(sys.argv) > 5 else "").encode().decode("unicode_escape").encode()
 cols, rows = (int(n) for n in (sys.argv[4] if len(sys.argv) > 4 else "200x50").split("x"))
 home = tempfile.mkdtemp(prefix="medir-consumo-")
 TCK = os.sysconf("SC_CLK_TCK")
@@ -74,7 +77,10 @@ def measure(name):
 
 
 pump(6)
-print(f"# {os.path.basename(binp)} {cols}x{rows}")
+if keys:
+    os.write(fd, keys)
+    pump(3)
+print(f"# {os.path.basename(binp)} {cols}x{rows}{' teclas ' + repr(keys) if keys else ''}")
 measure("al abrir")
 os.write(fd, b"\x1b[19~")  # F8
 pump(3)
