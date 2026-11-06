@@ -323,6 +323,15 @@ pub struct App {
     master_viz: bool,
     /// Lotes con `set_viz` que ha mandado la interfaz por su cuenta.
     ui_viz_batches: u64,
+    /// Su refresco (`[interfaz] visuales_hz`), contado en muestras del
+    /// master: las que han llegado desde el último cuadro de ellas, si toca
+    /// calcular el espectro y lo último del scope.
+    viz_hz: u32,
+    viz_pending: usize,
+    viz_fresh: bool,
+    master_cache: Option<crate::viz::VizView>,
+    /// El scope de `master_cache` es de silencio (parado, no se rehace).
+    master_cache_silent: bool,
     master_spectrogram: std::collections::VecDeque<Vec<f32>>,
     /// Cuadros por segundo (`[interfaz] refresco`).
     refresh_hz: u32,
@@ -550,6 +559,11 @@ impl App {
             spectrum_look: Default::default(),
             master_viz: false,
             ui_viz_batches: 0,
+            viz_hz: crate::config::DEFAULT_VIZ_HZ,
+            viz_pending: 0,
+            viz_fresh: false,
+            master_cache: None,
+            master_cache_silent: false,
             master_spectrogram: Default::default(),
             refresh_hz: crate::config::DEFAULT_REFRESH,
             learned: Vec::new(),
@@ -702,6 +716,7 @@ impl App {
             crate::theme::set_ascii(ascii);
         }
         self.refresh_hz = config.interface.refresh;
+        self.viz_hz = config.interface.viz_hz;
         self.files.shown = config.interface.explorer;
         self.files.width = config.interface.explorer_width;
         self.editor_rows = config.interface.editor_rows;

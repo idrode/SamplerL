@@ -315,13 +315,16 @@ fn the_master_scope_and_spectrum_are_off_until_asked_and_need_nothing_in_the_scr
 fn the_master_spectrum_panel_draws_dots_an_axis_and_a_spectrogram() {
     use crate::config::Config;
     let (_, mut app, mut engine) = open("screen_master_spectrum", Some(SONG));
+    // A 60 cuadros por segundo (un cuadro cada 800 muestras), uno por
+    // cada sexto de paso (1000).
+    app.set_config(&Config::parse("[interfaz]\nvisuales_hz = 60\n", true, "c"));
     app.toggle_master_viz();
     draw(&mut app, 120, 40);
     play(&mut app, &mut engine, 16);
-    // Un cuadro dibujado cada octavo de paso (los golpes son cortos): lo
+    // Un cuadro dibujado cada sexto de paso (los golpes son cortos): lo
     // que suena sube y cae despacio.
     for _ in 0..32 {
-        offline::render(&mut engine, STEP / 8, 2);
+        offline::render(&mut engine, STEP / 6, 2);
         app.tick();
         draw(&mut app, 120, 40);
     }
@@ -357,7 +360,7 @@ fn the_master_spectrum_panel_draws_dots_an_axis_and_a_spectrogram() {
     );
     // En barras (lo que menos gasta), bloques y no puntos.
     app.set_config(&Config::parse(
-        "[interfaz]\nespectro = \"barras\"\n",
+        "[interfaz]\nespectro = \"barras\"\nvisuales_hz = 60\n",
         true,
         "c",
     ));
@@ -369,12 +372,12 @@ fn the_master_spectrum_panel_draws_dots_an_axis_and_a_spectrogram() {
     assert!(plot.contains('█') || plot.contains('▄'), "{plot}");
     // En espectrograma, el historial crece con cada cuadro dibujado.
     app.set_config(&Config::parse(
-        "[interfaz]\nespectro = \"espectrograma\"\n",
+        "[interfaz]\nespectro = \"espectrograma\"\nvisuales_hz = 60\n",
         true,
         "c",
     ));
     for _ in 0..30 {
-        offline::render(&mut engine, STEP / 8, 2);
+        offline::render(&mut engine, STEP / 6, 2);
         app.tick();
         draw(&mut app, 120, 40);
     }

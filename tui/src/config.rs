@@ -360,6 +360,9 @@ pub struct InterfaceConfig {
     pub ascii: Option<bool>,
     /// Cuadros por segundo (`refresco`).
     pub refresh: u32,
+    /// Cuadros por segundo del scope y el espectro del master
+    /// (`visuales_hz`).
+    pub viz_hz: u32,
     /// El explorador de archivos a la izquierda (`explorador`) y su ancho
     /// (`ancho_explorador`; 0, el de siempre).
     pub explorer: bool,
@@ -378,6 +381,7 @@ impl Default for InterfaceConfig {
         InterfaceConfig {
             ascii: None,
             refresh: DEFAULT_REFRESH,
+            viz_hz: DEFAULT_VIZ_HZ,
             explorer: true,
             explorer_width: 0,
             editor_rows: 0,
@@ -396,6 +400,11 @@ pub const EXPLORER_WIDTHS: std::ops::RangeInclusive<u16> = 10..=200;
 /// Cuadros por segundo por defecto y su rango.
 pub const DEFAULT_REFRESH: u32 = 30;
 pub const REFRESH: std::ops::RangeInclusive<u32> = 5..=120;
+
+/// Cuadros por segundo del scope y el espectro del master por defecto y su
+/// rango.
+pub const DEFAULT_VIZ_HZ: u32 = 15;
+pub const VIZ_HZ: std::ops::RangeInclusive<u32> = 1..=60;
 
 /// Si el sistema dice que la terminal es UTF-8 (`LC_ALL`, `LC_CTYPE` o
 /// `LANG`, el primero que haya): sin eso, mejor ASCII.
@@ -421,6 +430,7 @@ impl InterfaceConfig {
 const INTERFACE_NAMES: &[&str] = &[
     "ascii",
     "refresco",
+    "visuales_hz",
     "explorador",
     "ancho_explorador",
     "alto_editor",
@@ -440,6 +450,11 @@ const INTERFACE_KEYS: &[(&str, &str, &str)] = &[
         "refresco",
         "cuadros por segundo de la interfaz (de 5 a 120): más, las visualizaciones van más suaves y gastan más; la entrada y el ratón no esperan al dibujo, y parado y en silencio no se vuelve a dibujar lo que no cambia",
         "`30`",
+    ),
+    (
+        "visuales_hz",
+        "cuadros por segundo del scope y el espectro del master cuando se ven (de 1 a 60), aparte de `refresco`: menos, gastan menos; las visualizaciones de Lua siguen el refresco general",
+        "`15`",
     ),
     (
         "explorador",
@@ -1128,6 +1143,17 @@ impl Config {
                                     REFRESH.end()
                                 )),
                             },
+                            "visuales_hz" => match value
+                                .as_integer()
+                                .filter(|n| VIZ_HZ.contains(&(*n as u32)) && *n > 0)
+                            {
+                                Some(n) => config.interface.viz_hz = n as u32,
+                                None => config.warnings.push(format!(
+                                    "[interfaz] visuales_hz: cuadros por segundo, de {} a {}",
+                                    VIZ_HZ.start(),
+                                    VIZ_HZ.end()
+                                )),
+                            },
                             "explorador" => match value.as_bool() {
                                 Some(on) => config.interface.explorer = on,
                                 None => config
@@ -1707,6 +1733,13 @@ mod tests {
         let c = Config::parse("[interfaz]\nrefresco = 500\nzz = 1\n", false, "c");
         assert_eq!(c.interface.refresh, DEFAULT_REFRESH);
         assert_eq!(c.warnings.len(), 2, "{:?}", c.warnings);
+        // El refresco del scope y el espectro del master, aparte.
+        let c = Config::parse("[interfaz]\nvisuales_hz = 5\n", false, "c");
+        assert_eq!((c.interface.viz_hz, c.interface.refresh), (5, DEFAULT_REFRESH));
+        assert!(c.warnings.is_empty(), "{:?}", c.warnings);
+        let c = Config::parse("[interfaz]\nvisuales_hz = 0\n", false, "c");
+        assert_eq!(c.interface.viz_hz, DEFAULT_VIZ_HZ);
+        assert!(c.warnings[0].contains("visuales_hz"), "{:?}", c.warnings);
     }
 
     #[test]

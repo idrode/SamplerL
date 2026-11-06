@@ -262,21 +262,37 @@ impl App {
             if !wanted[engine::VIZ_MASTER] {
                 self.master_spectrum.clear();
                 self.master_spectrogram.clear();
+                self.master_cache = None;
+                self.viz_pending = 0;
+                self.viz_fresh = false;
             }
             self.viz_sent = wanted;
         }
     }
 
     /// El scope y el espectro del master para sus paneles (vacío hasta que
-    /// llega audio).
+    /// llega audio): el scope del último cuadro de ellos
+    /// (`[interfaz] visuales_hz`) y el espectro como está.
     pub(super) fn master_views(&self) -> Vec<VizView> {
-        let Some(history) = self
-            .viz_history
-            .get(engine::VIZ_MASTER)
-            .filter(|h| !h.is_empty())
-        else {
+        let Some(scope) = &self.master_cache else {
             return Vec::new();
         };
+        vec![
+            scope.clone(),
+            VizView::Spectrum(crate::viz::spectrum::SpectrumView {
+                title: "8 espectro · master".into(),
+                size: 4,
+                levels: self.master_spectrum.clone(),
+            }),
+        ]
+    }
+
+    /// Hace el cuadro del scope del master con lo último.
+    fn build_master_scope(&self) -> Option<VizView> {
+        let history = self
+            .viz_history
+            .get(engine::VIZ_MASTER)
+            .filter(|h| !h.is_empty())?;
         let (a, b) = history.as_slices();
         let samples: Vec<f32> = a.iter().chain(b).copied().collect();
         // Nivel eficaz de lo último (mono, tras el limitador): sin
@@ -288,18 +304,11 @@ impl App {
         } else {
             "RMS -∞".into()
         };
-        vec![
-            VizView::Scope(crate::viz::scope::build(
-                &samples,
-                format!("7 scope · master · {rms}"),
-                4,
-            )),
-            VizView::Spectrum(crate::viz::spectrum::SpectrumView {
-                title: "8 espectro · master".into(),
-                size: 4,
-                levels: self.master_spectrum.clone(),
-            }),
-        ]
+        Some(VizView::Scope(crate::viz::scope::build(
+            &samples,
+            format!("7 scope · master · {rms}"),
+            4,
+        )))
     }
 
     /// El espectro del master para su panel (`None` hasta que llega audio).
@@ -340,12 +349,32 @@ impl App {
             }
             fresh.clear();
             self.controller.viz_samples(source, &mut fresh);
+            if source == engine::VIZ_MASTER {
+                self.viz_pending += fresh.len();
+            }
             let history = &mut self.viz_history[source];
             history.extend(fresh.iter().copied());
             let extra = history.len().saturating_sub(crate::viz::HISTORY);
             history.drain(..extra);
         }
         self.viz_scratch = fresh;
+        // El scope y el espectro del master, a su ritmo: cuando han llegado
+        // las muestras de un cuadro de ellas (en vivo, el tiempo real; en
+        // los tests, lo que se renderiza).
+        let every = (self.sample_rate / self.viz_hz.max(1)).max(1) as usize;
+        if self.viz_sent[engine::VIZ_MASTER] && self.master_shown() && self.viz_pending >= every {
+            self.viz_pending = 0;
+            // En silencio (parado), con el scope ya plano y el espectro
+            // caído del todo, no hay nada que rehacer: así el dibujo en
+            // reposo sigue en reposo.
+            let silent = self.viz_history[engine::VIZ_MASTER].iter().all(|&x| x == 0.0);
+            let settled = self.master_spectrum.iter().all(|&l| l <= 0.0);
+            if !(silent && settled && self.master_cache_silent && self.master_cache.is_some()) {
+                self.viz_fresh = true;
+                self.master_cache = self.build_master_scope();
+                self.master_cache_silent = silent;
+            }
+        }
     }
 
     /// Los espectros, una vez por cuadro dibujado (con su caída, que es por
@@ -354,7 +383,8 @@ impl App {
     /// mira la entrada cada 2 ms).
     pub fn frame_viz(&mut self) {
         let rate = self.sample_rate;
-        if self.viz_sent[engine::VIZ_MASTER] && self.master_shown() {
+        let fresh = std::mem::take(&mut self.viz_fresh);
+        if fresh && self.viz_sent[engine::VIZ_MASTER] && self.master_shown() {
             let history = &self.viz_history[engine::VIZ_MASTER];
             if !history.is_empty() {
                 let fresh = self.analyzer.analyze(last(history), rate, MASTER_BANDS);

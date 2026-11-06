@@ -1625,6 +1625,7 @@ paleta de 256.
 | --- | --- | --- |
 | `ascii` | dibujar las visualizaciones (y lo que tenga alternativa) solo con ASCII, sin Braille ni bloques, para una terminal que no los pinta | según `LANG`: sin UTF-8, `true` |
 | `refresco` | cuadros por segundo de la interfaz (de 5 a 120): más, las visualizaciones van más suaves y gastan más; la entrada y el ratón no esperan al dibujo, y parado y en silencio no se vuelve a dibujar lo que no cambia | `30` |
+| `visuales_hz` | cuadros por segundo del scope y el espectro del master cuando se ven (de 1 a 60), aparte de `refresco`: menos, gastan menos; las visualizaciones de Lua siguen el refresco general | `15` |
 | `explorador` | el explorador de archivos a la izquierda (en una terminal de menos de 120 columnas se esconde solo y Alt-E lo abre encima); se guarda al cambiarlo con Alt-E | `true` |
 | `ancho_explorador` | columnas del explorador (de 10 a 200; nunca más de dos quintos del ancho); `0`, las de siempre (26). Se guarda al arrastrar su borde o al cambiarlo con `<`/`>` o Ctrl-Alt-←→ | `0` |
 | `alto_editor` | filas del editor abajo (de 4 a 200; siempre deja al menos 6 al sonido); `0`, un tercio del alto. Se guarda al arrastrar su borde de arriba o al cambiarlo con Ctrl-Alt-↑↓ | `0` |

@@ -411,3 +411,62 @@ fn the_master_spectrum_moves_once_per_frame_not_per_tick() {
     draw(&mut app, 180, 50);
     assert_ne!(levels(&app), before);
 }
+
+#[test]
+fn the_master_scope_and_spectrum_follow_their_own_rate() {
+    use crate::config::Config;
+    // Las FFT y los cuadros del scope del master en 48 cuadros dibujados,
+    // uno cada 800 muestras (60 por segundo a 48 kHz), a `hz` cuadros por
+    // segundo de las visualizaciones.
+    let run = |hz: u32| {
+        let (mut app, mut engine) = open_tone(&format!("viz_master_rate_{hz}"));
+        app.set_config(&Config::parse(
+            &format!("[interfaz]\nvisuales_hz = {hz}\n"),
+            true,
+            "c",
+        ));
+        app.toggle_master_viz();
+        draw(&mut app, 120, 40);
+        play(&mut app, &mut engine, 20);
+        draw(&mut app, 120, 40);
+        let ffts = app.viz_cost().2;
+        let mut scopes = std::collections::HashSet::new();
+        for _ in 0..48 {
+            offline::render(&mut engine, 800, 2);
+            app.tick();
+            draw(&mut app, 120, 40);
+            scopes.insert(format!("{:?}", app.view().master_views[0]));
+        }
+        (app.viz_cost().2 - ffts, scopes.len())
+    };
+    // 48 × 800 = 38 400 muestras (0,8 s): a 15, 12 cuadros; a 60, uno
+    // por cada dibujado.
+    let (slow, slow_scopes) = run(15);
+    let (fast, fast_scopes) = run(60);
+    assert!((11..=13).contains(&slow), "{slow}");
+    assert!(fast >= 46, "{fast}");
+    assert!(slow_scopes <= 13 && fast_scopes > 40, "{slow_scopes} {fast_scopes}");
+}
+
+#[test]
+fn stopped_and_silent_the_master_spectrum_stops_computing() {
+    let (mut app, mut engine) = open_tone("viz_master_silent");
+    app.toggle_master_viz();
+    draw(&mut app, 120, 40);
+    play(&mut app, &mut engine, 20);
+    // Parado (F8): el tono se corta y llega silencio; el espectro cae y,
+    // con el historial en silencio, ya no se calcula nada.
+    app.handle(f(8));
+    let frames = |app: &mut App, engine: &mut Engine, n: usize| {
+        for _ in 0..n {
+            offline::render(engine, 800, 2);
+            app.tick();
+            draw(app, 120, 40);
+        }
+        app.viz_cost().2
+    };
+    frames(&mut app, &mut engine, 600);
+    let settled = app.viz_cost().2;
+    assert_eq!(frames(&mut app, &mut engine, 60), settled);
+    assert!(app.idle_key().is_some(), "en reposo");
+}
