@@ -426,7 +426,7 @@ fn render(path: &str, out: &str) -> Result<(), BoxError> {
     controller.play(load(path, RENDER_RATE)?)?;
     let max_frames = MAX_RENDER_SECONDS * RENDER_RATE as usize;
     let audio = engine::offline::render_until_stopped(&controller, &mut engine, 2, max_frames);
-    engine::offline::write_wav(out, &audio, 2, RENDER_RATE)?;
+    write_wav(out, &audio)?;
     println!("{out}: {} frames renderizados", audio.len() / 2);
     Ok(())
 }
@@ -470,7 +470,7 @@ fn render_sequence(path: &str, out: &str, sequence: &Sequence) -> Result<(), Box
         return Err(format!("render demasiado largo (máximo {MAX_RENDER_SECONDS} s)").into());
     }
     let audio = engine::offline::render(&mut engine, frames as usize, 2);
-    engine::offline::write_wav(out, &audio, 2, RENDER_RATE)?;
+    write_wav(out, &audio)?;
     println!(
         "{out}: {} a {} BPM, {} frames ({:.2} s)",
         script::bars_text(sequence.bars),
@@ -508,6 +508,14 @@ fn detect_tempo(path: &str) -> Result<(), BoxError> {
     Ok(())
 }
 
+/// Escribe la mezcla en `out` (WAV de 16 bits a la frecuencia del render)
+/// sin dejarlo a medias si algo falla (ver `script::atomic`).
+fn write_wav(out: &str, audio: &[f32]) -> std::io::Result<()> {
+    script::atomic::write_with(out, |tmp| {
+        engine::offline::write_wav(tmp, audio, 2, RENDER_RATE).map_err(std::io::Error::other)
+    })
+}
+
 /// Un `ScriptHost` con los límites de `[script]` de la configuración (la
 /// memoria y el tiempo de una carga), para las órdenes sin interfaz: el
 /// render, el análisis de choques y `--script`. La interfaz los pone al
@@ -536,7 +544,7 @@ fn render_track(path: &str, out: &str, track: &str, bars: Option<u64>) -> Result
     let audio = song
         .render_track(RENDER_RATE, bars, track)
         .ok_or_else(|| format!("--track: no hay ninguna pista \"{track}\""))??;
-    engine::offline::write_wav(out, &audio, 2, RENDER_RATE)?;
+    write_wav(out, &audio)?;
     println!("{out}: pista \"{track}\", {}", script::bars_text(bars));
     Ok(())
 }
@@ -624,7 +632,7 @@ fn render_script(
         return Err(format!("render demasiado largo (máximo {MAX_RENDER_SECONDS} s)").into());
     }
     let audio = engine::offline::render(&mut engine, frames as usize, 2);
-    engine::offline::write_wav(out, &audio, 2, RENDER_RATE)?;
+    write_wav(out, &audio)?;
     let start = if from > 0 {
         format!(" desde el compás {from}")
     } else {

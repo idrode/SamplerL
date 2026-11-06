@@ -421,7 +421,7 @@ impl Project {
         for l in &self.learned {
             text.push_str(&format!("mando = {}\n", l.to_line()));
         }
-        std::fs::write(path, text)
+        crate::atomic::write(path, text)
     }
 }
 

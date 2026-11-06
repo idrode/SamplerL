@@ -113,11 +113,8 @@ impl History {
             }
             stamp += Duration::from_nanos(1);
         }
-        // Primero a un temporal y luego se renombra: nunca queda una versión
-        // a medias.
-        let partial = path.with_extension("lua.part");
-        std::fs::write(&partial, text)?;
-        std::fs::rename(&partial, &path)?;
+        // Nunca queda una versión a medias (ver `script::atomic`).
+        script::atomic::write(&path, text)?;
         self.prune(&path)?;
         Ok(true)
     }

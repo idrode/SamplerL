@@ -114,3 +114,35 @@ fn the_script_limits_come_from_the_config() {
     app.load();
     assert!(app.view().error.is_none(), "{:?}", app.view().error);
 }
+
+/// Guardar es atómico (`script::atomic`): sobre un script de solo lectura
+/// no se escribe nada, el aviso lo dice y el archivo queda como estaba; al
+/// poder, se guarda sin dejar temporales.
+#[test]
+fn saving_never_leaves_the_script_half_written() {
+    let (path, mut app, _engine) = open("config_atomic_save", Some(SONG));
+    let mut perms = std::fs::metadata(&path).unwrap().permissions();
+    perms.set_readonly(true);
+    std::fs::set_permissions(&path, perms.clone()).unwrap();
+    replace_all(&mut app, &format!("{SONG}\n-- cambiado\n"));
+    app.save();
+    assert!(
+        app.view().message.starts_with("no se pudo guardar"),
+        "{}",
+        app.view().message
+    );
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), SONG);
+    #[allow(clippy::permissions_set_readonly_false)]
+    perms.set_readonly(false);
+    std::fs::set_permissions(&path, perms).unwrap();
+    app.save();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), app.text_for_test());
+    assert!(app.text_for_test().contains("-- cambiado"));
+    let dir = path.parent().unwrap();
+    let temps: Vec<_> = std::fs::read_dir(dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().ends_with(".sampler-tmp"))
+        .collect();
+    assert!(temps.is_empty(), "{temps:?}");
+}

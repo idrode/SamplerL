@@ -891,4 +891,8 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
     tumba el programa: límite de memoria del intérprete (256 MB) y de
     tiempo (2 s, comprobado cada 1000 instrucciones), configurables en
     `[script]`, con el error y su línea en el editor y lo anterior
-    sonando. Detalle en «Límites del script» de [docs/ESTADO.md](ESTADO.md).
+    sonando. Y guardar nunca deja un archivo a medias: el script, el
+    proyecto, los bloques, las ranuras, la configuración, el historial y
+    las exportaciones se escriben a un temporal en la misma carpeta y se
+    renombran (`script::atomic`). Detalle en «Límites del script» y
+    «Guardado atómico» de [docs/ESTADO.md](ESTADO.md).

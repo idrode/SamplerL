@@ -879,9 +879,12 @@ impl App {
             .render_with_metronome(self.sample_rate, bars, metronome)
             .map_err(|e| e.to_string())
             .and_then(|audio| {
-                engine::offline::write_wav(&path, &audio, 2, self.sample_rate)
-                    .map(|()| audio.len() / 2)
-                    .map_err(|e| e.to_string())
+                script::atomic::write_with(&path, |tmp| {
+                    engine::offline::write_wav(tmp, &audio, 2, self.sample_rate)
+                        .map_err(std::io::Error::other)
+                })
+                .map(|()| audio.len() / 2)
+                .map_err(|e| e.to_string())
             });
         let mut note = if self.dirty() || self.error.is_some() {
             " (lo último cargado bien, no el texto actual)"
@@ -1232,8 +1235,11 @@ impl App {
             None => song.render(self.sample_rate, bars),
         };
         let result = audio.map_err(|e| e.to_string()).and_then(|audio| {
-            engine::offline::write_wav(&path, &audio, 2, self.sample_rate)
-                .map_err(|e| e.to_string())
+            script::atomic::write_with(&path, |tmp| {
+                engine::offline::write_wav(tmp, &audio, 2, self.sample_rate)
+                    .map_err(std::io::Error::other)
+            })
+            .map_err(|e| e.to_string())
         });
         self.message = match result {
             Ok(()) => format!(
@@ -1801,7 +1807,7 @@ impl App {
         self.overwrite_armed = false;
         self.external = None;
         let text = self.text();
-        match std::fs::write(&self.path, &text) {
+        match script::atomic::write(&self.path, &text) {
             Ok(()) => {
                 self.saved = text;
                 self.load();
@@ -1851,7 +1857,7 @@ impl App {
         let mut note = String::new();
         if self.dirty() {
             let backup = self.unsaved_backup_path();
-            if let Err(e) = std::fs::write(&backup, self.text()) {
+            if let Err(e) = script::atomic::write(&backup, self.text()) {
                 self.external = Some(disk);
                 self.message = format!("no se pudo guardar tu texto en {}: {e}", backup.display());
                 return;
@@ -3360,7 +3366,7 @@ impl App {
         let dir = self.slots_dir.as_ref()?;
         let text = self.slots[slot].as_deref().unwrap_or("");
         std::fs::create_dir_all(dir)
-            .and_then(|()| std::fs::write(dir.join(format!("{}.txt", slot + 1)), text))
+            .and_then(|()| script::atomic::write(dir.join(format!("{}.txt", slot + 1)), text))
             .err()
             .map(|e| format!(" (no se pudo guardar en {}: {e})", dir.display()))
     }

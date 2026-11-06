@@ -1588,9 +1588,7 @@ pub fn save_learned(path: &Path, learned: &[script::learn::Learned]) -> std::io:
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    let tmp = path.with_extension("toml.tmp");
-    std::fs::write(&tmp, updated)?;
-    std::fs::rename(&tmp, path)
+    script::atomic::write(path, updated)
 }
 
 /// El texto de un `config.toml` con `[midi] mandos` puesto a `learned`.
@@ -1672,9 +1670,7 @@ pub fn save_keys(path: &Path, section: &str, values: &[(&str, String)]) -> std::
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    let tmp = path.with_extension("toml.tmp");
-    std::fs::write(&tmp, updated)?;
-    std::fs::rename(&tmp, path)
+    script::atomic::write(path, updated)
 }
 
 /// El texto de un `config.toml` con `values` puestos en `[section]`.
@@ -1741,9 +1737,7 @@ pub fn save_devices(path: &Path, choice: &crate::devices::Choice) -> std::io::Re
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    let tmp = path.with_extension("toml.tmp");
-    std::fs::write(&tmp, updated)?;
-    std::fs::rename(&tmp, path)
+    script::atomic::write(path, updated)
 }
 
 /// El texto de un `config.toml` con `[dispositivos]` puesto a `choice`.

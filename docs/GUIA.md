@@ -884,6 +884,17 @@ cortado en rejilla (`slice_grid(16)`), el número de cortes se escribe
 `rejilla16`. Se abre con `tui --edit proyecto.sampler` o con la orden
 `abrir`.
 
+**Guardar nunca deja un archivo a medias.** El script (Ctrl-S), el
+proyecto, los bloques, las ranuras, la configuración, el historial y lo
+que se exporta a WAV se escriben primero a un temporal oculto en la misma
+carpeta (`.<nombre>.<número>.sampler-tmp`) y luego se ponen en su sitio
+de una vez: si se va la luz o se llena el disco a mitad, queda el archivo
+de antes. Se conservan sus permisos, y un archivo de solo lectura no se
+sobrescribe (sale el aviso «no se pudo guardar»). Si el archivo es un
+enlace simbólico, se escribe en su destino y el enlace se queda. Un
+temporal que quedó de un guardado que no terminó se borra en el siguiente
+guardado de ese archivo.
+
 > **Usado en el tutorial:** [paso 2, Abrir un proyecto nuevo](PRIMERA-CANCION.md#paso-2-abrir-un-proyecto-nuevo) · [paso 13, Guardar, versiones y exportar](PRIMERA-CANCION.md#paso-13-guardar-versiones-y-exportar).
 
 ## 2. Atajos de teclado

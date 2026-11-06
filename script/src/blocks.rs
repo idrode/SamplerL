@@ -394,7 +394,7 @@ impl Library {
             path,
         };
         std::fs::create_dir_all(&dir)
-            .and_then(|()| std::fs::write(&block.path, block.to_file()))
+            .and_then(|()| crate::atomic::write(&block.path, block.to_file()))
             .map_err(|e| SaveError::Io(format!("{}: {e}", block.path.display())))?;
         self.reload();
         Ok(block)
@@ -412,7 +412,7 @@ impl Library {
             body: normalize_body(body),
             ..block
         };
-        std::fs::write(&block.path, block.to_file())
+        crate::atomic::write(&block.path, block.to_file())
             .map_err(|e| SaveError::Io(format!("{}: {e}", block.path.display())))?;
         self.reload();
         Ok(block)

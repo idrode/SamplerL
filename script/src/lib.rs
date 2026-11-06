@@ -39,6 +39,7 @@ use engine::{
     SendError, SliceFx, SliceShape, Slices, Step, valid_bpm,
 };
 pub mod api;
+pub mod atomic;
 
 /// `n` compases como texto: «1 compás», «4 compases».
 pub fn bars_text(n: u64) -> String {

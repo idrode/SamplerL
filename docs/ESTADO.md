@@ -3615,6 +3615,67 @@ cargado nada, y la carga siguiente entra), `the_default_memory_limit_holds`,
 (`tui/src/tests/config.rs`: en la interfaz, con el error en el editor y el
 transporte en marcha).
 
+## Guardado atómico
+
+Hallazgo M3 de `docs/AUDITORIA.md`: guardar el script, el proyecto o los
+bloques hacía `fs::write` directo sobre el archivo, así que un corte o el
+disco lleno a mitad dejaba la canción truncada. Ahora todo lo que escribe
+el usuario pasa por un solo sitio, `script::atomic` (`script/src/atomic.rs`):
+
+- `write(ruta, bytes)` y `write_with(ruta, |temporal| ...)` (para lo que
+  tiene su propia función de escribir, como los WAV del motor, que no se
+  tocan: se les da la ruta del temporal).
+- El temporal va **en la misma carpeta** que el destino (el renombrado es
+  atómico solo dentro del mismo sistema de archivos), oculto y con un
+  nombre que nunca pisa otro: `.<nombre>.<pid>-<n>.sampler-tmp`, creado
+  con `create_new`.
+- Se llena, se le ponen **los permisos del archivo de antes**, se vuelca al
+  disco (`sync_all`) y se renombra sobre el destino; luego se vuelca la
+  carpeta (en Unix; si no se puede, no es un error). Si algo falla antes
+  del renombrado, se borra el temporal y el archivo de antes no se ha
+  tocado.
+- **Solo lectura**: un archivo de solo lectura no se sustituye
+  (`PermissionDenied`), como hacía `fs::write`: si no, renombrar encima lo
+  habría cambiado sin avisar.
+- **Enlaces simbólicos**: se siguen (en cadena, hasta 40) y se escribe en
+  el destino, con el temporal junto a él; el enlace sigue siendo un
+  enlace. Un enlace roto crea su destino. Es lo que espera quien tiene la
+  canción enlazada desde otra carpeta (git, Syncthing).
+- **Huérfanos**: antes de cada guardado se borran los temporales del mismo
+  archivo con más de un minuto (`ORPHAN_AGE`): los de un guardado que no
+  terminó porque el programa murió. Los recientes no se tocan (podría ser
+  otro guardado en curso de otra instancia).
+- **El dueño** del archivo no se conserva (se guarda como el usuario que
+  corre el programa, como cualquier editor).
+
+Qué escrituras tenían el problema y ahora van por aquí:
+
+| Escritura | Antes | Ahora |
+|---|---|---|
+| El script (Ctrl-S, `App::save`) | `fs::write` directo | `atomic::write` |
+| La copia `<nombre>.sin-guardar.lua` al recargar del disco | directo | `atomic::write` |
+| El proyecto (`Project::save`) | directo | `atomic::write` |
+| Los bloques (guardar y actualizar, `blocks::Library`) | directo | `atomic::write` |
+| Las ranuras (`ranuras/N.txt`) | directo | `atomic::write` |
+| Exportar a WAV (`exportar`, `--render`, `--track`, `remuestrear`) | `write_wav` directo | `atomic::write_with` |
+| Congelar una pista (el WAV de 32 bits) | directo | `atomic::write_with` |
+| `config.toml` (mandos, la disposición, los dispositivos) | temporal fijo `config.toml.tmp` y renombrar, sin `fsync` ni permisos | `atomic::write` |
+| El historial de versiones | temporal `.lua.part` y renombrar, sin `fsync` | `atomic::write` |
+
+Lo que no hacía falta tocar: crear un archivo nuevo vacío en el
+explorador (`create_new`, no pisa nada) y renombrarlo (`fs::rename`, ya
+atómico). El motor no se ha tocado: `engine::offline::write_wav` sigue
+igual y recibe la ruta del temporal. Unos `.lua.part` de un historial que
+murió con la versión de antes no se limpian solos (no se leen: el
+historial solo lista `.lua`).
+
+Tests: en `script/src/atomic.rs`, el disco que se llena a mitad, el
+renombrado denegado, la carpeta de solo lectura de verdad, el archivo de
+solo lectura, los permisos, los enlaces (y el roto) y los huérfanos; y
+`saving_never_leaves_the_script_half_written` (`tui/src/tests/config.rs`:
+Ctrl-S sobre un script de solo lectura avisa y no lo toca; al poder,
+guarda sin dejar temporales).
+
 ## Audio de prueba y problemas conocidos
 
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`

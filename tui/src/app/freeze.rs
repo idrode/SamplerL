@@ -50,8 +50,11 @@ impl App {
             .map_or(Ok(()), std::fs::create_dir_all)
             .map_err(|e| e.to_string())
             .and_then(|()| {
-                engine::offline::write_wav_float(&path, &render.audio, 2, self.sample_rate)
-                    .map_err(|e| e.to_string())
+                script::atomic::write_with(&path, |tmp| {
+                    engine::offline::write_wav_float(tmp, &render.audio, 2, self.sample_rate)
+                        .map_err(std::io::Error::other)
+                })
+                .map_err(|e| e.to_string())
             });
         if let Err(e) = written {
             self.message = format!("congelar: no se pudo escribir {}: {e}", path.display());
