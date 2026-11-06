@@ -113,6 +113,7 @@ pub enum Action {
     FloatRight,
     WaveStyle,
     SpectrumStyle,
+    MasterViz,
     OpenMenu,
     TerminalInfo,
     Quit,
@@ -801,6 +802,12 @@ pub const ACTIONS: &[ActionDef] = &[
         name: "Espectro: otro dibujo",
         description: "El espectro del master en relleno, en línea, en barras o como espectrograma, por turno, en esta sesión (el de siempre, `[interfaz] espectro`)",
         keys: "",
+    },
+    ActionDef {
+        action: Action::MasterViz,
+        name: "Scope y espectro del master",
+        description: "Enseña o quita el scope y el espectro del master como pestañas; apagados no cuestan nada (ni el motor copia, ni se calcula la FFT)",
+        keys: "Alt-M",
     },
     ActionDef {
         action: Action::OpenMenu,

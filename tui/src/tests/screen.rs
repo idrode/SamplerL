@@ -58,10 +58,11 @@ fn wide_has_the_sound_a_column_for_the_master_and_the_editor_below() {
     assert!(sx < mx && sy == my, "{screen}");
     // El editor abajo, a todo el ancho del centro.
     assert!(ex == sx && ey > my, "{screen}");
-    // La columna de la derecha: mezclador, scope y espectro del master.
-    let (cx, cy) = find(&buffer, "┌ 7 scope").expect(&screen);
-    let (px, py) = find(&buffer, "┌ 8 espectro").expect(&screen);
-    assert!(cx == mx && px == mx && my < cy && cy < py, "{screen}");
+    // La columna de la derecha: el mezclador y la referencia de teclas;
+    // el scope y el espectro del master, sin pedirlos, no están.
+    let (rx, ry) = find(&buffer, "┌ referencia").expect(&screen);
+    assert!(rx == mx && my < ry, "{screen}");
+    assert!(!screen.contains("scope") && !screen.contains("espectro"), "{screen}");
     // Los efectos, en su pestaña (la primera).
     let (_, strip) = find(&buffer, " 5 efectos ").expect(&screen);
     assert_eq!(
@@ -83,6 +84,9 @@ fn a_tiny_terminal_says_the_audio_goes_on() {
 #[test]
 fn ascii_draws_the_ruler_and_the_tabs_without_unicode_blocks() {
     let (_, mut app, _engine) = open("screen_ascii", Some(SONG));
+    // Con el scope y el espectro pedidos: más pestañas que no caben.
+    app.toggle_master_viz();
+    app.show_tab(crate::layout::Tab::None);
     theme::set_ascii(true);
     let screen = text(&draw(&mut app, 60, 20));
     assert!(line(&screen, 1).starts_with("----------------"), "{screen}");
@@ -180,18 +184,19 @@ fn no_size_breaks_the_drawing_with_the_explorer_on_top_floating_or_maximized() {
 }
 
 #[test]
-fn shrinking_takes_away_the_explorer_first_then_the_fixed_spectrum_then_the_tracker() {
+fn shrinking_takes_away_the_explorer_first_then_the_tracker() {
     let (_, mut app, _engine) = open("screen_shrink", Some(SONG));
+    app.toggle_master_viz();
     let at = |app: &mut App, w, h| {
         draw(app, w, h);
         app.last_grid().unwrap().clone()
     };
     let g = at(&mut app, 120, 40);
-    assert!(g.explorer.is_some() && g.spectrum.is_some() && g.tracker.is_some());
+    assert!(g.explorer.is_some() && g.tracker.is_some());
     // Más estrecha: fuera el explorador; lo demás sigue.
     let g = at(&mut app, 119, 40);
-    assert!(g.explorer.is_none() && g.spectrum.is_some() && g.tracker.is_some());
-    // Más baja: el espectro y el tracker, a las pestañas.
+    assert!(g.explorer.is_none() && g.tracker.is_some());
+    // Más baja: el tracker, a las pestañas (el espectro siempre lo está).
     let g = at(&mut app, 99, 29);
     assert!(g.spectrum.is_none() && g.tracker.is_none());
     let dock = g.dock.unwrap();
@@ -233,38 +238,84 @@ fn play(app: &mut App, engine: &mut Engine, steps: usize) {
 }
 
 #[test]
-fn the_master_scope_and_spectrum_need_nothing_in_the_script() {
+fn the_master_scope_and_spectrum_are_off_until_asked_and_need_nothing_in_the_script() {
     let (_, mut app, mut engine) = open("screen_master_viz", Some(SONG));
     assert!(app.view().viz.is_empty(), "el script no pide ninguna");
+    // Sin pedirlos, ni pestañas ni paneles: ni un lote al motor, ni cola
+    // del master, ni FFT, aunque suene.
+    let screen = text(&draw(&mut app, 180, 50));
+    assert!(!screen.contains("7 scope") && !screen.contains("8 espectro"), "{screen}");
+    play(&mut app, &mut engine, 20);
+    draw(&mut app, 180, 50);
+    assert_eq!(app.viz_cost(), (0, [false; engine::VIZ_SOURCES], 0));
     assert!(app.view().master_views.is_empty());
-    // Al verse sus paneles, la interfaz enciende la cola del master: entra
-    // al compás.
+    // Desde el menú Ver: el espectro en su pestaña, elegida. La interfaz
+    // enciende la cola del master (entra al compás).
+    app.handle(f(10));
+    app.handle(Input {
+        key: Key::Char(crate::menu::Menu::View.letter()),
+        alt: true,
+        ..Input::default()
+    });
+    let items = app.view().menu.unwrap().items;
+    let at = items
+        .iter()
+        .position(|i| i.name == "Scope y espectro del master")
+        .expect("en el menú Ver");
+    for _ in 0..at {
+        app.handle(Input {
+            key: Key::Down,
+            ..Input::default()
+        });
+    }
+    app.handle(Input {
+        key: Key::Enter,
+        ..Input::default()
+    });
+    assert!(app.master_viz_on());
     draw(&mut app, 180, 50);
     play(&mut app, &mut engine, 20);
-    let views = app.view().master_views;
-    assert_eq!(views.len(), 2, "scope y espectro");
+    let screen = text(&draw(&mut app, 180, 50));
+    assert_eq!(app.view().master_views.len(), 2, "scope y espectro");
+    assert!(screen.contains(" 8 espectro · master · relleno "), "{screen}");
+    let (batches, sources, ffts) = app.viz_cost();
+    assert!(batches == 1 && sources[engine::VIZ_MASTER] && ffts > 0);
+    // El scope, en la suya.
+    app.show_tab(crate::layout::Tab::Panel(crate::focus::Panel::Scope));
+    draw(&mut app, 180, 50);
     let screen = text(&draw(&mut app, 180, 50));
     assert!(screen.contains("7 scope · master · RMS"), "{screen}");
-    assert!(screen.contains("8 espectro · master"), "{screen}");
     assert!(
         screen
             .chars()
             .any(|c| ('\u{2801}'..='\u{28ff}').contains(&c)),
         "el scope en Braille: {screen}"
     );
-    // En el tamaño mediano, el scope en su pestaña y el espectro en su
-    // panel, junto a las pestañas.
-    let screen = text(&draw(&mut app, 120, 40));
-    assert!(
-        screen.contains(" 7 scope ") && screen.contains("┌ 8 espectro · master · relleno"),
-        "{screen}"
-    );
+    // Alt-M los quita: el coste vuelve a cero (otro lote que apaga la
+    // cola; ni una FFT más).
+    app.handle(Input {
+        key: Key::Char('m'),
+        alt: true,
+        ..Input::default()
+    });
+    assert!(!app.master_viz_on());
+    draw(&mut app, 180, 50);
+    play(&mut app, &mut engine, 1);
+    let (batches, sources, ffts) = app.viz_cost();
+    assert!(batches == 2 && !sources[engine::VIZ_MASTER]);
+    let screen = text(&draw(&mut app, 180, 50));
+    play(&mut app, &mut engine, 20);
+    draw(&mut app, 180, 50);
+    assert_eq!(app.viz_cost(), (2, [false; engine::VIZ_SOURCES], ffts));
+    assert!(app.view().master_views.is_empty());
+    assert!(!screen.contains("7 scope") && !screen.contains("8 espectro"), "{screen}");
 }
 
 #[test]
 fn the_master_spectrum_panel_draws_dots_an_axis_and_a_spectrogram() {
     use crate::config::Config;
     let (_, mut app, mut engine) = open("screen_master_spectrum", Some(SONG));
+    app.toggle_master_viz();
     draw(&mut app, 120, 40);
     play(&mut app, &mut engine, 16);
     // Un cuadro dibujado cada octavo de paso (los golpes son cortos): lo
@@ -276,7 +327,13 @@ fn the_master_spectrum_panel_draws_dots_an_axis_and_a_spectrogram() {
     }
     let buffer = draw(&mut app, 120, 40);
     let screen = text(&buffer);
-    let area = app.last_grid().unwrap().spectrum.unwrap();
+    // En su pestaña: el dock sin la fila de las pestañas.
+    let dock = app.last_grid().unwrap().dock.clone().unwrap().area;
+    let area = ratatui::layout::Rect::new(dock.x, dock.y + 1, dock.width, dock.height - 1);
+    assert!(
+        find(&buffer, "┌ 8 espectro").is_some_and(|p| p == (area.x, area.y)),
+        "{screen}"
+    );
     let inner = |buffer: &Buffer| -> String {
         (area.y + 1..area.bottom() - 1)
             .map(|y| {
@@ -344,6 +401,7 @@ fn the_master_spectrum_panel_draws_dots_an_axis_and_a_spectrogram() {
 #[test]
 fn a_reload_keeps_the_master_for_its_panels() {
     let (_, mut app, mut engine) = open("screen_master_reload", Some(SONG));
+    app.toggle_master_viz();
     draw(&mut app, 180, 50);
     play(&mut app, &mut engine, 20);
     // Otra carga con una visualización de pista: el lote del script solo
@@ -364,15 +422,18 @@ fn a_reload_keeps_the_master_for_its_panels() {
 #[test]
 fn the_master_is_only_copied_while_its_panels_are_seen() {
     let (_, mut app, mut engine) = open("screen_master_hidden", Some(SONG));
+    app.toggle_master_viz();
     // Sin dibujar (o sin su panel a la vista), el motor no copia el master.
     play(&mut app, &mut engine, 20);
     assert!(app.view().master_views.is_empty());
-    // En el tamaño pequeño, el scope y el espectro son pestañas: con otra
-    // elegida no se ven.
+    // Pedidos, el scope y el espectro son pestañas: con otra elegida no se
+    // ven, ni se calcula la FFT.
     app.show_tab(crate::layout::Tab::Panel(crate::focus::Panel::Mixer));
     draw(&mut app, 80, 24);
     play(&mut app, &mut engine, 20);
+    draw(&mut app, 80, 24);
     assert!(app.view().master_views.is_empty());
+    assert_eq!(app.viz_cost().2, 0, "ni una FFT");
     // Con la del espectro, sí.
     app.show_tab(crate::layout::Tab::Panel(crate::focus::Panel::Spectrum));
     draw(&mut app, 80, 24);
@@ -414,6 +475,9 @@ fn pantalla_ascii() {
 #[test]
 fn the_tab_strip_scrolls_to_show_the_chosen_tab() {
     let (_, mut app, _engine) = open("screen_tabs_scroll", Some(SONG));
+    // Con el scope y el espectro pedidos, a 40 columnas no caben todas.
+    app.toggle_master_viz();
+    app.show_tab(crate::layout::Tab::None);
     let screen = text(&draw(&mut app, 40, 24));
     assert!(screen.contains('›'), "hay más a la derecha: {screen}");
     // Alt-8 (espectro): su pestaña se ve, elegida.

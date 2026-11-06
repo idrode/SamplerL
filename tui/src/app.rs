@@ -318,6 +318,11 @@ pub struct App {
     /// (`[interfaz] espectro`) y, en espectrograma, los últimos cuadros.
     master_spectrum: Vec<f32>,
     spectrum_look: crate::viz::master::Look,
+    /// El scope y el espectro del master, pedidos (Alt-M, el menú Ver o su
+    /// foco): apagados por defecto, sin coste.
+    master_viz: bool,
+    /// Lotes con `set_viz` que ha mandado la interfaz por su cuenta.
+    ui_viz_batches: u64,
     master_spectrogram: std::collections::VecDeque<Vec<f32>>,
     /// Cuadros por segundo (`[interfaz] refresco`).
     refresh_hz: u32,
@@ -543,6 +548,8 @@ impl App {
             viz_spectra: Vec::new(),
             master_spectrum: Vec::new(),
             spectrum_look: Default::default(),
+            master_viz: false,
+            ui_viz_batches: 0,
             master_spectrogram: Default::default(),
             refresh_hz: crate::config::DEFAULT_REFRESH,
             learned: Vec::new(),
@@ -3594,6 +3601,7 @@ impl App {
                 self.master_spectrogram.clear();
                 self.message = format!("espectro: {}", self.spectrum_look.name());
             }
+            Action::MasterViz => self.toggle_master_viz(),
             Action::OpenMenu => self.toggle_menu(),
             Action::TerminalInfo => self.terminal_info(),
             Action::Quit => {
@@ -4723,7 +4731,7 @@ impl App {
             dock_tab: self.dock_tab,
             menu_bar: true,
             menu: self.menu_view(),
-            master_viz: !self.editor_window(),
+            master_viz: self.master_viz && !self.editor_window(),
             files: self.files_needs(),
             editor_layout: self.editor_layout(),
             master_views: self.master_views(),

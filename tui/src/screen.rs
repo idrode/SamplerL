@@ -66,6 +66,10 @@ fn tab_height(view: &ViewModel, tab: Tab) -> u16 {
         Tab::Panel(Panel::Occupancy) => ui::OccupancyPanel::height(view),
         Tab::Sidechain => view.sidechain.as_ref().map_or(0, |s| s.height()),
         Tab::Viz => crate::viz::total_height(&ui::stacked_viz(view)),
+        // El scope y el espectro del master: bordes, sus filas y, en el
+        // espectro, el eje (con menos de tres, el espectrograma no cabe).
+        Tab::Panel(Panel::Scope) => 7,
+        Tab::Panel(Panel::Spectrum) => 9,
         Tab::Clash => view
             .clash_table
             .as_ref()

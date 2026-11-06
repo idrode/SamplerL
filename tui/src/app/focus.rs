@@ -89,6 +89,9 @@ impl App {
                 self.focus_files();
             }
             Panel::Mixer | Panel::Fx | Panel::Scope | Panel::Spectrum => {
+                if matches!(panel, Panel::Scope | Panel::Spectrum) {
+                    self.master_viz = true;
+                }
                 self.close_cursors();
                 self.chosen_focus = Some(panel);
                 self.dock_tab = Tab::Panel(panel);

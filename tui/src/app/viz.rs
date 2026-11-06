@@ -190,9 +190,43 @@ impl App {
         on
     }
 
+    /// «Scope y espectro del master» (Alt-M): los enseña como pestañas,
+    /// con el espectro elegido, o los quita. Apagados, ni el motor copia el
+    /// master ni se calcula la FFT (ver [`App::sync_ui_viz`]).
+    pub fn toggle_master_viz(&mut self) {
+        use crate::layout::Tab;
+        self.master_viz = !self.master_viz;
+        if self.master_viz {
+            self.show_tab(Tab::Panel(Panel::Spectrum));
+            self.message = "scope y espectro del master: Alt-M otra vez para quitarlos".into();
+        } else {
+            if matches!(self.dock_tab, Tab::Panel(Panel::Scope | Panel::Spectrum)) {
+                self.show_tab(Tab::None);
+            }
+            if matches!(self.chosen_focus, Some(Panel::Scope | Panel::Spectrum)) {
+                self.chosen_focus = None;
+            }
+            self.message = "scope y espectro del master quitados".into();
+        }
+    }
+
+    /// Si se han pedido el scope y el espectro del master.
+    #[cfg(test)]
+    pub fn master_viz_on(&self) -> bool {
+        self.master_viz
+    }
+
+    /// Lo que cuesta lo visual hasta ahora: los lotes `set_viz` que ha
+    /// mandado la interfaz, las fuentes que copia el motor y las FFT.
+    #[cfg(test)]
+    pub fn viz_cost(&self) -> (u64, [bool; engine::VIZ_SOURCES], u64) {
+        (self.ui_viz_batches, self.viz_sent, self.analyzer.runs())
+    }
+
     /// Si en el último cuadro se vio el scope o el espectro del master.
     fn master_shown(&self) -> bool {
-        !self.editor_window()
+        self.master_viz
+            && !self.editor_window()
             && self
                 .panels
                 .focus
@@ -215,6 +249,7 @@ impl App {
         let mut batch = engine::Batch::new();
         batch.set_viz(wanted);
         if self.controller.apply(batch).is_ok() {
+            self.ui_viz_batches += 1;
             let sources = self
                 .viz_history
                 .iter_mut()

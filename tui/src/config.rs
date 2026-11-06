@@ -121,6 +121,11 @@ pub const BINDABLE: &[(&str, Bound, &[&str])] = &[
         &["alt-0"],
     ),
     (
+        "visuales",
+        Bound::Action(Action::MasterViz),
+        &["alt-m"],
+    ),
+    (
         "explorador_archivos",
         Bound::Action(Action::ToggleExplorer),
         &["alt-e"],

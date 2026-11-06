@@ -118,6 +118,8 @@ pub struct Analyzer {
     edges: Vec<f32>,
     edges_for: (usize, u32),
     levels: Vec<f32>,
+    /// FFT hechas (para comprobar que apagado no se calcula nada).
+    runs: u64,
 }
 
 impl Default for Analyzer {
@@ -138,7 +140,14 @@ impl Analyzer {
             edges: Vec::new(),
             edges_for: (0, 0),
             levels: Vec::new(),
+            runs: 0,
         }
+    }
+
+    /// Cuántas FFT lleva hechas.
+    #[cfg(test)]
+    pub fn runs(&self) -> u64 {
+        self.runs
     }
 
     /// El nivel de cada banda de `tail` (sus primeras [`SIZE`] muestras;
@@ -149,6 +158,7 @@ impl Analyzer {
         rate: u32,
         bands: usize,
     ) -> &[f32] {
+        self.runs += 1;
         self.re.fill(0.0);
         self.im.fill(0.0);
         for ((re, &w), x) in self.re.iter_mut().zip(&self.window).zip(tail) {

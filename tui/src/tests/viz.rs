@@ -395,6 +395,7 @@ fn pantalla_viz_inline() {
 #[test]
 fn the_master_spectrum_moves_once_per_frame_not_per_tick() {
     let (mut app, mut engine) = open_tone("viz_master_frames");
+    app.toggle_master_viz();
     draw(&mut app, 180, 50);
     play(&mut app, &mut engine, 20);
     draw(&mut app, 180, 50);

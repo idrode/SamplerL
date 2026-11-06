@@ -591,10 +591,7 @@ fn small(g: &mut Grid, sound: Rect, needs: &Needs) {
         Tab::Panel(Panel::Fx),
         Tab::Panel(Panel::Lanes),
     ];
-    if needs.master_viz {
-        tabs.push(Tab::Panel(Panel::Spectrum));
-        tabs.push(Tab::Panel(Panel::Scope));
-    }
+    master_tabs(needs, &mut tabs);
     extra_tabs(needs, &mut tabs);
     g.dock = dock(rest, tabs);
 }
@@ -604,21 +601,22 @@ fn small(g: &mut Grid, sound: Rect, needs: &Needs) {
 const MEDIUM_SOUND: u16 = 20;
 const WIDE_SOUND: u16 = 26;
 
-/// Alto del espectro del master fijo (bordes, cuatro filas y el eje).
-const SPECTRUM_ROWS: u16 = 7;
-/// Ancho mínimo de la fila de abajo para que el espectro vaya al lado de
-/// las pestañas (si no, es una pestaña más).
-const SPECTRUM_BESIDE: u16 = 80;
+/// El scope y el espectro del master, si se han pedido: dos pestañas más
+/// (en todos los tamaños; fuera de la que se ve, ni se calculan).
+fn master_tabs(needs: &Needs, tabs: &mut Vec<Tab>) {
+    if needs.master_viz {
+        tabs.push(Tab::Panel(Panel::Spectrum));
+        tabs.push(Tab::Panel(Panel::Scope));
+    }
+}
 
-/// La onda, el tracker con el mezclador al lado y, debajo, las pestañas
-/// con el espectro del master a su derecha.
+/// La onda, el tracker con el mezclador al lado y, debajo, las pestañas.
 fn medium(g: &mut Grid, sound: Rect, needs: &Needs) {
     // Con poco alto (el editor crecido), como en el pequeño.
     if sound.height < MEDIUM_SOUND {
         return small(g, sound, needs);
     }
-    let fixed_spectrum = needs.master_viz && sound.width >= SPECTRUM_BESIDE && sound.height >= 18;
-    let dock_min = if fixed_spectrum { SPECTRUM_ROWS } else { 6 };
+    let dock_min = 6;
     let wave = if needs.editor { 8 } else { sound.height / 2 };
     let (wave, seq, dock_area) = stack(sound, wave, dock_min, needs.dock_want);
     g.wave = some(wave);
@@ -634,49 +632,22 @@ fn medium(g: &mut Grid, sound: Rect, needs: &Needs) {
         g.tracker = some(tracker);
         g.mixer = some(mixer);
     }
-    let dock_area = if fixed_spectrum {
-        let (dock_area, spectrum) = take_right(dock_area, dock_area.width * 2 / 5);
-        g.spectrum = some(spectrum);
-        tabs.push(Tab::Panel(Panel::Scope));
-        dock_area
-    } else {
-        if needs.master_viz {
-            tabs.push(Tab::Panel(Panel::Spectrum));
-            tabs.push(Tab::Panel(Panel::Scope));
-        }
-        dock_area
-    };
+    master_tabs(needs, &mut tabs);
     extra_tabs(needs, &mut tabs);
     g.dock = dock(dock_area, tabs);
 }
 
 /// La onda, el tracker entero y las pestañas; a la derecha, el
-/// mezclador, el scope y el espectro del master (y la referencia de
-/// teclas si sobra).
+/// mezclador y la referencia de teclas.
 fn wide(g: &mut Grid, sound: Rect, needs: &Needs) {
     if sound.height < WIDE_SOUND {
         return medium(g, sound, needs);
     }
     let (left, right) = take_right(sound, WIDE_RIGHT);
-    // Derecha: el mezclador arriba, luego scope y espectro, y la
-    // referencia con lo que quede.
+    // Derecha: el mezclador arriba y la referencia con lo que quede.
     let mixer = (right.height / 2).clamp(MIN_PANEL, 16);
     let (mixer, r) = take_top(right, mixer);
     g.mixer = some(mixer);
-    let r = if needs.master_viz {
-        let (scope, r) = take_top(r, 7.min(r.height / 2));
-        let spectrum = if r.height > 2 * SPECTRUM_ROWS + 4 {
-            2 * SPECTRUM_ROWS
-        } else {
-            r.height
-        };
-        let (spectrum, r) = take_top(r, spectrum);
-        g.scope = some(scope);
-        g.spectrum = some(spectrum);
-        r
-    } else {
-        r
-    };
     g.reference = some(r);
     // Centro: la onda, el tracker entero si cabe y las pestañas abajo.
     let wave = if needs.editor { 10 } else { 14 };
@@ -684,6 +655,7 @@ fn wide(g: &mut Grid, sound: Rect, needs: &Needs) {
     g.wave = some(wave);
     g.tracker = some(seq);
     let mut tabs = vec![Tab::Panel(Panel::Fx), Tab::Panel(Panel::Lanes)];
+    master_tabs(needs, &mut tabs);
     extra_tabs(needs, &mut tabs);
     g.dock = dock(dock_area, tabs);
 }
@@ -886,7 +858,7 @@ mod tests {
     }
 
     #[test]
-    fn medium_has_the_explorer_left_the_tracker_beside_the_mixer_and_the_spectrum_below() {
+    fn medium_has_the_explorer_left_the_tracker_beside_the_mixer_and_the_tabs_below() {
         let g = grid(Rect::new(0, 0, 120, 40), &needs());
         assert_eq!(g.size, Size::Medium);
         assert!(g.menu.is_some());
@@ -901,13 +873,23 @@ mod tests {
         assert_eq!(tracker.right(), mixer.x);
         assert_eq!(mixer.width, 26);
         assert_eq!(g.wave.unwrap().x, files.right());
-        // Abajo, las pestañas y el espectro del master, lado a lado.
-        let (dock, spectrum) = (g.dock.as_ref().unwrap().area, g.spectrum.unwrap());
-        assert_eq!(dock.y, spectrum.y);
-        assert_eq!(dock.right(), spectrum.x);
-        assert_eq!(spectrum.bottom(), editor.y);
+        // Abajo, las pestañas a todo el ancho; el scope y el espectro del
+        // master, pedidos, son dos pestañas más (nunca un panel fijo).
+        let dock = g.dock.as_ref().unwrap().area;
+        assert_eq!((dock.x, dock.right()), (files.right(), 120));
+        assert_eq!(dock.bottom(), editor.y);
+        assert!(g.spectrum.is_none() && g.scope.is_none());
         assert!(g.docked(Tab::Panel(Panel::Fx)) && g.docked(Tab::Panel(Panel::Scope)));
-        assert!(!g.docked(Tab::Panel(Panel::Spectrum)));
+        assert!(g.docked(Tab::Panel(Panel::Spectrum)));
+        // Sin pedirlos, ni pestañas.
+        let off = grid(
+            Rect::new(0, 0, 120, 40),
+            &Needs {
+                master_viz: false,
+                ..needs()
+            },
+        );
+        assert!(!off.docked(Tab::Panel(Panel::Scope)) && !off.docked(Tab::Panel(Panel::Spectrum)));
         // Con el piano roll, el mezclador pasa a las pestañas.
         let g = grid(
             Rect::new(0, 0, 120, 40),
@@ -932,13 +914,17 @@ mod tests {
     }
 
     #[test]
-    fn wide_has_the_explorer_the_sound_and_a_column_with_the_mixer_and_the_master() {
+    fn wide_has_the_explorer_the_sound_and_a_column_with_the_mixer_and_the_reference() {
         let g = grid(Rect::new(0, 0, 180, 50), &needs());
         assert_eq!(g.size, Size::Wide);
         let (files, wave, mixer) = (g.explorer.unwrap(), g.wave.unwrap(), g.mixer.unwrap());
         assert!(files.right() <= wave.x && wave.right() <= mixer.x);
         assert_eq!(mixer.width, WIDE_RIGHT);
-        assert!(g.scope.is_some() && g.spectrum.is_some());
+        // El scope y el espectro del master, pedidos, en las pestañas; la
+        // referencia de teclas debajo del mezclador.
+        assert!(g.scope.is_none() && g.spectrum.is_none());
+        assert!(g.docked(Tab::Panel(Panel::Spectrum)) && g.docked(Tab::Panel(Panel::Scope)));
+        assert_eq!(g.reference.unwrap().y, mixer.bottom());
         assert!(g.tracker.unwrap().height >= TRACKER_FULL - 3);
         // Con el editor algo más bajo, el tracker entero.
         let low = grid(

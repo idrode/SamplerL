@@ -82,7 +82,7 @@ pub fn menu_of(action: Action) -> Option<Menu> {
         SidechainView | LanesView | Occupancy | PianoRoll | Highlight | ResetMeters
         | AnalyzeMasking | Focus(_) | ToggleExplorer | EditorTaller | EditorShorter | Wider
         | Narrower | MaximizeEditor | FloatEditor | FloatUp | FloatDown | FloatLeft
-        | FloatRight | WaveStyle | SpectrumStyle => Menu::View,
+        | FloatRight | WaveStyle | SpectrumStyle | MasterViz => Menu::View,
         EditorWindow | EditorBack | RollWindow | RollBack | Devices | RefreshDevices
         | DevicesWindow | DevicesBack => Menu::Windows,
         TerminalInfo => Menu::Help,

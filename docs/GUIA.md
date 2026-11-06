@@ -1118,6 +1118,7 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Mover el flotante a la derecha | Dos columnas a la derecha | Alt-Shift-→ |
 | Onda: puntos o barras | Dibuja la onda de los samples con puntos Braille o con barras de bloques en esta sesión (la de siempre, `[interfaz] onda`) | — |
 | Espectro: otro dibujo | El espectro del master en relleno, en línea, en barras o como espectrograma, por turno, en esta sesión (el de siempre, `[interfaz] espectro`) | — |
+| Scope y espectro del master | Enseña o quita el scope y el espectro del master como pestañas; apagados no cuestan nada (ni el motor copia, ni se calcula la FFT) | Alt-M |
 | Menús | Abre la barra de menús: ←→ menú, ↑↓ entrada, Enter ejecuta, la letra subrayada abre su menú | F10 |
 | Qué sabe hacer esta terminal | Dice si hay truecolor, Unicode, teclas al soltar y ratón, y dónde está la configuración | — |
 | Salir | Sale (pide confirmación si hay cambios sin guardar) | Ctrl-Q |
@@ -1515,6 +1516,7 @@ paleta de 256.
 | `foco_espectro` | Foco: espectro | `alt-8` |
 | `foco_ocupacion` | Foco: ocupación | `alt-9` |
 | `foco_archivos` | Foco: archivos | `alt-0` |
+| `visuales` | Scope y espectro del master | `alt-m` |
 | `explorador_archivos` | Explorador de archivos | `alt-e` |
 | `editor_mas_alto` | Editor más alto | `ctrl-alt-up` |
 | `editor_menos_alto` | Editor más bajo | `ctrl-alt-down` |
