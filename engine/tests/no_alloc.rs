@@ -2124,3 +2124,152 @@ fn the_counter_sees_allocations() {
     });
     assert!(n >= 2, "{n}");
 }
+
+/// Quitar y sustituir en vivo todo lo que lleva memoria propia (N6 de
+/// `docs/AUDITORIA-2.md`): la tabla de lanes (también la última lane, que
+/// deja la tabla vacía y antes se soltaba en el callback), dos tablas
+/// seguidas antes del compás, patrones de samples y de sintetizador, un
+/// arreglo, los grupos y la preescucha. Lo retirado vuelve por la cola de
+/// basura y se libera aquí.
+#[test]
+fn removing_and_replacing_live_never_frees_in_the_callback() {
+    let mut mono = vec![0.0f32; 6000];
+    mono[..800].fill(0.5);
+    mono[3000..3800].fill(0.25);
+    let sample = Arc::new(Sample::from_interleaved(&mono, 1, RATE, RATE).unwrap());
+    let slices = Slices::detect(&sample, 2);
+    let silence = Arc::new(Sample::silence(RATE));
+    let one = Slices::detect(&silence, 1);
+    let lane = |slot: u8| engine::Curve::Lane {
+        index: slot,
+        min: 300.0,
+        max: 6000.0,
+    };
+    let laned = |slot: u8| {
+        Pattern::from_steps(sample.clone(), &slices, [Some(Step::new(0)); STEPS])
+            .unwrap()
+            .with_fx(&[Fx::lowpass(1000.0)])
+            .unwrap()
+            .with_automation(&[engine::Automation {
+                fx: 0,
+                param: 0,
+                curve: lane(slot),
+            }])
+            .unwrap()
+    };
+    let table = |lanes: &[usize]| {
+        let point = |at: f64, value: f32| engine::LanePoint {
+            at,
+            value,
+            curve: engine::LaneCurve::Linear,
+        };
+        let mut table = engine::Lanes::new();
+        for &i in lanes {
+            let lane =
+                engine::Lane::new(&[point(0.0, 300.0), point(8.0, 5000.0)], 16.0, false).unwrap();
+            table.set(i, Some(lane)).unwrap();
+        }
+        table
+    };
+    let synth = || {
+        let steps: Vec<Option<Step>> = (0..STEPS)
+            .map(|k| (k % 4 == 0).then(|| Step::new(0).with_pitch(k as f32)))
+            .collect();
+        Pattern::from_steps(silence.clone(), &one, steps)
+            .unwrap()
+            .with_synth(
+                Some(engine::synth::acid::patch(36.0)),
+                [None; engine::synth::PARAM_COUNT],
+            )
+            .unwrap()
+    };
+
+    let (mut controller, mut engine) = new_engine(RATE);
+    controller.set_bpm(170.0).unwrap();
+    let mut out = vec![0.0f32; 512 * 2];
+    let mut run = |controller: &mut engine::Controller, what: &str| {
+        let n = counted(|| {
+            for _ in 0..300 {
+                engine.process(&mut out, 2);
+            }
+        });
+        assert_eq!(n, 0, "reservas o liberaciones al {what}");
+        controller.collect_garbage();
+    };
+
+    let mut batch = engine::Batch::new();
+    batch
+        .set_lanes(table(&[0, 1]))
+        .set_pattern(0, Some(laned(0)))
+        .set_pattern(1, Some(synth()));
+    controller.apply(batch).unwrap();
+    controller.start().unwrap();
+    run(&mut controller, "empezar con lanes y un sintetizador");
+
+    // Quitar la última lane: la tabla vacía es «ninguna».
+    let mut batch = engine::Batch::new();
+    batch.set_lanes(table(&[])).set_pattern(0, Some(laned(5)));
+    controller.apply(batch).unwrap();
+    run(&mut controller, "quitar la última lane");
+
+    // Dos tablas seguidas antes del compás: la primera se sustituye sin
+    // llegar a sonar.
+    for lanes in [&[3][..], &[3, 4][..]] {
+        let mut batch = engine::Batch::new();
+        batch.set_lanes(table(lanes));
+        controller.apply(batch).unwrap();
+    }
+    run(&mut controller, "sustituir una tabla de lanes pendiente");
+    let mut batch = engine::Batch::new();
+    batch.set_lanes(table(&[]));
+    controller.apply(batch).unwrap();
+    run(&mut controller, "quitar todas las lanes otra vez");
+
+    // El sintetizador, sustituido por un patrón de samples y luego quitado.
+    controller.set_track_pattern(1, Some(laned(3))).unwrap();
+    run(&mut controller, "sustituir un sintetizador por samples");
+    controller.set_track_pattern(1, None).unwrap();
+    controller.set_track_pattern(0, None).unwrap();
+    run(&mut controller, "quitar los patrones");
+
+    // Un arreglo, sustituido y quitado.
+    let arranged = |seed: u64| {
+        let mut arrangement = engine::Arrangement::new();
+        arrangement
+            .add_section(seed, vec![(2, laned(0)), (3, synth())])
+            .unwrap();
+        arrangement.push(0, 2).unwrap();
+        arrangement
+    };
+    for arrangement in [Some(arranged(1)), Some(arranged(2)), None] {
+        let mut batch = engine::Batch::new();
+        batch.set_arrangement(arrangement);
+        controller.apply(batch).unwrap();
+        run(&mut controller, "sustituir o quitar el arreglo");
+    }
+
+    // Grupos puestos y quitados.
+    let mut groups = engine::Groups::new();
+    groups.groups[0] = Some(
+        engine::Group::new()
+            .with_fx(&[Fx::lowpass(2000.0)])
+            .unwrap(),
+    );
+    groups.member[2] = Some(0);
+    let mut batch = engine::Batch::new();
+    batch.set_groups(groups).set_pattern(2, Some(laned(0)));
+    controller.apply(batch).unwrap();
+    run(&mut controller, "poner un grupo");
+    let mut batch = engine::Batch::new();
+    batch.set_groups(engine::Groups::new());
+    controller.apply(batch).unwrap();
+    run(&mut controller, "quitar el grupo");
+
+    // La preescucha, sustituida por otra y parada.
+    controller.preview_slice(&sample, &slices, 0).unwrap();
+    run(&mut controller, "preescuchar");
+    controller.preview_slice(&sample, &slices, 1).unwrap();
+    run(&mut controller, "sustituir la preescucha");
+    controller.stop_preview().unwrap();
+    run(&mut controller, "parar la preescucha");
+}

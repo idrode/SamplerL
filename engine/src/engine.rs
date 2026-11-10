@@ -3021,7 +3021,14 @@ impl Engine {
         if step == 0
             && let Some(lanes) = self.pending_lanes.take()
         {
-            let lanes = (!lanes.is_empty()).then_some(lanes);
+            // (Una tabla vacía vuelve por la cola de basura: soltarla aquí
+            // liberaría memoria en el callback.)
+            let lanes = if lanes.is_empty() {
+                self.discard_lanes(lanes);
+                None
+            } else {
+                Some(lanes)
+            };
             if let Some(old) = std::mem::replace(&mut self.lanes, lanes) {
                 self.discard_lanes(old);
             }
