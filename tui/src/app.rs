@@ -37,6 +37,7 @@ mod learn;
 mod macros;
 mod menu;
 mod mouse;
+mod slices;
 mod vim;
 mod zoom;
 pub use mouse::MouseAction;
@@ -499,6 +500,10 @@ pub struct App {
     /// buena (solo se resalta si el editor tiene ese mismo texto) y los
     /// últimos pasos de cada pista que ha publicado el motor.
     loaded_text: Option<String>,
+    /// Cortes del detector o de la rejilla (sample y cómo se cortó) que se
+    /// han pasado a cortes explícitos en el código en esta sesión: lo que el
+    /// proyecto guardaba de ellos deja de guardarse si ya nada los usa.
+    converted: Vec<(String, script::Cut)>,
     cursors: crate::highlight::Cursors,
     /// El resaltado está encendido (`[resaltado] activo` y la paleta) y lo
     /// que se le suma al retardo de la salida (`retardo_ms`).
@@ -656,6 +661,7 @@ impl App {
             devices_terminal: None,
             link: None,
             loaded_text: None,
+            converted: Vec::new(),
             cursors: Default::default(),
             highlighting: true,
             highlight_delay_ms: 0.0,
@@ -969,14 +975,37 @@ impl App {
 
     /// El proyecto con el estado actual (script, samples, etiquetas) y ese
     /// tempo.
+    /// tempo. Lo que guardaba de unos cortes que ya están escritos en el
+    /// código (y que nada más usa) no se guarda: una sola fuente de verdad.
     fn project_with(&self, bpm: Option<f64>) -> Project {
+        let dropped = self.dropped_from_project();
+        let kept =
+            |sample: &str, cut: script::Cut| !dropped.iter().any(|(s, c)| s == sample && *c == cut);
         Project {
             script: self.path.clone(),
             samples: self.host.sample_dir().map(Path::to_path_buf),
             bpm,
-            labels: self.host.labels().to_vec(),
-            positions: self.host.positions().to_vec(),
-            edits: self.host.edits().to_vec(),
+            labels: self
+                .host
+                .labels()
+                .iter()
+                .filter(|l| kept(&l.sample, l.slices))
+                .cloned()
+                .collect(),
+            positions: self
+                .host
+                .positions()
+                .iter()
+                .filter(|p| kept(&p.sample, p.slices))
+                .cloned()
+                .collect(),
+            edits: self
+                .host
+                .edits()
+                .iter()
+                .filter(|e| kept(&e.sample, e.cut))
+                .cloned()
+                .collect(),
             learned: self.learned.clone(),
         }
     }
@@ -1014,6 +1043,39 @@ impl App {
             );
             return;
         };
+        // Cortes escritos en el código: la etiqueta va en su entrada.
+        if track.origin.explicit {
+            let track = track.clone();
+            let written = Self::slice_call(&track).map(|call| slices::Rewrite {
+                ranges: call.ranges.clone(),
+                labels: {
+                    let mut labels = call.labels.clone();
+                    if let Some(name) = name {
+                        for l in labels.iter_mut() {
+                            if l.as_deref() == Some(name) {
+                                *l = None;
+                            }
+                        }
+                    }
+                    if let Some(l) = labels.get_mut(index) {
+                        *l = name.map(str::to_string);
+                    }
+                    labels
+                },
+            });
+            let result = written.and_then(|rewrite| self.write_slices(rewrite));
+            self.message = match result {
+                Ok(()) => format!(
+                    "corte {slice} de {track_name}: {} · Ctrl-S lo guarda, Ctrl-Z lo deshace",
+                    match name {
+                        Some(name) => format!("«{name}»"),
+                        None => "sin etiqueta".into(),
+                    }
+                ),
+                Err(why) => self.not_written_message(why),
+            };
+            return;
+        }
         if let Err(e) = self
             .host
             .set_label(&origin.sample, origin.cut(), index + 1, name)
@@ -1104,7 +1166,173 @@ impl App {
     /// Pone el inicio del corte `index` de la pista seleccionada en `ms`
     /// (del sample original), o le quita el ajuste con `None`: lo de
     /// [`App::adjust_slice`], también para arrastrar la marca con el ratón.
+    /// Se escribe en el código (ver `app::slices`); si la llamada sale de
+    /// código, como antes en el proyecto, avisando de que el código no lo
+    /// guarda.
     fn place_slice(&mut self, index: usize, ms: Option<f64>) {
+        let Some(track) = self.tracks().get(self.selected).cloned() else {
+            self.message = "no hay pistas".into();
+            return;
+        };
+        if index >= track.slices.len() {
+            return;
+        }
+        let Some(source) = track.origin.indices[index] else {
+            self.message = format!(
+                "el corte {} de {} lo añade el script con :add(): muévelo en el script",
+                index + 1,
+                track.name
+            );
+            return;
+        };
+        let call = Self::slice_call(&track);
+        if track.origin.explicit {
+            match (ms, call) {
+                (Some(ms), Ok(call)) => self.place_in_code(&track, call, index, source, ms),
+                (None, Ok(_)) => {
+                    self.message = format!(
+                        "los cortes de {} están escritos en el código: no hay ajuste que \
+                         quitar (para volver al detector, cambia slice({{...}}) por slice(n))",
+                        track.name
+                    );
+                }
+                (_, Err(why)) => self.message = self.not_written_message(why),
+            }
+            return;
+        }
+        match (ms, call) {
+            (Some(ms), Ok(call)) => self.place_in_code(&track, call, index, source, ms),
+            (Some(_), Err(why)) => {
+                self.place_in_project(index, ms);
+                let note = self.not_written_message(why);
+                self.message = format!("{} · {note}", self.message);
+            }
+            (None, _) => self.place_in_project(index, None),
+        }
+    }
+
+    /// [`App::place_slice`] en el código: el corte `source` de la llamada
+    /// (el `index` de la pista) empieza en `ms`; el anterior acaba ahí si
+    /// acababa donde empezaba este (la marca es de los dos).
+    fn place_in_code(
+        &mut self,
+        track: &script::TrackDef,
+        call: &script::SliceCall,
+        index: usize,
+        source: usize,
+        ms: f64,
+    ) {
+        let rate = call.sample_rate.max(1) as f64;
+        let to_frame = |ms: f64| (ms / 1000.0 * rate).round().max(0.0) as usize;
+        let to_ms = |frame: usize| frame as f64 * 1000.0 / rate;
+        let gap = (mouse::DRAG_GAP_MS / 1000.0 * rate).ceil() as usize;
+        let mut ranges = call.ranges.clone();
+        let Some(old) = ranges.get(source).cloned() else {
+            return;
+        };
+        let shared = source
+            .checked_sub(1)
+            .filter(|&p| ranges[p].end == old.start);
+        let low = shared.map_or(0, |p| ranges[p].start + gap).min(old.start);
+        let high = old.end.saturating_sub(gap).max(old.start);
+        // Con la resolución de un frame, redondeado a 0,1 ms.
+        let wanted = to_frame((ms.max(0.0) * 10.0).round() / 10.0);
+        let at = wanted.clamp(low, high);
+        let limit = if at > wanted {
+            format!(" (tope: el corte {index})")
+        } else if at < wanted {
+            let next = ranges.get(source + 1).filter(|r| r.start == old.end);
+            if next.is_some() && index + 1 < track.slices.len() {
+                format!(" (tope: el corte {})", index + 2)
+            } else if ranges.iter().all(|r| r.end <= old.end) {
+                " (tope: el final del sample)".to_string()
+            } else {
+                format!(" (tope: el final del corte {})", index + 1)
+            }
+        } else {
+            String::new()
+        };
+        ranges[source].start = at;
+        if let Some(p) = shared {
+            ranges[p].end = at;
+        }
+        let labels = call.labels.clone();
+        let converted = self.note_conversion(track);
+        match self.write_slices(slices::Rewrite { ranges, labels }) {
+            Ok(()) => {
+                // Con `zero_cross`, dónde quedó de verdad.
+                let now = self
+                    .tracks()
+                    .get(self.selected)
+                    .and_then(|t| t.origin.call.as_ref().ok())
+                    .and_then(|c| c.ranges.get(source))
+                    .map(|r| (to_ms(r.start) * 10.0).round() / 10.0);
+                let target = (to_ms(at) * 10.0).round() / 10.0;
+                let zero = match now {
+                    Some(now) if track.origin.zero_cross.is_some() && now != target => {
+                        format!(" (cruce por cero en {now} ms)")
+                    }
+                    _ => String::new(),
+                };
+                self.message = format!(
+                    "corte {} de {}: empieza en {target} ms{limit}{zero}{}",
+                    index + 1,
+                    track.name,
+                    self.written_note(converted)
+                );
+            }
+            Err(why) => {
+                self.forget_conversion(converted);
+                self.message = self.not_written_message(why);
+            }
+        }
+    }
+
+    /// Lo que se añade al mensaje de un cambio de cortes escrito en el
+    /// código (con `converted`, que acaba de pasar a cortes explícitos).
+    fn written_note(&self, converted: Option<(String, script::Cut)>) -> String {
+        let first = match converted {
+            Some((_, cut)) => format!(
+                "; {} pasa a cortes explícitos en el código, slice({{ {{inicio, fin}}, ... }})",
+                cut.call()
+            ),
+            None => String::new(),
+        };
+        format!("{first} · Ctrl-S lo guarda, Ctrl-Z lo deshace")
+    }
+
+    /// Si los cortes de `track` son del detector o de la rejilla, apunta
+    /// que pasan a explícitos (lo que el proyecto guardaba de ellos deja de
+    /// guardarse) y lo devuelve.
+    fn note_conversion(&mut self, track: &script::TrackDef) -> Option<(String, script::Cut)> {
+        if track.origin.explicit {
+            return None;
+        }
+        let pair = (track.origin.sample.clone(), track.origin.cut());
+        if self.converted.contains(&pair) {
+            // Ya convertido antes en la sesión (y deshecho): se avisa igual.
+            return Some(pair);
+        }
+        self.converted.push(pair.clone());
+        Some(pair)
+    }
+
+    /// Deshace [`App::note_conversion`] si el cambio no se escribió (y no
+    /// estaba de antes).
+    fn forget_conversion(&mut self, converted: Option<(String, script::Cut)>) {
+        let Some(pair) = converted else { return };
+        let written = self
+            .tracks()
+            .iter()
+            .any(|t| t.origin.explicit && t.origin.sample == pair.0);
+        if !written && let Some(i) = self.converted.iter().position(|p| *p == pair) {
+            self.converted.remove(i);
+        }
+    }
+
+    /// [`App::place_slice`] en el proyecto (o en memoria, sin proyecto): lo
+    /// de antes, para los cortes del detector cuya llamada sale de código.
+    fn place_in_project(&mut self, index: usize, ms: Option<f64>) {
         let Some(track) = self.tracks().get(self.selected) else {
             self.message = "no hay pistas".into();
             return;
@@ -1569,7 +1797,140 @@ impl App {
         self.edit_slices(SliceOp::Join);
     }
 
+    /// Parte o une cortes de la pista seleccionada: en el código (ver
+    /// `app::slices`) o, si la llamada sale de código, como antes en el
+    /// proyecto, avisando de que el código no lo guarda.
     fn edit_slices(&mut self, op: SliceOp) {
+        let Some(track) = self.tracks().get(self.selected).cloned() else {
+            self.message = "no hay pistas".into();
+            return;
+        };
+        if track.slices.is_empty() {
+            return;
+        }
+        match Self::slice_call(&track) {
+            Ok(call) => self.edit_in_code(&track, call, op),
+            Err(why) if track.origin.explicit => self.message = self.not_written_message(why),
+            Err(why) => {
+                self.edit_in_project(op);
+                let note = self.not_written_message(why);
+                self.message = format!("{} · {note}", self.message);
+            }
+        }
+    }
+
+    /// [`App::edit_slices`] en el código.
+    fn edit_in_code(&mut self, track: &script::TrackDef, call: &script::SliceCall, op: SliceOp) {
+        let name = track.name.clone();
+        let selected = self
+            .selected_slice
+            .min(track.slices.len().saturating_sub(1));
+        let ratio = track.stretch.map_or(1.0, |s| s.ratio);
+        let rate = call.sample_rate.max(1) as f64;
+        let gap = (rate / 1000.0).ceil().max(1.0) as usize;
+        let frames = track.sample.frames();
+        // Los frames del sample sin estirar.
+        let original = |f: f64| (f / ratio).round().max(0.0) as usize;
+        let total = ((frames as f64) / ratio).round() as usize;
+        let total = total.max(call.ranges.iter().map(|r| r.end).max().unwrap_or(0));
+        let Ok(all) = engine::Slices::from_ranges(call.ranges.clone(), total, 1) else {
+            return;
+        };
+        let mut labels = call.labels.clone();
+        let source = |i: usize| track.origin.indices.get(i).copied().flatten();
+        let (ranges, message, new_selected) = match op {
+            SliceOp::Split(at) => {
+                let frame = match at {
+                    Some(frame) => original(frame),
+                    None => {
+                        let Some(s) = source(selected) else {
+                            self.message = format!(
+                                "el corte {} de {name} lo añade el script con :add(): cámbialo en el script",
+                                selected + 1
+                            );
+                            return;
+                        };
+                        let r = &call.ranges[s];
+                        (r.start + r.end) / 2
+                    }
+                };
+                match all.split(frame, gap) {
+                    Ok((split, k)) => {
+                        labels.insert(k, None);
+                        let ms = frame as f64 * 1000.0 / rate;
+                        let message = match at {
+                            Some(_) => format!(
+                                "corte nuevo en {name}: el {} empieza en {ms:.1} ms; ahora hay {}",
+                                k + 1,
+                                split.len()
+                            ),
+                            None => format!(
+                                "corte {} de {name} partido: ahora hay {} (el nuevo es el {})",
+                                k,
+                                split.len(),
+                                k + 1
+                            ),
+                        };
+                        (split, message, k)
+                    }
+                    Err(_) => {
+                        self.message = "no se puede: ahí no cabe un corte nuevo (muy cerca de \
+                                        otro, o fuera de los cortes)"
+                            .into();
+                        return;
+                    }
+                }
+            }
+            SliceOp::Join => {
+                let Some(s) = source(selected) else {
+                    self.message = format!(
+                        "el corte {} de {name} lo añade el script con :add(): cámbialo en el script",
+                        selected + 1
+                    );
+                    return;
+                };
+                let Some(joined) = all.without(s) else {
+                    self.message = format!(
+                        "el corte {} de {name} no tiene anterior: no se puede quitar",
+                        selected + 1
+                    );
+                    return;
+                };
+                labels.remove(s);
+                let message = format!(
+                    "corte {} de {name} unido al {}: ahora hay {}",
+                    s + 1,
+                    s,
+                    joined.len()
+                );
+                (joined, message, s - 1)
+            }
+        };
+        let ranges: Vec<_> = ranges.iter().collect();
+        let converted = self.note_conversion(track);
+        match self.write_slices(slices::Rewrite { ranges, labels }) {
+            Ok(()) => {
+                // El corte de la pista que es el nuevo (o el que queda).
+                if let Some(t) = self.tracks().get(self.selected) {
+                    self.selected_slice = t
+                        .origin
+                        .indices
+                        .iter()
+                        .position(|i| *i == Some(new_selected))
+                        .unwrap_or(0);
+                }
+                self.message = format!("{message}{}", self.written_note(converted));
+            }
+            Err(why) => {
+                self.forget_conversion(converted);
+                self.message = self.not_written_message(why);
+            }
+        }
+    }
+
+    /// [`App::edit_slices`] en el proyecto (o en memoria, sin proyecto): lo
+    /// de antes, para los cortes del detector cuya llamada sale de código.
+    fn edit_in_project(&mut self, op: SliceOp) {
         let Some(track) = self.tracks().get(self.selected) else {
             self.message = "no hay pistas".into();
             return;
@@ -1848,6 +2209,17 @@ impl App {
             Ok(()) => {
                 self.saved = text;
                 self.load();
+                // Los cortes pasados al código dejan de estar en el proyecto
+                // a la vez que se guardan en el script.
+                if self.project.is_some() && !self.dropped_from_project().is_empty() {
+                    let message = std::mem::take(&mut self.message);
+                    let saved = self.save_project_file();
+                    self.message = if saved.starts_with(" (no se pudo") {
+                        format!("{message}{saved}")
+                    } else {
+                        message
+                    };
+                }
             }
             Err(e) => {
                 self.message = format!("no se pudo guardar: {e}");

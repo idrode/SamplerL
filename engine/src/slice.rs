@@ -63,8 +63,24 @@ impl Default for DetectOptions {
     }
 }
 
-/// Cortes de un sample: rangos de frames contiguos, ordenados.
-/// El corte `i` va desde su transitorio hasta el siguiente (o el final del sample).
+/// Por qué no vale un corte de [`Slices::from_ranges`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RangeError {
+    /// No hay ningún corte.
+    Empty,
+    /// El final no va después del inicio.
+    Reversed,
+    /// Acaba pasado el final del sample.
+    OutOfSample,
+    /// Más corto que el mínimo.
+    TooShort,
+}
+
+/// Cortes de un sample: un rango de frames por corte. Los del detector y
+/// los de la rejilla son contiguos y ordenados (el corte `i` va desde su
+/// transitorio hasta el siguiente, o el final del sample); los de
+/// [`Slices::from_ranges`] tienen cada uno su inicio y su final, con
+/// huecos o solapes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Slices(Vec<Range<usize>>);
 
@@ -286,6 +302,66 @@ impl Slices {
         rejected.sort_unstable();
         rejected.dedup();
         (Slices(ranges), rejected)
+    }
+
+    /// Cortes independientes: cada uno con su inicio y su final propios,
+    /// en el orden dado (el primero es el corte 1). Pueden dejar huecos
+    /// entre ellos o solaparse; cada uno dura al menos `min_len` frames y
+    /// cabe en un sample de `frames`. Si alguno no vale, `Err` con su
+    /// índice (desde 0) y el motivo.
+    pub fn from_ranges(
+        ranges: Vec<Range<usize>>,
+        frames: usize,
+        min_len: usize,
+    ) -> Result<Slices, (usize, RangeError)> {
+        if ranges.is_empty() {
+            return Err((0, RangeError::Empty));
+        }
+        for (i, r) in ranges.iter().enumerate() {
+            let error = if r.end <= r.start {
+                Some(RangeError::Reversed)
+            } else if r.end > frames {
+                Some(RangeError::OutOfSample)
+            } else if r.end - r.start < min_len.max(1) {
+                Some(RangeError::TooShort)
+            } else {
+                None
+            };
+            if let Some(error) = error {
+                return Err((i, error));
+            }
+        }
+        Ok(Slices(ranges))
+    }
+
+    /// Cada corte acaba donde empieza el siguiente (y el último, en
+    /// `frames`): los de [`Slices::detect`] y [`Slices::grid`].
+    pub fn is_contiguous(&self, frames: usize) -> bool {
+        self.0.windows(2).all(|w| w[0].end == w[1].start)
+            && self.0.last().is_none_or(|r| r.end == frames)
+    }
+
+    /// Los mismos cortes con el corte `index` en `range`, sin tocar los
+    /// demás (cortes independientes). `None` si no existe.
+    pub fn with_range(&self, index: usize, range: Range<usize>) -> Option<Slices> {
+        let mut ranges = self.0.clone();
+        *ranges.get_mut(index)? = range;
+        Some(Slices(ranges))
+    }
+
+    /// Como [`Slices::snapped`] para cortes independientes: cada inicio va
+    /// al cruce por cero más cercano sin salirse de su propio corte (a
+    /// `min_gap` de su final); los finales y los demás cortes no se tocan.
+    pub fn snapped_starts(&self, sample: &Sample, max: usize, min_gap: usize) -> Slices {
+        let mut ranges = self.0.clone();
+        if max == 0 {
+            return Slices(ranges);
+        }
+        for range in &mut ranges {
+            let high = range.end.saturating_sub(min_gap).max(range.start);
+            range.start = snap_frame(sample, range.start, max, 0..high + 1);
+        }
+        Slices(ranges)
     }
 
     /// Los mismos cortes con cada inicio llevado al cruce por cero más

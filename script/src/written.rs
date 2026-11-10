@@ -200,6 +200,11 @@ pub(crate) fn current_row(lua: &Lua) -> Option<usize> {
     calling_line(lua, &script.chunk)?.checked_sub(1)
 }
 
+/// Fila (desde 0) de la llamada de Lua en curso, si es del trozo `chunk`.
+pub(crate) fn calling_row_in(lua: &Lua, chunk: &str) -> Option<usize> {
+    calling_line(lua, chunk)?.checked_sub(1)
+}
+
 /// Línea (desde 1) de la llamada de Lua en curso, si es del trozo del
 /// script.
 fn calling_line(lua: &Lua, chunk: &str) -> Option<usize> {

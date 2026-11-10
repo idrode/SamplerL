@@ -370,7 +370,7 @@ fn span_text(lines: &[String], span: script::TableSpan) -> Option<String> {
 }
 
 /// `lines` con `span` cambiado por `text`, como un solo texto.
-fn replace_span(lines: &[String], span: script::TableSpan, text: &str) -> String {
+pub(super) fn replace_span(lines: &[String], span: script::TableSpan, text: &str) -> String {
     let mut out = String::new();
     for (r, line) in lines.iter().enumerate() {
         let chars: Vec<char> = line.chars().collect();

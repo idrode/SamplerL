@@ -74,7 +74,8 @@ pub use sequencer::{
 };
 pub use shift::MAX_FORMANT;
 pub use slice::{
-    DEFAULT_MIN_GAP_SECONDS, DetectOptions, Detector, Slices, nearest_zero_crossing, snap_frame,
+    DEFAULT_MIN_GAP_SECONDS, DetectOptions, Detector, RangeError, Slices, nearest_zero_crossing,
+    snap_frame,
 };
 pub use slice_fx::SliceFx;
 pub use status::{Cursor, LaneLive, MAX_TAG, MasterStatus, SectionStatus, Status, TrackStatus};

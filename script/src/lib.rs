@@ -77,11 +77,13 @@ pub mod patterns;
 pub mod project;
 pub mod step_fx;
 pub use lanes::{LaneDef, LaneTarget, number_text, parse_points, points_text};
+pub mod slice_call;
 mod watch;
 mod written;
 
 use patterns::Rng;
 pub use project::{Cut, EditKind, Project, SliceEdit, SliceLabel, SlicePosition};
+pub use slice_call::SliceCall;
 pub use watch::{ScriptWatcher, WatchEvent};
 pub use written::{TableSpan, TokenSpan};
 
@@ -534,6 +536,12 @@ pub struct SliceOrigin {
     /// `zero_cross` de `slice`/`slice_grid`: cada inicio va al cruce por
     /// cero más cercano, a no más de estos ms. `None`: tal cual.
     pub zero_cross: Option<f64>,
+    /// Cortes explícitos (`slice({ {inicio, fin}, ... })`): cada uno con su
+    /// inicio y su final; no les tocan las ediciones del proyecto.
+    pub explicit: bool,
+    /// La llamada que los corta, tal como está escrita (para reescribirla
+    /// al editar los cortes en la onda), o por qué no se puede.
+    pub call: Result<SliceCall, String>,
 }
 
 impl SliceOrigin {
@@ -3548,6 +3556,8 @@ fn track_source(lua: &Lua, name: &str, source: &AnyUserData) -> mlua::Result<Tra
                 grid: true,
                 indices: vec![None],
                 zero_cross: None,
+                explicit: false,
+                call: Err("no sale de slice()".into()),
             };
             (Slices::grid(&source.sample, 1), origin, None)
         });
@@ -3579,6 +3589,8 @@ fn track_source(lua: &Lua, name: &str, source: &AnyUserData) -> mlua::Result<Tra
             grid: true,
             indices: vec![None],
             zero_cross: None,
+            explicit: false,
+            call: Err("es un sintetizador".into()),
         };
         let slices = Slices::grid(&silence, 1);
         let mut def = def(&silence, Path::new(""), slices, origin);
@@ -4250,21 +4262,46 @@ impl UserData for SampleHandle {
         });
 
         // `:slice(n [, { zero_cross }])`: corta en los `n` transitorios más
-        // fuertes.
-        methods.add_method("slice", |lua, this, (n, options): (i64, Option<Table>)| {
-            if !(1..=64).contains(&n) {
-                return Err(fail(
-                    lua,
-                    format!("slice({n}): el número de cortes va de 1 a 64"),
-                ));
-            }
-            let zero = cut_options(lua, &format!("slice({n})"), options.as_ref())?;
-            let slices = {
-                let _busy = Busy::here();
-                Slices::detect(&this.sample, n as usize)
-            };
-            cut_sample(lua, this, slices, Cut::detect(n as usize), zero)
-        });
+        // fuertes. `:slice({ {inicio, fin [, "nombre"]}, ... } [, { zero_cross
+        // }])`: cortes explícitos, cada uno con su inicio y su final en ms.
+        methods.add_method(
+            "slice",
+            |lua, this, (first, options): (Value, Option<Table>)| {
+                let n = match first {
+                    Value::Table(table) => {
+                        return explicit_slices(lua, this, &table, options.as_ref());
+                    }
+                    Value::Integer(n) => n,
+                    Value::Number(n) if n.fract() == 0.0 && n.abs() < 1e9 => n as i64,
+                    other => {
+                        return Err(fail(
+                            lua,
+                            format!(
+                                "slice({}): un número de cortes, slice(8), o una tabla de cortes, \
+                                 slice({{ {{0, 120}}, {{120, 250}} }})",
+                                match &other {
+                                    Value::String(t) => format!("\"{}\"", t.to_string_lossy()),
+                                    other => other.type_name().to_string(),
+                                }
+                            ),
+                        ));
+                    }
+                };
+                if !(1..=64).contains(&n) {
+                    return Err(fail(
+                        lua,
+                        format!("slice({n}): el número de cortes va de 1 a 64"),
+                    ));
+                }
+                let zero = cut_options(lua, &format!("slice({n})"), options.as_ref())?;
+                let slices = {
+                    let _busy = Busy::here();
+                    Slices::detect(&this.sample, n as usize)
+                };
+                let call = slice_call::find(lua, &["slice"], slice_call::FirstArg::Count(n));
+                cut_sample(lua, this, slices, Cut::detect(n as usize), zero, call, None)
+            },
+        );
 
         // `:slice_grid(n [, { zero_cross }])`: `n` cortes iguales (rejilla).
         methods.add_method(
@@ -4278,10 +4315,130 @@ impl UserData for SampleHandle {
                 }
                 let zero = cut_options(lua, &format!("slice_grid({n})"), options.as_ref())?;
                 let slices = Slices::grid(&this.sample, n as usize);
-                cut_sample(lua, this, slices, Cut::grid(n as usize), zero)
+                let call = slice_call::find(lua, &["slice_grid"], slice_call::FirstArg::Count(n));
+                cut_sample(lua, this, slices, Cut::grid(n as usize), zero, call, None)
             },
         );
     }
+}
+
+/// Máximo de cortes de una tabla de `slice({ ... })` (como `slice(64)`).
+const MAX_EXPLICIT_SLICES: usize = 64;
+
+/// `sample:slice({ {inicio, fin [, "nombre"]}, ... } [, opciones])`: cortes
+/// independientes, en ms del sample (sin estirar). Cada uno dura al menos
+/// 1 ms y cabe en el sample; pueden dejar huecos o solaparse.
+fn explicit_slices(
+    lua: &Lua,
+    this: &SampleHandle,
+    table: &Table,
+    options: Option<&Table>,
+) -> mlua::Result<SlicedHandle> {
+    let who = "slice({...})";
+    let usage = "cada corte es {inicio, fin} o {inicio, fin, \"nombre\"}, en ms";
+    let count = table.raw_len();
+    if table.pairs::<Value, Value>().count() != count {
+        return Err(fail(
+            lua,
+            format!("{who}: solo una lista de cortes, sin claves ({usage})"),
+        ));
+    }
+    if count == 0 {
+        return Err(fail(
+            lua,
+            format!("{who}: hace falta al menos un corte ({usage})"),
+        ));
+    }
+    if count > MAX_EXPLICIT_SLICES {
+        return Err(fail(
+            lua,
+            format!("{who}: {count} cortes; como mucho {MAX_EXPLICIT_SLICES}"),
+        ));
+    }
+    let length = frame_to_ms(this.sample.frames(), &this.sample);
+    let mut entries = Vec::with_capacity(count);
+    for i in 1..=count {
+        let at = |what: String| fail(lua, format!("{who}: el corte {i} {what}"));
+        let Value::Table(entry) = table.raw_get::<Value>(i)? else {
+            return Err(at(format!("no es una tabla ({usage})")));
+        };
+        let number = |k: usize| -> mlua::Result<f64> {
+            match entry.raw_get::<Value>(k)? {
+                Value::Integer(v) => Ok(v as f64),
+                Value::Number(v) if v.is_finite() => Ok(v),
+                _ => Err(at(format!(
+                    "no es {{inicio, fin}} con dos números ({usage})"
+                ))),
+            }
+        };
+        let (start, end) = (number(1)?, number(2)?);
+        let name = match entry.raw_get::<Value>(3)? {
+            Value::Nil => None,
+            Value::String(name) => {
+                let name = name.to_str()?.to_string();
+                check_label(&name).map_err(|e| at(format!("(\"{name}\"): {e}")))?;
+                Some(name)
+            }
+            _ => return Err(at(format!("tiene un nombre que no es texto ({usage})"))),
+        };
+        if entry.raw_len() > 3 || entry.pairs::<Value, Value>().count() != entry.raw_len() {
+            return Err(at(format!("tiene de más ({usage})")));
+        }
+        if start < 0.0 {
+            return Err(at(format!("empieza antes del principio ({start} ms)")));
+        }
+        if end <= start {
+            return Err(at(format!(
+                "acaba ({end} ms) antes de empezar ({start} ms)"
+            )));
+        }
+        if end > length + 1e-6 {
+            return Err(at(format!(
+                "acaba en {end} ms, pasado el final de {} ({length:.1} ms)",
+                this.name
+            )));
+        }
+        if let Some(name) = &name
+            && let Some(other) = entries
+                .iter()
+                .position(|(_, _, n): &(f64, f64, Option<String>)| n.as_ref() == Some(name))
+        {
+            return Err(at(format!(
+                "se llama «{name}», como el corte {}",
+                other + 1
+            )));
+        }
+        entries.push((start, end, name));
+    }
+    let zero = cut_options(lua, who, options)?;
+    let frames = this.sample.frames();
+    let ranges = entries
+        .iter()
+        .map(|&(a, b, _)| ms_to_frame(a, &this.sample)..ms_to_frame(b, &this.sample).min(frames))
+        .collect();
+    let slices = Slices::from_ranges(ranges, frames, min_slice_gap(&this.sample)).map_err(
+        |(i, error)| {
+            let what = match error {
+                engine::RangeError::TooShort => "dura menos de 1 ms",
+                engine::RangeError::OutOfSample => "se sale del sample",
+                engine::RangeError::Reversed | engine::RangeError::Empty => {
+                    "acaba antes de empezar"
+                }
+            };
+            fail(lua, format!("{who}: el corte {} {what}", i + 1))
+        },
+    )?;
+    let call = slice_call::find(lua, &["slice"], slice_call::FirstArg::Table(&entries));
+    let labels = entries.into_iter().map(|(_, _, name)| name).collect();
+    cut_sample(
+        lua,
+        this,
+        slices,
+        Cut::detect(count),
+        zero,
+        call,
+        Some(labels),
+    )
 }
 
 /// `sample(...):instrument({ ... })` en Lua.
@@ -5236,14 +5393,74 @@ fn far_kept_pitch(track: &TrackDef) -> Option<String> {
 /// Termina de cortar un sample: aplica las ediciones del proyecto
 /// (`partir`, `unir`), luego sus ajustes (`corte`) y sus etiquetas, todo
 /// para este sample cortado así (`cut`). Lo que no cabe se avisa.
+/// `call`: dónde está escrita la llamada (y lo que va tras su primer
+/// argumento), o por qué no se encuentra. `explicit`: las etiquetas de los
+/// cortes de `slice({ ... })`, que no toman nada del proyecto.
 fn cut_sample(
     lua: &Lua,
+    this: &SampleHandle,
+    slices: Slices,
+    cut: Cut,
+    zero: Option<f64>,
+    call: Result<(TableSpan, String), String>,
+    explicit: Option<Vec<Option<String>>>,
+) -> mlua::Result<SlicedHandle> {
+    let _ = lua;
+    let is_explicit = explicit.is_some();
+    let (slices, labels, stale, adjusted) = match explicit {
+        Some(labels) => {
+            let gap = min_slice_gap(&this.sample);
+            let slices = match zero {
+                Some(ms) => slices.snapped_starts(&this.sample, zero_frames(ms, &this.sample), gap),
+                None => slices,
+            };
+            let count = slices.len();
+            (slices, labels, Vec::new(), vec![false; count])
+        }
+        None => project_cuts(this, slices, cut, zero),
+    };
+    let count = slices.len();
+    let call = call.map(|(span, rest)| SliceCall {
+        span,
+        ranges: slices.iter().collect(),
+        labels: labels.clone(),
+        rest,
+        sample_rate: this.sample.sample_rate(),
+    });
+    Ok(SlicedHandle {
+        path: this.path.clone(),
+        sample: this.sample.clone(),
+        origin: SliceOrigin {
+            sample: this.name.clone(),
+            count: cut.count,
+            grid: cut.grid,
+            indices: (0..count).map(Some).collect(),
+            zero_cross: zero,
+            explicit: is_explicit,
+            call,
+        },
+        slices,
+        labels: Rc::new(RefCell::new(labels)),
+        stale: Rc::new(stale),
+        adjusted,
+        stretch: this.stretch,
+        shapes: Rc::new(RefCell::new(vec![DEFAULT_SHAPE; count])),
+        slice_fx: Rc::new(RefCell::new(vec![SliceFxDef::default(); count])),
+        warnings: this.warnings.clone(),
+    })
+}
+
+/// Los cortes del detector o de la rejilla con lo que dice el proyecto
+/// (partir, unir, ajustes, cruces por cero y etiquetas): los cortes, sus
+/// etiquetas, las etiquetas de otro corte (para avisar) y cuáles están
+/// ajustados a mano.
+#[allow(clippy::type_complexity)]
+fn project_cuts(
     this: &SampleHandle,
     mut slices: Slices,
     cut: Cut,
     zero: Option<f64>,
-) -> mlua::Result<SlicedHandle> {
-    let _ = lua;
+) -> (Slices, Vec<Option<String>>, Vec<(String, Cut)>, Vec<bool>) {
     let gap = min_slice_gap(&this.sample);
     let warn = |warning: String| {
         let mut warnings = this.warnings.borrow_mut();
@@ -5370,26 +5587,7 @@ fn cut_sample(
             *slot = Some(label.name.clone());
         }
     }
-    let count = slices.len();
-    Ok(SlicedHandle {
-        path: this.path.clone(),
-        sample: this.sample.clone(),
-        origin: SliceOrigin {
-            sample: this.name.clone(),
-            count: cut.count,
-            grid: cut.grid,
-            indices: (0..count).map(Some).collect(),
-            zero_cross: zero,
-        },
-        slices,
-        labels: Rc::new(RefCell::new(labels)),
-        stale: Rc::new(stale),
-        adjusted,
-        stretch: this.stretch,
-        shapes: Rc::new(RefCell::new(vec![DEFAULT_SHAPE; count])),
-        slice_fx: Rc::new(RefCell::new(vec![SliceFxDef::default(); count])),
-        warnings: this.warnings.clone(),
-    })
+    (slices, labels, stale, adjusted)
 }
 
 /// `sample(...):slice(n)` en Lua: sample con sus cortes y sus etiquetas.

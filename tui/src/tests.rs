@@ -2525,26 +2525,33 @@ fn each_adjusted_slice_keeps_its_place() {
         "{}",
         app.view().message
     );
-    assert_eq!(app.view().tracks[0].adjusted, [true, true, true, false]);
+    // Escritos en el código como cortes explícitos (sin `*`: no hay
+    // detector con el que compararlos), y guardados con Ctrl-S.
+    assert_eq!(app.view().tracks[0].adjusted, [false; 4]);
+    let text = app.text_for_test();
+    assert!(
+        text.contains("slice({ {5, 72.3}, {72.3, 73.5}, {73.5, 93.75}, {93.75, 125} })"),
+        "{text}"
+    );
+    app.handle(ctrl('s'));
     let saved = std::fs::read_to_string(&project).unwrap();
-    for line in [
-        "corte = break.wav rejilla4 1 5\n",
-        "corte = break.wav rejilla4 2 72.3\n",
-        "corte = break.wav rejilla4 3 73.5\n",
-    ] {
-        assert!(saved.contains(line), "{line}: {saved}");
-    }
+    assert!(!saved.contains("corte ="), "{saved}");
 
-    // Reabierto, cada uno donde estaba.
-    let (controller, _engine) = new_engine(RATE);
-    let app = App::open_project(&project, controller, RATE).unwrap();
-    assert_eq!(starts(&app), [240, 3470, 3528, 4500]);
-    assert_eq!(app.view().tracks[0].adjusted, [true, true, true, false]);
-    assert!(app.view().message.is_empty() || !app.view().message.contains("no se aplica"));
+    // Reabierto, cada uno donde estaba, también abriendo solo el script.
+    for target in [&project, &path] {
+        let (controller, _engine) = new_engine(RATE);
+        let app = if target == &project {
+            App::open_project(target, controller, RATE).unwrap()
+        } else {
+            App::open(target, controller, RATE).unwrap()
+        };
+        assert_eq!(starts(&app), [240, 3470, 3528, 4500]);
+        assert!(!app.view().message.contains("no se aplica"));
+    }
 }
 
 #[test]
-fn slices_are_nudged_with_keys_and_saved_in_the_project() {
+fn slices_are_nudged_with_keys_and_saved_in_the_code() {
     let path = fixture("nudge", Some(SONG));
     let dir = path.parent().unwrap().to_path_buf();
     let project = dir.join("p.sampler");
@@ -2558,10 +2565,15 @@ fn slices_are_nudged_with_keys_and_saved_in_the_project() {
     app.handle(key('.'));
     let view = app.view();
     assert!(
-        view.message
-            .starts_with("corte 2 de drums: empieza en 67.5 ms (guardado en"),
+        view.message.starts_with(
+            "corte 2 de drums: empieza en 67.5 ms; slice(2) pasa a cortes explícitos en el código"
+        ),
         "{}",
         view.message
+    );
+    assert!(
+        view.message
+            .ends_with("Ctrl-S lo guarda, Ctrl-Z lo deshace")
     );
     assert_eq!(view.tracks[0].slices[1], 3240..6000);
     assert_eq!(
@@ -2569,17 +2581,24 @@ fn slices_are_nudged_with_keys_and_saved_in_the_project() {
         0..3240,
         "el anterior acaba donde empieza"
     );
+    offline::render(&mut engine, 100, 2);
     app.handle(key('>'));
+    offline::render(&mut engine, 100, 2);
     assert_eq!(app.view().tracks[0].slices[1].start, 3288);
-    let saved = std::fs::read_to_string(&project).unwrap();
-    assert!(saved.contains("corte = break.wav 2 2 68.5\n"), "{saved}");
-    // La vista del sample lo marca con * y da su posición.
+    assert!(
+        app.text_for_test()
+            .contains("sample(\"break.wav\"):slice({ {0, 68.5}, {68.5, 125} })"),
+        "{}",
+        app.text_for_test()
+    );
+    assert!(app.dirty(), "se guarda con Ctrl-S");
+    // La vista del sample da su posición.
     let screen = text(&draw(&mut app, 160, 40));
-    assert!(screen.contains("corte 2* 68.5 ms"), "{screen}");
+    assert!(screen.contains("corte 2 68.5 ms"), "{screen}");
 
     // «,» lo adelanta; no puede pasar de su vecino (1 ms tras el corte 1).
     // (El motor avanza entre teclas, como en tiempo real: cada ajuste es
-    // una recarga y una preescucha en la cola de comandos.)
+    // una recarga en la cola de comandos.)
     for _ in 0..20 {
         app.handle(key(','));
         offline::render(&mut engine, 100, 2);
@@ -2594,20 +2613,38 @@ fn slices_are_nudged_with_keys_and_saved_in_the_project() {
         "{}",
         view.message
     );
-
-    // Reabierto, sigue igual; «Quitar el ajuste» lo devuelve al detector.
-    let (controller, _engine) = new_engine(RATE);
-    let mut app = App::open_project(&project, controller, RATE).unwrap();
-    assert_eq!(app.view().tracks[0].slices[1].start, 58);
-    assert_eq!(app.view().tracks[0].adjusted, vec![false, true]);
-    app.select_slice(true);
-    palette(&mut app, "quitar el ajuste");
-    assert_eq!(app.view().tracks[0].slices[1].start, 3000);
+    // Ctrl-Z deshace los cambios de uno en uno, como el texto: vuelve a
+    // 3,5 ms.
+    app.handle(ctrl('z'));
+    app.handle(ctrl('s'));
     assert!(
         !std::fs::read_to_string(&project)
             .unwrap()
             .contains("corte =")
     );
+
+    // Reabierto (el proyecto o solo el script), sigue igual.
+    for target in [&project, &path] {
+        let (controller, _engine) = new_engine(RATE);
+        let app = if target == &project {
+            App::open_project(target, controller, RATE).unwrap()
+        } else {
+            App::open(target, controller, RATE).unwrap()
+        };
+        assert_eq!(app.view().tracks[0].slices[1].start, 168);
+        assert_eq!(app.view().tracks[0].adjusted, vec![false, false]);
+    }
+    // «Quitar el ajuste» no tiene nada que quitar: lo dice.
+    let (controller, _engine) = new_engine(RATE);
+    let mut app = App::open(&path, controller, RATE).unwrap();
+    app.select_slice(true);
+    palette(&mut app, "quitar el ajuste");
+    assert!(
+        app.view().message.contains("están escritos en el código"),
+        "{}",
+        app.view().message
+    );
+    assert_eq!(app.view().tracks[0].slices[1].start, 168);
 }
 
 mod acid;
@@ -2659,6 +2696,7 @@ mod sends;
 mod shapes;
 mod sidechain;
 mod slice_fx;
+mod slice_save;
 mod split;
 mod step_fx;
 mod stretch;

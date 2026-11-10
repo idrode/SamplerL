@@ -147,7 +147,7 @@ fn the_wheel_zooms_around_the_pointer_and_the_view_stays_there() {
 
 #[test]
 fn a_right_click_adds_a_slice_there_and_on_a_mark_removes_it() {
-    let (project, mut app, _engine) = open_playing("zoom_right_click");
+    let (_, mut app, _engine) = open_playing("zoom_right_click");
     // Con zoom, para ponerlo con más precisión.
     app.handle(Input {
         key: Key::Right,
@@ -174,16 +174,24 @@ fn a_right_click_adds_a_slice_there_and_on_a_mark_removes_it() {
     );
     // La vista no salta.
     assert_eq!(view.tracks[0].window, Some(2250..3750));
-    let saved = std::fs::read_to_string(&project).unwrap();
-    assert!(saved.contains("partir = break.wav 2 "), "{saved}");
+    assert!(
+        app.text_for_test()
+            .contains("slice({ {0, 62.5}, {62.5, 74.9"),
+        "{}",
+        app.text_for_test()
+    );
     // Clic derecho en su marca: lo quita.
     draw(&mut app, 160, 40);
     app.mouse(MouseAction::RightDown, column_of(&app, new), y);
     let view = app.view();
     assert_eq!(view.tracks[0].slices, [0..3000, 3000..6000]);
     assert!(view.message.contains("unido al 2"), "{}", view.message);
-    let saved = std::fs::read_to_string(&project).unwrap();
-    assert!(saved.contains("unir = break.wav 2 3"), "{saved}");
+    assert!(
+        app.text_for_test()
+            .contains("slice({ {0, 62.5}, {62.5, 125} })"),
+        "{}",
+        app.text_for_test()
+    );
     // Antes del primer corte (que empieza en 0) no cabe nada; la marca
     // del 1 no se quita.
     app.handle(key('-'));

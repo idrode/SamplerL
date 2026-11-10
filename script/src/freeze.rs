@@ -320,6 +320,8 @@ fn frozen_track(
             grid: true,
             indices: vec![None],
             zero_cross: None,
+            explicit: false,
+            call: Err("es una pista congelada".into()),
         },
         stretch: None,
         rendered: Vec::new(),

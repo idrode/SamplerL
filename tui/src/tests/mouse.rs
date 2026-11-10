@@ -154,8 +154,8 @@ fn mark_column(app: &App, start: usize) -> u16 {
 }
 
 #[test]
-fn dragging_a_slice_mark_moves_it_and_saves_the_project() {
-    let (project, mut app, _engine) = open_project("mouse_slice_drag");
+fn dragging_a_slice_mark_moves_it_and_writes_it_in_the_code() {
+    let (project, mut app, mut engine) = open_project("mouse_slice_drag");
     draw(&mut app, 160, 40);
     let area = app.sample_area.unwrap();
     let (x, y) = (mark_column(&app, 3000), area.y + 1);
@@ -172,12 +172,9 @@ fn dragging_a_slice_mark_moves_it_and_saves_the_project() {
     assert_eq!(view.tracks[0].slices[1].start, moved);
     assert_eq!(view.tracks[0].slices[0].end, moved);
     assert_eq!(view.selected_slice, Some(1));
-    assert!(
-        !std::fs::read_to_string(&project)
-            .unwrap()
-            .contains("corte =")
-    );
-    // Al soltar, se pone como con «.» (redondeado a 0,1 ms) y se guarda.
+    assert!(app.text_for_test().contains("slice(2)"));
+    // Al soltar, se pone como con «.» (redondeado a 0,1 ms) y se escribe en
+    // el código.
     app.mouse(MouseAction::Up, x + 5, y);
     let view = app.view();
     let start = view.tracks[0].slices[1].start;
@@ -185,14 +182,24 @@ fn dragging_a_slice_mark_moves_it_and_saves_the_project() {
         start.abs_diff(moved) <= RATE as usize / 10_000 + 1,
         "{start} vs {moved}"
     );
-    assert_eq!(view.tracks[0].adjusted, vec![false, true]);
     assert!(
         view.message.starts_with("corte 2 de drums: empieza en"),
         "{}",
         view.message
     );
+    let ms = (start as f64 / 48.0 * 10.0).round() / 10.0;
+    assert!(
+        app.text_for_test()
+            .contains(&format!("slice({{ {{0, {ms}}}, {{{ms}, 125}} }})")),
+        "{}",
+        app.text_for_test()
+    );
+    // Con Ctrl-S, en el script; el proyecto no lo guarda.
+    app.handle(ctrl('s'));
     let saved = std::fs::read_to_string(&project).unwrap();
-    assert!(saved.contains("corte = break.wav 2 2 "), "{saved}");
+    assert!(!saved.contains("corte ="), "{saved}");
+    // (El motor recoge las cargas.)
+    offline::render(&mut engine, 100, 2);
     // Se sigue moviendo desde donde quedó.
     draw(&mut app, 160, 40);
     let x = mark_column(&app, start);
