@@ -224,3 +224,28 @@ fn the_rewritten_call_reads_back_the_same_slices() {
     let call = again.tracks[0].origin.call.clone().unwrap();
     assert_eq!(call.ranges, ranges);
 }
+
+#[test]
+fn stretched_explicit_slices_keep_their_own_ends() {
+    let dir = fixture("stretch");
+    // 0,5 s a 120 BPM estirado a 150 (×0,8): cada límite, en su sitio.
+    let song = eval(
+        &dir,
+        "bpm(150)\n\
+         local s = sample(\"four.wav\"):stretch(120):slice({ {0, 100}, {150, 400}, {300, 500} })\n\
+         track(\"a\", s):steps(\"1 2 3 .  . . . .  . . . .  . . . .\")\n",
+    )
+    .unwrap();
+    let scaled = |ms: f64| (ms * 48.0 * 0.8).round() as usize;
+    assert_eq!(
+        slices(&song, "a"),
+        vec![
+            0..scaled(100.0),
+            scaled(150.0)..scaled(400.0),
+            scaled(300.0)..scaled(500.0)
+        ]
+    );
+    // La llamada guarda los del sample sin estirar (para reescribirla).
+    let call = song.tracks[0].origin.call.clone().unwrap();
+    assert_eq!(call.ranges, vec![0..4800, 7200..19_200, 14_400..24_000]);
+}

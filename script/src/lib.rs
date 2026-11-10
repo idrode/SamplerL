@@ -1745,7 +1745,15 @@ impl ScriptHost {
             .iter()
             .map(|t| {
                 t.def.stretch.map(|_| {
-                    let starts = t.def.slices.iter().map(|r| r.start).collect();
+                    // Con cortes explícitos, también sus finales (pueden no
+                    // ser el inicio de otro); los del detector, como siempre.
+                    let ends = t.def.origin.explicit;
+                    let starts = t
+                        .def
+                        .slices
+                        .iter()
+                        .flat_map(|r| std::iter::once(r.start).chain(ends.then_some(r.end)))
+                        .collect();
                     (t.def.sample.clone(), starts)
                 })
             })

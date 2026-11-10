@@ -2273,3 +2273,48 @@ fn removing_and_replacing_live_never_frees_in_the_callback() {
     controller.stop_preview().unwrap();
     run(&mut controller, "parar la preescucha");
 }
+
+#[test]
+fn independent_slices_with_gaps_and_overlaps_never_allocate() {
+    let mut mono = vec![0.0f32; 24_000];
+    for (i, s) in mono.iter_mut().enumerate() {
+        *s = ((i % 300) as f32 / 300.0 - 0.5) * 0.8;
+    }
+    let sample = Arc::new(Sample::from_interleaved(&mono, 1, RATE, RATE).unwrap());
+    // Cortes editados: el 1 y el 2 se solapan, entre el 2 y el 3 hay un
+    // hueco, y el 3 es largo (sigue sonando al cambiar de compás).
+    let edited = Slices::from_ranges(vec![0..5000, 3000..7000, 9000..23_000], 24_000, 48).unwrap();
+    let other = Slices::from_ranges(vec![100..900, 50..20_000, 8000..8100], 24_000, 48).unwrap();
+    let bar = |slices: usize| {
+        let mut steps = [None; STEPS];
+        for (k, slot) in steps.iter_mut().enumerate() {
+            *slot = Some(Step::new(k % slices).with_retrig(if k % 5 == 4 { 2 } else { 1 }));
+        }
+        steps
+    };
+    let first = Pattern::from_bars(sample.clone(), &edited, &[bar(3)]).unwrap();
+    let second = Pattern::from_bars(sample.clone(), &other, &[bar(3)]).unwrap();
+    let (mut controller, mut engine) = new_engine(RATE);
+    controller.set_bpm(170.0).unwrap();
+    controller.set_pattern(first).unwrap();
+    controller.start().unwrap();
+    let mut out = vec![0.0f32; 512 * 2];
+    let n = counted(|| {
+        for _ in 0..300 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas con cortes con huecos y solapes");
+    // Los cortes cambian mientras suenan (entran al compás), y los pads y
+    // la preescucha tocan los nuevos.
+    controller.set_track_pattern(0, Some(second)).unwrap();
+    controller.play_slice_on(1, &sample, &other, 1).unwrap();
+    controller.preview_slice(&sample, &edited, 2).unwrap();
+    let n = counted(|| {
+        for _ in 0..300 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas al cambiar los cortes mientras suenan");
+    assert!(out.iter().all(|s| s.is_finite()));
+}
