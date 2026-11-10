@@ -9,6 +9,71 @@ use rubato::{Fft, FixedSync, Resampler};
 pub struct Sample {
     data: Vec<f32>,
     sample_rate: u32,
+    repairs: Repairs,
+}
+
+/// Nivel más alto que se acepta en un sample (+36 dBFS): por encima, un WAV
+/// en coma flotante trae basura (`1e30`), que desbordaría el resampleo o
+/// los filtros. Se recorta a este valor.
+pub const MAX_SAMPLE_LEVEL: f32 = 64.0;
+
+/// Lo que hubo que arreglar al cargar un sample (ver
+/// [`Sample::from_interleaved`]). Con un archivo normal, todo a cero.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Repairs {
+    /// Muestras NaN o infinitas, puestas a 0.
+    pub non_finite: usize,
+    /// Muestras por encima de [`MAX_SAMPLE_LEVEL`], recortadas.
+    pub clamped: usize,
+}
+
+impl Repairs {
+    pub fn any(&self) -> bool {
+        self.non_finite > 0 || self.clamped > 0
+    }
+}
+
+impl fmt::Display for Repairs {
+    /// «3 muestras no válidas (NaN o infinito) puestas a 0», para un aviso.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let plural = |n: usize| if n == 1 { "" } else { "s" };
+        let mut parts = Vec::new();
+        if self.non_finite > 0 {
+            let n = self.non_finite;
+            parts.push(format!(
+                "{n} muestra{} no válida{} (NaN o infinito) puesta{} a 0",
+                plural(n),
+                plural(n),
+                plural(n)
+            ));
+        }
+        if self.clamped > 0 {
+            let n = self.clamped;
+            parts.push(format!(
+                "{n} muestra{} fuera de rango (más de {MAX_SAMPLE_LEVEL}) recortada{}",
+                plural(n),
+                plural(n)
+            ));
+        }
+        f.write_str(&parts.join(" y "))
+    }
+}
+
+/// Deja `x` en algo que el motor puede tocar: lo no finito a 0, lo enorme
+/// recortado y los subnormales a 0 (inaudibles, y lentos en los filtros).
+/// Lo normal no cambia.
+fn sanitize(x: f32, repairs: &mut Repairs) -> f32 {
+    if !x.is_finite() {
+        repairs.non_finite += 1;
+        0.0
+    } else if x.abs() > MAX_SAMPLE_LEVEL {
+        repairs.clamped += 1;
+        MAX_SAMPLE_LEVEL.copysign(x)
+    } else if x.is_subnormal() {
+        0.0
+    } else {
+        x
+    }
 }
 
 #[derive(Debug)]
@@ -61,6 +126,12 @@ impl Sample {
 
     /// Construye un sample desde audio entrelazado con cualquier número de canales.
     /// Mono se duplica a ambos lados; con más de dos canales se usan los dos primeros.
+    ///
+    /// Antes de resamplear se sanea: NaN e infinitos a 0, lo que pasa de
+    /// [`MAX_SAMPLE_LEVEL`] recortado y los subnormales a 0. Un NaN rompía
+    /// el resampleo (pánico de `rubato`) o, sin resampleo, se quedaba en
+    /// los filtros y dejaba muda la mezcla. Cuántas se arreglaron, en
+    /// [`Sample::repairs`] (la carga lo avisa).
     pub fn from_interleaved(
         samples: &[f32],
         channels: usize,
@@ -72,9 +143,14 @@ impl Sample {
         }
         let frames = samples.len() / channels;
         let mut stereo = Vec::with_capacity(frames * 2);
+        let mut repairs = Repairs::default();
         for frame in samples.chunks_exact(channels) {
-            let l = frame[0];
-            let r = if channels > 1 { frame[1] } else { l };
+            let l = sanitize(frame[0], &mut repairs);
+            let r = if channels > 1 {
+                sanitize(frame[1], &mut repairs)
+            } else {
+                l
+            };
             stereo.push(l);
             stereo.push(r);
         }
@@ -87,7 +163,13 @@ impl Sample {
         Ok(Sample {
             data,
             sample_rate: target_rate,
+            repairs,
         })
+    }
+
+    /// Lo que hubo que arreglar al cargarlo (ver [`Sample::from_interleaved`]).
+    pub fn repairs(&self) -> Repairs {
+        self.repairs
     }
 
     /// Un frame de silencio: el sample de una pista que no toca samples
@@ -96,12 +178,17 @@ impl Sample {
         Sample {
             data: vec![0.0; 2],
             sample_rate,
+            repairs: Repairs::default(),
         }
     }
 
     /// Sample desde estéreo entrelazado ya a la frecuencia del motor.
     pub(crate) fn from_raw(data: Vec<f32>, sample_rate: u32) -> Self {
-        Sample { data, sample_rate }
+        Sample {
+            data,
+            sample_rate,
+            repairs: Repairs::default(),
+        }
     }
 
     pub fn frames(&self) -> usize {
@@ -224,6 +311,7 @@ impl Sample {
         Sample {
             data,
             sample_rate: self.sample_rate,
+            repairs: self.repairs,
         }
     }
 }

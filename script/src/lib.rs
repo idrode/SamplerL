@@ -2163,6 +2163,16 @@ impl ScriptHost {
                 let path = base_dir.join(&name);
                 let mut sample = load_cached(&mut cache.borrow_mut(), &path, rate)
                     .map_err(|e| fail(lua, format!("{}: {e}", path.display())))?;
+                // Un WAV con NaN, infinitos o valores enormes se carga
+                // saneado (ver `Sample::from_interleaved`), con aviso.
+                let repairs = sample.repairs();
+                if repairs.any() {
+                    let warning = format!("{name}: {repairs}");
+                    let mut list = warnings.borrow_mut();
+                    if !list.contains(&warning) {
+                        list.push(warning);
+                    }
+                }
                 if let Some(options) = options {
                     let options = import_options(lua, &name, &options)?;
                     if !options.is_empty() {

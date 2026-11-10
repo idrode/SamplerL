@@ -79,3 +79,78 @@ fn import_errors_point_at_the_line() {
         error("local s = sample(\"suelto.wav\", { fade_in = true })").contains("fade_in son ms")
     );
 }
+
+/// Un WAV en coma flotante con NaN e infinitos carga (saneado: esas
+/// muestras a 0) y la carga lo avisa con el nombre y cuántas eran. A otra
+/// frecuencia que el motor mataba el programa; a la misma, dejaba la mezcla
+/// muda (N2 y N3 de `docs/AUDITORIA-2.md`).
+#[test]
+fn a_float_wav_with_nan_loads_with_a_warning_and_the_mix_keeps_sounding() {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("import-nan");
+    std::fs::create_dir_all(&dir).unwrap();
+    // WAV mono en coma flotante de 32 bits, escrito a mano.
+    for (file, rate) in [("nan44.wav", 44_100u32), ("nan48.wav", 48_000)] {
+        let samples: Vec<f32> = (0..4001)
+            .map(|i| match i {
+                2000 => f32::NAN,
+                2001 => f32::INFINITY,
+                _ if i < 2000 => (i as f32 * 0.05).sin(),
+                _ => 0.1,
+            })
+            .collect();
+        let data: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
+        let mut wav = Vec::new();
+        wav.extend(b"RIFF");
+        wav.extend((36 + data.len() as u32).to_le_bytes());
+        wav.extend(b"WAVEfmt ");
+        wav.extend(16u32.to_le_bytes());
+        wav.extend(3u16.to_le_bytes());
+        wav.extend(1u16.to_le_bytes());
+        wav.extend(rate.to_le_bytes());
+        wav.extend((rate * 4).to_le_bytes());
+        wav.extend(4u16.to_le_bytes());
+        wav.extend(32u16.to_le_bytes());
+        wav.extend(b"data");
+        wav.extend((data.len() as u32).to_le_bytes());
+        wav.extend(&data);
+        std::fs::write(dir.join(file), wav).unwrap();
+    }
+    engine::offline::write_wav(dir.join("a.wav"), &[0.5; 1000], 1, 48_000).unwrap();
+    for file in ["nan44.wav", "nan48.wav"] {
+        let source = format!(
+            r#"bpm(120)
+local malo = sample("{file}")
+local a = sample("a.wav"):slice(1)
+track("malo", malo:slice(1)):steps("1 . . .  . . . .  . . . .  . . . .")
+  :fx("filter", {{ type = "lowpass", cutoff = 3000 }}):send("reverb", 0.3)
+track("x", a):steps("1 1 1 1  1 1 1 1  1 1 1 1  1 1 1 1")
+"#
+        );
+        let (mut controller, mut engine) = engine::new_engine(48_000);
+        let mut host = script::ScriptHost::new(48_000);
+        let song = host
+            .load(&mut controller, &source, "song.lua", &dir)
+            .map_err(|e| e.message)
+            .unwrap();
+        assert!(
+            song.warnings
+                .iter()
+                .any(|w| w.starts_with(&format!("{file}: 2 muestras no válidas"))),
+            "{:?}",
+            song.warnings
+        );
+        controller.start().unwrap();
+        let bar = 96_000;
+        let audio = engine::offline::render(&mut engine, 4 * bar, 2);
+        for b in 0..4 {
+            let silent = audio[2 * b * bar..2 * (b + 1) * bar]
+                .chunks(2)
+                .filter(|f| f[0] == 0.0 && f[1] == 0.0)
+                .count();
+            assert!(
+                silent < bar / 2,
+                "{file}, compás {b}: {silent} frames mudos"
+            );
+        }
+    }
+}

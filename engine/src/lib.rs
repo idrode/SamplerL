@@ -66,7 +66,7 @@ pub use lane::{
 pub use limiter::{LIMIT_THRESHOLD, soft_limit};
 pub use output::{NullOutput, Output, open_null_output, open_output};
 pub use pitch::{NoteGuess, detect_mono, detect_note, detect_notes, note_name};
-pub use sample::{ImportOptions, LoadError, Sample};
+pub use sample::{ImportOptions, LoadError, MAX_SAMPLE_LEVEL, Repairs, Sample};
 pub use sequencer::{
     DEFAULT_BPM, MAX_BPM, MAX_CHORD, MAX_CYCLE_BARS, MAX_DELAY, MAX_GAIN, MAX_RETRIG,
     MAX_SEMITONES, MAX_STEPS, MIN_BPM, Meter, Pattern, STEPS, Step, TempoRamp, bar_frames,
