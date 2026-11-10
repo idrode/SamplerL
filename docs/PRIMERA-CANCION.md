@@ -240,7 +240,7 @@ ventana basta.
 
 ## Paso 3. Cargar un break y trocearlo
 
-> **Referencia:** [sample(ruta [, opciones])](GUIA.md#sampleruta--opciones) · [sample:slice(n [, opciones])](GUIA.md#sampleslicen--opciones) · [Saber el tempo del break](GUIA.md#saber-el-tempo-del-break) · [sample:detect_bpm()](GUIA.md#sampledetect_bpm) · [bpm(n)](GUIA.md#bpmn) · [Etiquetar cortes desde la interfaz](GUIA.md#etiquetar-cortes-desde-la-interfaz).
+> **Referencia:** [sample(ruta [, opciones])](GUIA.md#sampleruta--opciones) · [sample:slice(n | cortes [, opciones])](GUIA.md#sampleslicen--cortes--opciones) · [Saber el tempo del break](GUIA.md#saber-el-tempo-del-break) · [sample:detect_bpm()](GUIA.md#sampledetect_bpm) · [bpm(n)](GUIA.md#bpmn) · [Etiquetar cortes desde la interfaz](GUIA.md#etiquetar-cortes-desde-la-interfaz).
 
 **Borra la plantilla.** Ctrl-Inicio va al principio; Shift-Ctrl-Fin
 selecciona hasta el final; Ctrl-X lo corta. (O escribe el script con tu
@@ -360,7 +360,7 @@ la [sección 7](GUIA.md#7-solución-de-problemas).
 > zero_cross = 2 })` (o `slice(8, { ... })`) lleva cada inicio al cruce
 > por cero más cercano, a no más de 2 ms. Vale también para tus ajustes
 > con `,` y `.`. Ver
-> [sample:slice(n [, opciones])](GUIA.md#sampleslicen--opciones).
+> [sample:slice(n | cortes [, opciones])](GUIA.md#sampleslicen--cortes--opciones).
 
 ## Paso 4. El primer patrón de batería
 

@@ -1623,19 +1623,32 @@ pub const FUNCTIONS: &[Function] = &[
     Function {
         name: "slice",
         receiver: Receiver::Sample,
-        signature: "sample:slice(n [, opciones])",
+        signature: "sample:slice(n | cortes [, opciones])",
         returns: Some(Receiver::Slices),
-        summary: "Corta el sample en sus n golpes más fuertes.",
-        doc: "Si hay menos golpes, devuelve menos cortes. Usa el detector por flujo \
-              espectral con 40 ms de separación mínima. Con `zero_cross` (tabla de abajo), \
-              cada inicio de corte se lleva al cruce por cero más cercano, a no más de esos \
-              ms, para que el golpe no empiece en un salto (un clic); vale también para los \
-              cortes de `add`, `move` y los ajustes del proyecto. Sin la opción, los cortes \
-              son exactamente los de siempre.",
+        summary: "Corta el sample en sus n golpes más fuertes, o en los cortes de una tabla.",
+        doc: "Con un número, busca los golpes: si hay menos, devuelve menos cortes; usa el \
+              detector por flujo espectral con 40 ms de separación mínima, y cada corte acaba \
+              donde empieza el siguiente. Con una tabla, `{ {inicio, fin}, ... }` en ms del \
+              sample (sin estirar), cada corte tiene su propio inicio y su propio final, en el \
+              orden de la tabla (el primero es el 1): pueden dejar huecos entre ellos o \
+              solaparse, y cada uno dura al menos 1 ms y cabe en el sample (si no, error con \
+              el número del corte, y sigue sonando lo anterior). Un tercer valor le pone \
+              nombre: `{0, 120, \"kick\"}`. Es la forma que escribe la interfaz al editar los \
+              cortes en la onda (ratón o teclas): la llamada `slice(8)` pasa a la tabla con los \
+              cortes que daba, y se guarda con el script. Todo lo de un corte (`set`, `dur`, \
+              `fit`, `rev`, `bend`, `instrument`, `note`, `fx`, `warp`) usa sus límites. Con \
+              `zero_cross` (tabla de abajo), cada inicio de corte se lleva al cruce por cero \
+              más cercano, a no más de esos ms, para que el golpe no empiece en un salto (un \
+              clic); vale también para los cortes de `add`, `move` y los ajustes del proyecto. \
+              Sin la opción, los cortes son exactamente los de siempre.",
         params: &[
             Param {
                 name: "n",
                 description: "cortes a buscar (1 a 64)",
+            },
+            Param {
+                name: "cortes",
+                description: "tabla de hasta 64 cortes `{inicio, fin}` o `{inicio, fin, \"nombre\"}`, en ms",
             },
             Param {
                 name: "opciones",
@@ -1646,7 +1659,10 @@ pub const FUNCTIONS: &[Function] = &[
         example: Some(
             "local amen = sample(\"amen.wav\"):slice(8)\n\
              local cuantos = amen:count()\n\
-             track(\"drums\", amen):steps(\"1 . . .  . . . .  1 . . .  . . . .\")\n",
+             track(\"drums\", amen):steps(\"1 . . .  . . . .  1 . . .  . . . .\")\n\
+             -- Cada corte con su inicio y su final: un hueco y un solape.\n\
+             local trozos = sample(\"amen.wav\"):slice({ {0, 90, \"kick\"}, {120, 260}, {200, 400} })\n\
+             track(\"trozos\", trozos):steps(\"kick . 2 .  3 . . .  kick . . .  2 . 3 .\")\n",
         ),
     },
     Function {
@@ -1704,6 +1720,28 @@ pub const FUNCTIONS: &[Function] = &[
              track(\"drums\", amen):steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\")\n\
              track(\"sub\", synth(\"sub\", {}))\n  \
              :melody(nota .. \" _ _ _  _ _ _ _  . . . .  . . . .\")\n",
+        ),
+    },
+    Function {
+        name: "range",
+        receiver: Receiver::Slices,
+        signature: "cortes:range(i)",
+        returns: None,
+        summary: "Dónde empieza y dónde acaba el corte i (desde 1), en ms.",
+        doc: "Devuelve dos números, el inicio y el final en ms del sample (sin estirar), \
+              al microsegundo. Con los cortes del detector, el final es el inicio del \
+              siguiente; con los de una tabla, el suyo.",
+        params: &[Param {
+            name: "i",
+            description: "número del corte (desde 1)",
+        }],
+        template: "range(${1})",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             local desde, hasta = amen:range(3)\n\
+             -- La caja, solo su primera mitad.\n\
+             amen:move(3, desde, (desde + hasta) / 2)\n\
+             track(\"drums\", amen):steps(\"1 . 3 .  . . 3 .  1 . 3 .  . . 3 .\")\n",
         ),
     },
     Function {
@@ -1860,14 +1898,17 @@ pub const FUNCTIONS: &[Function] = &[
     Function {
         name: "move",
         receiver: Receiver::Slices,
-        signature: "cortes:move(i, ms)",
+        signature: "cortes:move(i, ms [, fin])",
         returns: Some(Receiver::Slices),
-        summary: "Ajuste manual: el corte i empieza en ms (desde el principio del sample).",
-        doc: "Manda sobre el detector; el corte anterior acaba donde empieza este. \
-              Tiene que quedar a más de 1 ms de sus vecinos. Cambia la variable, \
-              así que hazlo antes de usarla en `track()`. Desde la interfaz, el \
-              mismo ajuste se hace con teclas en el modo tocar y se guarda en el \
-              proyecto (`corte = amen.wav 8 3 412.5`).",
+        summary: "Ajuste manual: el corte i empieza en ms (y, con fin, acaba ahí).",
+        doc: "Con cortes del detector (`slice(n)`) y sin `fin`, manda sobre el detector y \
+              el corte anterior acaba donde empieza este; tiene que quedar a más de 1 ms de \
+              sus vecinos. Con `fin`, o con cortes de una tabla (`slice({ ... })`), solo se \
+              mueve este corte: los vecinos se quedan como estaban (puede quedar un hueco o \
+              un solape), y tiene que durar al menos 1 ms y caber en el sample. Cambia la \
+              variable, así que hazlo antes de usarla en `track()`. Desde la interfaz, lo \
+              mismo se hace arrastrando en la onda o con `,` `.` `<` `>` en el modo tocar, y \
+              se escribe en la llamada `slice(...)`.",
         params: &[
             Param {
                 name: "i",
@@ -1877,12 +1918,18 @@ pub const FUNCTIONS: &[Function] = &[
                 name: "ms",
                 description: "dónde empieza, en ms desde el principio del sample",
             },
+            Param {
+                name: "fin",
+                description: "dónde acaba, en ms (sin él, donde acababa; los vecinos no se mueven)",
+            },
         ],
         template: "move(${2}, ${200})",
         example: Some(
             "local amen = sample(\"amen.wav\"):slice(8)\n\
              -- El charles del corte 2, un poco antes para que entre con su ataque.\n\
              amen:move(2, 205.5)\n\
+             -- El corte 5, más corto, sin mover el 6.\n\
+             amen:move(5, amen:range(5), amen:range(5) + 60)\n\
              track(\"drums\", amen):steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\")\n",
         ),
     },

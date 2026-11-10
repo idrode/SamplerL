@@ -3495,13 +3495,14 @@ local bass = sh101{
 track("bass", bass):melody("c . c c/  eb . c . g1 . bb1 c/  . c eb f")
 ```
 
-### `sample:slice(n [, opciones])`
+### `sample:slice(n | cortes [, opciones])`
 
 Devuelve: cortes.
 
-Corta el sample en sus n golpes más fuertes. Si hay menos golpes, devuelve menos cortes. Usa el detector por flujo espectral con 40 ms de separación mínima. Con `zero_cross` (tabla de abajo), cada inicio de corte se lleva al cruce por cero más cercano, a no más de esos ms, para que el golpe no empiece en un salto (un clic); vale también para los cortes de `add`, `move` y los ajustes del proyecto. Sin la opción, los cortes son exactamente los de siempre.
+Corta el sample en sus n golpes más fuertes, o en los cortes de una tabla. Con un número, busca los golpes: si hay menos, devuelve menos cortes; usa el detector por flujo espectral con 40 ms de separación mínima, y cada corte acaba donde empieza el siguiente. Con una tabla, `{ {inicio, fin}, ... }` en ms del sample (sin estirar), cada corte tiene su propio inicio y su propio final, en el orden de la tabla (el primero es el 1): pueden dejar huecos entre ellos o solaparse, y cada uno dura al menos 1 ms y cabe en el sample (si no, error con el número del corte, y sigue sonando lo anterior). Un tercer valor le pone nombre: `{0, 120, "kick"}`. Es la forma que escribe la interfaz al editar los cortes en la onda (ratón o teclas): la llamada `slice(8)` pasa a la tabla con los cortes que daba, y se guarda con el script. Todo lo de un corte (`set`, `dur`, `fit`, `rev`, `bend`, `instrument`, `note`, `fx`, `warp`) usa sus límites. Con `zero_cross` (tabla de abajo), cada inicio de corte se lleva al cruce por cero más cercano, a no más de esos ms, para que el golpe no empiece en un salto (un clic); vale también para los cortes de `add`, `move` y los ajustes del proyecto. Sin la opción, los cortes son exactamente los de siempre.
 
 - `n`: cortes a buscar (1 a 64)
+- `cortes`: tabla de hasta 64 cortes `{inicio, fin}` o `{inicio, fin, "nombre"}`, en ms
 - `opciones`: tabla con `zero_cross` (ver abajo)
 
 | Parámetro | Qué es | Por defecto | Valores |
@@ -3512,6 +3513,9 @@ Corta el sample en sus n golpes más fuertes. Si hay menos golpes, devuelve meno
 local amen = sample("amen.wav"):slice(8)
 local cuantos = amen:count()
 track("drums", amen):steps("1 . . .  . . . .  1 . . .  . . . .")
+-- Cada corte con su inicio y su final: un hueco y un solape.
+local trozos = sample("amen.wav"):slice({ {0, 90, "kick"}, {120, 260}, {200, 400} })
+track("trozos", trozos):steps("kick . 2 .  3 . . .  kick . . .  2 . 3 .")
 ```
 
 ### `cortes:count()`
@@ -3545,6 +3549,20 @@ local nota = amen:note(1) or "C1"
 track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
 track("sub", synth("sub", {}))
   :melody(nota .. " _ _ _  _ _ _ _  . . . .  . . . .")
+```
+
+### `cortes:range(i)`
+
+Dónde empieza y dónde acaba el corte i (desde 1), en ms. Devuelve dos números, el inicio y el final en ms del sample (sin estirar), al microsegundo. Con los cortes del detector, el final es el inicio del siguiente; con los de una tabla, el suyo.
+
+- `i`: número del corte (desde 1)
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+local desde, hasta = amen:range(3)
+-- La caja, solo su primera mitad.
+amen:move(3, desde, (desde + hasta) / 2)
+track("drums", amen):steps("1 . 3 .  . . 3 .  1 . 3 .  . . 3 .")
 ```
 
 ### `cortes:set([i,] parámetros)`
@@ -3645,19 +3663,22 @@ amen:name(1, "kick"):name(2, "hat"):name(3, "snare")
 track("drums", amen):steps("kick . hat .  snare . hat .  kick kick hat .  snare . hat^7@0.5 .")
 ```
 
-### `cortes:move(i, ms)`
+### `cortes:move(i, ms [, fin])`
 
 Devuelve: cortes.
 
-Ajuste manual: el corte i empieza en ms (desde el principio del sample). Manda sobre el detector; el corte anterior acaba donde empieza este. Tiene que quedar a más de 1 ms de sus vecinos. Cambia la variable, así que hazlo antes de usarla en `track()`. Desde la interfaz, el mismo ajuste se hace con teclas en el modo tocar y se guarda en el proyecto (`corte = amen.wav 8 3 412.5`).
+Ajuste manual: el corte i empieza en ms (y, con fin, acaba ahí). Con cortes del detector (`slice(n)`) y sin `fin`, manda sobre el detector y el corte anterior acaba donde empieza este; tiene que quedar a más de 1 ms de sus vecinos. Con `fin`, o con cortes de una tabla (`slice({ ... })`), solo se mueve este corte: los vecinos se quedan como estaban (puede quedar un hueco o un solape), y tiene que durar al menos 1 ms y caber en el sample. Cambia la variable, así que hazlo antes de usarla en `track()`. Desde la interfaz, lo mismo se hace arrastrando en la onda o con `,` `.` `<` `>` en el modo tocar, y se escribe en la llamada `slice(...)`.
 
 - `i`: número del corte (desde 1)
 - `ms`: dónde empieza, en ms desde el principio del sample
+- `fin`: dónde acaba, en ms (sin él, donde acababa; los vecinos no se mueven)
 
 ```lua
 local amen = sample("amen.wav"):slice(8)
 -- El charles del corte 2, un poco antes para que entre con su ataque.
 amen:move(2, 205.5)
+-- El corte 5, más corto, sin mover el 6.
+amen:move(5, amen:range(5), amen:range(5) + 60)
 track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .")
 ```
 

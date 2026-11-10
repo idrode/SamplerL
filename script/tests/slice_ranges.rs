@@ -249,3 +249,73 @@ fn stretched_explicit_slices_keep_their_own_ends() {
     let call = song.tracks[0].origin.call.clone().unwrap();
     assert_eq!(call.ranges, vec![0..4800, 7200..19_200, 14_400..24_000]);
 }
+
+#[test]
+fn move_with_an_end_or_on_a_table_leaves_the_neighbours() {
+    let dir = fixture("move");
+    let steps = "track(\"a\", s):steps(\"1 2 3 4  . . . .  . . . .  . . . .\")\n";
+    // Del detector, con final: solo ese corte.
+    let song = eval(
+        &dir,
+        &format!("local s = sample(\"four.wav\"):slice(4)\ns:move(2, 130, 200)\n{steps}"),
+    )
+    .unwrap();
+    let got = slices(&song, "a");
+    assert_eq!(got[1], 6240..9600);
+    assert_eq!(got[0], 0..6000, "el anterior no se mueve");
+    assert_eq!(got[2].start, 12_000);
+    // De una tabla, sin final: solo su inicio.
+    let song = eval(
+        &dir,
+        &format!(
+            "local s = sample(\"four.wav\"):slice({{ {{0, 125}}, {{125, 250}}, {{250, 375}}, {{375, 500}} }})\n\
+             s:move(2, 140)\n\
+             local a, b = s:range(2)\n\
+             assert(a == 140 and b == 250, a .. \" \" .. b)\n{steps}"
+        ),
+    )
+    .unwrap();
+    assert_eq!(slices(&song, "a")[..2], [0..6000, 6720..12_000]);
+    for (code, expected) in [
+        ("s:move(2, 140, 140.5)", "al menos 1 ms"),
+        ("s:move(2, 300, 200)", "al menos 1 ms"),
+        ("s:move(2, 100, 900)", "pasado el final del sample"),
+        ("s:move(9, 100)", "el corte no existe (hay 4)"),
+        ("s:range(0)", "range(0): el corte no existe"),
+    ] {
+        let error = eval(
+            &dir,
+            &format!("local s = sample(\"four.wav\"):slice(4)\n{code}\n"),
+        )
+        .err()
+        .unwrap_or_else(|| panic!("{code}: sin error"));
+        assert!(
+            error.contains("song.lua:2:") && error.contains(expected),
+            "{code}: {error}"
+        );
+    }
+}
+
+#[test]
+fn everything_about_a_slice_uses_its_own_bounds() {
+    let dir = fixture("features");
+    let table = "{ {0, 125}, {150, 400}, {300, 500, \"top\"} }";
+    let source = format!(
+        "bpm(120)\n\
+         local s = sample(\"four.wav\"):slice({table})\n\
+         s:set(2, {{ dur = \"1/16\", fit = \"loop\", rev = true }})\n\
+         s:fx(\"top\", \"lowpass\", {{ cutoff = 2000 }})\n\
+         assert(s:note(1) == nil or type(s:note(1)) == \"string\")\n\
+         local a, b = s:range(3)\n\
+         assert(a == 300 and b == 500)\n\
+         track(\"a\", s):steps(\"1 2 top .  2 . 1 .  . . . .  . . . .\")\n\
+         track(\"b\", s:slice_at(2)):steps(\"x . . .  . . . .  . . . .  . . . .\")\n\
+         track(\"c\", s:slice_at(3):instrument({{ root = \"C4\" }})):melody(\"c4 . e4 .  . . . .  . . . .  . . . .\")\n"
+    );
+    let song = eval(&dir, &source).unwrap();
+    assert_eq!(slices(&song, "b"), vec![7200..19_200]);
+    assert_eq!(slices(&song, "c"), vec![14_400..24_000]);
+    let audio = song.render(RATE, 2).unwrap();
+    assert!(audio.iter().all(|s| s.is_finite()));
+    assert!(audio.iter().any(|&s| s != 0.0));
+}

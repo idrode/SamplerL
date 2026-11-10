@@ -6219,50 +6219,125 @@ impl UserData for SlicedHandle {
 
         // `:move(i, ms)`: el corte `i` empieza en `ms` (ajuste manual; las
         // pistas definidas antes con esta variable no lo ven).
-        methods.add_method_mut("move", |lua, this, (index, ms): (i64, f64)| {
-            let count = this.slices.len();
-            let i = usize::try_from(index - 1)
+        methods.add_method_mut(
+            "move",
+            |lua, this, (index, ms, end): (i64, f64, Option<f64>)| {
+                let count = this.slices.len();
+                let i = usize::try_from(index - 1)
+                    .ok()
+                    .filter(|&i| i < count)
+                    .ok_or_else(|| {
+                        fail(
+                            lua,
+                            format!("move({index}): el corte no existe (hay {count})"),
+                        )
+                    })?;
+                if !(ms.is_finite() && ms >= 0.0) {
+                    return Err(fail(
+                        lua,
+                        format!("move({index}, {ms}): ms desde el principio (0 o más)"),
+                    ));
+                }
+                let gap = min_slice_gap(&this.sample);
+                // Con el final, o con cortes explícitos: solo este corte (sus
+                // vecinos no se mueven).
+                if end.is_some() || this.origin.explicit {
+                    let current = this.slices.get(i).expect("el corte existe");
+                    let end_ms = end.unwrap_or(frame_to_ms(current.end, &this.sample));
+                    let who = match end {
+                        Some(e) => format!("move({index}, {ms}, {e})"),
+                        None => format!("move({index}, {ms})"),
+                    };
+                    if !end_ms.is_finite() {
+                        return Err(fail(lua, format!("{who}: el final, en ms")));
+                    }
+                    let mut start = ms_to_frame(ms, &this.sample);
+                    let stop = if end_ms < 0.0 {
+                        0
+                    } else {
+                        ms_to_frame(end_ms, &this.sample)
+                    };
+                    if let Some(zero) = this.origin.zero_cross {
+                        start = engine::snap_frame(
+                            &this.sample,
+                            start,
+                            zero_frames(zero, &this.sample),
+                            0..stop.saturating_sub(gap) + 1,
+                        );
+                    }
+                    let length = frame_to_ms(this.sample.frames(), &this.sample);
+                    if stop > this.sample.frames() {
+                        return Err(fail(
+                            lua,
+                            format!("{who}: acaba pasado el final del sample ({length:.1} ms)"),
+                        ));
+                    }
+                    if stop < start + gap {
+                        return Err(fail(
+                            lua,
+                            format!(
+                                "{who}: el corte tiene que acabar al menos 1 ms después de empezar \
+                             (acaba en {:.1} ms)",
+                                frame_to_ms(stop, &this.sample)
+                            ),
+                        ));
+                    }
+                    this.slices = this
+                        .slices
+                        .with_range(i, start..stop)
+                        .expect("el corte existe");
+                    this.adjusted[i] = true;
+                    return Ok(this.clone());
+                }
+                let mut frame = ms_to_frame(ms, &this.sample);
+                if let Some(zero) = this.origin.zero_cross {
+                    // Sin salirse de sus vecinos: el cruce más cercano dentro.
+                    let low = i
+                        .checked_sub(1)
+                        .map_or(0, |p| this.slices.get(p).map_or(0, |r| r.start + gap));
+                    let high = this.slices.get(i).map_or(0, |r| r.end.saturating_sub(gap));
+                    frame = engine::snap_frame(
+                        &this.sample,
+                        frame,
+                        zero_frames(zero, &this.sample),
+                        low..high + 1,
+                    );
+                }
+                this.slices = this.slices.with_start(i, frame, gap).map_err(|bounds| {
+                    fail(
+                        lua,
+                        format!(
+                            "move({index}, {ms}): se sale de sus vecinos ({:.1} a {:.1} ms)",
+                            frame_to_ms(bounds.start, &this.sample),
+                            frame_to_ms(bounds.end, &this.sample)
+                        ),
+                    )
+                })?;
+                this.adjusted[i] = true;
+                Ok(this.clone())
+            },
+        );
+
+        // `:range(i)`: dónde empieza y dónde acaba el corte `i`, en ms del
+        // sample (sin estirar).
+        methods.add_method("range", |lua, this, index: i64| {
+            let range = usize::try_from(index - 1)
                 .ok()
-                .filter(|&i| i < count)
+                .and_then(|i| this.slices.get(i))
                 .ok_or_else(|| {
                     fail(
                         lua,
-                        format!("move({index}): el corte no existe (hay {count})"),
+                        format!(
+                            "range({index}): el corte no existe (hay {})",
+                            this.slices.len()
+                        ),
                     )
                 })?;
-            if !(ms.is_finite() && ms >= 0.0) {
-                return Err(fail(
-                    lua,
-                    format!("move({index}, {ms}): ms desde el principio (0 o más)"),
-                ));
-            }
-            let gap = min_slice_gap(&this.sample);
-            let mut frame = ms_to_frame(ms, &this.sample);
-            if let Some(zero) = this.origin.zero_cross {
-                // Sin salirse de sus vecinos: el cruce más cercano dentro.
-                let low = i
-                    .checked_sub(1)
-                    .map_or(0, |p| this.slices.get(p).map_or(0, |r| r.start + gap));
-                let high = this.slices.get(i).map_or(0, |r| r.end.saturating_sub(gap));
-                frame = engine::snap_frame(
-                    &this.sample,
-                    frame,
-                    zero_frames(zero, &this.sample),
-                    low..high + 1,
-                );
-            }
-            this.slices = this.slices.with_start(i, frame, gap).map_err(|bounds| {
-                fail(
-                    lua,
-                    format!(
-                        "move({index}, {ms}): se sale de sus vecinos ({:.1} a {:.1} ms)",
-                        frame_to_ms(bounds.start, &this.sample),
-                        frame_to_ms(bounds.end, &this.sample)
-                    ),
-                )
-            })?;
-            this.adjusted[i] = true;
-            Ok(this.clone())
+            let ms = |f: usize| {
+                let ms = frame_to_ms(f, &this.sample);
+                (ms * 1000.0).round() / 1000.0
+            };
+            Ok((ms(range.start), ms(range.end)))
         });
 
         // `:fx(cuál, nombre, { parámetros })`: un efecto que solo suena en
