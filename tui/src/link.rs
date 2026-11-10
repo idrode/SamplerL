@@ -1480,9 +1480,11 @@ mod tests {
         assert_eq!(Conn::new(a).unwrap().peer_uid().unwrap(), my_uid());
     }
 
+    /// En la carpeta temporal del sistema y con un nombre corto: una ruta
+    /// de socket no pasa de ~108 bytes y el repositorio puede estar en una
+    /// ruta larga (B4 de la primera auditoría).
     fn temp_dir(test: &str) -> PathBuf {
-        let dir = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../target/tmp"))
-            .join(format!("link_{test}"));
+        let dir = std::env::temp_dir().join(format!("smp-{}-link_{test}", my_uid()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.parent().unwrap()).unwrap();
         dir

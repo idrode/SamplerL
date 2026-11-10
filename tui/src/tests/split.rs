@@ -26,9 +26,19 @@ track("drums", amen):steps("2 2 2 2  2 2 2 2  2 2 2 2  2 2 2 2")
 track("kick", amen:slice_at(1)):steps("x . . .  x . . .  x . . .  x . . .")
 "#;
 
-/// Carpeta de los sockets del test (privada, como la de verdad).
+/// Carpeta de los sockets del test (privada, como la de verdad): en la
+/// carpeta temporal del sistema con un nombre corto, porque una ruta de
+/// socket no pasa de ~108 bytes y el repositorio puede estar en una ruta
+/// larga (B4 de la primera auditoría). Una por script.
 pub(super) fn socket_dir(script: &Path) -> PathBuf {
-    let dir = script.parent().unwrap().join("run");
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    script.parent().unwrap().hash(&mut hasher);
+    let dir = std::env::temp_dir().join(format!(
+        "smp-{}-{:08x}",
+        link::my_uid(),
+        hasher.finish() as u32
+    ));
     link::private_dir(&dir).unwrap();
     dir
 }
