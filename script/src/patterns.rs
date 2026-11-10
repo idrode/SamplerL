@@ -75,6 +75,8 @@ pub fn euclid(k: i64, n: i64, hit: &str, length: Option<i64>) -> Result<String, 
 pub fn rotate(text: &str, n: i64) -> Result<String, String> {
     let tokens = tokens(text, &format!("rotate(patrón, {n})"))?;
     let len = tokens.len() as i64;
+    // Primero el resto: `i - n` desbordaría con un `n` enorme.
+    let n = n.rem_euclid(len);
     let rotated: Vec<String> = (0..len)
         .map(|i| tokens[(i - n).rem_euclid(len) as usize].clone())
         .collect();

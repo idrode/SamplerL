@@ -131,3 +131,49 @@ fn a_64_bit_float_wav_is_a_clear_error() {
     let error = Sample::load_wav(&path, 44_100).err().expect("no se lee");
     assert!(error.to_string().contains("WAV"), "{error}");
 }
+
+/// Un WAV extensible que dice tener 200 bits válidos por muestra: error
+/// claro, sin desbordar el desplazamiento de la escala (N16; `hound` toma
+/// esos bits válidos si no son 0).
+#[test]
+fn a_wav_with_absurd_valid_bits_is_an_error() {
+    let mut fmt = Vec::new();
+    fmt.extend(0xFFFEu16.to_le_bytes()); // WAVE_FORMAT_EXTENSIBLE
+    fmt.extend(1u16.to_le_bytes());
+    fmt.extend(48_000u32.to_le_bytes());
+    fmt.extend((48_000u32 * 2).to_le_bytes());
+    fmt.extend(2u16.to_le_bytes());
+    fmt.extend(16u16.to_le_bytes());
+    fmt.extend(22u16.to_le_bytes()); // cbSize
+    fmt.extend(200u16.to_le_bytes()); // bits válidos
+    fmt.extend(4u32.to_le_bytes()); // máscara de canales
+    // KSDATAFORMAT_SUBTYPE_PCM
+    fmt.extend([
+        0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b,
+        0x71,
+    ]);
+    let mut wav = Vec::new();
+    wav.extend(b"RIFF");
+    wav.extend((4 + 8 + fmt.len() as u32 + 8 + 4).to_le_bytes());
+    wav.extend(b"WAVEfmt ");
+    wav.extend((fmt.len() as u32).to_le_bytes());
+    wav.extend(&fmt);
+    wav.extend(b"data");
+    wav.extend(4u32.to_le_bytes());
+    wav.extend([0u8; 4]);
+    let path = dir().join("absurd-bits.wav");
+    std::fs::write(&path, wav).unwrap();
+    assert!(Sample::load_wav(&path, 48_000).is_err());
+}
+
+/// Un ajuste de corte enorme (un `1e308` en el proyecto llega como
+/// `usize::MAX`) no desborda al compararlo con su vecino (N16).
+#[test]
+fn a_huge_slice_start_is_rejected_without_overflow() {
+    let sample = Sample::from_interleaved(&[0.5; 48_000], 1, 48_000, 48_000).unwrap();
+    let slices = engine::Slices::grid(&sample, 4);
+    let (moved, rejected) = slices.with_starts(&[(1, usize::MAX), (2, usize::MAX)], 100);
+    assert_eq!(moved.len(), 4);
+    assert!(!rejected.is_empty());
+    assert!(slices.with_start(3, usize::MAX, usize::MAX).is_err());
+}

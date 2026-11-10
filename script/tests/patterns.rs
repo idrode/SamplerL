@@ -523,3 +523,19 @@ fn a_huge_pattern_is_refused_before_splitting_it() {
     assert!(error.len() < 300, "{error}");
     assert!(error.contains("…"), "{error}");
 }
+
+/// `rotate` con el entero más pequeño de Lua: antes desbordaba `i - n`
+/// (N16); da lo mismo que su resto.
+#[test]
+fn rotate_by_the_smallest_integer_does_not_overflow() {
+    let text = "1 . 2 .  3 . 4 .  5 . 6 .  7 . 8 .";
+    let len = 16i64;
+    assert_eq!(
+        script::patterns::rotate(text, i64::MIN).unwrap(),
+        script::patterns::rotate(text, i64::MIN.rem_euclid(len)).unwrap()
+    );
+    assert_eq!(
+        script::patterns::rotate(text, i64::MAX).unwrap(),
+        script::patterns::rotate(text, i64::MAX.rem_euclid(len)).unwrap()
+    );
+}

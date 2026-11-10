@@ -109,6 +109,10 @@ impl Sample {
         let samples: Vec<f32> = match spec.sample_format {
             hound::SampleFormat::Float => reader.samples::<f32>().collect::<Result<_, _>>()?,
             hound::SampleFormat::Int => {
+                // 0 bits desbordaría el desplazamiento (y no es audio).
+                if !(1..=32).contains(&spec.bits_per_sample) {
+                    return Err(LoadError::Wav(hound::Error::Unsupported));
+                }
                 let scale = 1.0 / (1u64 << (spec.bits_per_sample - 1)) as f32;
                 reader
                     .samples::<i32>()

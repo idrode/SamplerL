@@ -195,7 +195,7 @@ impl Slices {
         let current = self.0.get(index).ok_or(0..0)?;
         let low = match index {
             0 => 0,
-            i => self.0[i - 1].start + min_gap,
+            i => self.0[i - 1].start.saturating_add(min_gap),
         };
         let high = current.end.saturating_sub(min_gap);
         if !(low..=high).contains(&start) || low > high {
@@ -244,7 +244,7 @@ impl Slices {
                 (starts[last] > end.saturating_sub(min_gap) && moved[last]).then_some(last);
             let clash = past_end.or_else(|| {
                 (1..n)
-                    .filter(|&i| starts[i] < starts[i - 1] + min_gap)
+                    .filter(|&i| starts[i] < starts[i - 1].saturating_add(min_gap))
                     .find_map(|i| [i, i - 1].into_iter().find(|&j| moved[j]))
             });
             let Some(j) = clash else { break };
