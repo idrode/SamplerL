@@ -38,8 +38,11 @@ la sección 4 (con sus parámetros, rangos y un ejemplo cada una).
 - Prepararlo al importar: recortar silencios, normalizar y fundidos
   (`sample(ruta, { trim, normalize, fade_in, fade_out })`), y estirarlo al
   tempo de la canción sin cambiar el tono (`sample:stretch()`).
-- Etiquetar cortes (`cortes:name`, o desde la interfaz), moverlos a oído
-  (`,` `.` en el modo tocar, o `cortes:move`), crearlos y quitarlos (`n` y
+- Etiquetar cortes (`cortes:name`, o desde la interfaz), moverlos y
+  redimensionarlos a oído, cada uno con su inicio y su final aunque queden
+  huecos o solapes (arrastrando en la onda, `,` `.` en el modo tocar, o
+  `cortes:move`; se escribe en el código como `slice({ {inicio, fin}, ...
+  })` y se guarda con Ctrl-S), crearlos y quitarlos (`n` y
   Supr, o con el clic derecho en la onda), con zoom en la vista del sample
   para afinar (`+` `-`, la rueda del ratón), y llevar cada inicio al cruce
   por cero más cercano para que no haga clic (`slice(n, { zero_cross = 2 })`).
@@ -1303,38 +1306,74 @@ pistas, no pasa por su volumen, efectos ni mute, suena también con el
 secuenciador parado y no toca el script. Sirve para buscar el corte que
 quieres (y etiquetarlo o ajustarlo, ver más abajo).
 
-El **ajuste manual de cortes** (`,` `.` `<` `>`, o «Adelantar/Retrasar el
-corte 5 ms» en la paleta) mueve el inicio del corte seleccionado, sin
-sonar: mientras afinas no se dispara nada; para oírlo, su tecla, espacio o
-un clic en la onda. Se guarda en el proyecto como posición absoluta (`corte =
-amen.wav 8 3 412.5`) y manda sobre el detector: si el detector se equivoca
-o corta tarde un golpe, se corrige a oído. El corte anterior acaba donde
-empieza el ajustado. Mover uno solo cambia ese: los demás conservan su
-ajuste. No pasa de sus vecinos: si llega a ellos, se queda a 1,2 ms
-(el mensaje dice «tope: el corte N»), sin empujarlos.
-La vista del sample marca los cortes ajustados con `*` y da la posición
-del seleccionado; «Quitar el ajuste del corte» lo devuelve al detector. En
-Lua, `cortes:move(i, ms)`.
+**Dónde se guarda lo que editas en la onda.** En el código. Mover,
+redimensionar, partir, unir o etiquetar un corte desde la vista del sample
+reescribe la llamada que corta el sample: `sample("amen.wav"):slice(8)`
+pasa a `sample("amen.wav"):slice({ {0, 110.5}, {110.5, 230}, ... })`, con el
+inicio y el final de cada corte en ms (y su nombre, si lo tiene: `{0, 110.5,
+"kick"}`). La primera vez lo avisa («slice(8) pasa a cortes explícitos en el
+código»). Es un paso de deshacer, como lo que escriben el tracker o el piano
+roll: Ctrl-Z vuelve a `slice(8)`. Entra al cargar, en el compás siguiente, y
+**se guarda con Ctrl-S**, con el script: al cerrar y abrir (el `.lua` o el
+proyecto) los cortes siguen igual. Lo que un proyecto antiguo guardaba de esos
+cortes (`corte =`, `partir =`, `unir =`, `etiqueta =`) pasa al código con la
+primera edición y deja de guardarse en el proyecto al guardar: una sola fuente
+de verdad.
 
-**Con el ratón**, en la vista del sample: pulsa sobre la marca de un corte
-(o justo a su lado) y arrástrala; el corte anterior se alarga o se acorta
-con ella. Al soltar se guarda como el ajuste de las teclas (en el
-proyecto, sin sonar). Va de columna en columna; para afinar, `<` y
-`>`, o el zoom. Un clic sin arrastrar (sobre la marca o en otro sitio
-de la onda) selecciona el corte que hay ahí y lo preescucha. Sin ratón
-en la terminal, lo mismo con ← → y espacio. El **clic derecho** en la onda pone un corte nuevo justo ahí, y
-sobre una marca, quita ese corte. Sirve en los dos modos y en la ventana
-principal con el editor fuera.
+- Si el texto ha cambiado desde la última carga, primero carga (Ctrl-S): la
+  posición de la llamada es la del texto cargado.
+- Si la llamada no está escrita tal cual (`slice(n)` con una variable, una
+  tabla que sale de una función), el cambio **no se puede guardar en el
+  código** y el mensaje lo dice, con por qué y cómo pasarlo a literal
+  (escribe `slice(8)` o la tabla dentro de la llamada). Con el detector, el
+  cambio se aplica igual, como antes (en memoria o en el proyecto abierto); con
+  una tabla generada, no se cambia.
+- Si al releer no da esos cortes (un `:move()` o un `:add()` después de
+  `slice()` los cambia) o cambiaría los de otra pista, se deshace y lo dice.
 
-**Crear y quitar cortes.** `n` parte el corte seleccionado en su mitad
-(luego se afina con `,` `.` o arrastrando la marca) y Supr (o Retroceso)
-quita el seleccionado: el anterior se alarga hasta donde acababa. Con el
-ratón, el clic derecho (ver arriba). Se guardan en el proyecto como
-«Partir» y «Unir» de la paleta (`partir = amen.wav 8 180.25`, `unir =
-amen.wav 8 7`), y las etiquetas y los ajustes de los cortes siguientes se
-corren. El corte 1 no se puede quitar, y un corte nuevo tiene que quedar a
-más de 1 ms de sus vecinos. Los añadidos en el script con `cortes:add` se
-cambian en el script.
+**Cada corte tiene su inicio y su final.** Mover el borde de un corte no
+toca a sus vecinos: si acortas el 1, el 2 sigue donde estaba y queda un
+hueco; si alargas el 1 más allá del inicio del 2, se solapan. Un corte dura
+al menos 1,2 ms al editarlo (1 ms en el código) y no sale del sample. En la
+onda, los huecos se ven apagados, los solapes con el color de los avisos, los
+finales sueltos con `]` en la fila de los números, y el título dice cuántos
+hay («1 hueco · 1 solape») y el inicio y el final del corte elegido.
+
+**Con el ratón**, en la vista del sample (en los dos modos y en la ventana
+principal con el editor fuera):
+
+| Qué | Cómo |
+| --- | --- |
+| Mover el inicio de un corte | arrastra su marca (pulsando en ella o a su derecha) |
+| Mover el final de un corte | arrastra su final: en la columna a la izquierda de la marca del siguiente, o su `]` |
+| Mover el corte entero | arrastra desde dentro del corte, lejos de sus bordes |
+| Mover la marca con los vecinos (lo de antes) | Alt o Ctrl y arrastra: el anterior acaba donde empieza este |
+| Elegir un corte y oírlo | clic sin arrastrar |
+| Poner un corte | clic derecho en la onda (en un hueco, llega hasta el siguiente corte) |
+| Quitar un corte | clic derecho en su marca (el anterior se alarga hasta donde acababa) |
+
+Shift no sirve de modificador: la terminal lo usa para seleccionar texto.
+Mientras arrastras solo cambia la vista (el mensaje dice dónde va y si ha
+llegado a un tope); al soltar se escribe en el código, sin sonar. Va de
+columna en columna; para afinar, el zoom o las teclas.
+
+**Con las teclas**, en el modo tocar: `,` `.` mueven 5 ms y `<` `>` 1 ms lo
+que elija `b` del corte seleccionado: el inicio (al empezar), el final, el
+corte entero o la marca compartida con los vecinos (como Alt con el ratón).
+`b` va pasando por los cuatro y el mensaje dice cuál toca; también está en la
+paleta, «Cambiar qué mueven las teclas del corte». Mover no suena: para oírlo,
+su tecla, espacio o un clic en la onda. Con un tope, se queda ahí y lo dice
+(«tope: el corte 1», «tope: el final del sample»). En Lua, lo mismo es
+`cortes:move(i, ms [, fin])`.
+
+**Crear y quitar cortes.** `n` parte el corte seleccionado en su mitad y
+Supr (o Retroceso) lo quita: el anterior se alarga hasta donde acababa. Con
+el ratón, el clic derecho (ver arriba). Los cortes siguientes se corren un
+número (y los `steps` que los nombran por número tocan otro: por etiqueta no
+cambia). El corte 1 no se puede quitar. Los añadidos en el script con
+`cortes:add` se cambian en el script. «Quitar el ajuste del corte» solo
+quita los ajustes de un proyecto antiguo (los cortes escritos en el código se
+cambian en el código).
 
 **Zoom de la vista del sample.** `+` acerca la vista (cada vez, la mitad
 del sample) alrededor del corte seleccionado, y `-` la aleja hasta verlo
@@ -2079,7 +2118,7 @@ segundo clic, como con Enter.
 | --- | --- | --- |
 | Editor | clic mueve el cursor, arrastrar selecciona, la rueda desplaza; arrastrar su borde de arriba cambia su alto; flotante, arrastrar su título lo mueve y sus bordes de abajo y de la derecha, su tamaño | [Editor](#editor), [El editor abajo](#el-editor-abajo-maximizado-o-flotante) |
 | Explorador de archivos | clic elige, clic en el icono de una carpeta la abre o la cierra, dos clics abren, la rueda recorre, arrastrar su borde derecho cambia el ancho | [El explorador de archivos](#el-explorador-de-archivos) |
-| Vista del sample | arrastrar una marca mueve el corte, clic lo elige y suena, clic derecho pone o quita un corte, la rueda acerca y aleja | [Modo tocar](#modo-tocar-esc) |
+| Vista del sample | arrastrar un borde mueve el inicio o el final de ese corte sin tocar a los demás, arrastrar dentro de un corte lo mueve entero, Alt o Ctrl y arrastrar mueve la marca con los vecinos; clic lo elige y suena, clic derecho pone o quita un corte, la rueda acerca y aleja; se escribe en el código (Ctrl-S lo guarda) | [Modo tocar](#modo-tocar-esc) |
 | Piano roll | clic pone una nota, arrastrar la mueve o la alarga, clic derecho la borra; nunca suena | [Piano roll](#piano-roll) |
 | Lanes de automatización | clic añade un punto, arrastrar lo mueve, clic derecho lo borra; armado el touch, arrastrar en vertical graba | [Automatizar con lanes](#automatizar-con-lanes) |
 | Tracker | clic en el nombre elige la pista y el clic derecho la silencia (`m`); clic en una celda pone ahí el cursor de edición y otro clic en ella abre sus efectos (Enter); con el cursor, la rueda lo sube y lo baja | [Editar los efectos de un paso](#editar-los-efectos-de-un-paso-desde-el-tracker) |
@@ -2665,8 +2704,11 @@ la vista del sample pone cada etiqueta junto al número de su corte.
 Sin tocar el script: en el modo tocar, toca el corte (queda seleccionado,
 resaltado en la vista del sample) o elígelo con «Corte siguiente» / «Corte
 anterior» de la paleta. Luego «Etiquetar el corte seleccionado» (F1) abre
-la línea de órdenes con `etiquetar N ` escrito: pon el nombre y Enter. La
-etiqueta se guarda en el proyecto abierto (si no hay, con `guardar`), vale
+la línea de órdenes con `etiquetar N ` escrito: pon el nombre y Enter. Si
+los cortes ya están escritos en el código (`slice({ ... })`, por ejemplo
+tras moverlos en la onda), la etiqueta va en su entrada (`{0, 110.5,
+"kick"}`) y se guarda con Ctrl-S. Si no, se guarda en el proyecto abierto
+(si no hay, con `guardar`), vale
 para todas las pistas de ese sample cortado igual y se recarga al momento.
 Si el script ya nombra ese corte con `:name()`, manda el script y el
 mensaje lo avisa.
@@ -5639,6 +5681,23 @@ arrange({ {"intro", 4}, {"drop", 8} })
   ajustes `--min-gap` y `--detector` son de la línea de comandos. Para
   probarlos, renderiza el WAV con `--pattern` y mira la lista de cortes.
 
+### Los cortes editados en la onda no se guardan
+
+- **Se guardan con el script**: lo que mueves en la onda se escribe en la
+  llamada `slice(...)` del código (el editor marca cambios sin guardar);
+  Ctrl-S lo guarda. Si sales sin guardar, el aviso de cambios sin guardar lo
+  dice.
+- **«no se puede guardar en el código»**: la llamada no está escrita tal
+  cual (el número sale de una variable, la tabla de una función, o hay dos
+  llamadas iguales en la misma línea). Escríbela dentro de la llamada, como
+  `slice(8)` o `slice({ {0, 120}, {120, 250} })`, y vuelve a editar.
+- **«carga antes (Ctrl-S)»**: has escrito desde la última carga; la
+  posición de la llamada es la del texto cargado.
+- **«el código lo cambia después de slice()»**: un `:move()`, `:add()` o
+  `:remove()` después de `slice()` cambia ese corte; quítalo o edítalo ahí.
+- **Con la ventana del editor aparte**, el cambio llega a esa ventana y se
+  guarda desde ella (Ctrl-S allí).
+
 ### Un corte hace clic al empezar
 
 Si el golpe empieza en un punto de la onda lejos del cero, el salto suena
@@ -5649,11 +5708,12 @@ graves o con la rejilla se sigue oyendo).
   o `slice_grid(16, { zero_cross = 2 })`. Cada inicio va al cruce más
   cercano a no más de esos ms (`true` es 2 ms; hasta 50). Sin la opción,
   los cortes son exactamente los de siempre.
-- **Los ajustes a mano mandan como objetivo**: con la opción, `move`,
-  `add`, las teclas `,` `.` `<` `>` y arrastrar la marca guardan el ms que
-  elijas, y el corte empieza en el cruce más cercano a él (el mensaje lo
-  dice: «empieza en 260 ms (cruce por cero en 259,4 ms)»). Las teclas
-  mueven el ms guardado, no el cruce, así que nunca se quedan atascadas.
+- **Los ajustes a mano van al cruce**: con la opción, `move`, `add`, las
+  teclas `,` `.` `<` `>` y arrastrar en la onda ponen el ms que elijas y el
+  corte empieza en el cruce más cercano a él (el mensaje lo dice: «empieza en
+  260 ms (cruce por cero en 259,4 ms)»). Lo que se escribe en el código es
+  ya el cruce, así que con pasos de 1 ms en un grave muy lento las teclas
+  pueden volver al mismo cruce: usa `,` `.` (5 ms) o arrastra.
 - **Si no se mueve**: el sample no cruza el cero a esa distancia (un
   grave muy lento, o una señal con corriente continua). Sube el máximo, o
   prepara el sample con `sample(ruta, { fade_in = ... })` o un `highpass`.

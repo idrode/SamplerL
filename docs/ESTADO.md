@@ -1713,7 +1713,7 @@ Todo está probado con `TestBackend` y el ratón simulado; nada en una terminal 
 - **«1 compás» en singular** (`script::bars_text`): el render de la línea de comandos (`--render`, también con `--pattern` y `--track`), la alternativa de `--detect-bpm`, `exportar`, `remuestrear` y el informe de choques (texto, mensaje, título de la lista y de la tabla) decían «1 compases». Tests: `one_bar_is_singular` en `script/src/lib.rs`, `export_renders_the_mix_to_wav` (exportar 1 compás) y el informe de choques de un compás en `tui/src/tests/masking.rs`.
 - **`--edit` no abre en silencio una ruta que no existe** (`check_edit_target` en `tui/src/main.rs`, antes de abrir la interfaz y el audio): un script que no existe es un error que dice dónde se ha buscado y propone `--new`; con `--new` se abre la plantilla de siempre (se crea al guardar) si su carpeta existe, y si no, error; un script que existe se abre tal cual, con `--new` o sin él. Un proyecto `.sampler` que no existe es siempre un error (se crea con la orden `guardar`). `--new` solo va con `--edit`; `--window-editor` no lo lleva y sigue abriendo la plantilla (lo abre la principal, que ya decidió). Test `edit_refuses_a_missing_script_unless_new` en `tui/src/tests.rs`; la sección 1 y el paso 2 del tutorial lo explican.
 - **Nota de cada corte** (`engine/src/pitch.rs`): `detect_note(sample, rango) -> Option<NoteGuess { hz, midi (con decimales), clarity }>` y `detect_notes(sample, cortes)`; `NoteGuess::note`/`cents`/`name` y `note_name(midi)` en cifrado americano con sostenidos, C4 = 60 (`patterns::note_name` la usa). YIN por ventanas: la ventana dura el periodo más largo que se busca (`MIN_HZ` = 40, `MAX_HZ` = 2100: de E1 a C7; en un corte corto, menos), la diferencia `d(τ)` sale de la autocorrelación con `rustfft` y las energías por sumas acumuladas, se normaliza por su media acumulada y el primer valle bajo `THRESHOLD` = 0,15, hasta su fondo y afinado con una parábola, da el periodo. Hasta `MAX_WINDOWS` = 48 ventanas repartidas por el corte, sin los primeros 15 ms (el ataque). Votan las ventanas con periodo y al menos el 10 % del nivel de la más fuerte, con peso `nivel · (1 − d')`; la nota es su mediana pesada (con dos notas en el corte, la que más suena), y si las que tienen periodo no llegan a la mitad del nivel de las que suenan, no hay nota. No corre en el hilo de audio. Lua: `cortes:note(i)` devuelve el nombre y los cents, o `nil` (registro: `note` de `Receiver::Slices`, con ejemplo; error con línea si el corte no existe); el nombre vale tal cual en `melody` y en `root`. Interfaz: `App::slice_notes` (caché por puntero del sample y rangos de los cortes, `slice_notes_key`; se rellena con `update_waveforms`, al cargar; los synth no se analizan), `TrackView::notes` y `TrackView::note(i)`; la vista del sample escribe la nota en cada marca (`ui::slice_mark`: `3 G#4`, `3* voz G#4`), y «Notas de los cortes» (`Action::SliceNotes`) deja en el mensaje la lista (`1 C4 · 2 E4 · 3 — · 4 A4 -30¢`, cents desde `CENTS_SHOWN` = 10). Guía: «La nota de cada corte» en la sección 3 y el mapa. Tests en `engine/tests/pitch.rs` (de E1 a C7, senos y con 8 armónicos, a 44,1 y 48 kHz, a menos de 3 cents; una nota 25 cents alta; ruido, silencio, caja y charles sin nota, y el bombo del break sintético entre F#1 y G1, también bajo el charles del corte siguiente; una melodía de seis notas cortada por transitorios y en rejilla; un corte de dos notas; cortes muy cortos), `engine/src/pitch.rs` (nombres y cents), `script/tests/notes.rs` (nombres y cents desde Lua, en `melody` y `root`, `nil` con ruido, error con línea) y `tui/src/tests/notes.rs` (las marcas, la paleta con cents y sin notas, mover un corte la recalcula).
-- **Arrastrar las marcas de los cortes con el ratón** (`tui/src/app/mouse.rs`: `SliceDrag`, `App::grab_slice`, `App::mouse_sample`): en la vista del sample (la pequeña, en los dos modos, y la forma de onda grande de la principal sin editor; sin nada abierto encima, `App::nothing_on_top`), un clic a menos de una columna y media de una marca agarra ese corte y lo selecciona; arrastrar mueve su inicio (y el final del anterior) por lo que se mueve el ratón, en frames, sin saltar a la columna pulsada, y se para a 1,2 ms de sus vecinos (algo más que el margen de 1 ms del script, para que el redondeo a 0,1 ms no lo pise). Mientras se arrastra solo cambia la vista (`App::view` pone la marca donde va); al soltar, `App::place_slice` (lo que ya hacía `adjust_slice`, ahora con una posición absoluta en ms del original, también con stretch) lo guarda en el proyecto, recarga y preescucha. Un clic lejos de las marcas selecciona el corte que hay ahí; agarrar y soltar sin moverse, igual. Los cortes añadidos con `:add()` no se arrastran (se mueven en el script). La resolución es la de una columna (un sample de 2 s en 80 columnas, 25 ms); el ajuste fino sigue en `<`/`>`. Un clic nuevo suelta un arrastre que se quedó a medias (soltado fuera de la terminal). `ui::draw` guarda `App::sample_area`. Usa `[editor] raton`. Tests en `tui/src/tests/mouse.rs` (arrastrar y guardar, topes a los dos lados, seleccionar sin mover, con la paleta nada, la ventana principal).
+- **Arrastrar las marcas de los cortes con el ratón** (lo de abajo es como se hizo; desde «Cortes independientes y guardar su edición», arrastrar mueve un borde sin los vecinos, Alt o Ctrl la marca compartida, y todo se escribe en el código en vez del proyecto) (`tui/src/app/mouse.rs`: `SliceDrag`, `App::grab_slice`, `App::mouse_sample`): en la vista del sample (la pequeña, en los dos modos, y la forma de onda grande de la principal sin editor; sin nada abierto encima, `App::nothing_on_top`), un clic a menos de una columna y media de una marca agarra ese corte y lo selecciona; arrastrar mueve su inicio (y el final del anterior) por lo que se mueve el ratón, en frames, sin saltar a la columna pulsada, y se para a 1,2 ms de sus vecinos (algo más que el margen de 1 ms del script, para que el redondeo a 0,1 ms no lo pise). Mientras se arrastra solo cambia la vista (`App::view` pone la marca donde va); al soltar, `App::place_slice` (lo que ya hacía `adjust_slice`, ahora con una posición absoluta en ms del original, también con stretch) lo guarda en el proyecto, recarga y preescucha. Un clic lejos de las marcas selecciona el corte que hay ahí; agarrar y soltar sin moverse, igual. Los cortes añadidos con `:add()` no se arrastran (se mueven en el script). La resolución es la de una columna (un sample de 2 s en 80 columnas, 25 ms); el ajuste fino sigue en `<`/`>`. Un clic nuevo suelta un arrastre que se quedó a medias (soltado fuera de la terminal). `ui::draw` guarda `App::sample_area`. Usa `[editor] raton`. Tests en `tui/src/tests/mouse.rs` (arrastrar y guardar, topes a los dos lados, seleccionar sin mover, con la paleta nada, la ventana principal).
 - **Crear y quitar cortes y zoom en la vista del sample** (`tui/src/app/zoom.rs`, `App::edit_slices` con `SliceOp`): `n` en el modo tocar parte el seleccionado en su mitad (lo de «Partir»), Supr o Retroceso lo quita (lo de «Unir»; el corte 1 no), y el clic derecho en la onda pone un corte justo donde se pulsa (`App::split_at`: parte el corte donde cae, o añade uno antes del primero; se guarda como `partir` al microsegundo, en ms del original también con stretch) y sobre una marca (a la distancia de agarrar) lo quita (`App::delete_slice`). Si al cargar no cabe (a menos de 1 ms de un vecino), se deja como estaba, como en la paleta. Zoom: `WaveZoom { track, level, center }`, se ve `frames >> level` (mínimo 256 frames, ~6 ms a 44,1 kHz) centrado en `center` o, sin él, en el inicio del corte seleccionado, sin salirse del sample. `+`/`=` y `-` en el modo tocar y tres acciones de paleta; Shift-←/→ desplaza un cuarto. La rueda sobre la onda acerca y aleja con el punto apuntado fijo y fija `center`; Shift y la rueda o la rueda horizontal desplazan (`MouseAction::RightDown`, `ScrollLeft`, `ScrollRight`). Elegir o mover el corte con las teclas vuelve a seguirlo (`follow_selected_slice`); tocar la onda con el ratón fija la vista antes (`pin_wave_view`), para que no salte al cambiar de corte o al soltar un arrastre. Solo la pista seleccionada (por nombre; en otra se ve entera). El resumen del trozo se calcula del sample con su resolución (`Waveform::window`, hasta 2048 tramos) y se guarda en `App::zoom_cache` mientras no cambien sample ni trozo; `TrackView::window` dice qué frames se ven y `ui` coloca marcas, números, ms del pie (con un decimal por debajo de 200 ms) y el corte que suena relativos a él; el título dice `zoom ×N a-b ms`. Ratón (agarrar, arrastrar, seleccionar) con la misma ventana. Tests en `tui/src/tests/wave_zoom.rs` (teclas, desplazar, tope, otra pista; marcas en su sitio con zoom; rueda con el punto fijo y sin saltar al pulsar; clic derecho pone y quita y se guarda; `n` y Supr) y `app::zoom::tests`.
 - **Grupos de pistas** (`engine/src/group.rs`): `Group { fx, automation, gain, pan, sends, mix_curves }` con los mismos `with_*` y validaciones que el patrón, y `Groups { groups: [Option<Group>; MAX_GROUPS], member: [Option<usize>; MAX_TRACKS] }` (`MAX_GROUPS` = 4; `validate`: cada pista va a un grupo que existe). Entran por `Batch::set_groups` (`Command::SetGroups`, guardado aparte en el lote y aplicado al empezar el compás, como los buses). En `Engine::mix`, una pista de un grupo suma su salida (después de su volumen, pan, mute y solo) a `group_buf[g]` (fijo, en el heap) en vez de al master; sus envíos siguen saliendo de ella. Después de todas las pistas, `Engine::mix_groups` pasa cada grupo despierto por su cadena (`run_fx`, o con automatización `modulate_chain`, que es lo que hacía `modulate` sacado de la pista para usarlo también aquí) y lo suma al master y a los buses con su volumen, pan y envíos suavizados y con curvas (`mix_target`, la misma función que usan ahora las pistas, con la misma aritmética). El EQ dinámico de un grupo puede escuchar cualquier pista por sidechain (los grupos se mezclan cuando ya están todas). Estado por grupo (`GroupState`): efectos, parámetros movidos, volumen, pan y envíos suavizados; al entrar otro grupo, `update` conserva el estado de los efectos del mismo tipo; un grupo que pasa `GROUP_TAIL_SECONDS` (1 s) sin recibir nada y sin sonar se duerme (`sleep`: efectos sin memoria, todo en su sitio) y no se procesa, así que sin grupos la salida es la de siempre bit a bit. `Status::groups`: el pico de cada uno. Lua: `group(nombre, { pistas })` (global, fuera de `section()`; devuelve `GroupHandle`; `group(nombre)` sin lista da el ya creado) con `:fx`, `:gain`, `:pan` y `:send`, que comparten con los de la pista `fx_arg`, `gain_arg`, `pan_arg` y `send_arg`; errores con línea: pista repetida o ya en otro grupo, lista vacía, más de 4, uno que no existe o que ya existe; al acabar, `check_groups` comprueba que cada pista y cada sidechain existen en alguna sección o variante. `Song::groups: Vec<GroupDef>`; `song_groups` los pasa al motor con la ranura de cada pista (`resolve_sidechains`, compartido con las pistas). Registro: `Receiver::Group` («grupo») y sus cuatro métodos. Interfaz: una columna por grupo detrás de las pistas en el panel de efectos (`GroupView`, `ui::group_column`: `▣ bateria ← kick, caja`, volumen, pan, envíos, nivel con `App::group_meters` y su cadena) y `· ▣ bateria` en el título de cada pista (`TrackView::group`); la ayuda de `grupo:fx` dice el efecto como la de la pista. Tests en `engine/tests/groups.rs` (un grupo sin nada es bit a bit lo mismo; volumen y pan exactos; solo cambian sus pistas; una distorsión en el grupo suena como una pista que tocara la suma y no como cada una distorsionada aparte; los envíos de la pista no pasan por el grupo y los del grupo mandan la suma, al frame exacto del eco; entran al compás; errores), `no_alloc.rs` (dos grupos con compresor, filtro con macro, EQ dinámico con sidechain, envíos y volumen con curva, y macros moviéndose), `script/tests/groups.rs` y `tui/src/tests/groups_macros.rs`.
 - **Macros** (`engine::Curve::Macro { index, from, to }`): una curva que no depende de la posición sino de un valor de 0 a 1 (`MAX_MACROS` = 8; con escala logarítmica para las frecuencias, como las demás). `Curve::value`/`value_at` reciben ahora las macros (`Macros = [f32; MAX_MACROS]`), que el motor pasa en los relojes de cada trozo (`Clock`, `BusClock`, `SongClock`, `grain::Position`) y en `SliceShape::at`, `Knob::at` y `drive_block`: así vale en todo lo que admite `ramp`/`lfo` (efectos de pista, de corte y de grupo, volumen, pan y envíos, buses, sintetizadores, granos y lo de por golpe), sin más código en cada sitio. El valor entra con el lote (`Batch::set_macros`, `Command::SetMacros`, al compás) y se mueve en vivo con `Controller::set_macro` (`Command::SetMacro`, inmediato; también cambia los lotes que esperan, para que una recarga mandada antes no deshaga lo movido después). Los parámetros lo siguen con su suavizado de siempre (~5 ms). Además, una voz que empieza desde el silencio en una pista con volumen, pan o envíos con curva suena ya con el valor de la curva (como hacían los efectos automatizados con `snap`) y no hace un fundido desde el valor fijo; sin curvas no cambia nada. Lua: `macro(nombre, desde, hasta)` devuelve una curva (`CurveHandle`, como `ramp`/`lfo`): la macro se numera por orden de aparición (`Builder::macro_index`); `macro_init(nombre, valor)` (fuera de `section()`) da el valor inicial (0 sin él). `Song::macros: Vec<MacroDef { name, value }>`. `ScriptHost::set_macro` la mueve en el motor y en el modelo (las dos variantes) y la recuerda por nombre (`macro_values`: el valor del script en la última carga y el de vivo); al recargar, se queda el de vivo salvo que el script cambie su `macro_init`, y lo que se exporta suena con los valores de ahora. Para no gastar sitio en la cola de comandos, `song_batch` solo manda los grupos si la canción tiene (o tenía, para quitarlos) y las macros si tiene. Interfaz (`tui/src/app/macros.rs`): «Macros» en la paleta (`Action::Macros`, atable en `[teclas] macros`; con el editor en su ventana se abre en la principal) abre `MacrosPopup` (barra y valor de cada una): ↑↓ elige, ←→ ±0,05, `-`/`+` ±0,01, 0-9 salta a 0..0,9, Inicio y Fin a 0 y 1, Esc o Enter cierra; `[midi] macros = [21, 22]` (`MidiConfig::macros`, `macro_for`, que respeta `canal` salvo con MPE): cada CC de la lista mueve su macro (0-127 → 0-1) y no llega como expresión. El título del panel de efectos lista las macros con su valor. Tests en `engine/tests/macros.rs` (el volumen sigue a la macro, se mueve ya y sin saltos, un lote que espera conserva lo movido después, rangos, escala logarítmica), `script/tests/macros.rs` (números por orden, `macro_init`, suena como el número que da, recargar conserva o manda el script, en todos los sitios de las curvas, errores con línea), `script/tests/registry.rs` y `tui/src/tests/groups_macros.rs` (panel, teclas, recarga, CC, aviso de configuración, ayuda de `grupo:fx`). Guía: «Grupos de pistas» y «Macros» en el mapa, las columnas de los grupos y la lista de macros en «Leer el panel de efectos», `[midi] macros` en «MIDI» y dos recetas, «Pegar la batería con un grupo» y «Una macro para el subidón» (`scripts/ejemplos/15-grupo-bateria.lua` y `16-macro-subidon.lua`).
@@ -1721,6 +1721,7 @@ Todo está probado con `TestBackend` y el ratón simulado; nada en una terminal 
 - **Mover un corte no suena** (`App::place_slice`, `App::browse_slice`, `tui/src/app/mouse.rs`). Causa: `place_slice`, por donde pasan `,` `.` `<` `>`, «Quitar el ajuste» y soltar una marca arrastrada, terminaba con `preview_selected()`, que manda `Controller::preview_slice` (la voz de preescucha); y ← → (`browse_slice`) también preescuchaban cada corte al elegirlo. Ahora mover, quitar el ajuste y elegir con ← → solo cambian la posición o la selección. Suena: la tecla del corte en el modo tocar (el pad, con el volumen, los efectos y el choke de la pista), espacio y «Preescuchar el corte seleccionado» (la preescucha, pedida a propósito) y un clic sin arrastrar en la onda: lejos de las marcas, al pulsar (selecciona y preescucha el corte de ahí); sobre una marca, al soltar sin haberla movido (al pulsar todavía puede ser un arrastre). Sin ratón en la terminal, ← → y espacio. Las líneas de ayuda del modo tocar lo dicen. Tests: `moving_a_slice_is_silent_and_its_key_plays_it` (parado: `,` `.` `<` `>` y quitar el ajuste dejan el render a cero; la tecla `2` y espacio, no), `arrows_in_play_mode_browse_and_space_previews_slices` y `mouse::a_click_on_the_wave_selects_and_plays_the_slice_there` (el clic suena; agarrar sin soltar no; arrastrar la marca no). Sin probar en una terminal de verdad: el clic depende de que la terminal mande los eventos del ratón (`[editor] raton`, y dentro de tmux `set -g mouse on`).
 - **Botón de pánico y límite de voces** (`engine/src/engine.rs`: `Command::Panic { hold }`, `Command::Resume`, `Command::SetVoiceLimit`, `Engine::panic`, `steal_oldest`, `make_room_for_synth`; `engine::synth::Synth::stamp`; `tui/src/app.rs`: `App::panic`; `[voces]` en `config.rs`). No había forma de callar lo que suena sin parar el secuenciador (Stop lo paraba todo) ni límite de voces entre pistas: solo el de cada pista (`voices` del instrumento, 1-16, y del sintetizador; los granos, `MAX_GRAINS` = 32 por pista), con robo de la más antigua dentro de la pista. Pánico: por la cola de comandos lock-free de siempre, inmediato (no espera al compás). Para cada pista hace lo de `Stop` sin parar el transporte (quita el retrigger pendiente, la voz pasa a su fundido de 1,5 ms, `kill_notes` corta notas, sintetizador y nube, y sus notas MIDI se apagan) y además `Voice::hush` gasta la cola de los efectos de corte (`VoiceFx::spend_tail`; sin eso, hasta 100 ms); la preescucha también. Los buses de envío y los efectos de pista siguen (su cola es de la pista, no de la voz). Con `hold`, `Engine::hushed`: `play_hit` vuelve sin disparar (el secuenciador sigue contando, también `every`, las curvas y la línea de tiempo) y `Play`, `NoteOn`, `GrainOn` y `Preview` sueltan su sample a la cola de basura sin sonar (`SynthOn`, que no lleva nada en el heap, se ignora) hasta `Resume`; el metrónomo sigue. Un pánico sin `hold` no quita la pausa. Se publica en `Status::hushed` (un atómico) y la barra de transporte dice `PÁNICO: pausa`. Límite de voces: `DEFAULT_VOICE_LIMIT` = 64 (hasta `MAX_VOICE_LIMIT` = 256) notas de instrumento y voces de sintetizador que cuentan, entre todas las pistas. Antes de abrir una nota (si su pista no está ya llena, que entonces roba la suya como siempre) o una voz de sintetizador que ocupe una más (no la de un monofónico que ya suena), mientras se llegue al límite se roba la más antigua de todas: las notas llevan como `born` un contador global del motor (`Engine::stamp`; antes uno por pista, solo se usaba para ordenar y casar las notas MIDI) y las voces del sintetizador un `stamp` aparte (su `born` siembra las fases y no se toca: el sonido no cambia). Bajar el límite roba ya lo que sobra. La voz de cortes de cada pista (una) y los granos no cuentan. Interfaz: F12 (`panico`) y Shift-F12 (`pausa_panico`, pone y quita la pausa) en `[teclas]` y en la paleta; se miran al principio de `App::handle`, antes que la paleta, el explorador, los cursores o el modo vim, y desde la ventana del editor van a la principal como las demás acciones del motor. Sueltan antes las notas de los pads. `[voces] limite` se manda al motor en `set_config`; el render offline usa el de por defecto. Tests: `engine/tests/panic.rs` (todo a la vez: secuenciador, pad, nota, sintetizador y preescucha; tras el pánico, ninguna voz y el render a cero en 200 ms tras el fundido, la posición intacta, un pad y el compás siguiente vuelven a sonar; la cola de un efecto de corte se corta; en pausa no entra nada en un compás entero y el secuenciador cuenta, un pánico puntual no la quita y reanudar vuelve a sonar; el límite roba la nota más antigua de otra pista y bajar el límite roba ya), `no_alloc.rs` (límite con robo entre pistas, pánico puntual y en pausa con todo lo que no entra, reanudar), `tui/src/tests/panic.rs` (F12 con la paleta abierta, Shift-F12 dos veces con la barra de estado, F12 en pausa, teclas y `[voces]` desde la configuración con sus avisos) y `split::the_panic_keys_from_the_editor_window_reach_the_main_one`. `golden.rs`, idéntico. Sin probar en una terminal de verdad: que F12 y Shift-F12 lleguen (dentro de tmux y por SSH, y en terminales desplegables que usan F12).
 - **Edición de cortes**: duraciones (`dur`, `fit`), el corte como instrumento y deformaciones; tiene su propia sección, «Edición de cortes», más abajo.
+- **Cortes independientes y guardar su edición**: lo editado en la onda se escribe en el código (`slice({ {inicio, fin}, ... })`) y se guarda con Ctrl-S; cada corte con su inicio y su final; su propia sección, «Cortes independientes y guardar su edición», más abajo.
 
 ### Decisiones
 
@@ -3850,6 +3851,165 @@ grupos y la preescucha; con el código de antes falla en «quitar la
 - **N15** (`meter()` no cambia la longitud de las pistas) va con M2 (qué
   es «compás»): fuera de esta tanda, en «Preguntas para Roi» del informe.
 - M1 (el limitador), M2 y M5: fuera de alcance por decisión de Roi.
+
+## Cortes independientes y guardar su edición
+
+Continuación de la edición de cortes con el ratón (sin fase propia). Cinco
+commits: el arreglo del guardado, el modelo y el motor, el ratón y el
+teclado, la API de Lua y esta documentación.
+
+### El fallo: la edición en la onda no se guardaba
+
+- **Reproducido** antes de arreglarlo en `tui/src/tests/slice_save.rs`:
+  arrastrar la marca de un corte (con las coordenadas de la geometría de la
+  onda), Ctrl-S, abrir de nuevo (el script, o el proyecto y el script) y
+  comparar los cortes. Los tres primeros tests fallaban con el código de
+  antes (volvía `[0..3000, 3000..6000]`).
+- **Causa raíz**: los ajustes hechos con el ratón o las teclas (`,` `.`
+  `<` `>`, arrastrar, `n`, Supr, clic derecho) iban a `ScriptHost::positions`
+  y `edits` y se guardaban solo en el `.sampler` (`App::save_project_file`), y
+  solo con un proyecto abierto; sin él, el mensaje decía «se guardará con
+  «guardar»» y se quedaban en memoria. Ctrl-S (`App::save`) escribe solo el
+  script, y abrir el `.lua` (`App::open`) no lee el proyecto: sin proyecto
+  se perdían al cerrar, y con él, al abrir solo el script. La recarga al
+  guardar no pisaba nada (el script no decía nada de ellos); el problema era
+  que la fuente de verdad estaba partida entre el código y un archivo aparte
+  que no siempre se usaba. Con el editor en su ventana pasaba lo mismo: la
+  principal guardaba el proyecto y la del editor solo el script.
+- **Decisión: el código es la fuente de verdad** (la preferencia del
+  usuario, y lo que ya hacen el tracker, el piano roll y las lanes). Lo
+  editado reescribe la llamada que corta el sample en la forma explícita,
+  `slice({ {inicio, fin [, "nombre"]}, ... })` en ms del sample sin estirar
+  (`script::slice_call`). La primera edición de un `slice(n)` o un
+  `slice_grid(n)` lo convierte con los cortes que daba (con los ajustes,
+  partir, unir y etiquetas del proyecto y los cruces por cero) y lo avisa. Se
+  descartó el `.sampler` como fuente única: obligaría a abrir siempre el
+  proyecto y dejaría el script diciendo `slice(8)` con otros cortes.
+- **Dónde está la llamada**: `slice_call::find`, al evaluar `slice` o
+  `slice_grid`, busca `:slice(`/`:slice_grid(`/`:slice{` fuera de cadenas y
+  comentarios en la línea que da Lua (en Lua 5.4, la del principio de la
+  cadena de métodos) y las tres siguientes, y luego las tres anteriores;
+  vale la que tiene escrito el mismo primer argumento (el número, o la tabla
+  leída con `parse_ranges`, que solo acepta números, cadenas y llaves). Dos
+  iguales en una línea, un número de una variable o una tabla con cuentas:
+  `SliceOrigin::call` es `Err` con el motivo. `SliceCall` guarda el sitio
+  (`TableSpan`), los cortes de la llamada (frames sin estirar), sus
+  etiquetas y lo que va tras el primer argumento (`, { zero_cross = 2 }`, que
+  se conserva).
+- **Escribirla** (`tui/src/app/slices.rs`, `App::write_slices`): solo con el
+  texto cargado (si no, «carga antes (Ctrl-S)»), en un paso de deshacer
+  (`replace_text`), y se carga. Al releerla, las pistas de esa llamada (las
+  que la usan entera o con `slice_at`) tienen que tener los cortes nuevos que
+  han cambiado (con su estiramiento y, con `zero_cross`, a esa distancia) y
+  las demás, los de antes; si no (un `:move()` o `:add()` después, que
+  manda), se deshace y se dice. Los ms se escriben con los menos decimales
+  (hasta tres) que vuelven al mismo frame (`frame_ms_text`): `67.2` y no
+  `67.208`. Una línea si cabe en 72 caracteres; si no, cuatro cortes por
+  línea con la sangría de la llamada.
+- **El proyecto**: lo que guardaba de unos cortes convertidos (`corte =`,
+  `partir =`, `unir =`, `etiqueta =` de ese sample cortado así) no se
+  guarda más (`App::project_with` lo filtra con `dropped_from_project`) si
+  ninguna llamada del detector o de la rejilla de la canción lo usa ya; en
+  memoria se conserva, así que Ctrl-Z vuelve a `slice(8)` con sus ajustes.
+  Ctrl-S guarda el script y, si hay algo que quitar, el proyecto (los dos
+  con `script::atomic`). Las etiquetas de cortes del detector sin editar
+  siguen en el proyecto, como antes (`etiquetar`); en cortes explícitos van
+  en su entrada de la tabla.
+- **Si no se puede escribir**: con cortes del detector cuya llamada sale de
+  código, la marca de inicio se mueve como antes (en memoria o en el
+  proyecto abierto) y el mensaje dice «no se puede guardar en el código»,
+  por qué y cómo pasarlo a literal; los demás movimientos (final, entero) y
+  las tablas generadas no se cambian, con el mismo mensaje.
+- **La ventana del editor aparte**: la principal reescribe su copia del
+  texto y la manda con `ToEditor::Text` (como el tracker); se guarda desde
+  la ventana del editor. Test `with_the_editor_in_its_window_the_edit_reaches_it`.
+- Tests (`tui/src/tests/slice_save.rs`): sin proyecto y con él (abriendo
+  el proyecto y solo el script), tres ciclos de editar, guardar y abrir, un
+  proyecto antiguo con `corte =` y `etiqueta =` que pasan al código y salen
+  del proyecto, una llamada generada (se aplica y avisa) y una tabla en una
+  variable (no se cambia), el texto sin cargar y Ctrl-Z; y en
+  `script/tests/slice_ranges.rs`, dónde se encuentra cada llamada y que la
+  reescrita da los mismos cortes.
+
+### Cortes independientes
+
+- **Modelo**: `engine::Slices` sigue siendo un rango por corte; los del
+  detector y la rejilla son contiguos (`is_contiguous`) y los de
+  `Slices::from_ranges` tienen cada uno su inicio y su final, en el orden
+  dado, con huecos o solapes. `from_ranges` da el índice y el motivo del
+  primero que no vale (`RangeError`: vacío, fin antes del inicio, fuera del
+  sample, más corto que el mínimo). `with_range` cambia uno sin tocar los
+  demás y `snapped_starts` lleva solo los inicios al cruce por cero.
+- **Mínimo de longitud**: 1 ms en el código (el margen de siempre,
+  `min_slice_gap`) y 1,2 ms al editar en la onda (como el arrastre de
+  antes: que el redondeo a 0,1 ms no lo pise). Los solapes no tienen
+  límite: dos cortes pueden ser casi el mismo.
+- **Los scripts de siempre suenan igual**: `slice(n)` y `slice_grid(n)` no
+  cambian (siguen por `project_cuts`, el código de antes), y una tabla con
+  los mismos cortes contiguos suena bit a bit igual
+  (`contiguous_ranges_sound_like_the_detector`). golden.rs, idéntico.
+- **Motor**: los cortes ya viajaban como rangos resueltos en el patrón
+  (`resolve_bar`, fuera del hilo de audio) y entran con el lote al compás;
+  no hace falta capacidad nueva. La voz que suena guarda su rango y su
+  `Arc` del sample: si cambian los cortes, acaba su corte con su fundido
+  (`new_slices_while_one_sounds_let_it_end_without_a_click`), y si un golpe
+  nuevo la interrumpe, el fundido cruzado de siempre. `no_alloc.rs` toca
+  cortes con huecos y solapes, los cambia mientras suenan y los usa en un pad
+  y en la preescucha. Con `stretch`, los finales de los cortes explícitos
+  también son límites del WSOLA.
+- **La interfaz** dice qué corte suena por su inicio: con dos cortes que
+  empiezan igual, el primero.
+
+### Ratón y teclado
+
+- **Geometría**: `ui::WaveLayout` (el área de la onda y los frames que se
+  ven, que guarda el dibujo en `App::wave_layout`, en lugar de
+  `sample_area`) con `hit`: el borde más cercano a 1,5 columnas; si un
+  inicio y un final caen juntos, el inicio pulsando en la celda de la marca
+  o a su derecha y el final a su izquierda (se probó primero dar prioridad
+  al corte elegido, pero pulsar en la marca «2» agarraba el final del 1);
+  dentro de un corte, el cuerpo (el elegido si lo cubre; si no, el que
+  empieza más tarde); si no, un hueco. Los tests piden dónde pulsar con
+  `point_of`.
+- **Arrastrar** (`app/mouse.rs`, `SliceDrag`): un borde mueve ese borde, el
+  cuerpo mueve el corte entero, y con **Alt o Ctrl** (`App::mouse_with`; en
+  `main.rs`, `mouse_held`) la marca de inicio se mueve con los cortes que
+  empiezan o acaban justo ahí, lo de antes. Shift no: la terminal lo usa
+  para seleccionar. La vista enseña los cortes del arrastre
+  (`SliceDrag::preview`) y al soltar se escribe (`App::move_slice_edge`).
+  Pulsar dentro de un corte ya no suena al pulsar sino al soltar sin mover
+  (todavía puede ser un arrastre). El clic derecho en un hueco pone un corte
+  desde ahí hasta el inicio siguiente.
+- **Teclado**: `b` en el modo tocar (y «Cambiar qué mueven las teclas del
+  corte» en la paleta, `Action::SliceEdge`) elige qué mueven `,` `.` `<` `>`:
+  inicio (al empezar), final, entero o marca compartida. Todo pasa por
+  `app::slices::moved` (pura, con sus tests): topes en el principio y el
+  final del sample, en su propio otro borde y, con la marca compartida, en
+  los vecinos; el mensaje dice cuál.
+- **Dibujo**: la onda con un color por cobertura (apagado en un hueco, el de
+  los avisos donde se solapan dos o más, sin colores nuevos en el tema), `]`
+  en la fila de los números para cada final que no es el inicio de otro, y
+  el título con «N huecos · N solapes» y el inicio y el final del corte
+  elegido; en ASCII, lo mismo (`]` es ASCII).
+- Tests: `tui/src/tests/mouse.rs` (inicio sin mover al vecino, topes, final
+  a la izquierda de la marca, cuerpo entero, Alt como antes),
+  `tui/src/tests/slice_edit.rs` (la geometría, huecos y solapes en palabras
+  y en ASCII, clic derecho en un hueco) y `tui/src/tests.rs` (`b` y las
+  teclas con cada modo; la marca compartida da los mismos cortes que antes).
+
+### API de Lua
+
+- `sample:slice({ {inicio, fin [, "nombre"]}, ... } [, opciones])`: mismo
+  nombre que `slice(n)` (el primer argumento dice cuál), hasta 64 cortes,
+  errores con el número del corte (`script/tests/slice_ranges.rs`: fin antes
+  del inicio, fuera del sample, negativo, menos de 1 ms, vacía, con claves,
+  nombre repetido o que no es texto); si falla, sigue sonando lo anterior.
+  Las etiquetas del proyecto no se aplican a una tabla.
+- `cortes:move(i, ms, fin)` mueve solo ese corte (con cualquier corte); con
+  los de una tabla, `move(i, ms)` mueve solo su inicio. `cortes:range(i)` da
+  el inicio y el final en ms.
+- En el registro (`api.rs`), con la guía regenerada; los enlaces del
+  tutorial al ancla nueva de `slice`.
 
 ## Audio de prueba y problemas conocidos
 

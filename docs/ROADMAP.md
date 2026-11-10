@@ -911,3 +911,17 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
     N12 (cargar un sample muy largo congela la interfaz: va con la
     partición de `App`, M5) y N15 (va con M2). Detalle en «Arreglos de la
     segunda auditoría» de [docs/ESTADO.md](ESTADO.md).
+24. ✅ **Cortes independientes y guardar su edición** (pedida por el
+    usuario; continuación de la edición de cortes con el ratón). Detalle
+    en «Cortes independientes y guardar su edición» de
+    [docs/ESTADO.md](ESTADO.md).
+    1. ✅ **El fallo del guardado**: lo editado en la onda iba solo al
+       `.sampler` (y solo con un proyecto abierto); ahora se escribe en la
+       llamada `slice(...)` del código y se guarda con Ctrl-S.
+    2. ✅ **Modelo y motor**: cada corte con su inicio y su final
+       (`Slices::from_ranges`), huecos y solapes; lo de siempre suena igual.
+    3. ✅ **Ratón y teclado**: bordes, cuerpo y, con Alt o Ctrl, la marca
+       compartida; `b` para las teclas; huecos y solapes a la vista.
+    4. ✅ **API de Lua**: `slice({ {inicio, fin}, ... })`, `move(i, ms,
+       fin)` y `range(i)`.
+    5. ✅ **Documentación**.
