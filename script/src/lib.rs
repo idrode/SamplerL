@@ -40,6 +40,7 @@ use engine::{
 };
 pub mod api;
 pub mod atomic;
+pub mod panics;
 
 /// `n` compases como texto: «1 compás», «4 compases».
 pub fn bars_text(n: u64) -> String {
@@ -49,6 +50,9 @@ pub fn bars_text(n: u64) -> String {
         format!("{n} compases")
     }
 }
+
+#[cfg(test)]
+mod panic_tests;
 
 #[cfg(test)]
 #[test]
@@ -552,6 +556,23 @@ impl ScriptError {
         }
     }
 
+    /// Un pánico recogido por [`panics`]: un fallo del programa, no del
+    /// script. La carga falla como cualquier otra y sigue sonando lo
+    /// anterior.
+    pub fn internal(panic: &str) -> Self {
+        // `panic` empieza por la línea del script, si se sabe.
+        let (place, text) = match panic.split_once(": ") {
+            Some((place, text)) if place.contains(".lua:") || place.ends_with(".lua") => {
+                (format!("{place}: "), text)
+            }
+            _ => (String::new(), panic),
+        };
+        ScriptError::new(format!(
+            "{place}error interno del programa (no es de tu script): {text}; sigue sonando lo \
+             anterior"
+        ))
+    }
+
     /// Mensaje legible de un error de mlua: la causa original, sin la pila.
     /// Si la causa no dice dónde ocurrió (p. ej. un argumento de tipo
     /// incorrecto), se toma la posición de la pila de llamadas.
@@ -996,6 +1017,19 @@ impl ScriptHost {
         name: &str,
         base_dir: &Path,
     ) -> Result<&Song, ScriptError> {
+        panics::catch(|| self.load_unguarded(controller, source, name, base_dir))
+            .map_err(|panic| ScriptError::internal(&panic))??;
+        Ok(self.song.as_ref().expect("la carga deja la canción"))
+    }
+
+    /// [`ScriptHost::load`] sin la red de pánicos.
+    fn load_unguarded(
+        &mut self,
+        controller: &mut Controller,
+        source: &str,
+        name: &str,
+        base_dir: &Path,
+    ) -> Result<(), ScriptError> {
         let mut song = self.eval(source, name, base_dir)?;
         // Con variantes, sigue sonando la que sonaba (la A al principio).
         let mut other = song.alternate.take().map(|b| *b);
@@ -1060,7 +1094,7 @@ impl ScriptHost {
         self.song = Some(song);
         self.other = other;
         self.macro_values = values;
-        Ok(self.song.as_ref().unwrap())
+        Ok(())
     }
 
     /// Las macros de lo que suena, con su valor.
@@ -1107,6 +1141,17 @@ impl ScriptHost {
         controller: &mut Controller,
         letter: char,
     ) -> Result<&Song, ScriptError> {
+        panics::catch(|| self.set_variant_unguarded(controller, letter))
+            .map_err(|panic| ScriptError::internal(&panic))??;
+        Ok(self.song.as_ref().expect("con variantes hay canción"))
+    }
+
+    /// [`ScriptHost::set_variant`] sin la red de pánicos.
+    fn set_variant_unguarded(
+        &mut self,
+        controller: &mut Controller,
+        letter: char,
+    ) -> Result<(), ScriptError> {
         if self.variant().is_none() {
             return Err(ScriptError::new(
                 "no hay variantes: defínelas con variant(\"sección o pista\", \"B\", function() ... end)",
@@ -1129,7 +1174,7 @@ impl ScriptHost {
             }
             self.other = self.song.replace(other);
         }
-        Ok(self.song.as_ref().unwrap())
+        Ok(())
     }
 
     /// Alterna entre A y B (ver [`ScriptHost::set_variant`]).
@@ -1144,9 +1189,11 @@ impl ScriptHost {
 
     /// Evalúa el script y devuelve el modelo, sin tocar el motor.
     pub fn eval(&mut self, source: &str, name: &str, base_dir: &Path) -> Result<Song, ScriptError> {
+        // Un pánico de Rust dentro de una función de la API no se puede
+        // atrapar con `pcall`: sale entero y lo recoge `panics::catch_at`.
         let lua = Lua::new_with(
             StdLib::MATH | StdLib::STRING | StdLib::TABLE | StdLib::UTF8,
-            LuaOptions::default(),
+            LuaOptions::new().catch_rust_panics(false),
         )
         .map_err(|e| ScriptError::from_lua(&e))?;
 
@@ -1227,24 +1274,32 @@ impl ScriptHost {
             old: std::mem::take(&mut self.imported),
             used: Vec::new(),
         }));
-        let result = self
-            .install_api(
-                &lua,
-                &state,
-                (&cache, &imports),
-                &warnings,
-                &pattern_rng,
-                base_dir,
-            )
-            .and_then(|()| {
-                // Para saber dónde está escrito cada patrón.
-                lua.set_app_data(written::ScriptText::new(source, format!("={name}")));
-                lua.load(source).set_name(format!("={name}")).exec()
-            })
-            .and_then(|()| run_bodies(&state));
+        // Un pánico (un fallo del programa) pasa a ser el error de la carga,
+        // con la línea del script por la que iba.
+        let probe = lua.clone();
+        let result = panics::catch_at(
+            move || location(&probe),
+            || {
+                self.install_api(
+                    &lua,
+                    &state,
+                    (&cache, &imports),
+                    &warnings,
+                    &pattern_rng,
+                    base_dir,
+                )
+                .and_then(|()| {
+                    // Para saber dónde está escrito cada patrón.
+                    lua.set_app_data(written::ScriptText::new(source, format!("={name}")));
+                    lua.load(source).set_name(format!("={name}")).exec()
+                })
+                .and_then(|()| run_bodies(&state))
+            },
+        );
         self.samples = std::mem::take(&mut *cache.borrow_mut());
         self.imported = std::mem::take(&mut imports.borrow_mut().used);
         self.memory_peak = peak.get().max(lua.used_memory());
+        let result = result.map_err(|panic| ScriptError::internal(&panic))?;
         let versions = result.map_err(|e| {
             if is_memory_error(&e) {
                 let at = match line.get() {
@@ -1626,6 +1681,14 @@ impl ScriptHost {
             }
             Ok(())
         };
+
+        // Solo en los tests: un fallo del programa a voluntad, para probar
+        // la red de pánicos.
+        #[cfg(test)]
+        globals.set(
+            "__panico",
+            lua.create_function(|_, message: String| -> mlua::Result<()> { panic!("{message}") })?,
+        )?;
 
         let st = state.clone();
         let g = guard.clone();

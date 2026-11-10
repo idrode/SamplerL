@@ -254,8 +254,18 @@ impl fmt::Display for ProjectError {
 impl std::error::Error for ProjectError {}
 
 impl Project {
-    /// Lee un proyecto. Las rutas se resuelven respecto a su carpeta.
+    /// Lee un proyecto. Las rutas se resuelven respecto a su carpeta. Un
+    /// fallo del programa al leerlo es un error más (ver [`crate::panics`]).
     pub fn load(path: &Path) -> Result<Project, ProjectError> {
+        crate::panics::catch(|| Self::load_unguarded(path)).map_err(|panic| {
+            ProjectError(format!(
+                "{}: error interno al leerlo: {panic}",
+                path.display()
+            ))
+        })?
+    }
+
+    fn load_unguarded(path: &Path) -> Result<Project, ProjectError> {
         let text = std::fs::read_to_string(path)
             .map_err(|e| ProjectError(format!("{}: {e}", path.display())))?;
         let dir = path.parent().unwrap_or(Path::new("."));

@@ -45,7 +45,13 @@ impl App {
     pub(super) fn analyze_key(&mut self, name: String, sample: Arc<Sample>) {
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
-            let _ = tx.send(engine::detect_key(&sample));
+            // Un pánico del análisis es «sin resultado», sin escribir en la
+            // pantalla.
+            let _ = tx.send(
+                script::panics::catch(|| engine::detect_key(&sample))
+                    .ok()
+                    .flatten(),
+            );
         });
         self.completion = None;
         self.key_panel = Some(KeyPanel {

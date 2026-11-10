@@ -1307,8 +1307,14 @@ impl App {
         let sample = match self.preview_cache.get(path) {
             Some(sample) => sample.clone(),
             None => {
-                let sample =
-                    Arc::new(Sample::load_wav(path, self.sample_rate).map_err(|e| e.to_string())?);
+                // Un archivo raro no puede tumbar el programa (ni el audio).
+                let rate = self.sample_rate;
+                let sample = script::panics::catch(|| Sample::load_wav(path, rate))
+                    .map_err(|panic| {
+                        format!("{}: error interno al leerlo: {panic}", path.display())
+                    })?
+                    .map_err(|e| e.to_string())?;
+                let sample = Arc::new(sample);
                 // Una caché pequeña: lo que se va escuchando al recorrer.
                 if self.preview_cache.len() >= PREVIEW_CACHE {
                     self.preview_cache.clear();
