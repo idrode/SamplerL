@@ -896,3 +896,18 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
     las exportaciones se escriben a un temporal en la misma carpeta y se
     renombran (`script::atomic`). Detalle en «Límites del script» y
     «Guardado atómico» de [docs/ESTADO.md](ESTADO.md).
+23. ✅ **Arreglos de la segunda auditoría** ([docs/AUDITORIA-2.md](AUDITORIA-2.md)):
+    15 de sus 17 hallazgos, cada uno con su commit y un test que falla sin
+    el arreglo. Ningún pánico en la carga mata el programa (un script con
+    secciones sin `arrange()`, un fallo interno: error en el editor y sigue
+    sonando lo anterior); los samples con NaN o infinitos se sanean al
+    cargar y, si algo no finito llega a la mezcla, el motor lo pone a cero
+    y calla esa pista en vez de quedarse mudo; el límite de tiempo de Lua ya
+    no se rodea (`pcall`, `__gc`, patrones de `string`, y un vigilante para
+    lo demás); quitar la última lane ya no libera memoria en el callback;
+    los patrones enormes se rechazan antes de partirlos; cortes iguales con
+    el sample bajo; render a trozos de hasta dos horas en 16, 24 o 32 bits;
+    samples en FLAC, MP3, OGG y AIFF; y huellas nuevas en `golden.rs`. Falta:
+    N12 (cargar un sample muy largo congela la interfaz: va con la
+    partición de `App`, M5) y N15 (va con M2). Detalle en «Arreglos de la
+    segunda auditoría» de [docs/ESTADO.md](ESTADO.md).

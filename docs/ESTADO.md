@@ -13,7 +13,7 @@ ROADMAP.
 - **Paso 1 hecho.** Workspace con `engine` (librería) y `tui` (binario mínimo: render offline; reproducir por la tarjeta exige `--allow-audio`, ver las Notas de `CLAUDE.md`; aún sin ratatui).
 - Decisiones técnicas:
   - Samples en memoria como estéreo f32 entrelazado (mono se duplica, >2 canales se usan los dos primeros), resampleados al cargar con `rubato::Fft`. La longitud de salida se calcula con enteros porque rubato 5 puede dar un frame de más.
-  - Carga de WAV con `hound`; `symphonia` todavía no se usa.
+  - Carga de WAV con `hound`; FLAC, MP3, OGG Vorbis y AIFF con `symphonia` (ver M4 en «Arreglos de la segunda auditoría»).
   - `new_engine()` devuelve `Controller` (control) y `Engine` (audio). Comandos por cola SPSC lock-free (`rtrb`). Los `Arc<Sample>` que el motor deja de usar vuelven por una segunda cola ("basura") y se liberan en el hilo de control: el callback nunca libera memoria.
   - Salida con `cpal` 0.18, dispositivo por defecto; el callback convierte formato con un bloque intermedio en la pila.
   - Test de render offline en `engine/tests/`: se llama a `Engine::process` por bloques sin dispositivo de audio.
@@ -51,7 +51,7 @@ ROADMAP.
   - Tests en `engine/tests/notation.rs` (incluido que un patrón en notación renderiza igual que el construido con `Step`).
 - **Paso 5 (Lua hecho)** en el crate `script` (`mlua` 0.12 con Lua 5.4 `vendored`; compila con el gcc del sistema). Depende de `engine`; `tui` depende de los dos.
   - `ScriptHost::load(controller, fuente, nombre, carpeta)` / `load_file(controller, ruta)`: evalúa el script en un Lua nuevo, construye el modelo `Song { bpm, tracks: Vec<TrackDef> }` y lo envía con `Controller::apply` como un lote: todo entra junto en el siguiente compás. `ScriptHost::song()` es el último modelo válido (lo leerán las vistas).
-  - Si algo falla, no se envía nada y sigue sonando lo anterior. Esto incluye sintaxis, errores de ejecución, notación, corte inexistente, archivo que no existe, pista no definida, BPM fuera de rango, más de 8 pistas o un script que tarda más de 2 s o usa más de 256 MB (`set_time_limit` y `set_memory_limit`, `[script]` en la configuración; ver «Límites del script»).
+  - Si algo falla, no se envía nada y sigue sonando lo anterior. Esto incluye sintaxis, errores de ejecución, notación, corte inexistente, archivo que no existe, pista no definida, BPM fuera de rango, más de 8 pistas, un script que tarda más de 2 s o usa más de 256 MB (`set_time_limit` y `set_memory_limit`, `[script]` en la configuración; ver «Límites del script») o un fallo del programa (un pánico: «error interno», ver N5 en «Arreglos de la segunda auditoría»).
   - Errores con archivo y línea: `song.lua:3: steps: paso 11 ("5^"): falta el número después de ^`.
   - API: `bpm(n)`, `sample(ruta)` (relativa a la carpeta del script), `:slice(n)` (detector por defecto; `:count()` da los cortes), `:slice_at(i)` (solo el corte i, desde 1; en el patrón es `1`/`x`), `track(nombre, sliced)` define o redefine una pista, `track(nombre)` la recupera. Métodos de pista, encadenables: `:steps("...")` en mini-notación, `:gain(g)`, `:fx(nombre, {params})`, `:every(n, fn)` y `:chance(p, efecto[, valor])`.
   - `:fx`: `"filter"` (`type` = `"lowpass"`/`"highpass"`, `cutoff`, `q`), `"lowpass"`/`"highpass"` (`cutoff`, `q`), `"bitcrush"` (`bits` = 8, `downsample` = 1). Una clave desconocida da error (para detectar erratas).
@@ -3599,12 +3599,10 @@ Decisiones:
 - **Un solo límite por carga**, no por función: el intérprete es nuevo en
   cada carga.
 
-Lo que sigue sin cortarse: una sola función de C que tarde mucho sin
-reservar memoria, como un patrón de `string.find` con vuelta atrás
-(`string.rep("a", 3000):find(".-.-.-b")` no acabó en 120 s): el hook solo
-corre entre instrucciones de Lua. En la interfaz congela el hilo de la
-interfaz (el audio sigue: va en el suyo). Quitarlo pediría envolver las
-funciones de patrones de `string`; no se ha hecho.
+Lo que no se cortaba (una función de C que tarda mucho, como un patrón de
+`string.find` con vuelta atrás; un `pcall` que se traga el error del
+límite; un `__gc`) se arregló después, con la segunda auditoría: ver N4 en
+«Arreglos de la segunda auditoría».
 
 Tests: `runaway_scripts_hit_the_limits_and_the_previous_keeps_playing`
 (`script/tests/lua.rs`: cadenas que se guardan, tablas que crea Rust,
@@ -3675,6 +3673,183 @@ solo lectura, los permisos, los enlaces (y el roto) y los huérfanos; y
 `saving_never_leaves_the_script_half_written` (`tui/src/tests/config.rs`:
 Ctrl-S sobre un script de solo lectura avisa y no lo toca; al poder,
 guarda sin dejar temporales).
+
+## Arreglos de la segunda auditoría
+
+`docs/AUDITORIA-2.md` (nota C+) encontró 17 hallazgos nuevos (N1-N17).
+Se arreglaron por tandas, de menor a mayor riesgo, con un commit por
+hallazgo y un test que falla sin el arreglo; la tabla de hallazgos del
+informe dice el commit de cada uno. Las reglas de siempre: `golden.rs`
+idéntico (las cinco huellas de antes, sin tocar) y `no_alloc.rs` en verde
+y ampliado; además, `scripts/comparar-audio.sh` con el binario de antes de
+los arreglos: las 27 recetas deterministas, iguales bit a bit.
+
+### Pánicos en la carga (N1, N5)
+
+- **N1**: con secciones sin `arrange()` (o una variante B con una pista
+  nueva), una pista tenía ranura pero no estaba en lo que suena, y un
+  `unwrap` de `song_batch` mataba el programa. Dos secciones sin
+  `arrange()` bastaban. Esa ranura queda sin patrón (es lo que dice el
+  aviso «suena solo "…"»). No es un error: el script es válido.
+- **N5**: `script::panics::catch` recoge un pánico sin escribir en la
+  terminal (un gancho de pánicos que, dentro de `catch`, guarda el
+  mensaje) y lo devuelve como texto. Lo usan `ScriptHost::load`, `eval` y
+  `set_variant` (un pánico es «error interno del programa (no es de tu
+  script)», con la línea del script por la que iba: el gancho corre antes
+  de deshacer la pila y mira la de Lua con `catch_at`), `Project::load`,
+  la preescucha de un archivo y el hilo de la tonalidad. Lua se crea con
+  `catch_rust_panics(false)`: un `pcall` del script no puede tragarse un
+  pánico y seguir con el estado roto. El intérprete es nuevo en cada
+  carga, así que tras un pánico no queda nada a medias; la caché de
+  samples se devuelve igual. Tests: `script/src/panic_tests.rs` (con una
+  función `__panico` que solo existe en los tests): el error lleva la
+  línea, `pcall` y `xpcall` no lo atrapan, dentro de una sección también,
+  y con la canción sonando el compás siguiente suena igual y la carga
+  siguiente entra.
+
+### Samples con NaN o infinitos (N2, N3)
+
+- **Decisión**: un sample con muestras no finitas **se carga con esas
+  muestras a 0 y un aviso** («x.wav: 3 muestras no válidas (NaN o
+  infinito) puestas a 0»), en vez de rechazarlo: un NaN suelto en un
+  sample bueno no debería impedir usarlo, y el aviso dice cuántas.
+  `Sample::from_interleaved` sanea antes de resamplear: lo no finito a 0,
+  lo que pasa de `MAX_SAMPLE_LEVEL` (64, +36 dBFS: un `1e30` desbordaba el
+  resampleo) recortado, y los subnormales a 0 (inaudibles y lentos en los
+  filtros; no se avisan). `Sample::repairs` cuenta lo arreglado y
+  `sample()` lo avisa. Un WAV de 64 bits en coma flotante sigue siendo un
+  error de `hound`, sin pánico. Con esto el pánico de `rubato` (N2) no es
+  alcanzable.
+- **N3, el mecanismo exacto** (medido con renders offline): el NaN llega
+  al **filtro de la pista** (un biquad, con memoria), que lo devuelve en
+  cada muestra siguiente; la pista toca en cada compás, así que su voz
+  nunca acaba y su cadena nunca se vacía (la memoria de los efectos solo
+  se vacía con la pista en silencio); su salida NaN, sumada al master, lo
+  hace NaN entero, y `soft_limit` convierte NaN en 0: silencio total, para
+  siempre. La **reverb** guarda el NaN en sus combs hasta que se duerme
+  (un segundo sin entrada): un segundo de silencio. El delay y el
+  compresor no lo guardaban. Los medidores no lo veían: `f32::max`
+  ignora el NaN.
+- **La red** (en el hilo de audio, sin reservas): tras los efectos de
+  cada pista y de cada grupo, `scrub` pone a cero lo no finito y, si
+  había algo, vacía la memoria de esos efectos y calla esa pista como el
+  pánico (`hush_track`, solo ella; el secuenciador sigue). En el master,
+  lo que quede (buses, preescucha) también a cero y los buses se vacían
+  (`Rack::clear`). Con entradas normales no cambia nada (solo toca lo no
+  finito): `golden.rs` igual. `MasterStatus::non_finite` cuenta las
+  muestras y la interfaz lo avisa en el mensaje. Coste: un recorrido de
+  `is_finite` por bloque y pista, que no se nota en la medida.
+- Tests: `engine/tests/bad_samples.rs` (NaN, infinitos y ambos, con y sin
+  resampleo, valores enormes, subnormales, un archivo limpio idéntico,
+  64 bits), `engine/src/engine/nan_tests.rs` (un sample envenenado que no
+  pasa por la carga: con filtro, con reverb, y los medidores) y
+  `a_float_wav_with_nan_loads_with_a_warning_and_the_mix_keeps_sounding`
+  (`script/tests/import.rs`).
+
+### Liberar memoria en el callback (N6)
+
+`(!lanes.is_empty()).then_some(lanes)` soltaba el `Box<Lanes>` en
+`Engine::step` al quitar la última lane. Ahora vuelve por la cola de
+basura como las demás tablas. Revisado el resto de lo que el motor suelta:
+patrones, arreglos, samples y tablas pendientes ya iban por la cola, y lo
+demás que llega por comandos es `Copy`. `no_alloc.rs` tiene un test nuevo
+(`removing_and_replacing_live_never_frees_in_the_callback`) que quita y
+sustituye en vivo la tabla de lanes (también la última lane), dos tablas
+antes del compás, patrones de samples y de sintetizador, un arreglo, los
+grupos y la preescucha; con el código de antes falla en «quitar la
+última lane».
+
+### El límite de tiempo de Lua (N4) y la memoria de Rust (N7)
+
+- `script/src/sandbox.rs`: `pcall` y `xpcall` son envoltorios que, pasado
+  el límite (el hook guarda su mensaje), devuelven ese error en vez de
+  atraparlo; `setmetatable` rechaza una metatabla con `__gc` (un
+  finalizador corre con los hooks apagados, también al cerrar Lua; en Lua
+  5.4 un `__gc` añadido después no cuenta); y `string.find`, `match`,
+  `gmatch` y `gsub` rechazan un patrón cuyo coste en el peor caso
+  (`longitud^(cuantificadores + 1)`, o `^cuantificadores` anclado) pasa
+  de `MAX_PATTERN_COST` (1e12), solo con dos o más cuantificadores (con
+  uno, como mucho cuadrático: `s:gsub("%s+", "")` nunca se rechaza).
+- **El vigilante** (para lo que el hook no ve): `ScriptHost::eval` corre la
+  evaluación en un hilo con una copia de su estado (las cachés de samples
+  son `Arc`) y espera. Si pasado el límite y `WATCHDOG_GRACE` (1 s) la
+  evaluación sigue en Lua o en C, **se abandona**: la carga falla con su
+  error, la interfaz sigue y sigue sonando lo anterior. Matar el hilo no
+  es seguro en Rust; se deja acabar solo (tiene el límite de memoria del
+  intérprete y acaba con el proceso); como mucho dos abandonados a la vez
+  (con más, la carga dice que hay que guardar y reiniciar). El trabajo de
+  Rust (cargar, preparar y cortar samples, montar la canción) se marca
+  (`Busy`) y no se vigila: con un archivo largo tarda, pero acaba, y antes
+  también se esperaba. **Coste medido**: 41 µs por carga para crear el
+  hilo (con pila de 16 MB, solo memoria virtual), frente a 650 µs de
+  evaluar una canción corta (`medida_del_vigilante`, ignorado).
+- Con el binario real: el bucle con `pcall` y el `__tostring` que no
+  vuelve se cortan a los 2,0 s; el patrón de la auditoría y el `__gc`, al
+  momento; un patrón que el filtro deja pasar pero tarda minutos en C
+  (`.-.-x` sobre 10 000 caracteres), a los 3,0 s por el vigilante. En la
+  interfaz, con `tui_hostil.py`, sigue respondiendo.
+- **N7**: partir un patrón en pasos reserva memoria de Rust, fuera del
+  límite del intérprete: `steps(("1 "):rep(2e7))` llegaba a 1,6 GB.
+  `parse_pattern_with` y las funciones de patrones rechazan un texto de
+  más de `MAX_PATTERN_BYTES` (32 KiB) antes de partirlo: 87 MB (la propia
+  cadena y su copia) y 0,15 s. Los demás argumentos (cortes, longitud,
+  `every`, `euclid`, `arrange`) ya tenían tope. El error de un paso
+  larguísimo enseña sus 40 primeros caracteres.
+- **N9**: `dofile` y `loadfile` ya no existen (ni la guía ni las recetas
+  los usaban); `print` deja su línea en los avisos de la carga, con dónde
+  se llamó, como mucho 20 de 200 caracteres (en vez de escribir encima de
+  la pantalla).
+- Tests: `the_time_limit_cannot_be_dodged` (ocho rodeos, cada uno en su
+  hilo para que el test no se cuelgue), `print_goes_to_the_warnings_and_there_is_no_dofile`
+  (`script/tests/lua.rs`), `a_huge_pattern_is_refused_before_splitting_it`
+  (`script/tests/patterns.rs`) y el coste de patrones en `sandbox.rs`.
+
+### El resto
+
+- **N8**: los umbrales del detector de transitorios son absolutos. Ahora,
+  si salen menos cortes de los pedidos, se detecta otra vez con el sample
+  normalizado y se queda la que encuentre más; lo que ya daba sus cortes
+  no cambia (por eso no se normaliza siempre). Test: el mismo break de 0
+  a −30 dB da los mismos 8 cortes.
+- **N13 y M6**: el render de la línea de órdenes se escribe a trozos
+  (`engine::offline::render_into`, los mismos bloques que `render`: el
+  mismo archivo) y el tope sube de 600 s a dos horas (lo que cabe en un
+  WAV de 32 bits en coma flotante sin pasar de 4 GB): 14 minutos, 11 MB de
+  pico y 3 s. Formato: `--bits 16|24|32f` y `--dither` (TPDF de un
+  escalón, determinista) en la línea de órdenes, `24bits`, `32f` y
+  `dither` en `exportar`. Por defecto, 16 bits sin dither, como siempre.
+- **N14**: un note off que no cabe en la cola de comandos queda en
+  `stuck_offs` y se reintenta en cada `tick`.
+- **N16**: `rotate(p, math.mininteger)`, un WAV extensible con «bits
+  válidos» enormes (`hound` los acepta) y un ajuste de corte de `1e308`
+  desbordaban en depuración; ahora resto, error y saturación.
+- **N10**: cuatro huellas nuevas en `golden.rs` (sintetizadores, buses,
+  lanes, grupos con macros), sin tocar las cinco de antes; como ellas, se
+  comprueban en x86_64 (iguales en depuración y en release).
+- **N11**: el test de los límites aguantaba mal una máquina cargada: los
+  casos de memoria llevan 30 s de límite de tiempo y los de tiempo un
+  margen absoluto de 2 s. Otros tres tests con poco margen (la salida
+  nula, el explorador, el patrón enorme), con más.
+- **N17**: tests para los dos bordes de `resume` y para `euclid` más largo
+  que `n`; cazan los mutantes que antes escapaban.
+- **M4**: samples en FLAC, MP3, OGG Vorbis y AIFF con `symphonia` 0.5
+  (Rust puro; dependencia nueva, la que ya decía CLAUDE.md), por la
+  extensión; los WAV siguen con `hound` igual. En MP3 se quita el retardo
+  del códec. El explorador y el autocompletado enseñan esas extensiones
+  (`engine::SAMPLE_EXTENSIONS`).
+- **B1, B2, B4**: fuera `Grid::scope` y `Grid::spectrum`; los comentarios de
+  `song_batch` en su sitio; los sockets de los tests en una ruta corta.
+
+### Sin arreglar
+
+- **N12** (cargar un sample muy largo congela la interfaz: un WAV de 20
+  minutos tarda 12 s): arreglarlo es cargar sin esperar en la interfaz
+  (la carga en su hilo y aplicarla en un `tick` posterior), un cambio de
+  `App` que va con la partición de M5. El vigilante no abandona esas
+  cargas (es trabajo de Rust), así que no empeora.
+- **N15** (`meter()` no cambia la longitud de las pistas) va con M2 (qué
+  es «compás»): fuera de esta tanda, en «Preguntas para Roi» del informe.
+- M1 (el limitador), M2 y M5: fuera de alcance por decisión de Roi.
 
 ## Audio de prueba y problemas conocidos
 

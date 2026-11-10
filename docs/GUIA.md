@@ -764,6 +764,13 @@ cargo run -p tui -- --script canciones/tema.lua --render renders/drop.wav --from
 Desde la interfaz, la orden `exportar` (F2) hace lo mismo con lo que está
 cargado.
 
+El WAV sale en 16 bits salvo que se pida otro formato: `--bits 24` o
+`--bits 32f` (coma flotante, sin recortar), y `--dither` añade ruido TPDF
+de un escalón antes de redondear (en 16 o 24 bits; siempre el mismo, así
+dos renders iguales dan el mismo archivo). En `exportar`, las palabras
+`24bits`, `32f` y `dither`, en cualquier sitio. El render se escribe a
+trozos: dura como mucho dos horas.
+
 **Remuestrear** es grabar la salida de una pista (o del master) como un
 sample nuevo para volver a cortarlo y tocarlo. Con `--track pista` (y
 `--script`), `--render` graba solo esa pista, como si estuviera en solo:
@@ -1378,7 +1385,7 @@ proyecto o, si no hay, a la del script.
 
 | Orden | Qué hace |
 | --- | --- |
-| `exportar [archivo.wav] [compases] [metronomo]` | Renderiza la mezcla a WAV. Por defecto `<script>-mezcla.wav` y la canción entera (con `arrange()`, la línea de tiempo hasta 256 compases; si no, el ciclo de `every`/`chance`, al menos 4 compases). Con `metronomo`, lleva el clic; si no, nunca |
+| `exportar [archivo.wav] [compases] [metronomo] [24bits\|32f] [dither]` | Renderiza la mezcla a WAV. Por defecto `<script>-mezcla.wav` y la canción entera (con `arrange()`, la línea de tiempo hasta 256 compases; si no, el ciclo de `every`/`chance`, al menos 4 compases). Con `metronomo`, lleva el clic; si no, nunca. En 16 bits salvo `24bits` o `32f` (coma flotante); `dither` añade ruido TPDF antes de redondear |
 | `guardar [proyecto.sampler]` | Guarda el script y el proyecto |
 | `abrir proyecto.sampler` | Abre un proyecto (`abrir!` descarta los cambios sin guardar) |
 | `muestras [carpeta]` | Cambia la carpeta de los samples (sin argumento, dice cuál es) |
@@ -2711,6 +2718,24 @@ que usa más de 256 MB de memoria se corta con su error (y la línea donde
 iba, si se sabe), y sigue sonando lo anterior. Una canción normal usa
 menos de 1 MB y tarda milisegundos; los dos se cambian en `[script]`
 (`memoria`, en MB, y `tiempo`, en segundos; ver «Configuración»).
+
+Para que esos límites no se puedan rodear:
+
+- `pcall` y `xpcall` atrapan los errores de siempre, pero no el del límite
+  de tiempo: pasado el límite, lo devuelven tal cual.
+- `setmetatable` no admite `__gc` (un finalizador no tiene límite de
+  tiempo).
+- `string.find`, `match`, `gmatch` y `gsub` rechazan un patrón con dos o
+  más cuantificadores (`*`, `+`, `-`, `?`) si, en el peor caso, podría
+  tardar demasiado sobre una cadena tan larga («el patrón es demasiado
+  costoso»). Con uno, nunca.
+- Una función que aun así no vuelve se abandona un segundo después del
+  límite («se abandona la carga»), y la interfaz sigue respondiendo.
+- El texto de un patrón (`steps`, `melody`, `rotate`...) ocupa como mucho
+  32 KiB: 64 pasos de 512 caracteres, de sobra.
+- `dofile` y `loadfile` no existen (el script es un solo archivo).
+  `print(...)` no escribe en la terminal: su línea sale en los avisos de
+  la carga (en el mensaje del editor), como mucho las 20 primeras.
 
 El resto de esta sección se genera a partir del registro de la API
 (`script/src/api.rs`), el mismo que usa el autocompletado del editor. Para
@@ -4441,7 +4466,15 @@ track("drums")
   llamada, notación inválida, un corte que no existe, un archivo que no
   está, un bucle infinito (se corta a los 2 s) o uno que guarda sin parar
   (se corta en 256 MB): no se envía nada al motor. Los dos límites se
-  cambian en `[script]` de `config.toml`.
+  cambian en `[script]` de `config.toml`. Un fallo del propio programa al
+  cargar sale igual, como «error interno del programa (no es de tu
+  script)», con la línea por la que iba; cuéntalo, porque es un fallo.
+- **Un sample con muestras rotas se carga igual.** Un WAV en coma flotante
+  con NaN o infinitos (o valores enormes) se carga con esas muestras a 0
+  (o recortadas) y la carga lo avisa con el nombre y cuántas eran. Si aun
+  así algo no finito llega a la mezcla, el motor lo pone a cero, vacía la
+  memoria de los efectos de esa pista, la calla (como el pánico, solo
+  ella) y lo dice en el mensaje: el resto sigue sonando.
   El error aparece en el editor (borde rojo, mensaje al pie y la línea con
   fondo rojo); Ctrl-G lleva a ella. Al corregir y guardar, el cambio entra
   en el compás siguiente.

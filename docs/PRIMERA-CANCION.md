@@ -101,20 +101,22 @@ otro sitio.) La nota es un do central (C4); el bajo no necesita sample:
 es un sintetizador (paso 11). El break sintético va a 140 BPM; tus samples
 irán a otro tempo, y está bien: el paso 5 explica cómo igualarlos.
 
-**Formato.** Solo se leen archivos **WAV**. Valen mono o estéreo (el mono
-suena igual por los dos lados; de un archivo con más canales se usan los
-dos primeros), en enteros de 16 o 24 bits o en coma flotante, y a
-cualquier frecuencia: al cargarlos se convierten a la del motor. Un MP3,
-un FLAC o un OGG se convierte antes con `ffmpeg`:
+**Formato.** Se leen **WAV, FLAC, MP3, OGG (Vorbis) y AIFF**, por su
+extensión. Valen mono o estéreo (el mono suena igual por los dos lados; de
+un archivo con más canales se usan los dos primeros), en enteros o en coma
+flotante, y a cualquier frecuencia: al cargarlos se convierten a la del
+motor. Si el archivo trae muestras rotas (NaN o infinitos, en coma
+flotante), se ponen a 0 y la carga lo avisa. Otro formato (M4A, Opus...)
+se convierte antes con `ffmpeg`:
 
 ```sh
-ffmpeg -i amen.mp3 amen.wav
+ffmpeg -i amen.m4a amen.wav
 ```
 
-Para convertir todos los MP3 de la carpeta:
+Para convertir todos los de la carpeta:
 
 ```sh
-for f in *.mp3; do ffmpeg -i "$f" "${f%.mp3}.wav"; done
+for f in *.m4a; do ffmpeg -i "$f" "${f%.m4a}.wav"; done
 ```
 
 **Rutas.** En el script, `sample("amen.wav")` busca el archivo **en la
@@ -140,8 +142,8 @@ cancion.lua:3: amen.wav: error leyendo WAV: No such file or directory (os error 
 ```
 
 La ruta del mensaje es la que se ha buscado (relativa a la carpeta del
-script, salvo que sea absoluta). Un archivo que no es WAV de
-verdad (un MP3 renombrado a `.wav`) también da error al leerlo:
+script, salvo que sea absoluta). Un archivo que no es lo que dice su
+extensión (un M4A renombrado a `.wav`) también da error al leerlo:
 conviértelo con `ffmpeg`.
 
 ## Paso 2. Abrir un proyecto nuevo
@@ -1374,7 +1376,7 @@ end)
 | El tracker no se mueve | Ctrl-Espacio (o Ctrl-T) arranca. El secuenciador arranca solo con la primera carga buena: si el script tiene un error desde el principio, corrígelo y Ctrl-S |
 | Borde rojo en el editor | El error está al pie; Ctrl-G va a su línea. Sigue sonando lo anterior |
 | `el script no existe (buscado en ...)` al abrir | Estás en otra carpeta o el nombre tiene una errata. Para empezar un script nuevo, `--new` (paso 2) |
-| `error leyendo WAV` | La ruta del sample (paso 1): nombre, mayúsculas, carpeta. ¿Es un WAV de verdad? Conviértelo con `ffmpeg` |
+| `error leyendo WAV` o `error leyendo el audio` | La ruta del sample (paso 1): nombre, mayúsculas, carpeta. ¿Es de verdad lo que dice su extensión? Conviértelo a WAV con `ffmpeg` |
 | `la pista "x" no existe` | Para crear una pista hacen falta los cortes: `track("x", cortes)`. `track("x")` solo recupera una ya creada (paso 5) |
 | `el corte N no existe` | El detector encontró menos golpes que los que pediste: quita ese número del patrón o pide menos cortes |
 | `el patrón necesita 16 pasos` | Cuenta los pasos: cuatro grupos de cuatro (o los de `:length(n)`) |
