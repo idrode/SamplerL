@@ -3511,15 +3511,8 @@ impl Engine {
     /// mínimo (las colas de los efectos de corte, también); el
     /// secuenciador sigue.
     fn panic(&mut self) {
-        let now = self.transport.frame;
         for t in 0..MAX_TRACKS {
-            self.tracks[t].retrig = None;
-            self.trigger(t, None);
-            if let Some(fading) = &mut self.tracks[t].fading {
-                fading.hush();
-            }
-            self.kill_notes(t);
-            self.midi_note_off(t, now);
+            self.hush_track(t);
         }
         if let Some(old) = self.preview.take() {
             self.fade_preview(old);
@@ -3786,6 +3779,8 @@ impl Engine {
             }
         }
         let mut live = [false; MAX_TRACKS];
+        let mut poisoned = [false; MAX_TRACKS];
+        let mut non_finite = 0u64;
         for t in mix_order(&listens) {
             let track = &mut self.tracks[t];
             let base = (
@@ -3937,6 +3932,18 @@ impl Engine {
             } else {
                 run_fx(&mut track.fx, buf, t, &self.side_buf, &live, 0..2 * n);
             }
+            // Un NaN o un infinito (un sample roto, un efecto que diverge)
+            // no pasa de aquí: a cero, los efectos sin memoria (el NaN se
+            // quedaría para siempre en un filtro) y la pista se calla al
+            // acabar el bloque. Lo finito no cambia.
+            let bad = scrub(buf);
+            if bad > 0 {
+                for state in &mut track.fx {
+                    state.reset();
+                }
+                poisoned[t] = true;
+                non_finite += bad;
+            }
             // La reducción de sus efectos de dinámica, para la vista del
             // sidechain (atómicos: ni reservas ni bloqueos).
             for (slot, state) in track.fx.iter().enumerate() {
@@ -4042,7 +4049,12 @@ impl Engine {
                 }
             }
         }
-        self.mix_groups(n, &clock, group_fed, &live, &mut fed);
+        // Las pistas que dieron algo no finito, calladas (como el pánico,
+        // solo esas).
+        for (t, _) in poisoned.iter().enumerate().filter(|(_, p)| **p) {
+            self.hush_track(t);
+        }
+        non_finite += self.mix_groups(n, &clock, group_fed, &live, &mut fed);
         // Lo que devuelven los buses (los dormidos no tocan nada).
         self.rack.mix_into(
             &self.send_buf,
@@ -4072,6 +4084,14 @@ impl Engine {
             self.discard(done.sample);
         }
         self.metronome.mix_into(&mut self.master[..2 * n]);
+        // Lo no finito que quede (de los buses, la preescucha), a cero; y
+        // si había, los buses se vacían (la reverb lo guardaría).
+        let bad = scrub(&mut self.master[..2 * n]);
+        if bad > 0 {
+            self.rack.clear();
+            non_finite += bad;
+        }
+        self.status.add_non_finite(non_finite);
         // Medidor del master antes del limitador, y cuándo actúa.
         let mut peak = 0.0f32;
         let mut limited = 0u64;
@@ -4109,10 +4129,12 @@ impl Engine {
         group_fed: [bool; MAX_GROUPS],
         live: &[bool; MAX_TRACKS],
         fed: &mut [bool; BUSES],
-    ) {
+    ) -> u64 {
         let rate = self.sample_rate;
         let smoothing = 1.0 - (-1.0 / (GAIN_SMOOTHING_SECONDS * rate as f32)).exp();
         let tail = (GROUP_TAIL_SECONDS * rate as f32) as usize;
+        // Muestras no finitas puestas a cero (ver `scrub`).
+        let mut non_finite = 0u64;
         for (g, &fed_group) in group_fed.iter().enumerate() {
             let Some(group) = self.groups.groups[g] else {
                 continue;
@@ -4146,6 +4168,14 @@ impl Engine {
                 );
             } else {
                 run_fx(&mut state.fx, buf, NO_TRACK, &self.side_buf, live, 0..2 * n);
+            }
+            // Como en las pistas: lo no finito, a cero y sin memoria.
+            let bad = scrub(buf);
+            if bad > 0 {
+                for fx in &mut state.fx {
+                    fx.reset();
+                }
+                non_finite += bad;
             }
             let base = (group.gain, group.pan, group.sends);
             let curves = group.mix_curves;
@@ -4193,6 +4223,20 @@ impl Engine {
                 state.sleep(&group, rate);
             }
         }
+        non_finite
+    }
+
+    /// Calla una pista que ha dado algo no finito: lo del pánico, solo en
+    /// ella (sus voces con el fundido mínimo; el secuenciador sigue).
+    fn hush_track(&mut self, t: usize) {
+        let now = self.transport.frame;
+        self.tracks[t].retrig = None;
+        self.trigger(t, None);
+        if let Some(fading) = &mut self.tracks[t].fading {
+            fading.hush();
+        }
+        self.kill_notes(t);
+        self.midi_note_off(t, now);
     }
 
     /// Pasa una voz interrumpida a la ranura de fundido de su pista. Si ya
@@ -4678,6 +4722,19 @@ pub(crate) fn drive_block(
     }
 }
 
+/// Pone a cero las muestras no finitas (NaN o infinito) de `buf` y dice
+/// cuántas había. Las finitas no cambian: con entradas normales no hace
+/// nada.
+fn scrub(buf: &mut [f32]) -> u64 {
+    let bad = buf.iter().filter(|x| !x.is_finite()).count();
+    if bad > 0 {
+        for x in buf.iter_mut().filter(|x| !x.is_finite()) {
+            *x = 0.0;
+        }
+    }
+    bad as u64
+}
+
 /// Copia la mezcla estéreo a la salida con `channels` canales: en mono se
 /// promedia; con más de dos, los demás canales quedan en silencio.
 fn write_out(master: &[f32], out: &mut [f32], channels: usize) {
@@ -4698,6 +4755,9 @@ fn write_out(master: &[f32], out: &mut [f32], channels: usize) {
         }
     }
 }
+
+#[cfg(test)]
+mod nan_tests;
 
 #[cfg(test)]
 mod tests {

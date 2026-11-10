@@ -95,6 +95,10 @@ pub struct MasterStatus {
     /// Frames en los que actuó el limitador (la suma pasó de
     /// `LIMIT_THRESHOLD`).
     pub limited_frames: u64,
+    /// Muestras no finitas (NaN o infinito) que salían de una pista, un
+    /// grupo o los buses: se pusieron a cero y se vació la memoria de sus
+    /// efectos (ver `Engine::mix_with`). Con entradas normales, 0.
+    pub non_finite: u64,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -145,6 +149,7 @@ pub(crate) struct SharedStatus {
     group_peak: [AtomicU32; MAX_GROUPS],
     master_peak: AtomicU32,
     limited: AtomicU64,
+    non_finite: AtomicU64,
     section_entry: AtomicU64,
     section_bar: AtomicU64,
     section_looping: AtomicBool,
@@ -176,6 +181,7 @@ impl SharedStatus {
             group_peak: std::array::from_fn(|_| AtomicU32::new(0)),
             master_peak: AtomicU32::new(0),
             limited: AtomicU64::new(0),
+            non_finite: AtomicU64::new(0),
             section_entry: AtomicU64::new(NONE),
             section_bar: AtomicU64::new(0),
             section_looping: AtomicBool::new(false),
@@ -329,6 +335,13 @@ impl SharedStatus {
         }
     }
 
+    /// Muestras no finitas que se pusieron a cero en el bloque.
+    pub fn add_non_finite(&self, samples: u64) {
+        if samples > 0 {
+            self.non_finite.fetch_add(samples, Relaxed);
+        }
+    }
+
     // --- Lectura (interfaz) ---
 
     /// Instantánea; los picos se ponen a cero al leerlos.
@@ -372,6 +385,7 @@ impl SharedStatus {
             master: MasterStatus {
                 peak: f32::from_bits(self.master_peak.swap(0, Relaxed)),
                 limited_frames: self.limited.swap(0, Relaxed),
+                non_finite: self.non_finite.swap(0, Relaxed),
             },
             section: opt(self.section_entry.load(Relaxed)).map(|entry| SectionStatus {
                 entry: entry as usize,

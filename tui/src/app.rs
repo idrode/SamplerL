@@ -4554,6 +4554,15 @@ impl App {
         if status.master.limited_frames > 0 {
             self.limiting_until = hold;
         }
+        // El motor puso a cero algo no finito (NaN o infinito) y vació los
+        // efectos de esa pista: se avisa (el audio sigue).
+        if status.master.non_finite > 0 {
+            self.message = format!(
+                "el audio traía {} muestras no válidas (NaN o infinito): a cero, y los efectos de \
+                 esa pista vaciados; el resto sigue sonando",
+                status.master.non_finite
+            );
+        }
         if status.master.peak > 1.0 {
             self.clipping_until = hold;
         }

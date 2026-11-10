@@ -228,6 +228,14 @@ impl Rack {
         }
     }
 
+    /// Vacía la memoria de los dos buses y los duerme (tras un valor no
+    /// finito: un NaN se quedaría dando vueltas en la reverb). Sin reservas.
+    pub fn clear(&mut self) {
+        self.delay.clear();
+        self.reverb.clear();
+        self.awake = [false; BUSES];
+    }
+
     /// Los parámetros con los que suena el bloque que empieza en `steps` y
     /// `seconds`: los fijos, o los de su curva suavizados desde el bloque
     /// anterior (`keep`). Un parámetro sin curva que vuelve a su valor fijo
