@@ -221,3 +221,49 @@ pub(crate) fn resume(old: &Arrangement, place: Place, new: &Arrangement) -> Opti
         }
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Un arreglo con las secciones `ids` (sin pistas) y su línea de tiempo
+    /// `(índice de sección, compases)`.
+    fn arranged(ids: &[u64], timeline: &[(usize, u32)]) -> Arrangement {
+        let mut arrangement = Arrangement::new();
+        for &id in ids {
+            arrangement.add_section(id, Vec::new()).unwrap();
+        }
+        for &(section, bars) in timeline {
+            arrangement.push(section, bars).unwrap();
+        }
+        arrangement
+    }
+
+    /// Los dos bordes de `resume` que no tenía ningún test (N17 de
+    /// `docs/AUDITORIA-2.md`: con `<` cambiado por `<=` o `%` por `+`
+    /// pasaban todos). Recargar acortando la sección que suena, justo al
+    /// compás que ya no cabe: sigue en la entrada siguiente, en su compás 0.
+    #[test]
+    fn a_bar_that_no_longer_fits_goes_to_the_next_entry() {
+        let old = arranged(&[1, 2], &[(0, 4), (1, 2)]);
+        let new = arranged(&[1, 2], &[(0, 3), (1, 2)]);
+        let at = |bar| resume(&old, Place { entry: 0, bar }, &new);
+        assert_eq!(at(2), Some(Place { entry: 0, bar: 2 }));
+        assert_eq!(at(3), Some(Place { entry: 1, bar: 0 }));
+    }
+
+    /// Y si es la última entrada, la siguiente es la primera (sin salirse
+    /// de la línea de tiempo).
+    #[test]
+    fn past_the_last_entry_it_wraps_to_the_first() {
+        let old = arranged(&[1, 2], &[(0, 2), (1, 4)]);
+        let new = arranged(&[1, 2], &[(0, 2), (1, 2)]);
+        assert_eq!(
+            resume(&old, Place { entry: 1, bar: 3 }, &new),
+            Some(Place { entry: 0, bar: 0 })
+        );
+        // La sección ya no está: `None`.
+        let gone = arranged(&[1], &[(0, 2)]);
+        assert_eq!(resume(&old, Place { entry: 1, bar: 0 }, &gone), None);
+    }
+}

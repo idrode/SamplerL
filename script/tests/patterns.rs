@@ -539,3 +539,20 @@ fn rotate_by_the_smallest_integer_does_not_overflow() {
         script::patterns::rotate(text, i64::MAX.rem_euclid(len)).unwrap()
     );
 }
+
+/// `euclid` con más pasos que `n`: el ciclo de `n` se repite hasta llenar
+/// la longitud (N17: con `i % n` cambiado, ningún test lo veía).
+#[test]
+fn euclid_repeats_its_cycle_to_fill_the_length() {
+    let tokens = |text: String| engine::notation::step_texts(&text);
+    let eight = tokens(script::patterns::euclid(3, 8, "x", Some(8)).unwrap());
+    let sixteen = tokens(script::patterns::euclid(3, 8, "x", Some(16)).unwrap());
+    assert_eq!(sixteen.len(), 16);
+    assert_eq!(sixteen[..8], eight[..]);
+    assert_eq!(sixteen[8..], eight[..]);
+    let twelve = tokens(script::patterns::euclid(2, 5, "x", Some(12)).unwrap());
+    let five = tokens(script::patterns::euclid(2, 5, "x", Some(5)).unwrap());
+    for (i, token) in twelve.iter().enumerate() {
+        assert_eq!(token, &five[i % 5], "paso {i}");
+    }
+}
