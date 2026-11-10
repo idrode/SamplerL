@@ -2672,12 +2672,14 @@ fn song_batch(
     // Sin línea de tiempo, los patrones sueltos (y fuera el arreglo que
     // hubiera).
     batch.set_arrangement(None);
+    // Una ranura puede ser de una pista que no suena ahora: de otra sección
+    // sin `arrange()` o de la otra variante. Esa queda sin patrón.
     for (slot, assigned) in slots.iter().enumerate() {
-        let pattern = match assigned {
-            Some(name) => {
-                let track = song.tracks.iter().find(|t| &t.name == name).unwrap();
-                Some(track_pattern(track, slots)?)
-            }
+        let track = assigned
+            .as_ref()
+            .and_then(|name| song.tracks.iter().find(|t| &t.name == name));
+        let pattern = match track {
+            Some(track) => Some(track_pattern(track, slots)?),
             None => None,
         };
         batch.set_pattern(slot, pattern);

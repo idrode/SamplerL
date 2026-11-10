@@ -198,3 +198,34 @@ fn errors_say_the_line() {
         assert!(err.contains(&format!("song.lua:{line}:")), "{code}: {err}");
     }
 }
+
+/// Una sección sin `arrange()` cuya variante B trae una pista nueva: la
+/// pista tiene ranura (por la B) pero no está en la A que suena. Antes,
+/// un `unwrap` mataba el programa al cargar.
+#[test]
+fn a_section_variant_with_a_new_track_and_no_arrange_loads() {
+    let source = r#"bpm(120)
+local a = sample("a.wav"):slice(1)
+track("x", a):steps("1 . . .  . . . .  . . . .  . . . .")
+section("drop", function() end)
+variant("drop", "B", function()
+  track("kick", a):steps("1 . . .  1 . . .  1 . . .  1 . . .")
+end)
+"#;
+    let loaded = song(source).unwrap();
+    assert_eq!(loaded.variant, Some('A'));
+    // Y la siguiente carga, con el arreglo escrito, también.
+    song(&format!("{source}arrange({{ {{ \"drop\", 4 }} }})\n")).unwrap();
+}
+
+/// Dos secciones sin `arrange()`: suena la primera y las pistas de la
+/// segunda tienen ranura sin patrón.
+#[test]
+fn two_sections_with_different_tracks_and_no_arrange_load() {
+    let source = r#"bpm(120)
+local a = sample("a.wav"):slice(1)
+section("uno", function() track("x", a):steps("1 . . .  . . . .  . . . .  . . . .") end)
+section("dos", function() track("y", a):steps("1 . . .  1 . . .  1 . . .  1 . . .") end)
+"#;
+    song(source).unwrap();
+}
