@@ -101,7 +101,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let grid = grid_of(&view, screen);
     let mut panels = PanelAreas::default();
     app.editor_area = None;
-    app.sample_area = None;
+    app.wave_layout = None;
     let mut roll_area = None;
     let mut lanes_area = None;
 
@@ -162,7 +162,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     if let Some(area) = grid.wave {
         panels.focus.push((area, Panel::Wave));
         draw_wave(&view, area, frame.buffer_mut());
-        app.sample_area = Some(Block::bordered().inner(area));
+        let window = view
+            .selected
+            .and_then(|i| view.tracks.get(i))
+            .map(|t| t.window.clone().unwrap_or(0..t.sample_frames));
+        app.wave_layout =
+            window.map(|w| crate::ui::WaveLayout::new(Block::bordered().inner(area), w));
     }
     let mut place = |panel: Panel, area: Rect, frame: &mut Frame, panels: &mut PanelAreas| {
         panels.focus.push((area, panel));

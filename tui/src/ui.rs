@@ -1286,9 +1286,9 @@ pub fn keys_text(view: &ViewModel) -> String {
     } else if !view.key_help.is_empty() {
         view.key_help.clone()
     } else if view.playing_mode && view.editor_outside {
-        "TOCAR: 1-0 q-i cortes · ←→ elegir · espacio oír · m mute · s solo · Ctrl-O pista · Ctrl-Espacio marcha/paro · F1 paleta".into()
+        "TOCAR: 1-0 q-i cortes · ←→ elegir · espacio oír · , . mover (b qué) · m mute · s solo · Ctrl-O pista · Ctrl-Espacio marcha/paro · F1 paleta".into()
     } else if view.playing_mode {
-        "TOCAR: 1-0 q-i cortes · ←→ elegir · espacio oír · m mute · s solo · Ctrl-O pista · Ctrl-Espacio marcha/paro · F1 paleta · Esc editor".into()
+        "TOCAR: 1-0 q-i cortes · ←→ elegir · espacio oír · , . mover (b qué) · m mute · s solo · Ctrl-O pista · Ctrl-Espacio marcha/paro · F1 paleta · Esc editor".into()
     } else {
         "Ctrl-S guardar y cargar · Ctrl-L cargar · Ctrl-Espacio marcha/paro · \
          Ctrl-G ir al error · Ctrl-O pista · Esc tocar · F1 paleta · F2 órdenes · \
@@ -1387,11 +1387,25 @@ fn sample_title(view: &ViewModel, track: &crate::model::TrackView) -> String {
     // ajustes y del proyecto) y se dice de qué tempo a cuál.
     let chosen = view.selected_slice.map_or(String::new(), |i| {
         format!(
-            " · corte {} {:.1} ms",
+            " · corte {} {:.1}–{:.1} ms",
             slice_mark(track, i),
-            slice_ms(track, i)
+            slice_ms(track, i),
+            slice_end_ms(track, i)
         )
     });
+    // Los cortes independientes pueden dejar huecos o solaparse: se dice
+    // con palabras (sin color también se entiende).
+    let (gaps, overlaps) = gaps_and_overlaps(&track.slices);
+    let plural = |n: usize, one: &str, many: &str| match n {
+        0 => String::new(),
+        1 => format!(" · 1 {one}"),
+        n => format!(" · {n} {many}"),
+    };
+    let chosen = format!(
+        "{}{}{chosen}",
+        plural(gaps, "hueco", "huecos"),
+        plural(overlaps, "solape", "solapes")
+    );
     let stretch = track.stretch.map_or(String::new(), |(source, ratio)| {
         let round = |b: f64| ((b * 10.0).round() / 10.0).to_string();
         format!(" · {}→{} BPM", round(source), round(source / ratio))
@@ -1420,6 +1434,63 @@ fn sample_title(view: &ViewModel, track: &crate::model::TrackView) -> String {
         track.sample_name,
         track.slices.len()
     )
+}
+
+/// Cuántos huecos (trozos sin corte entre el primero y el último) y
+/// cuántos solapes (un corte que empieza antes de que acabe otro) hay.
+pub fn gaps_and_overlaps(slices: &[std::ops::Range<usize>]) -> (usize, usize) {
+    let mut sorted: Vec<&std::ops::Range<usize>> = slices.iter().collect();
+    sorted.sort_by_key(|r| (r.start, r.end));
+    let (mut gaps, mut overlaps) = (0, 0);
+    let mut reach = None;
+    for r in sorted {
+        match reach {
+            Some(end) if r.start > end => gaps += 1,
+            Some(end) if r.start < end => overlaps += 1,
+            _ => {}
+        }
+        reach = Some(reach.map_or(r.end, |e: usize| e.max(r.end)));
+    }
+    (gaps, overlaps)
+}
+
+/// Dónde acaba el corte `i`, en ms del sample original.
+fn slice_end_ms(track: &crate::model::TrackView, i: usize) -> f64 {
+    let ratio = track.stretch.map_or(1.0, |(_, r)| r);
+    track.slices.get(i).map_or(0.0, |r| {
+        r.end as f64 * 1000.0 / track.sample_rate.max(1) as f64 / ratio
+    })
+}
+
+/// Cuántos cortes cubren lo que se ve entre las fracciones `from` y `to`.
+fn coverage(track: &crate::model::TrackView, from: f64, to: f64) -> usize {
+    track
+        .slices
+        .iter()
+        .filter(|r| shown_fraction(track, r.start) < to && shown_fraction(track, r.end) > from)
+        .count()
+}
+
+/// El color de la onda en un trozo con `covered` cortes encima: apagado en
+/// un hueco y el de los avisos donde se solapan.
+fn coverage_color(covered: usize) -> Color {
+    match covered {
+        0 => dim(),
+        1 => wave_color(),
+        _ => warning_color(),
+    }
+}
+
+/// Columna (desde 0) donde acaba el corte `i` (la de su último frame), si
+/// se ve y no empieza otro justo ahí: un final suelto, que se marca con
+/// `]`.
+fn slice_end_column(track: &crate::model::TrackView, i: usize, width: u16) -> Option<u16> {
+    let end = track.slices.get(i)?.end;
+    if track.slices.iter().any(|r| r.start == end) || end == 0 {
+        return None;
+    }
+    let column = (shown_fraction(track, end - 1) * width as f64).floor();
+    (column >= 0.0 && column < width as f64).then_some(column as u16)
 }
 
 /// Dónde empieza el corte `i`, en ms del sample original.
@@ -1524,7 +1595,7 @@ fn draw_wave_dots(track: &crate::model::TrackView, inner: Rect, buf: &mut Buffer
         } else if lit {
             accent()
         } else {
-            wave_color()
+            coverage_color(coverage(track, from, to))
         };
         for y in 0..inner.height as usize {
             let mut bits = cells[y * columns + x];
@@ -1566,7 +1637,7 @@ fn draw_wave_bars(track: &crate::model::TrackView, inner: Rect, buf: &mut Buffer
         } else if lit {
             accent()
         } else {
-            wave_color()
+            coverage_color(coverage(track, from, to))
         };
         // Desde el centro hasta el pico, aunque el trozo no cruce el 0.
         let cells = wave_bar(lo.min(0.0), hi.max(0.0), inner.height);
@@ -1639,6 +1710,17 @@ fn slice_numbers(
     };
     for i in 0..track.slices.len() {
         put(i, Style::new().fg(slice_color()).bold(), buf);
+    }
+    // Los finales sueltos (un hueco o un solape detrás), con `]`.
+    for i in 0..track.slices.len() {
+        if let Some(column) = slice_end_column(track, i, area.width) {
+            let style = if selected == Some(i) {
+                Style::new().fg(Color::Black).bg(slice_color()).bold()
+            } else {
+                Style::new().fg(slice_color())
+            };
+            buf.set_string(area.x + column, area.y, "]", style);
+        }
     }
     if playing && let Some(i) = track.playing_slice.filter(|&i| i < track.slices.len()) {
         put(i, Style::new().fg(Color::Black).bg(accent()).bold(), buf);
@@ -1788,6 +1870,119 @@ fn slice_mark(track: &crate::model::TrackView, i: usize) -> String {
         mark.push_str(&word);
     }
     mark
+}
+
+/// Columnas a cada lado de un borde de corte en las que un clic lo agarra.
+pub const WAVE_GRAB_COLUMNS: f64 = 1.5;
+
+/// La geometría de la onda de la pista seleccionada tal como se dibujó: su
+/// área (dentro del borde) y los frames que se ven (con zoom, un trozo).
+/// El ratón la usa para saber qué hay bajo cada celda, y los tests, para
+/// pedir dónde pulsar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WaveLayout {
+    pub area: Rect,
+    pub window: std::ops::Range<usize>,
+}
+
+/// Qué hay en la onda bajo el ratón.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WaveHit {
+    /// Un borde del corte `slice` (desde 0): el final con `end`.
+    Edge { slice: usize, end: bool },
+    /// Dentro del corte `slice`, lejos de sus bordes.
+    Body { slice: usize },
+    /// En un hueco: ningún corte.
+    Gap,
+}
+
+impl WaveLayout {
+    pub fn new(area: Rect, window: std::ops::Range<usize>) -> WaveLayout {
+        WaveLayout { area, window }
+    }
+
+    pub fn contains(&self, x: u16, y: u16) -> bool {
+        self.area.contains(ratatui::layout::Position::new(x, y))
+    }
+
+    /// Frames por columna.
+    pub fn frames_per_column(&self) -> f64 {
+        self.window.len() as f64 / self.area.width.max(1) as f64
+    }
+
+    /// El frame del centro de la columna `x` de la terminal.
+    pub fn frame_at(&self, x: u16) -> f64 {
+        let column = x.saturating_sub(self.area.x) as f64 + 0.5;
+        self.window.start as f64 + column * self.frames_per_column()
+    }
+
+    /// La columna (desde el borde izquierdo del área, fraccionaria) del
+    /// frame `frame`: la frontera entre `frame - 1` y `frame`.
+    pub fn column_of(&self, frame: usize) -> f64 {
+        (frame as f64 - self.window.start as f64) / self.frames_per_column().max(f64::MIN_POSITIVE)
+    }
+
+    /// La celda de la terminal donde se dibuja la marca del frame `frame`
+    /// (en la fila de la onda bajo la de los números).
+    #[cfg(test)]
+    pub fn point_of(&self, frame: usize) -> (u16, u16) {
+        let column = self.column_of(frame).floor().max(0.0) as u16;
+        (
+            (self.area.x + column).min(self.area.right().saturating_sub(1)),
+            self.area.y + 1.min(self.area.height.saturating_sub(1)),
+        )
+    }
+
+    /// Lo que hay en la columna `x` con estos cortes: el borde más cercano a
+    /// menos de [`WAVE_GRAB_COLUMNS`] (si un inicio y un final caen juntos,
+    /// el inicio pulsando en la marca o a su derecha y el final a su
+    /// izquierda), el corte de ahí (el seleccionado, si también lo cubre;
+    /// si no, el que empieza más tarde) o un hueco.
+    pub fn hit(
+        &self,
+        x: u16,
+        slices: &[std::ops::Range<usize>],
+        selected: Option<usize>,
+    ) -> WaveHit {
+        let column = x.saturating_sub(self.area.x) as f64 + 0.5;
+        let mut edges: Vec<(usize, bool, f64, f64)> = Vec::new();
+        for (i, r) in slices.iter().enumerate() {
+            for (end, frame) in [(false, r.start), (true, r.end)] {
+                let at = self.column_of(frame);
+                let distance = (at - column).abs();
+                if distance <= WAVE_GRAB_COLUMNS {
+                    edges.push((i, end, distance, at));
+                }
+            }
+        }
+        let cell = x.saturating_sub(self.area.x) as f64;
+        let side = |&(_, end, _, at): &(usize, bool, f64, f64)| {
+            // Un inicio se agarra en la celda de su marca o a la derecha; un
+            // final, a su izquierda.
+            u8::from(end != (cell < at.floor()))
+        };
+        // A la misma distancia (un final y un inicio juntos), el lado; y
+        // después, el corte seleccionado.
+        let best = edges.iter().min_by(|a, b| {
+            a.2.total_cmp(&b.2)
+                .then(side(a).cmp(&side(b)))
+                .then((Some(b.0) == selected).cmp(&(Some(a.0) == selected)))
+        });
+        if let Some(&(slice, end, _, _)) = best {
+            return WaveHit::Edge { slice, end };
+        }
+        let frame = self.frame_at(x);
+        let inside = |r: &std::ops::Range<usize>| (r.start as f64) <= frame && frame < r.end as f64;
+        if let Some(i) = selected.filter(|&i| slices.get(i).is_some_and(inside)) {
+            return WaveHit::Body { slice: i };
+        }
+        slices
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| inside(r))
+            .max_by_key(|(_, r)| r.start)
+            .map_or(WaveHit::Gap, |(slice, _)| WaveHit::Body { slice })
+    }
 }
 
 /// Dónde cae el ratón en el tracker.

@@ -149,15 +149,17 @@ fn open_project(test: &str) -> (PathBuf, App, Engine) {
 /// Columna de la terminal donde se dibuja la marca del corte que empieza
 /// en `start` (break.wav: 6000 frames).
 fn mark_column(app: &App, start: usize) -> u16 {
-    let area = app.sample_area.expect("se dibujó el sample");
-    area.x + (start as f64 / 6000.0 * area.width as f64).floor() as u16
+    app.wave_layout()
+        .expect("se dibujó el sample")
+        .point_of(start)
+        .0
 }
 
 #[test]
 fn dragging_a_slice_mark_moves_it_and_writes_it_in_the_code() {
     let (project, mut app, mut engine) = open_project("mouse_slice_drag");
     draw(&mut app, 160, 40);
-    let area = app.sample_area.unwrap();
+    let area = app.wave_layout().unwrap().area;
     let (x, y) = (mark_column(&app, 3000), area.y + 1);
     app.mouse(MouseAction::Down, x, y);
     assert!(
@@ -165,12 +167,13 @@ fn dragging_a_slice_mark_moves_it_and_writes_it_in_the_code() {
         "{}",
         app.view().message
     );
-    // Mientras se arrastra, solo cambia la vista: el anterior acaba ahí.
+    // Mientras se arrastra, solo cambia la vista; el corte 1 no se mueve
+    // (queda un hueco).
     app.mouse(MouseAction::Drag, x + 5, y);
     let moved = 3000 + (5.0 * 6000.0 / area.width as f64).round() as usize;
     let view = app.view();
     assert_eq!(view.tracks[0].slices[1].start, moved);
-    assert_eq!(view.tracks[0].slices[0].end, moved);
+    assert_eq!(view.tracks[0].slices[0].end, 3000);
     assert_eq!(view.selected_slice, Some(1));
     assert!(app.text_for_test().contains("slice(2)"));
     // Al soltar, se pone como con «.» (redondeado a 0,1 ms) y se escribe en
@@ -190,7 +193,7 @@ fn dragging_a_slice_mark_moves_it_and_writes_it_in_the_code() {
     let ms = (start as f64 / 48.0 * 10.0).round() / 10.0;
     assert!(
         app.text_for_test()
-            .contains(&format!("slice({{ {{0, {ms}}}, {{{ms}, 125}} }})")),
+            .contains(&format!("slice({{ {{0, 62.5}}, {{{ms}, 125}} }})")),
         "{}",
         app.text_for_test()
     );
@@ -210,26 +213,115 @@ fn dragging_a_slice_mark_moves_it_and_writes_it_in_the_code() {
 }
 
 #[test]
-fn a_dragged_mark_stops_at_its_neighbours() {
+fn a_dragged_edge_stops_at_the_sample_and_at_its_own_other_edge() {
     let (_, mut app, _engine) = open_project("mouse_slice_clamp");
     draw(&mut app, 160, 40);
-    let area = app.sample_area.unwrap();
-    let (x, y) = (mark_column(&app, 3000), area.y + 1);
-    app.mouse(MouseAction::Down, x, y);
-    // Mucho más allá del principio: se queda a 1,2 ms del corte 1.
-    app.mouse(MouseAction::Drag, area.x, y);
+    let layout = app.wave_layout().unwrap();
+    let area = layout.area;
+    let (x, y) = layout.point_of(3000);
     let gap = (1.2 / 1000.0 * RATE as f64).ceil() as usize;
-    assert_eq!(app.view().tracks[0].slices[1].start, gap);
-    app.mouse(MouseAction::Up, area.x, y);
-    let view = app.view();
-    assert!(!view.message.starts_with("no se mueve"), "{}", view.message);
-    assert!(view.tracks[0].slices[1].start.abs_diff(gap) <= 5);
-    // Y por la derecha, a 1,2 ms del final del sample.
-    draw(&mut app, 160, 40);
-    let x = mark_column(&app, view.tracks[0].slices[1].start);
+    // El inicio del 2, mucho más allá del principio: pasa por encima del 1
+    // (se solapan) hasta el principio del sample.
     app.mouse(MouseAction::Down, x, y);
+    app.mouse(MouseAction::Drag, area.x, y);
+    assert_eq!(app.view().tracks[0].slices[1].start, 0);
+    assert_eq!(app.view().tracks[0].slices[0], 0..3000);
+    // Y por la derecha, a 1,2 ms de su propio final.
     app.mouse(MouseAction::Drag, area.right() + 20, y);
     assert_eq!(app.view().tracks[0].slices[1].start, 6000 - gap);
+    assert!(
+        app.view().message.contains("(tope: su final)"),
+        "{}",
+        app.view().message
+    );
+    app.mouse(MouseAction::Up, area.right() + 20, y);
+    let view = app.view();
+    assert!(view.tracks[0].slices[1].start.abs_diff(6000 - gap) <= 5);
+    assert_eq!(view.tracks[0].slices[0], 0..3000);
+}
+
+#[test]
+fn the_end_of_a_slice_is_dragged_left_of_its_mark_without_moving_the_next() {
+    let (_, mut app, mut engine) = open_project("mouse_slice_end");
+    draw(&mut app, 160, 40);
+    let layout = app.wave_layout().unwrap();
+    let (x, y) = layout.point_of(3000);
+    // Una columna a la izquierda de la marca: el final del corte 1.
+    app.mouse(MouseAction::Down, x - 1, y);
+    assert!(
+        app.view().message.contains("corte 1 agarrado por el final"),
+        "{}",
+        app.view().message
+    );
+    app.mouse(MouseAction::Drag, x - 11, y);
+    app.mouse(MouseAction::Up, x - 11, y);
+    let view = app.view();
+    assert!(view.tracks[0].slices[0].end < 3000);
+    assert_eq!(view.tracks[0].slices[1], 3000..6000, "el 2 no se mueve");
+    assert!(
+        view.message.starts_with("corte 1 de drums: acaba en"),
+        "{}",
+        view.message
+    );
+    // Se ve el hueco: el título lo dice y el final suelto lleva `]`.
+    let screen = text(&draw(&mut app, 160, 40));
+    assert!(screen.contains("1 hueco"), "{screen}");
+    assert!(screen.contains(']'), "{screen}");
+    offline::render(&mut engine, 100, 2);
+    // El cuerpo del 2 se arrastra entero, con su largo.
+    let layout = app.wave_layout().unwrap();
+    let (x, y) = layout.point_of(4500);
+    app.mouse(MouseAction::Down, x, y);
+    assert!(app.view().message.contains("moverlo entero"));
+    app.mouse(MouseAction::Drag, x - 20, y);
+    app.mouse(MouseAction::Up, x - 20, y);
+    let view = app.view();
+    let two = view.tracks[0].slices[1].clone();
+    assert!(two.start < 3000 && two.len().abs_diff(3000) <= 5, "{two:?}");
+    assert!(view.message.contains("va de"), "{}", view.message);
+    let screen = text(&draw(&mut app, 160, 40));
+    assert!(screen.contains("1 solape"), "{screen}");
+}
+
+#[test]
+fn alt_or_ctrl_drags_the_shared_mark_as_before() {
+    let (_, mut app, _engine) = open_project("mouse_slice_shared");
+    draw(&mut app, 160, 40);
+    let layout = app.wave_layout().unwrap();
+    let area = layout.area;
+    let (x, y) = layout.point_of(3000);
+    app.mouse_with(MouseAction::Down, x, y, true);
+    assert!(
+        app.view().message.contains("la marca compartida"),
+        "{}",
+        app.view().message
+    );
+    // Hasta 1,2 ms del inicio del 1, y de vuelta.
+    app.mouse(MouseAction::Drag, area.x, y);
+    let gap = (1.2 / 1000.0 * RATE as f64).ceil() as usize;
+    let view = app.view();
+    assert_eq!(view.tracks[0].slices[1].start, gap);
+    assert_eq!(view.tracks[0].slices[0].end, gap);
+    assert!(
+        view.message.contains("(tope: el corte 1)"),
+        "{}",
+        view.message
+    );
+    app.mouse(MouseAction::Drag, x + 5, y);
+    app.mouse(MouseAction::Up, x + 5, y);
+    let view = app.view();
+    let start = view.tracks[0].slices[1].start;
+    assert!(start > 3000);
+    assert_eq!(view.tracks[0].slices[0].end, start);
+    // Con Alt en el final del 1 (a la izquierda de la marca), lo mismo.
+    draw(&mut app, 160, 40);
+    let (x, y) = app.wave_layout().unwrap().point_of(start);
+    app.mouse_with(MouseAction::Down, x - 1, y, true);
+    app.mouse(MouseAction::Drag, x + 30, y);
+    app.mouse(MouseAction::Up, x + 30, y);
+    let view = app.view();
+    assert!(view.tracks[0].slices[1].start > start);
+    assert_eq!(view.tracks[0].slices[0].end, view.tracks[0].slices[1].start);
 }
 
 #[test]
@@ -241,14 +333,14 @@ fn a_click_on_the_wave_selects_and_plays_the_slice_there() {
     offline::render(&mut engine, 2000, 2);
     let heard = |engine: &mut Engine| offline::render(engine, 2000, 2).iter().any(|&s| s != 0.0);
     draw(&mut app, 160, 40);
-    let area = app.sample_area.unwrap();
+    let area = app.wave_layout().unwrap().area;
     let y = area.y + 1;
-    // Lejos de las marcas, en el corte 2: lo selecciona sin moverlo y
-    // suena.
+    // Lejos de las marcas, en el corte 2: lo selecciona y suena al soltar
+    // (pulsar todavía puede ser arrastrarlo entero).
     let x = mark_column(&app, 4500);
     app.mouse(MouseAction::Down, x, y);
-    app.mouse(MouseAction::Drag, x + 3, y);
-    app.mouse(MouseAction::Up, x + 3, y);
+    assert!(!heard(&mut engine), "pulsar todavía no suena");
+    app.mouse(MouseAction::Up, x, y);
     let view = app.view();
     assert_eq!(view.selected_slice, Some(1));
     assert_eq!(view.tracks[0].slices[1].start, 3000);
@@ -291,7 +383,7 @@ fn the_big_sample_view_of_the_main_window_drags_marks_too() {
     let path = fixture("mouse_slice_main", Some(SONG));
     let (mut main, _engine) = super::split::main_window(&path, None);
     draw(&mut main, 120, 40);
-    let area = main.sample_area.expect("la onda grande");
+    let area = main.wave_layout().expect("la onda grande").area;
     let x = mark_column(&main, 3000);
     // En la fila de la onda (bajo la de los números).
     main.mouse(MouseAction::Down, x, area.y + 2);

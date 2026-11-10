@@ -73,9 +73,9 @@ pub fn menu_of(action: Action) -> Option<Menu> {
         | TextEnd | GotoLine | Find | FindNext | FindPrevious | Complete | GotoError
         | ToggleVim | EditTracker | EditRoll | FillGap | SuggestFills => Menu::Edit,
         NextTrack | Mute | Solo | ClearMuteSolo | LabelSlice | SliceNotes | SampleKey | Preview
-        | SliceEarlier | SliceLater | ClearSliceAdjust | NextSlice | PreviousSlice | SplitSlice
-        | JoinSlice | ZoomIn | ZoomOut | ZoomReset | DetectBpm | MidiLearn | MidiKnobs | Macros
-        | LaneTouch | Record => Menu::Track,
+        | SliceEarlier | SliceLater | SliceEdge | ClearSliceAdjust | NextSlice | PreviousSlice
+        | SplitSlice | JoinSlice | ZoomIn | ZoomOut | ZoomReset | DetectBpm | MidiLearn
+        | MidiKnobs | Macros | LaneTouch | Record => Menu::Track,
         Transport | Cue | ClearCue | Metronome | TapTempo | NextSection | PreviousSection
         | JumpSection | LoopSection | FollowTimeline | ToggleVariant | Panic | PanicPause
         | PlayMode => Menu::Transport,
@@ -109,8 +109,8 @@ pub fn submenu_of(action: Action) -> Option<&'static str> {
         YankSlot | PasteSlot => "Ranuras",
         Freeze | Unfreeze => "Congelar",
         GotoLine | Find | FindNext | FindPrevious | TextStart | TextEnd => "Buscar e ir",
-        LabelSlice | SliceNotes | SliceEarlier | SliceLater | ClearSliceAdjust | NextSlice
-        | PreviousSlice | SplitSlice | JoinSlice => "Cortes",
+        LabelSlice | SliceNotes | SliceEarlier | SliceLater | SliceEdge | ClearSliceAdjust
+        | NextSlice | PreviousSlice | SplitSlice | JoinSlice => "Cortes",
         ZoomIn | ZoomOut | ZoomReset => "Zoom de la onda",
         MidiLearn | MidiKnobs | ExportKnobs => "Mandos MIDI",
         NextSection | PreviousSection | JumpSection | LoopSection | FollowTimeline => "Secciones",

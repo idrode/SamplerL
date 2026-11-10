@@ -20,11 +20,8 @@ fn slices_of(app: &App, name: &str) -> Vec<std::ops::Range<usize>> {
 /// con las coordenadas que da la geometría de la onda.
 fn drag_mark(app: &mut App, start: usize, columns: i32) {
     draw(app, 160, 40);
-    let area = app.sample_area.unwrap();
-    let (x, y) = (
-        area.x + (start as f64 / 6000.0 * area.width as f64).floor() as u16,
-        area.y + 1,
-    );
+    let layout = app.wave_layout().expect("se dibujó la onda");
+    let (x, y) = layout.point_of(start);
     let to = (x as i32 + columns) as u16;
     app.mouse(MouseAction::Down, x, y);
     app.mouse(MouseAction::Drag, to, y);

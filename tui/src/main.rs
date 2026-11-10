@@ -992,6 +992,13 @@ fn run_devices_window(path: &std::path::Path) -> Result<(), BoxError> {
     result
 }
 
+/// Si el ratón va con Alt o Ctrl (en la onda: la marca compartida).
+fn mouse_held(m: &ratatui::crossterm::event::MouseEvent) -> bool {
+    use ratatui::crossterm::event::KeyModifiers;
+    m.modifiers
+        .intersects(KeyModifiers::ALT | KeyModifiers::CONTROL)
+}
+
 /// Lo que hace el ratón, sin crossterm (así se prueba la aplicación).
 fn mouse_action(m: &ratatui::crossterm::event::MouseEvent) -> Option<app::MouseAction> {
     use app::MouseAction;
@@ -1219,7 +1226,7 @@ fn run_terminal(
                     Event::Mouse(m) => {
                         let action = mouse_action(&m);
                         if let Some(action) = action {
-                            app.mouse(action, m.column, m.row);
+                            app.mouse_with(action, m.column, m.row, mouse_held(&m));
                         }
                     }
                     _ => {}

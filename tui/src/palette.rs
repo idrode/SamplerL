@@ -53,6 +53,7 @@ pub enum Action {
     Preview,
     SliceEarlier,
     SliceLater,
+    SliceEdge,
     ClearSliceAdjust,
     NextSlice,
     PreviousSlice,
@@ -356,19 +357,25 @@ pub const ACTIONS: &[ActionDef] = &[
     ActionDef {
         action: Action::SliceEarlier,
         name: "Adelantar el corte 5 ms",
-        description: "Mueve el inicio del corte seleccionado 5 ms antes (se guarda en el proyecto y manda sobre el detector)",
+        description: "Mueve 5 ms antes el inicio del corte seleccionado (o lo que elija «Cambiar qué mueven las teclas del corte»), sin tocar a los demás; se escribe en el código: slice({ {inicio, fin}, ... })",
         keys: ", (modo tocar; < 1 ms)",
     },
     ActionDef {
         action: Action::SliceLater,
         name: "Retrasar el corte 5 ms",
-        description: "Mueve el inicio del corte seleccionado 5 ms después",
+        description: "Mueve 5 ms después el inicio del corte seleccionado (o lo que elija «Cambiar qué mueven las teclas del corte»)",
         keys: ". (modo tocar; > 1 ms)",
+    },
+    ActionDef {
+        action: Action::SliceEdge,
+        name: "Cambiar qué mueven las teclas del corte",
+        description: "Lo que mueven , . < > del corte seleccionado: el inicio, el final, el corte entero o la marca compartida (con ella se mueven también los vecinos que empiezan o acaban ahí, como Alt o Ctrl con el ratón)",
+        keys: "b (modo tocar)",
     },
     ActionDef {
         action: Action::ClearSliceAdjust,
         name: "Quitar el ajuste del corte",
-        description: "El corte seleccionado vuelve a empezar donde lo pone el detector",
+        description: "El corte seleccionado vuelve a empezar donde lo pone el detector (solo los ajustes de un proyecto antiguo; los cortes escritos en el código se cambian en el código)",
         keys: "",
     },
     ActionDef {
@@ -386,13 +393,13 @@ pub const ACTIONS: &[ActionDef] = &[
     ActionDef {
         action: Action::SplitSlice,
         name: "Partir el corte seleccionado",
-        description: "Añade un corte en su mitad (se guarda en el proyecto; las etiquetas y ajustes siguientes se corren); con el ratón, clic derecho en la onda lo pone ahí",
+        description: "Añade un corte en su mitad (se escribe en el código; los cortes siguientes se corren uno); con el ratón, clic derecho en la onda lo pone ahí",
         keys: "n (modo tocar)",
     },
     ActionDef {
         action: Action::JoinSlice,
         name: "Unir el corte seleccionado con el anterior",
-        description: "Quita su marca: el anterior se alarga hasta donde acababa este (se guarda en el proyecto); con el ratón, clic derecho en la marca",
+        description: "Lo quita y el anterior se alarga hasta donde acababa este (se escribe en el código); con el ratón, clic derecho en su marca",
         keys: "Supr (modo tocar)",
     },
     ActionDef {

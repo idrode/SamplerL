@@ -1078,13 +1078,14 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Reiniciar medidores | Pone a cero los medidores y quita los avisos de limitador y saturación | — |
 | Etiquetar el corte seleccionado | Abre «etiquetar N » para escribir la etiqueta (kick, snare...); se guarda en el proyecto | — |
 | Preescuchar el corte seleccionado | Lo toca en una voz aparte, sin pasar por la pista ni tocar el script | espacio (modo tocar) |
-| Adelantar el corte 5 ms | Mueve el inicio del corte seleccionado 5 ms antes (se guarda en el proyecto y manda sobre el detector) | , (modo tocar; < 1 ms) |
-| Retrasar el corte 5 ms | Mueve el inicio del corte seleccionado 5 ms después | . (modo tocar; > 1 ms) |
-| Quitar el ajuste del corte | El corte seleccionado vuelve a empezar donde lo pone el detector | — |
+| Adelantar el corte 5 ms | Mueve 5 ms antes el inicio del corte seleccionado (o lo que elija «Cambiar qué mueven las teclas del corte»), sin tocar a los demás; se escribe en el código: slice({ {inicio, fin}, ... }) | , (modo tocar; < 1 ms) |
+| Retrasar el corte 5 ms | Mueve 5 ms después el inicio del corte seleccionado (o lo que elija «Cambiar qué mueven las teclas del corte») | . (modo tocar; > 1 ms) |
+| Cambiar qué mueven las teclas del corte | Lo que mueven , . < > del corte seleccionado: el inicio, el final, el corte entero o la marca compartida (con ella se mueven también los vecinos que empiezan o acaban ahí, como Alt o Ctrl con el ratón) | b (modo tocar) |
+| Quitar el ajuste del corte | El corte seleccionado vuelve a empezar donde lo pone el detector (solo los ajustes de un proyecto antiguo; los cortes escritos en el código se cambian en el código) | — |
 | Corte siguiente | Selecciona el corte siguiente de la pista (sin tocarlo) | — |
 | Corte anterior | Selecciona el corte anterior de la pista (sin tocarlo) | — |
-| Partir el corte seleccionado | Añade un corte en su mitad (se guarda en el proyecto; las etiquetas y ajustes siguientes se corren); con el ratón, clic derecho en la onda lo pone ahí | n (modo tocar) |
-| Unir el corte seleccionado con el anterior | Quita su marca: el anterior se alarga hasta donde acababa este (se guarda en el proyecto); con el ratón, clic derecho en la marca | Supr (modo tocar) |
+| Partir el corte seleccionado | Añade un corte en su mitad (se escribe en el código; los cortes siguientes se corren uno); con el ratón, clic derecho en la onda lo pone ahí | n (modo tocar) |
+| Unir el corte seleccionado con el anterior | Lo quita y el anterior se alarga hasta donde acababa este (se escribe en el código); con el ratón, clic derecho en su marca | Supr (modo tocar) |
 | Acercar la vista del sample | Ve la mitad del sample alrededor del corte seleccionado, para ajustar los cortes con más detalle (también la rueda del ratón sobre la onda) | + (modo tocar; Shift-←→ desplaza) |
 | Alejar la vista del sample | Ve el doble del sample (hasta verlo entero) | - (modo tocar) |
 | Ver el sample entero | Quita el zoom de la vista del sample | — |

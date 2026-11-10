@@ -204,3 +204,220 @@ impl App {
             .collect()
     }
 }
+
+/// Qué se mueve de un corte (con el ratón o con `,` `.` `<` `>`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Edge {
+    /// Su inicio, sin tocar a los demás (queda un hueco o un solape).
+    #[default]
+    Start,
+    /// Su final, sin tocar a los demás.
+    End,
+    /// El corte entero (inicio y final a la vez).
+    Whole,
+    /// La marca de su inicio con los cortes que empiezan o acaban justo
+    /// ahí (como antes: el anterior acaba donde empieza este).
+    Shared,
+}
+
+impl Edge {
+    /// El siguiente con la tecla `b`.
+    pub fn next(self) -> Edge {
+        match self {
+            Edge::Start => Edge::End,
+            Edge::End => Edge::Whole,
+            Edge::Whole => Edge::Shared,
+            Edge::Shared => Edge::Start,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Edge::Start => "el inicio",
+            Edge::End => "el final",
+            Edge::Whole => "el corte entero",
+            Edge::Shared => "la marca compartida (los vecinos la siguen)",
+        }
+    }
+
+    /// El frame de este borde del corte `r` (el inicio, salvo el final).
+    pub fn of(self, r: &Range<usize>) -> usize {
+        match self {
+            Edge::End => r.end,
+            _ => r.start,
+        }
+    }
+}
+
+/// Adónde va el borde: tantos ms desde donde está (las teclas) o a esos
+/// ms del sample original (el ratón, al soltar).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Target {
+    Delta(f64),
+    At(f64),
+}
+
+/// Dónde se quedó un movimiento que no llegó adonde se pedía.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Limit {
+    /// El principio del sample.
+    SampleStart,
+    /// El final del sample.
+    SampleEnd,
+    /// Su propio otro borde (no puede durar menos del mínimo).
+    Own,
+    /// El corte `j` (desde 0) con el que comparte la marca.
+    Neighbour(usize),
+}
+
+/// `ranges` con `edge` del corte `i` llevado a `to` (en frames; con
+/// `Whole`, el inicio nuevo), sin salirse de `0..total` ni dejar ningún
+/// corte afectado con menos de `gap` frames. Devuelve los cortes y el tope,
+/// si se quedó antes.
+pub fn moved(
+    ranges: &[Range<usize>],
+    i: usize,
+    edge: Edge,
+    to: i64,
+    total: usize,
+    gap: usize,
+) -> (Vec<Range<usize>>, Option<Limit>) {
+    let mut out = ranges.to_vec();
+    let Some(r) = ranges.get(i).cloned() else {
+        return (out, None);
+    };
+    let clamp = |to: i64, low: (i64, Limit), high: (i64, Limit)| -> (usize, Option<Limit>) {
+        if to < low.0 {
+            (low.0.max(0) as usize, Some(low.1))
+        } else if to > high.0 {
+            (high.0.max(low.0).max(0) as usize, Some(high.1))
+        } else {
+            (to as usize, None)
+        }
+    };
+    let (gap_i, total_i) = (gap as i64, total as i64);
+    match edge {
+        Edge::Start => {
+            let (at, limit) = clamp(
+                to,
+                (0, Limit::SampleStart),
+                (r.end as i64 - gap_i, Limit::Own),
+            );
+            out[i].start = at;
+            (out, limit)
+        }
+        Edge::End => {
+            let (at, limit) = clamp(
+                to,
+                (r.start as i64 + gap_i, Limit::Own),
+                (total_i, Limit::SampleEnd),
+            );
+            out[i].end = at;
+            (out, limit)
+        }
+        Edge::Whole => {
+            let len = (r.end - r.start) as i64;
+            let (at, limit) = clamp(
+                to,
+                (0, Limit::SampleStart),
+                (total_i - len, Limit::SampleEnd),
+            );
+            out[i] = at..at + len as usize;
+            (out, limit)
+        }
+        Edge::Shared => {
+            let f = r.start;
+            // Los que empiezan ahí (como este) y los que acaban ahí.
+            let starts: Vec<usize> = (0..ranges.len())
+                .filter(|&j| ranges[j].start == f)
+                .collect();
+            let ends: Vec<usize> = (0..ranges.len()).filter(|&j| ranges[j].end == f).collect();
+            let mut low = (0i64, Limit::SampleStart);
+            for &j in &ends {
+                let bound = ranges[j].start as i64 + gap_i;
+                if bound > low.0 {
+                    low = (bound, Limit::Neighbour(j));
+                }
+            }
+            let mut high = (total_i, Limit::SampleEnd);
+            for &j in &starts {
+                let bound = ranges[j].end as i64 - gap_i;
+                if bound < high.0 {
+                    high = (
+                        bound,
+                        if j == i {
+                            Limit::Own
+                        } else {
+                            Limit::Neighbour(j)
+                        },
+                    );
+                }
+            }
+            let (at, limit) = clamp(to, low, high);
+            for &j in &starts {
+                out[j].start = at;
+            }
+            for &j in &ends {
+                out[j].end = at;
+            }
+            (out, limit)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const GAP: usize = 10;
+
+    #[test]
+    fn one_edge_moves_without_its_neighbours() {
+        let r = vec![0..100, 100..200, 200..300];
+        let (out, limit) = moved(&r, 0, Edge::End, 60, 300, GAP);
+        assert_eq!(out, [0..60, 100..200, 200..300]);
+        assert_eq!(limit, None);
+        // Más allá del vecino: se solapa con él.
+        let (out, _) = moved(&r, 0, Edge::End, 150, 300, GAP);
+        assert_eq!(out, [0..150, 100..200, 200..300]);
+        let (out, _) = moved(&r, 1, Edge::Start, 130, 300, GAP);
+        assert_eq!(out, [0..100, 130..200, 200..300]);
+        let (out, limit) = moved(&r, 1, Edge::Start, 195, 300, GAP);
+        assert_eq!(out[1], 190..200);
+        assert_eq!(limit, Some(Limit::Own));
+        let (out, limit) = moved(&r, 2, Edge::End, 999, 300, GAP);
+        assert_eq!(out[2], 200..300);
+        assert_eq!(limit, Some(Limit::SampleEnd));
+        let (_, limit) = moved(&r, 0, Edge::Start, -5, 300, GAP);
+        assert_eq!(limit, Some(Limit::SampleStart));
+    }
+
+    #[test]
+    fn the_whole_slice_moves_and_keeps_its_length() {
+        let r = vec![0..100, 100..200];
+        let (out, limit) = moved(&r, 1, Edge::Whole, 40, 300, GAP);
+        assert_eq!(out, [0..100, 40..140]);
+        assert_eq!(limit, None);
+        let (out, limit) = moved(&r, 1, Edge::Whole, 250, 300, GAP);
+        assert_eq!(out[1], 200..300);
+        assert_eq!(limit, Some(Limit::SampleEnd));
+    }
+
+    #[test]
+    fn the_shared_mark_takes_its_neighbours_along() {
+        let r = vec![0..100, 100..200, 200..300];
+        let (out, limit) = moved(&r, 1, Edge::Shared, 140, 300, GAP);
+        assert_eq!(out, [0..140, 140..200, 200..300]);
+        assert_eq!(limit, None);
+        let (out, limit) = moved(&r, 1, Edge::Shared, 5, 300, GAP);
+        assert_eq!(out, [0..10, 10..200, 200..300]);
+        assert_eq!(limit, Some(Limit::Neighbour(0)));
+        let (out, limit) = moved(&r, 1, Edge::Shared, 250, 300, GAP);
+        assert_eq!(out, [0..190, 190..200, 200..300]);
+        assert_eq!(limit, Some(Limit::Own));
+        // Sin vecino en la marca, como el inicio solo.
+        let r = vec![0..80, 100..200];
+        let (out, _) = moved(&r, 1, Edge::Shared, 50, 300, GAP);
+        assert_eq!(out, [0..80, 50..200]);
+    }
+}

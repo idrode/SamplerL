@@ -2482,6 +2482,12 @@ fn each_adjusted_slice_keeps_its_place() {
     let (controller, mut engine) = new_engine(RATE);
     let mut app = App::open_project(&project, controller, RATE).unwrap();
     app.handle(esc());
+    // Con la marca compartida (`b` tres veces: inicio, final, entero,
+    // marca), como antes: el anterior acaba donde empieza este.
+    for _ in 0..3 {
+        app.handle(key('b'));
+    }
+    assert!(app.view().message.contains("la marca compartida"));
     let starts = |app: &App| -> Vec<usize> {
         app.view().tracks[0]
             .slices
@@ -2575,28 +2581,26 @@ fn slices_are_nudged_with_keys_and_saved_in_the_code() {
         view.message
             .ends_with("Ctrl-S lo guarda, Ctrl-Z lo deshace")
     );
+    // Solo su inicio: el 1 no se mueve (queda un hueco entre los dos).
     assert_eq!(view.tracks[0].slices[1], 3240..6000);
-    assert_eq!(
-        view.tracks[0].slices[0],
-        0..3240,
-        "el anterior acaba donde empieza"
-    );
+    assert_eq!(view.tracks[0].slices[0], 0..3000, "el vecino no se mueve");
     offline::render(&mut engine, 100, 2);
     app.handle(key('>'));
     offline::render(&mut engine, 100, 2);
     assert_eq!(app.view().tracks[0].slices[1].start, 3288);
     assert!(
         app.text_for_test()
-            .contains("sample(\"break.wav\"):slice({ {0, 68.5}, {68.5, 125} })"),
+            .contains("sample(\"break.wav\"):slice({ {0, 62.5}, {68.5, 125} })"),
         "{}",
         app.text_for_test()
     );
     assert!(app.dirty(), "se guarda con Ctrl-S");
     // La vista del sample da su posición.
     let screen = text(&draw(&mut app, 160, 40));
-    assert!(screen.contains("corte 2 68.5 ms"), "{screen}");
+    assert!(screen.contains("corte 2 68.5–125.0 ms"), "{screen}");
 
-    // «,» lo adelanta; no puede pasar de su vecino (1 ms tras el corte 1).
+    // «,» lo adelanta, pasando por encima del 1 (se solapan), hasta el
+    // principio del sample.
     // (El motor avanza entre teclas, como en tiempo real: cada ajuste es
     // una recarga en la cola de comandos.)
     for _ in 0..20 {
@@ -2604,17 +2608,42 @@ fn slices_are_nudged_with_keys_and_saved_in_the_code() {
         offline::render(&mut engine, 100, 2);
     }
     let view = app.view();
-    // De 5 en 5 ms llega a 3,5 ms; otros 5 se saldrían: se queda en el
-    // tope, 1,2 ms tras el corte 1.
-    assert_eq!(view.tracks[0].slices[1].start, 58);
+    assert_eq!(view.tracks[0].slices[1].start, 0);
+    assert_eq!(view.tracks[0].slices[0], 0..3000);
+    assert!(
+        view.message.contains("(tope: el principio del sample)"),
+        "{}",
+        view.message
+    );
+    // `b`: el final. «,» lo acorta sin tocar el 1.
+    app.handle(key('b'));
+    app.handle(key(','));
+    offline::render(&mut engine, 100, 2);
+    let view = app.view();
+    assert_eq!(view.tracks[0].slices[1], 0..5760);
     assert!(
         view.message
-            .starts_with("corte 2 de drums: empieza en 1.2 ms (tope: el corte 1)"),
+            .starts_with("corte 2 de drums: acaba en 120 ms"),
+        "{}",
+        view.message
+    );
+    // `b`: entero. «.» lo lleva 5 ms más allá, con su largo.
+    app.handle(key('b'));
+    app.handle(key('.'));
+    offline::render(&mut engine, 100, 2);
+    assert_eq!(app.view().tracks[0].slices[1], 240..6000);
+    app.handle(key('.'));
+    offline::render(&mut engine, 100, 2);
+    let view = app.view();
+    assert_eq!(view.tracks[0].slices[1], 240..6000);
+    assert!(
+        view.message
+            .contains("no se mueve (tope: el final del sample)"),
         "{}",
         view.message
     );
     // Ctrl-Z deshace los cambios de uno en uno, como el texto: vuelve a
-    // 3,5 ms.
+    // 0..5760.
     app.handle(ctrl('z'));
     app.handle(ctrl('s'));
     assert!(
@@ -2631,8 +2660,8 @@ fn slices_are_nudged_with_keys_and_saved_in_the_code() {
         } else {
             App::open(target, controller, RATE).unwrap()
         };
-        assert_eq!(app.view().tracks[0].slices[1].start, 168);
-        assert_eq!(app.view().tracks[0].adjusted, vec![false, false]);
+        assert_eq!(app.view().tracks[0].slices[1], 0..5760);
+        assert_eq!(app.view().tracks[0].slices[0], 0..3000);
     }
     // «Quitar el ajuste» no tiene nada que quitar: lo dice.
     let (controller, _engine) = new_engine(RATE);
@@ -2644,7 +2673,7 @@ fn slices_are_nudged_with_keys_and_saved_in_the_code() {
         "{}",
         app.view().message
     );
-    assert_eq!(app.view().tracks[0].slices[1].start, 168);
+    assert_eq!(app.view().tracks[0].slices[1], 0..5760);
 }
 
 mod acid;
@@ -2695,6 +2724,7 @@ mod sections;
 mod sends;
 mod shapes;
 mod sidechain;
+mod slice_edit;
 mod slice_fx;
 mod slice_save;
 mod split;

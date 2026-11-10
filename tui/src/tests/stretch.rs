@@ -29,7 +29,7 @@ track("drums", amen):steps("1 . 2 .  1 . 2 .  1 . 2 .  1 . 2 .")
     app.adjust_slice(Some(5.0));
     let text = app.text_for_test();
     assert!(
-        text.contains("sample(\"break.wav\"):stretch(120):slice({ {0, 67.5}, {67.5, 125} })"),
+        text.contains("sample(\"break.wav\"):stretch(120):slice({ {0, 62.5}, {67.5, 125} })"),
         "{text}"
     );
     let start = app.view().tracks[0].slices[1].start;

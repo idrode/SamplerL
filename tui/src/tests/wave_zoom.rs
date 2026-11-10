@@ -30,10 +30,10 @@ fn shift(key: Key) -> Input {
 
 /// Columna de la terminal del frame `frame` con lo que se ve ahora.
 fn column_of(app: &App, frame: usize) -> u16 {
-    let area = app.sample_area.expect("se dibujó el sample");
-    let window = app.view().tracks[0].window.clone().unwrap_or(0..6000);
-    let fraction = (frame - window.start) as f64 / window.len() as f64;
-    area.x + (fraction * area.width as f64).floor() as u16
+    app.wave_layout()
+        .expect("se dibujó el sample")
+        .point_of(frame)
+        .0
 }
 
 #[test]
@@ -101,7 +101,7 @@ fn the_zoomed_wave_draws_the_marks_where_they_are() {
     app.handle(key('+'));
     // De 1500 a 4500: la marca del corte 2 (en 3000), en el centro.
     let buffer = draw(&mut app, 160, 40);
-    let area = app.sample_area.unwrap();
+    let area = app.wave_layout().unwrap().area;
     let middle = area.x + area.width / 2;
     assert_eq!(buffer[(middle, area.y)].symbol(), "2");
     // La del corte 1 (en 0) no se ve.
@@ -117,7 +117,7 @@ fn the_zoomed_wave_draws_the_marks_where_they_are() {
 fn the_wheel_zooms_around_the_pointer_and_the_view_stays_there() {
     let (_, mut app, _engine) = open_playing("zoom_wheel");
     draw(&mut app, 160, 40);
-    let area = app.sample_area.unwrap();
+    let area = app.wave_layout().unwrap().area;
     let y = area.y + 1;
     let x = column_of(&app, 4500);
     app.mouse(MouseAction::ScrollUp, x, y);
@@ -156,7 +156,7 @@ fn a_right_click_adds_a_slice_there_and_on_a_mark_removes_it() {
     app.handle(key('+'));
     app.handle(key('+'));
     draw(&mut app, 160, 40);
-    let area = app.sample_area.unwrap();
+    let area = app.wave_layout().unwrap().area;
     let y = area.y + 1;
     // 2250..3750 en 158 columnas: unos 9,5 frames cada una.
     let x = column_of(&app, 3600);

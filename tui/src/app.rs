@@ -238,9 +238,14 @@ pub struct App {
     pub editor_area: Option<ratatui::layout::Rect>,
     /// Arrastrando con el ratón: dónde se pulsó (fila y columna del texto).
     drag_from: Option<(usize, usize)>,
-    /// Dónde se dibujó la forma de onda la última vez (dentro del borde):
-    /// el ratón arrastra ahí las marcas de los cortes.
-    pub sample_area: Option<ratatui::layout::Rect>,
+    /// Dónde se dibujó la forma de onda la última vez (dentro del borde) y
+    /// qué frames se veían: el ratón agarra y arrastra ahí los cortes.
+    pub(crate) wave_layout: Option<crate::ui::WaveLayout>,
+    /// Qué mueven `,` `.` `<` `>` del corte seleccionado (`b` lo cambia).
+    slice_edge: slices::Edge,
+    /// El último clic del ratón llevaba Alt o Ctrl: arrastrar la marca de
+    /// un corte mueve también a los vecinos que la comparten.
+    mouse_held: bool,
     /// Dónde se dibujaron el tracker, la vista de ocupación y el mezclador
     /// (y lo que los tapa): el ratón los usa.
     pub panels: PanelAreas,
@@ -532,7 +537,9 @@ impl App {
             editor: TextArea::new(text.lines().map(String::from).collect()),
             editor_area: None,
             drag_from: None,
-            sample_area: None,
+            wave_layout: None,
+            slice_edge: slices::Edge::Start,
+            mouse_held: false,
             panels: PanelAreas::default(),
             slice_drag: None,
             wave_zoom: None,
@@ -1132,24 +1139,159 @@ impl App {
         let index = self
             .selected_slice
             .min(track.slices.len().saturating_sub(1));
-        let Some(range) = track.slices.get(index) else {
+        self.follow_selected_slice();
+        match delta_ms {
+            Some(delta) => {
+                self.move_slice_edge(index, self.slice_edge, slices::Target::Delta(delta))
+            }
+            None => self.place_slice(index, None),
+        }
+    }
+
+    /// `b` en el modo tocar: qué mueven `,` `.` `<` `>` del corte
+    /// seleccionado (el inicio, el final, el corte entero o la marca
+    /// compartida con los vecinos).
+    pub fn cycle_slice_edge(&mut self) {
+        self.slice_edge = self.slice_edge.next();
+        self.message = format!(
+            ", . < > mueven {} del corte (b cambia)",
+            self.slice_edge.name()
+        );
+    }
+
+    /// Mueve `edge` del corte `index` de la pista seleccionada (ver
+    /// [`slices::moved`]): en el código o, si la llamada sale de código y
+    /// es la marca de inicio, como antes en el proyecto, avisando.
+    pub(super) fn move_slice_edge(
+        &mut self,
+        index: usize,
+        edge: slices::Edge,
+        target: slices::Target,
+    ) {
+        let Some(track) = self.tracks().get(self.selected).cloned() else {
+            self.message = "no hay pistas".into();
             return;
         };
-        // Con `zero_cross` el inicio real es el cruce más cercano al ajuste
-        // guardado: se mueve el ajuste, no el cruce (si no, con un paso más
-        // corto que la distancia al siguiente cruce volvería siempre al
-        // mismo).
-        let origin = &track.origin;
-        let stored = origin.zero_cross.and(origin.indices[index]).and_then(|i| {
-            self.host
-                .positions()
+        if index >= track.slices.len() {
+            return;
+        }
+        let Some(source) = track.origin.indices[index] else {
+            self.message = format!(
+                "el corte {} de {} lo añade el script con :add(): muévelo en el script",
+                index + 1,
+                track.name
+            );
+            return;
+        };
+        let call = match Self::slice_call(&track) {
+            Ok(call) => call.clone(),
+            Err(why) => {
+                // Lo de antes (el proyecto) solo sabe mover la marca de
+                // inicio que comparten.
+                let current = self.frame_ms(track.slices.get(index).map_or(0, |r| r.start));
+                let shared = matches!(edge, slices::Edge::Shared | slices::Edge::Start);
+                if track.origin.explicit || !shared {
+                    self.message = self.not_written_message(why);
+                    return;
+                }
+                let ms = match target {
+                    slices::Target::Delta(d) => current + d,
+                    slices::Target::At(ms) => ms,
+                };
+                self.place_in_project(index, Some(ms));
+                let note = self.not_written_message(why);
+                self.message = format!("{} · {note}", self.message);
+                return;
+            }
+        };
+        let rate = call.sample_rate.max(1) as f64;
+        let to_ms = |frame: usize| frame as f64 * 1000.0 / rate;
+        let to_frame = |ms: f64| (ms / 1000.0 * rate).round() as i64;
+        let round = |ms: f64| (ms * 10.0).round() / 10.0;
+        let gap = (mouse::DRAG_GAP_MS / 1000.0 * rate).ceil() as usize;
+        let total = ((track.sample.frames() as f64) / track.stretch.map_or(1.0, |s| s.ratio))
+            .round() as usize;
+        let total = total.max(call.ranges.iter().map(|r| r.end).max().unwrap_or(0));
+        let Some(old) = call.ranges.get(source).cloned() else {
+            return;
+        };
+        let wanted = match target {
+            slices::Target::Delta(d) => round(to_ms(edge.of(&old)) + d),
+            slices::Target::At(ms) => round(ms),
+        };
+        let (ranges, limit) =
+            slices::moved(&call.ranges, source, edge, to_frame(wanted), total, gap);
+        // El número en la pista de un corte de la llamada.
+        let numbered = |j: usize| {
+            track
+                .origin
+                .indices
                 .iter()
-                .find(|p| p.sample == origin.sample && p.slices == origin.cut() && p.slice == i + 1)
-                .map(|p| p.ms)
-        });
-        let current = stored.unwrap_or_else(|| self.frame_ms(range.start));
-        self.follow_selected_slice();
-        self.place_slice(index, delta_ms.map(|d| current + d));
+                .position(|i| *i == Some(j))
+                .map_or(j + 1, |k| k + 1)
+        };
+        let limit = match limit {
+            None => String::new(),
+            Some(slices::Limit::SampleStart) => " (tope: el principio del sample)".into(),
+            Some(slices::Limit::SampleEnd) => " (tope: el final del sample)".into(),
+            Some(slices::Limit::Neighbour(j)) => format!(" (tope: el corte {})", numbered(j)),
+            Some(slices::Limit::Own) => {
+                // Si otro empieza justo donde acaba este, es su tope.
+                let other = (edge != slices::Edge::End)
+                    .then(|| call.ranges.iter().position(|r| r.start == old.end))
+                    .flatten();
+                match (other, edge) {
+                    (Some(j), _) => format!(" (tope: el corte {})", numbered(j)),
+                    (None, slices::Edge::End) => " (tope: su inicio)".into(),
+                    (None, _) if old.end >= total => " (tope: el final del sample)".into(),
+                    (None, _) => " (tope: su final)".into(),
+                }
+            }
+        };
+        if ranges == call.ranges {
+            self.message = format!("corte {} de {}: no se mueve{limit}", index + 1, track.name);
+            return;
+        }
+        let labels = call.labels.clone();
+        let converted = self.note_conversion(&track);
+        let new = ranges[source].clone();
+        match self.write_slices(slices::Rewrite { ranges, labels }) {
+            Ok(()) => {
+                // Con `zero_cross`, dónde quedó de verdad.
+                let now = self
+                    .tracks()
+                    .get(self.selected)
+                    .and_then(|t| t.origin.call.as_ref().ok())
+                    .and_then(|c| c.ranges.get(source).cloned())
+                    .unwrap_or(new.clone());
+                let zero = match edge {
+                    slices::Edge::End => String::new(),
+                    _ if track.origin.zero_cross.is_some() && now.start != new.start => {
+                        format!(" (cruce por cero en {} ms)", round(to_ms(now.start)))
+                    }
+                    _ => String::new(),
+                };
+                let what = match edge {
+                    slices::Edge::End => format!("acaba en {} ms", round(to_ms(new.end))),
+                    slices::Edge::Whole => format!(
+                        "va de {} a {} ms",
+                        round(to_ms(new.start)),
+                        round(to_ms(new.end))
+                    ),
+                    _ => format!("empieza en {} ms", round(to_ms(new.start))),
+                };
+                self.message = format!(
+                    "corte {} de {}: {what}{limit}{zero}{}",
+                    index + 1,
+                    track.name,
+                    self.written_note(converted)
+                );
+            }
+            Err(why) => {
+                self.forget_conversion(converted);
+                self.message = self.not_written_message(why);
+            }
+        }
     }
 
     /// Ms del sample original (sin estirar) del frame `frame` del sample
@@ -1177,7 +1319,7 @@ impl App {
         if index >= track.slices.len() {
             return;
         }
-        let Some(source) = track.origin.indices[index] else {
+        let Some(_) = track.origin.indices[index] else {
             self.message = format!(
                 "el corte {} de {} lo añade el script con :add(): muévelo en el script",
                 index + 1,
@@ -1188,7 +1330,9 @@ impl App {
         let call = Self::slice_call(&track);
         if track.origin.explicit {
             match (ms, call) {
-                (Some(ms), Ok(call)) => self.place_in_code(&track, call, index, source, ms),
+                (Some(ms), Ok(_)) => {
+                    self.move_slice_edge(index, slices::Edge::Shared, slices::Target::At(ms))
+                }
                 (None, Ok(_)) => {
                     self.message = format!(
                         "los cortes de {} están escritos en el código: no hay ajuste que \
@@ -1201,90 +1345,15 @@ impl App {
             return;
         }
         match (ms, call) {
-            (Some(ms), Ok(call)) => self.place_in_code(&track, call, index, source, ms),
+            (Some(ms), Ok(_)) => {
+                self.move_slice_edge(index, slices::Edge::Shared, slices::Target::At(ms))
+            }
             (Some(_), Err(why)) => {
                 self.place_in_project(index, ms);
                 let note = self.not_written_message(why);
                 self.message = format!("{} · {note}", self.message);
             }
             (None, _) => self.place_in_project(index, None),
-        }
-    }
-
-    /// [`App::place_slice`] en el código: el corte `source` de la llamada
-    /// (el `index` de la pista) empieza en `ms`; el anterior acaba ahí si
-    /// acababa donde empezaba este (la marca es de los dos).
-    fn place_in_code(
-        &mut self,
-        track: &script::TrackDef,
-        call: &script::SliceCall,
-        index: usize,
-        source: usize,
-        ms: f64,
-    ) {
-        let rate = call.sample_rate.max(1) as f64;
-        let to_frame = |ms: f64| (ms / 1000.0 * rate).round().max(0.0) as usize;
-        let to_ms = |frame: usize| frame as f64 * 1000.0 / rate;
-        let gap = (mouse::DRAG_GAP_MS / 1000.0 * rate).ceil() as usize;
-        let mut ranges = call.ranges.clone();
-        let Some(old) = ranges.get(source).cloned() else {
-            return;
-        };
-        let shared = source
-            .checked_sub(1)
-            .filter(|&p| ranges[p].end == old.start);
-        let low = shared.map_or(0, |p| ranges[p].start + gap).min(old.start);
-        let high = old.end.saturating_sub(gap).max(old.start);
-        // Con la resolución de un frame, redondeado a 0,1 ms.
-        let wanted = to_frame((ms.max(0.0) * 10.0).round() / 10.0);
-        let at = wanted.clamp(low, high);
-        let limit = if at > wanted {
-            format!(" (tope: el corte {index})")
-        } else if at < wanted {
-            let next = ranges.get(source + 1).filter(|r| r.start == old.end);
-            if next.is_some() && index + 1 < track.slices.len() {
-                format!(" (tope: el corte {})", index + 2)
-            } else if ranges.iter().all(|r| r.end <= old.end) {
-                " (tope: el final del sample)".to_string()
-            } else {
-                format!(" (tope: el final del corte {})", index + 1)
-            }
-        } else {
-            String::new()
-        };
-        ranges[source].start = at;
-        if let Some(p) = shared {
-            ranges[p].end = at;
-        }
-        let labels = call.labels.clone();
-        let converted = self.note_conversion(track);
-        match self.write_slices(slices::Rewrite { ranges, labels }) {
-            Ok(()) => {
-                // Con `zero_cross`, dónde quedó de verdad.
-                let now = self
-                    .tracks()
-                    .get(self.selected)
-                    .and_then(|t| t.origin.call.as_ref().ok())
-                    .and_then(|c| c.ranges.get(source))
-                    .map(|r| (to_ms(r.start) * 10.0).round() / 10.0);
-                let target = (to_ms(at) * 10.0).round() / 10.0;
-                let zero = match now {
-                    Some(now) if track.origin.zero_cross.is_some() && now != target => {
-                        format!(" (cruce por cero en {now} ms)")
-                    }
-                    _ => String::new(),
-                };
-                self.message = format!(
-                    "corte {} de {}: empieza en {target} ms{limit}{zero}{}",
-                    index + 1,
-                    track.name,
-                    self.written_note(converted)
-                );
-            }
-            Err(why) => {
-                self.forget_conversion(converted);
-                self.message = self.not_written_message(why);
-            }
         }
     }
 
@@ -1854,7 +1923,29 @@ impl App {
                         (r.start + r.end) / 2
                     }
                 };
-                match all.split(frame, gap) {
+                // En un hueco (cortes explícitos): uno nuevo desde ahí hasta
+                // el siguiente inicio (o el final del sample).
+                let in_gap = !call.ranges.iter().any(|r| r.contains(&frame))
+                    && call.ranges.iter().any(|r| r.start < frame);
+                let split = if in_gap {
+                    let end = call
+                        .ranges
+                        .iter()
+                        .map(|r| r.start)
+                        .filter(|&s| s > frame)
+                        .min()
+                        .unwrap_or(total);
+                    let k = call.ranges.iter().filter(|r| r.start <= frame).count();
+                    let mut ranges = call.ranges.clone();
+                    ranges.insert(k, frame..end);
+                    match engine::Slices::from_ranges(ranges, total, gap) {
+                        Ok(slices) => Ok((slices, k)),
+                        Err(_) => Err(0..0),
+                    }
+                } else {
+                    all.split(frame, gap)
+                };
+                match split {
                     Ok((split, k)) => {
                         labels.insert(k, None);
                         let ms = frame as f64 * 1000.0 / rate;
@@ -4005,6 +4096,7 @@ impl App {
             Action::ClearSliceAdjust => self.adjust_slice(None),
             Action::NextSlice => self.select_slice(true),
             Action::SplitSlice => self.split_selected(),
+            Action::SliceEdge => self.cycle_slice_edge(),
             Action::ZoomIn => self.zoom_wave(true, None),
             Action::ZoomOut => self.zoom_wave(false, None),
             Action::ZoomReset => self.reset_wave_zoom(),
@@ -4768,6 +4860,8 @@ impl App {
                     self.toggle_variant();
                 } else if c == 'n' {
                     self.split_selected();
+                } else if c == 'b' {
+                    self.cycle_slice_edge();
                 } else if c == '+' || c == '=' {
                     self.zoom_wave(true, None);
                 } else if c == '-' {
@@ -5136,12 +5230,9 @@ impl App {
         if let Some(drag) = &self.slice_drag
             && let Some(track) = selected.and_then(|i| tracks.get_mut(i))
             && track.name == drag.track
-            && drag.index < track.slices.len()
+            && drag.preview.len() == track.slices.len()
         {
-            track.slices[drag.index].start = drag.at;
-            if drag.index > 0 {
-                track.slices[drag.index - 1].end = drag.at;
-            }
+            track.slices = drag.preview.clone();
         }
         let selected_slice = selected
             .and_then(|t| tracks[t].slices.len().checked_sub(1))

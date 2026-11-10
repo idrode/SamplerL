@@ -19,7 +19,9 @@
 
 use ratatui_textarea::{CursorMove, Scrolling};
 
+use super::slices::{self, Edge};
 use super::{App, Mode};
+use crate::ui::{WaveHit, WaveLayout};
 
 /// Lo que hace el ratón (sin depender de crossterm: así se prueba).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,36 +46,48 @@ pub enum MouseAction {
 /// Líneas que mueve cada paso de la rueda.
 const WHEEL_LINES: i16 = 3;
 
-/// Columnas a cada lado de una marca en las que un clic la agarra.
-const GRAB_COLUMNS: f64 = 1.0;
-
-/// Lo que se deja como mínimo entre un corte y sus vecinos al arrastrar,
-/// en ms: algo más que el margen de 1 ms del script, para que el
-/// redondeo a 0,1 ms no lo pise.
+/// Lo que se deja como mínimo de largo a un corte al arrastrar, en ms:
+/// algo más que el mínimo de 1 ms del script, para que el redondeo a
+/// 0,1 ms no lo pise.
 pub(super) const DRAG_GAP_MS: f64 = 1.2;
 
-/// La marca de un corte que se arrastra (en frames del sample que suena,
+/// Un corte agarrado con el ratón (en frames del sample que suena,
 /// estirado si la pista tiene stretch).
 #[derive(Debug, Clone)]
 pub(crate) struct SliceDrag {
     /// La pista (por nombre: si cambia la seleccionada, no se aplica).
     pub(crate) track: String,
     pub(crate) index: usize,
+    /// Qué se arrastra: un borde, el corte entero o la marca compartida.
+    edge: Edge,
     /// Columna de la terminal donde se pulsó.
     column: u16,
-    /// Dónde empezaba el corte y dónde lo deja el arrastre.
-    start: usize,
-    pub(crate) at: usize,
-    /// Hasta dónde puede llegar (sus vecinos con el margen).
-    low: usize,
-    high: usize,
+    /// Los cortes de la pista al agarrar y donde los deja el arrastre (lo
+    /// que enseña la vista hasta soltar).
+    start: Vec<std::ops::Range<usize>>,
+    pub(crate) preview: Vec<std::ops::Range<usize>>,
+    /// Se ha movido (si no, al soltar es un clic: suena).
+    moved: bool,
+    gap: usize,
+    total: usize,
 }
-
 impl App {
-    /// El ratón en la columna `column` y la fila `row` de la terminal.
+    /// El ratón en la columna `column` y la fila `row` de la terminal, sin
+    /// Alt ni Ctrl.
+    #[cfg(test)]
     pub fn mouse(&mut self, action: MouseAction, column: u16, row: u16) {
+        self.mouse_with(action, column, row, false);
+    }
+
+    /// Como [`App::mouse`]; `held`: con Alt o Ctrl pulsado (en la onda,
+    /// agarrar la marca de un corte la mueve con los vecinos que la
+    /// comparten). Shift no vale: la terminal lo usa para seleccionar.
+    pub fn mouse_with(&mut self, action: MouseAction, column: u16, row: u16, held: bool) {
         if !self.mouse_enabled {
             return;
+        }
+        if action == MouseAction::Down {
+            self.mouse_held = held;
         }
         // Un clic nuevo suelta el arrastre que se quedó a medias (soltado
         // fuera de la terminal, sin `Up`).
@@ -220,38 +234,47 @@ impl App {
 }
 
 impl App {
+    /// La geometría de la onda tal como se dibujó la última vez.
+    #[cfg(test)]
+    pub(crate) fn wave_layout(&self) -> Option<WaveLayout> {
+        self.wave_layout.clone()
+    }
+
     /// Pulsa (o mueve la rueda) en la forma de onda de una pista con
     /// sample, sin nada encima.
     fn on_sample(&self, action: MouseAction, column: u16, row: u16) -> bool {
         !matches!(action, MouseAction::Drag | MouseAction::Up)
             && self.nothing_on_top()
             && self
-                .sample_area
-                .is_some_and(|a| a.contains(ratatui::layout::Position::new(column, row)))
+                .wave_layout
+                .as_ref()
+                .is_some_and(|l| l.contains(column, row))
             && self.tracks().get(self.selected).is_some_and(|t| {
                 t.instrument.and_then(|i| i.synth).is_none() && !t.slices.is_empty()
             })
     }
 
-    /// Agarra, arrastra o suelta la marca de un corte en la vista del
-    /// sample; con el botón derecho, pone o quita un corte; con la rueda,
-    /// zoom.
+    /// Agarra, arrastra o suelta un corte en la vista del sample (un borde,
+    /// el cuerpo entero o, con Alt o Ctrl, la marca compartida); con el
+    /// botón derecho, pone o quita un corte; con la rueda, zoom.
     fn mouse_sample(&mut self, action: MouseAction, column: u16) {
+        let Some(layout) = self.wave_layout.clone() else {
+            return;
+        };
         match action {
             MouseAction::Down => {
                 // Con zoom, la vista se queda donde está aunque cambie el
                 // corte seleccionado.
                 self.pin_wave_view();
-                self.grab_slice(column);
+                self.grab_slice(&layout, column);
             }
             MouseAction::RightDown => {
                 self.pin_wave_view();
-                self.right_click_sample(column);
+                self.right_click_sample(&layout, column);
             }
             MouseAction::ScrollUp | MouseAction::ScrollDown => {
-                let Some(area) = self.sample_area else { return };
-                let x = column.saturating_sub(area.x) as f64 + 0.5;
-                let anchor = x / area.width.max(1) as f64;
+                let x = column.saturating_sub(layout.area.x) as f64 + 0.5;
+                let anchor = x / layout.area.width.max(1) as f64;
                 self.zoom_wave(action == MouseAction::ScrollUp, Some(anchor));
             }
             MouseAction::ScrollLeft | MouseAction::ScrollRight => {
@@ -259,23 +282,40 @@ impl App {
             }
             MouseAction::ZoomIn | MouseAction::ZoomOut => {}
             MouseAction::Drag => {
-                let Some(area) = self.sample_area else { return };
-                let frames = self.shown_frames().len();
+                let per_column = layout.frames_per_column();
                 let Some(drag) = self.slice_drag.as_mut() else {
                     return;
                 };
                 // Lo que se mueve el ratón, en frames (sin saltar al pulsar
-                // un poco al lado de la marca).
-                let per_column = frames as f64 / area.width.max(1) as f64;
-                let moved = (column as f64 - drag.column as f64) * per_column;
-                let at = (drag.start as f64 + moved).round().max(0.0) as usize;
-                drag.at = at.clamp(drag.low, drag.high);
-                let (index, at) = (drag.index, drag.at);
-                let ms = self.frame_ms(at);
-                self.message = format!(
-                    "corte {}: arrastrando a {ms:.1} ms (suelta para fijarlo)",
-                    index + 1
+                // un poco al lado del borde).
+                let delta = ((column as f64 - drag.column as f64) * per_column).round() as i64;
+                let from = drag.edge.of(&drag.start[drag.index]) as i64;
+                let (preview, limit) = slices::moved(
+                    &drag.start,
+                    drag.index,
+                    drag.edge,
+                    from + delta,
+                    drag.total,
+                    drag.gap,
                 );
+                drag.moved |= preview != drag.start;
+                drag.preview = preview;
+                let (index, edge, r) = (drag.index, drag.edge, drag.preview[drag.index].clone());
+                let (a, b) = (self.frame_ms(r.start), self.frame_ms(r.end));
+                let what = match edge {
+                    Edge::End => format!("acaba en {b:.1} ms"),
+                    Edge::Whole => format!("de {a:.1} a {b:.1} ms"),
+                    Edge::Start | Edge::Shared => format!("empieza en {a:.1} ms"),
+                };
+                let limit = match limit {
+                    None => String::new(),
+                    Some(slices::Limit::SampleStart) => " (tope: el principio del sample)".into(),
+                    Some(slices::Limit::SampleEnd) => " (tope: el final del sample)".into(),
+                    Some(slices::Limit::Neighbour(j)) => format!(" (tope: el corte {})", j + 1),
+                    Some(slices::Limit::Own) if edge == Edge::End => " (tope: su inicio)".into(),
+                    Some(slices::Limit::Own) => " (tope: su final)".into(),
+                };
+                self.message = format!("corte {}: {what}{limit} (suelta para fijarlo)", index + 1);
             }
             MouseAction::Up => {
                 let Some(drag) = self.slice_drag.take() else {
@@ -285,87 +325,65 @@ impl App {
                     .tracks()
                     .get(self.selected)
                     .is_some_and(|t| t.name == drag.track);
-                if !same || drag.at == drag.start {
-                    // Un clic sobre la marca, sin arrastrar: suena.
+                if !same || !drag.moved {
+                    // Un clic, sin arrastrar: suena.
                     if same {
                         self.preview_selected();
                     }
                     return;
                 }
-                let ms = self.frame_ms(drag.at);
-                self.place_slice(drag.index, Some(ms));
+                let ms = self.frame_ms(drag.edge.of(&drag.preview[drag.index]));
+                self.move_slice_edge(drag.index, drag.edge, slices::Target::At(ms));
             }
         }
     }
 
-    /// El frame del sample (y la columna desde el borde, al centro de la
-    /// celda) que hay en la columna `column` de la terminal.
-    fn frame_at(&self, column: u16) -> Option<(f64, f64)> {
-        let area = self.sample_area?;
-        let shown = self.shown_frames();
-        let x = column.saturating_sub(area.x) as f64 + 0.5;
-        let frame = shown.start as f64 + x / area.width.max(1) as f64 * shown.len() as f64;
-        Some((frame, x))
-    }
-
-    /// La columna (desde el borde, fraccionaria) del frame `frame`.
-    fn column_of(&self, frame: usize) -> f64 {
-        let width = self.sample_area.map_or(1, |a| a.width.max(1)) as f64;
-        let shown = self.shown_frames();
-        (frame as f64 - shown.start as f64) / shown.len().max(1) as f64 * width
-    }
-
-    /// La marca más cerca de la columna `x` (desde el borde) y a cuántas
-    /// columnas está.
-    fn nearest_mark(&self, x: f64) -> Option<(usize, f64)> {
-        let track = self.tracks().get(self.selected)?;
-        track
-            .slices
-            .iter()
-            .enumerate()
-            .map(|(i, r)| (i, (self.column_of(r.start) - x).abs()))
-            .min_by(|a, b| a.1.total_cmp(&b.1))
-    }
-
-    /// Clic derecho en la onda: en una marca, quita ese corte; si no, pone
+    /// Clic derecho en la onda: en un borde, quita ese corte; si no, pone
     /// uno nuevo donde se pulsa.
-    fn right_click_sample(&mut self, column: u16) {
-        let Some((frame, x)) = self.frame_at(column) else {
+    fn right_click_sample(&mut self, layout: &WaveLayout, column: u16) {
+        let Some(track) = self.tracks().get(self.selected) else {
             return;
         };
-        match self.nearest_mark(x) {
-            Some((index, distance)) if distance <= GRAB_COLUMNS + 0.5 => self.delete_slice(index),
-            _ => self.split_at(frame.round() as usize),
+        let ranges: Vec<_> = track.slices.iter().collect();
+        match layout.hit(column, &ranges, None) {
+            WaveHit::Edge { slice, end: false } => self.delete_slice(slice),
+            _ => self.split_at(layout.frame_at(column).round() as usize),
         }
     }
 
-    /// Clic en la onda: cerca de una marca, la agarra; si no, selecciona
-    /// el corte que hay donde se pulsa.
-    fn grab_slice(&mut self, column: u16) {
+    /// Clic en la onda: en un borde de un corte, lo agarra (con Alt o
+    /// Ctrl, la marca compartida); dentro de un corte, lo elige y lo agarra
+    /// entero; en un hueco, nada.
+    fn grab_slice(&mut self, layout: &WaveLayout, column: u16) {
         let Some(track) = self.tracks().get(self.selected).cloned() else {
             return;
         };
-        // Centro de la columna pulsada, en columnas desde el borde.
-        let Some((frame, x)) = self.frame_at(column) else {
-            return;
-        };
-        let Some((index, distance)) = self.nearest_mark(x) else {
-            return;
+        let selected = Some(
+            self.selected_slice
+                .min(track.slices.len().saturating_sub(1)),
+        );
+        let ranges: Vec<_> = track.slices.iter().collect();
+        let (index, edge) = match layout.hit(column, &ranges, selected) {
+            WaveHit::Gap => {
+                self.message = "aquí no hay ningún corte (un hueco): clic derecho pone uno".into();
+                return;
+            }
+            WaveHit::Body { slice } => (slice, Edge::Whole),
+            WaveHit::Edge { slice, end } => {
+                let r = &ranges[slice];
+                match (end, self.mouse_held) {
+                    (false, false) => (slice, Edge::Start),
+                    (true, false) => (slice, Edge::End),
+                    (false, true) => (slice, Edge::Shared),
+                    // El final con Alt: la marca del que empieza ahí, si hay.
+                    (true, true) => match ranges.iter().position(|o| o.start == r.end) {
+                        Some(next) => (next, Edge::Shared),
+                        None => (slice, Edge::End),
+                    },
+                }
+            }
         };
         self.selected_slice = index;
-        if distance > GRAB_COLUMNS + 0.5 {
-            // Lejos de las marcas: el corte de ahí.
-            let at = frame as usize;
-            let index = track
-                .slices
-                .iter()
-                .take_while(|r| r.start <= at)
-                .count()
-                .saturating_sub(1);
-            self.selected_slice = index;
-            self.preview_selected();
-            return;
-        }
         if track.origin.indices.get(index).copied().flatten().is_none() {
             self.message = format!(
                 "el corte {} de {} lo añade el script con :add(): muévelo en el script",
@@ -377,28 +395,25 @@ impl App {
         let rate = track.sample.sample_rate() as f64;
         let ratio = track.stretch.map_or(1.0, |s| s.ratio);
         let gap = (DRAG_GAP_MS / 1000.0 * rate * ratio).ceil() as usize;
-        let Some(range) = track.slices.get(index) else {
-            return;
-        };
-        let low = match index {
-            0 => 0,
-            i => track.slices.get(i - 1).map_or(0, |r| r.start + gap),
-        };
-        // Sin sitio para moverse, se queda donde está.
-        let (low, high) = (
-            low.min(range.start),
-            range.end.saturating_sub(gap).max(range.start),
-        );
         self.slice_drag = Some(SliceDrag {
             track: track.name.clone(),
             index,
+            edge,
             column,
-            start: range.start,
-            at: range.start,
-            low,
-            high,
+            start: ranges.clone(),
+            preview: ranges,
+            moved: false,
+            gap,
+            total: track.sample.frames(),
         });
-        self.message = format!("corte {} agarrado: arrastra para moverlo", index + 1);
+        self.message = match edge {
+            Edge::Whole => format!("corte {} agarrado: arrastra para moverlo entero", index + 1),
+            edge => format!(
+                "corte {} agarrado por {}: arrastra para moverlo",
+                index + 1,
+                edge.name()
+            ),
+        };
     }
 
     /// El mensaje de corte seleccionado (con su etiqueta, si la tiene).
