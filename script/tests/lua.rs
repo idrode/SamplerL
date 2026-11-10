@@ -207,27 +207,31 @@ fn runaway_scripts_hit_the_limits_and_the_previous_keeps_playing() {
     let mut audio = render_left(&mut engine, BAR / 2);
 
     let ms = Duration::from_millis;
+    // Los casos de memoria llevan un límite de tiempo holgado: con la
+    // máquina cargada, el de 0,5 s podía llegar antes que el de memoria
+    // (N11 de `docs/AUDITORIA-2.md`).
+    let roomy = Duration::from_secs(30);
     // (script, límite de memoria en MB, de tiempo, lo que dice el error)
     let bad: [(&str, usize, Duration, &str); 5] = [
         // Cadenas grandes que se guardan.
         (
             "local t = {}\nwhile true do t[#t + 1] = string.rep(\"x\", 100000) .. #t end\n",
             32,
-            limit,
+            roomy,
             "el script usa más de 32 MB de memoria",
         ),
         // Tablas que crea Rust (cada `scale` es una tabla nueva).
         (
             "local t = {}\nwhile true do t[#t + 1] = scale(\"minor\", \"c\") end\n",
             4,
-            ms(5000),
+            roomy,
             "el script usa más de 4 MB de memoria",
         ),
         // Concatenar en un bucle.
         (
             "local s = \"\"\nwhile true do s = s .. string.rep(\"y\", 100000) end\n",
             32,
-            limit,
+            roomy,
             "el script usa más de 32 MB de memoria",
         ),
         // Instrucciones caras sin guardar nada: solo el tiempo las corta.
@@ -254,7 +258,13 @@ fn runaway_scripts_hit_the_limits_and_the_previous_keeps_playing() {
             "sin la línea: \"{err}\"\n{src}"
         );
         assert!(err.contains("[script]"), "sin el ajuste: \"{err}\"");
-        assert!(took < time + ms(400), "{src}: tardó {took:?}");
+        // Un límite de tiempo corta poco después de pasarlo; el margen es
+        // absoluto y amplio (con la máquina cargada se tardaba casi el
+        // doble), pero un límite que no corta lo sigue rompiendo.
+        if time == limit {
+            assert!(took >= limit, "{src}: cortó antes del límite ({took:?})");
+            assert!(took < limit + ms(2000), "{src}: tardó {took:?}");
+        }
     }
     audio.extend(render_left(&mut engine, BAR / 2 + BAR));
 

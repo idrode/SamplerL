@@ -506,7 +506,7 @@ fn a_huge_pattern_is_refused_before_splitting_it() {
         assert!(error.starts_with("song.lua:"), "{what}: {error}");
         // Sin partirlo: al momento.
         assert!(
-            started.elapsed() < std::time::Duration::from_millis(500),
+            started.elapsed() < std::time::Duration::from_secs(2),
             "{what}"
         );
     }

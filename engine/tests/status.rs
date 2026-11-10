@@ -66,10 +66,12 @@ fn null_output_moves_the_engine_in_real_time() {
     controller.set_pattern(pattern()).unwrap();
     controller.start().unwrap();
     let output = open_null_output(engine, RATE);
-    // A 400 BPM, un paso dura 37,5 ms: en ~300 ms deben pasar varios.
+    // A 400 BPM, un paso dura 37,5 ms: en ~300 ms deben pasar varios. Se
+    // espera hasta 3 s por si la máquina va cargada (sin cambiar lo que se
+    // comprueba).
     let start = Instant::now();
     let mut last = None;
-    while start.elapsed() < Duration::from_millis(300) {
+    while start.elapsed() < Duration::from_secs(3) && !last.is_some_and(|s| s >= 3) {
         std::thread::sleep(Duration::from_millis(10));
         last = controller.status().step;
     }

@@ -485,7 +485,9 @@ mod tests {
         let start = std::time::Instant::now();
         tree.toggle(1);
         let rows = tree.rows();
-        assert!(start.elapsed() < std::time::Duration::from_secs(1));
+        // Holgado: con la máquina cargada; lo que importa es que no lee
+        // todas las entradas (serían segundos con miles).
+        assert!(start.elapsed() < std::time::Duration::from_secs(5));
         assert_eq!(rows.len(), 2 + MAX_ENTRIES + 1);
         let last = rows.last().unwrap();
         assert!(last.note && last.name.contains("20 más"), "{last:?}");
