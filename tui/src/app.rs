@@ -445,6 +445,10 @@ pub struct App {
     recording: Option<crate::record::Recording>,
     /// Notas en vivo de instrumentos que suenan (pads y MIDI).
     held: Vec<HeldNote>,
+    /// Notas soltadas cuyo note off no cupo en la cola de comandos (llena
+    /// tras una ráfaga): `(pista, tecla, nube)`. Se reintentan en cada
+    /// `tick` hasta que entran, para que no se quede ninguna colgada.
+    stuck_offs: Vec<(usize, u8, bool)>,
     /// La terminal avisa al soltar una tecla: los pads sueltan su nota con
     /// ese evento (si no, por tiempo: ver `PAD_FIRST_HOLD`).
     key_releases: bool,
@@ -631,6 +635,7 @@ impl App {
             tapping: None,
             recording: None,
             held: Vec::new(),
+            stuck_offs: Vec::new(),
             key_releases: false,
             slots: Default::default(),
             slots_dir: None,
@@ -1787,6 +1792,12 @@ impl App {
         self.controller.status()
     }
 
+    /// Llena la cola de comandos del motor (como tras una ráfaga).
+    #[cfg(test)]
+    pub fn fill_command_queue_for_test(&mut self) {
+        while self.controller.set_metronome(false).is_ok() {}
+    }
+
     #[cfg(test)]
     pub fn path_for_test(&self) -> &Path {
         &self.path
@@ -2642,11 +2653,9 @@ impl App {
             return;
         };
         let held = self.held.remove(at);
-        let _ = if held.grain {
-            self.controller.grain_off(held.slot, key)
-        } else {
-            self.controller.note_off(held.slot, key)
-        };
+        if self.send_note_off(held.slot, key, held.grain).is_err() {
+            self.stuck_offs.push((held.slot, key, held.grain));
+        }
         if let (Some(rec), Some(step), Some(position)) = (
             &mut self.recording,
             held.recorded,
@@ -2654,6 +2663,30 @@ impl App {
         ) && rec.track == held.track
         {
             rec.release(step, position);
+        }
+    }
+
+    fn send_note_off(
+        &mut self,
+        slot: usize,
+        key: u8,
+        grain: bool,
+    ) -> Result<(), engine::SendError> {
+        if grain {
+            self.controller.grain_off(slot, key)
+        } else {
+            self.controller.note_off(slot, key)
+        }
+    }
+
+    /// Reintenta los note off que no cupieron (ver `stuck_offs`), en orden.
+    fn retry_note_offs(&mut self) {
+        let stuck = std::mem::take(&mut self.stuck_offs);
+        for (i, &(slot, key, grain)) in stuck.iter().enumerate() {
+            if self.send_note_off(slot, key, grain).is_err() {
+                self.stuck_offs.extend_from_slice(&stuck[i..]);
+                break;
+            }
         }
     }
 
@@ -4515,6 +4548,7 @@ impl App {
     }
 
     pub fn tick(&mut self) {
+        self.retry_note_offs();
         self.poll_link();
         self.poll_devices();
         self.poll_key_analysis();

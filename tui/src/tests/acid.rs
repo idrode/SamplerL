@@ -186,3 +186,27 @@ fn the_sh101_shows_its_params() {
     let screen = text(&draw(&mut app, 140, 40));
     assert!(screen.contains("sintetizador · b · sh101"), "{screen}");
 }
+
+/// Un note off que no cabe en la cola de comandos (llena tras una ráfaga)
+/// se reintenta en el `tick` siguiente: la nota no se queda colgada (N14
+/// de `docs/AUDITORIA-2.md`).
+#[test]
+fn a_note_off_that_does_not_fit_is_retried() {
+    let quiet = "bpm(120)\ntrack(\"bass\", synth(\"acid\")):steps(\". . . .  . . . .  . . . .  . . . .\")\n";
+    let (_, mut app, mut engine) = open("acid_stuck", Some(quiet));
+    app.handle(esc());
+    let t0 = Instant::now();
+    app.press_pad_at(4, t0);
+    offline::render(&mut engine, STEP, 2);
+    // La cola, llena.
+    app.fill_command_queue_for_test();
+    app.release_expired_pads(t0 + Duration::from_secs(1));
+    // El motor vacía la cola; la nota sigue sonando (su off no entró).
+    offline::render(&mut engine, STEP, 2);
+    let held = offline::render(&mut engine, STEP, 2);
+    assert!(rms(&held) > 0.01, "se soltó sin reintentar");
+    app.tick();
+    offline::render(&mut engine, STEP, 2);
+    let after = offline::render(&mut engine, STEP, 2);
+    assert!(rms(&after) < 1e-4, "colgada: {}", rms(&after));
+}
