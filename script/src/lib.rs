@@ -2786,11 +2786,6 @@ impl ScriptHost {
     }
 }
 
-/// Lote que lleva la canción al motor: tempo y el patrón de cada pista en su
-/// ranura (`slots[i]` es el nombre de la pista de la ranura `i`).
-/// El lote que hace sonar `song`. `before`, lo que sonaba (para quitar sus
-/// grupos si `song` ya no tiene): los grupos y las macros solo van si hacen
-/// falta, para no gastar sitio en la cola de comandos.
 /// Qué fuentes del motor copian muestras: las pistas (por su hueco) y el
 /// master de las visualizaciones de audio de `song`.
 pub fn viz_flags(song: &Song, slots: &[Option<String>; MAX_TRACKS]) -> [bool; engine::VIZ_SOURCES] {
@@ -2815,6 +2810,11 @@ pub fn viz_flags(song: &Song, slots: &[Option<String>; MAX_TRACKS]) -> [bool; en
     on
 }
 
+/// Lote que lleva la canción al motor: tempo y el patrón de cada pista en su
+/// ranura (`slots[i]` es el nombre de la pista de la ranura `i`).
+/// `before`, lo que sonaba (para quitar sus grupos si `song` ya no tiene):
+/// los grupos y las macros solo van si hacen falta, para no gastar sitio en
+/// la cola de comandos.
 fn song_batch(
     song: &Song,
     slots: &[Option<String>; MAX_TRACKS],
