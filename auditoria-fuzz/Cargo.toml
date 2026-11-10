@@ -1,0 +1,32 @@
+# Fuzzers de la segunda auditoría (docs/AUDITORIA-2.md). Fuera del workspace:
+# no toca los crates ni su Cargo.lock. Rust estable (no hay nightly en esta
+# máquina: ni `cargo fuzz` ni miri), con un generador propio y mutaciones.
+[package]
+name = "auditoria-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+engine = { path = "../engine" }
+script = { path = "../script" }
+hound = "3.5.1"
+
+[profile.release]
+debug = 1
+overflow-checks = true
+debug-assertions = true
+
+# Como el binario de verdad (`cargo build --release` del workspace): los
+# enteros dan la vuelta en vez de dar pánico. Para ver qué pánicos del
+# perfil `release` de aquí llegan al usuario.
+[profile.real]
+inherits = "release"
+overflow-checks = false
+debug-assertions = false
+
+# Solo para `examples/loom_ranura.rs` (el modelo de `engine::device::EngineSlot`).
+[dev-dependencies]
+loom = "0.7"
