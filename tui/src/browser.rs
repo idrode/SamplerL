@@ -37,10 +37,11 @@ fn walk(dir: &Path, prefix: &str, depth: usize, out: &mut Vec<String>) {
             if depth < MAX_DEPTH {
                 walk(&path, &format!("{prefix}{name}/"), depth + 1, out);
             }
-        } else if path
-            .extension()
-            .is_some_and(|e| e.eq_ignore_ascii_case("wav"))
-        {
+        } else if path.extension().is_some_and(|e| {
+            engine::SAMPLE_EXTENSIONS
+                .iter()
+                .any(|ok| e.eq_ignore_ascii_case(ok))
+        }) {
             out.push(format!("{prefix}{name}"));
         }
     }

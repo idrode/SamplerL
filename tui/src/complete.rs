@@ -271,7 +271,7 @@ fn string_context(
                 .into_iter()
                 .map(|w| Candidate {
                     label: w.clone(),
-                    kind: "WAV".into(),
+                    kind: "audio".into(),
                     signature: format!("sample(\"{w}\")"),
                     description: "archivo de la carpeta de muestras".into(),
                     insert: w,

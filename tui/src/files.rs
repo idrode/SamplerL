@@ -21,8 +21,8 @@ pub enum Kind {
 }
 
 /// Las extensiones de los samples que se pueden cargar (`sample()` lee
-/// WAV, como el explorador de samples).
-pub const AUDIO: [&str; 1] = ["wav"];
+/// WAV, FLAC, MP3, OGG y AIFF, como el explorador de samples).
+pub const AUDIO: [&str; engine::SAMPLE_EXTENSIONS.len()] = engine::SAMPLE_EXTENSIONS;
 
 impl Kind {
     /// Qué es `path` (`None`: no se enseña).
@@ -411,7 +411,7 @@ mod tests {
             "scripts/01-intro.lua",
             "samples/amen.wav",
             "samples/Think.WAV",
-            "samples/notas.flac",
+            "samples/notas.txt",
             "samples/breaks/apache.wav",
         ] {
             std::fs::write(dir.join(f), "").unwrap();
@@ -521,7 +521,7 @@ mod tests {
             }
         }
         assert_eq!(Kind::of(Path::new("a.WAV"), false), Some(Kind::Audio));
+        assert_eq!(Kind::of(Path::new("a.flac"), false), Some(Kind::Audio));
         assert_eq!(Kind::of(Path::new("a.txt"), false), None);
-        assert_eq!(Kind::of(Path::new("a.flac"), false), None);
     }
 }

@@ -9,6 +9,9 @@ hound = "3.5.1"
 rtrb = "0.4.0"
 rubato = "5.0.1"
 rustfft = "6.4.1"
+# Samples que no son WAV (FLAC, MP3, OGG Vorbis, AIFF): Rust puro. Los WAV
+# siguen con hound.
+symphonia = { version = "0.5.4", default-features = false, features = ["aiff", "flac", "mp3", "ogg", "pcm", "vorbis"] }
 
 [dev-dependencies]
 hound = "3.5.1"

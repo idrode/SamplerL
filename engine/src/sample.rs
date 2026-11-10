@@ -79,14 +79,22 @@ fn sanitize(x: f32, repairs: &mut Repairs) -> f32 {
 #[derive(Debug)]
 pub enum LoadError {
     Wav(hound::Error),
+    /// Un archivo que no es WAV (FLAC, MP3, OGG, AIFF) que no se pudo
+    /// leer, o un formato que no se conoce.
+    Decode(String),
     Resample(String),
     Empty,
 }
+
+/// Las extensiones de los samples que se pueden cargar (en minúsculas):
+/// WAV con `hound`, y FLAC, MP3, OGG Vorbis y AIFF con `symphonia`.
+pub const SAMPLE_EXTENSIONS: [&str; 7] = ["wav", "wave", "flac", "mp3", "ogg", "aif", "aiff"];
 
 impl fmt::Display for LoadError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             LoadError::Wav(e) => write!(f, "error leyendo WAV: {e}"),
+            LoadError::Decode(e) => write!(f, "error leyendo el audio: {e}"),
             LoadError::Resample(e) => write!(f, "error resampleando: {e}"),
             LoadError::Empty => write!(f, "el archivo no tiene audio"),
         }
@@ -102,8 +110,24 @@ impl From<hound::Error> for LoadError {
 }
 
 impl Sample {
-    /// Carga un WAV y lo convierte a estéreo f32 a `target_rate`.
+    /// Carga un archivo de audio y lo convierte a estéreo f32 a
+    /// `target_rate`: un WAV con `hound` (como siempre) y, por su
+    /// extensión, FLAC, MP3, OGG Vorbis o AIFF con `symphonia` (ver
+    /// [`SAMPLE_EXTENSIONS`]). Todo pasa por [`Sample::from_interleaved`]
+    /// (saneado y resampleo).
     pub fn load_wav(path: impl AsRef<Path>, target_rate: u32) -> Result<Self, LoadError> {
+        let path = path.as_ref();
+        let extension = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_ascii_lowercase);
+        if let Some(ext) = extension.as_deref()
+            && SAMPLE_EXTENSIONS.contains(&ext)
+            && !matches!(ext, "wav" | "wave")
+        {
+            let (samples, channels, rate) = decode(path, ext)?;
+            return Self::from_interleaved(&samples, channels, rate, target_rate);
+        }
         let mut reader = hound::WavReader::open(path)?;
         let spec = reader.spec();
         let samples: Vec<f32> = match spec.sample_format {
@@ -208,6 +232,79 @@ impl Sample {
     pub fn frame(&self, i: usize) -> (f32, f32) {
         (self.data[2 * i], self.data[2 * i + 1])
     }
+}
+
+/// Decodifica con `symphonia` un archivo que no es WAV: sus muestras
+/// entrelazadas, los canales y la frecuencia. Un paquete corrupto se salta
+/// (como haría un reproductor); un error de lectura, no.
+fn decode(path: &Path, extension: &str) -> Result<(Vec<f32>, usize, u32), LoadError> {
+    use symphonia::core::audio::SampleBuffer;
+    use symphonia::core::codecs::DecoderOptions;
+    use symphonia::core::errors::Error;
+    use symphonia::core::formats::FormatOptions;
+    use symphonia::core::io::MediaSourceStream;
+    use symphonia::core::meta::MetadataOptions;
+    use symphonia::core::probe::Hint;
+
+    let fail = |e: &dyn fmt::Display| LoadError::Decode(e.to_string());
+    let file = std::fs::File::open(path).map_err(|e| fail(&e))?;
+    let stream = MediaSourceStream::new(Box::new(file), Default::default());
+    let mut hint = Hint::new();
+    hint.with_extension(extension);
+    let probed = symphonia::default::get_probe()
+        .format(
+            &hint,
+            stream,
+            // Sin el retardo ni el relleno del códec (MP3 con cabecera de
+            // LAME): el sample empieza donde empieza el audio.
+            &FormatOptions {
+                enable_gapless: true,
+                ..Default::default()
+            },
+            &MetadataOptions::default(),
+        )
+        .map_err(|e| fail(&e))?;
+    let mut format = probed.format;
+    let track = format
+        .default_track()
+        .ok_or_else(|| LoadError::Decode("no tiene ninguna pista de audio".into()))?;
+    let id = track.id;
+    let rate = track
+        .codec_params
+        .sample_rate
+        .ok_or_else(|| LoadError::Decode("no dice su frecuencia de muestreo".into()))?;
+    let mut decoder = symphonia::default::get_codecs()
+        .make(&track.codec_params, &DecoderOptions::default())
+        .map_err(|e| fail(&e))?;
+    let mut samples = Vec::new();
+    let mut channels = 0;
+    loop {
+        let packet = match format.next_packet() {
+            Ok(packet) => packet,
+            // El final del archivo.
+            Err(Error::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(Error::ResetRequired) => break,
+            Err(e) => return Err(fail(&e)),
+        };
+        if packet.track_id() != id {
+            continue;
+        }
+        match decoder.decode(&packet) {
+            Ok(decoded) => {
+                let spec = *decoded.spec();
+                channels = spec.channels.count();
+                let mut buffer = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
+                buffer.copy_interleaved_ref(decoded);
+                samples.extend_from_slice(buffer.samples());
+            }
+            Err(Error::DecodeError(_)) => continue,
+            Err(e) => return Err(fail(&e)),
+        }
+    }
+    if channels == 0 {
+        return Err(LoadError::Empty);
+    }
+    Ok((samples, channels, rate))
 }
 
 fn resample(stereo: Vec<f32>, frames: usize, from: u32, to: u32) -> Result<Vec<f32>, LoadError> {

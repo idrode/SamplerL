@@ -5145,7 +5145,7 @@ fn redo_in(
     editor.redo()
 }
 
-/// Archivos WAV de una carpeta, ordenados.
+/// Archivos de audio de una carpeta (los que lee `sample()`), ordenados.
 fn list_wavs(dir: &Path) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
@@ -5153,7 +5153,13 @@ fn list_wavs(dir: &Path) -> Vec<String> {
     let mut wavs: Vec<String> = entries
         .filter_map(|e| e.ok())
         .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("wav")))
+        .filter(|p| {
+            p.extension().is_some_and(|e| {
+                engine::SAMPLE_EXTENSIONS
+                    .iter()
+                    .any(|ok| e.eq_ignore_ascii_case(ok))
+            })
+        })
         .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
         .collect();
     wavs.sort();
