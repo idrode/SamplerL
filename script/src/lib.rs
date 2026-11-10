@@ -30,6 +30,7 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
 use engine::notation::{check_label, parse_pattern_with, split_label};
@@ -41,6 +42,7 @@ use engine::{
 pub mod api;
 pub mod atomic;
 pub mod panics;
+pub mod sandbox;
 
 /// `n` compases como texto: «1 compás», «4 compases».
 pub fn bars_text(n: u64) -> String {
@@ -96,6 +98,15 @@ pub const DEFAULT_MEMORY_LIMIT: usize = 256 << 20;
 /// Cada cuántas instrucciones de Lua se comprueba el tiempo (y se apunta
 /// la línea y el pico de memoria).
 const HOOK_INSTRUCTIONS: u32 = 1_000;
+
+/// Lo que espera el vigilante de [`ScriptHost::eval`] después del límite de
+/// tiempo antes de abandonar una carga atascada en una función de C (el
+/// hook ya la habría cortado si estuviera en Lua).
+pub const WATCHDOG_GRACE: Duration = Duration::from_secs(1);
+
+/// Cargas abandonadas que pueden seguir en marcha a la vez: con más, no se
+/// evalúa otra (cada una puede ocupar un núcleo y la memoria del límite).
+const MAX_ABANDONED: usize = 2;
 /// Se mezcla con la semilla de la carga para el generador de `mutate` y
 /// `shuffle` sin semilla propia.
 const PATTERN_SEED: u64 = 0x5eed_0f9a_77e2_a5c3;
@@ -631,6 +642,7 @@ fn script_location(traceback: &str) -> Option<String> {
 /// Evalúa scripts y aplica su resultado al motor. Vive en el hilo de control.
 /// Un sample preparado al importar (`sample(nombre, { ... })`), que se
 /// guarda entre cargas.
+#[derive(Clone)]
 struct Imported {
     original: Arc<Sample>,
     options: engine::ImportOptions,
@@ -666,6 +678,7 @@ impl Imports {
 
 /// Un corte precalculado que se guarda entre cargas (`warp`, `smear`:
 /// calcularlo cuesta), por sample y clave.
+#[derive(Clone)]
 struct Deformed {
     original: Arc<Sample>,
     key: engine::RenderKey,
@@ -673,6 +686,7 @@ struct Deformed {
 }
 
 /// Un sample estirado que se guarda entre cargas (estirar cuesta).
+#[derive(Clone)]
 struct Stretched {
     original: Arc<Sample>,
     ratio: f64,
@@ -724,6 +738,13 @@ pub struct ScriptHost {
     macro_values: HashMap<String, (f32, f32)>,
     /// Mandos MIDI asignados (MIDI learn), por nombre de parámetro.
     learned: Vec<learn::Learned>,
+    /// Las cargas abandonadas por el vigilante: cada una pone su bandera al
+    /// acabar.
+    abandoned: Vec<Arc<AtomicBool>>,
+    /// Mientras la evaluación hace trabajo de Rust (cargar un sample,
+    /// montar la canción), más de cero: el vigilante no la abandona por
+    /// eso (no está atascada; ver [`ScriptHost::eval`]).
+    busy: Arc<AtomicUsize>,
 }
 
 impl ScriptHost {
@@ -750,6 +771,8 @@ impl ScriptHost {
             last_tag: 0,
             macro_values: HashMap::new(),
             learned: Vec::new(),
+            abandoned: Vec::new(),
+            busy: Arc::default(),
         }
     }
 
@@ -1188,7 +1211,119 @@ impl ScriptHost {
     }
 
     /// Evalúa el script y devuelve el modelo, sin tocar el motor.
+    ///
+    /// Corre en un hilo aparte con una copia de lo que la evaluación usa
+    /// (las cachés de samples son `Arc`), vigilado: el hook corta lo que
+    /// pasa del límite de tiempo dentro de Lua, pero no ve una función de C
+    /// que no vuelve. Si la evaluación sigue en Lua o en C pasado el límite
+    /// y [`WATCHDOG_GRACE`], se abandona: la carga falla con su error, la
+    /// interfaz sigue y sigue sonando lo anterior. El hilo abandonado no se
+    /// puede matar sin riesgo; acaba solo (y su memoria tiene el límite del
+    /// intérprete). El trabajo de Rust (cargar y estirar samples, montar la
+    /// canción) no se vigila: es largo con archivos largos pero acaba.
     pub fn eval(&mut self, source: &str, name: &str, base_dir: &Path) -> Result<Song, ScriptError> {
+        self.abandoned.retain(|done| !done.load(Ordering::Acquire));
+        if self.abandoned.len() >= MAX_ABANDONED {
+            return Err(ScriptError::new(format!(
+                "{name}: hay {} cargas anteriores atascadas en una función de Lua que no vuelve; \
+                 guarda y reinicia el programa",
+                self.abandoned.len()
+            )));
+        }
+        let mut worker = self.eval_worker();
+        let (source_, name_, base_) =
+            (source.to_string(), name.to_string(), base_dir.to_path_buf());
+        let (tx, rx) = std::sync::mpsc::channel();
+        let done = Arc::new(AtomicBool::new(false));
+        let done_ = done.clone();
+        let spawned = std::thread::Builder::new()
+            .name("lua".into())
+            // Holgado para las llamadas de C anidadas de Lua (solo memoria
+            // virtual hasta que se usa).
+            .stack_size(16 << 20)
+            .spawn(move || {
+                let result = worker.eval_here(&source_, &name_, &base_);
+                let _ = tx.send((worker, result));
+                done_.store(true, Ordering::Release);
+            });
+        if spawned.is_err() {
+            // Sin hilo, aquí mismo (sin vigilante).
+            return self.eval_here(source, name, base_dir);
+        }
+        let started = Instant::now();
+        let patience = self.time_limit + WATCHDOG_GRACE;
+        loop {
+            match rx.recv_timeout(Duration::from_millis(20)) {
+                Ok((worker, result)) => {
+                    self.samples = worker.samples;
+                    self.imported = worker.imported;
+                    self.stretched = worker.stretched;
+                    self.deformed = worker.deformed;
+                    self.last_tag = worker.last_tag;
+                    self.memory_peak = worker.memory_peak;
+                    return result;
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    if started.elapsed() > patience && self.busy.load(Ordering::Acquire) == 0 {
+                        self.abandoned.push(done);
+                        self.busy = Arc::default();
+                        return Err(ScriptError::new(format!(
+                            "{name}: el script tarda más de {:.1} s dentro de una función que no \
+                             se puede cortar (¿un patrón de string.find, match o gsub muy \
+                             costoso?); se abandona la carga (el límite es [script] tiempo)",
+                            self.time_limit.as_secs_f32()
+                        )));
+                    }
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(ScriptError::internal(&format!(
+                        "{name}: la evaluación acabó sin resultado"
+                    )));
+                }
+            }
+        }
+    }
+
+    /// Un host con lo que necesita [`ScriptHost::eval_here`], para el hilo
+    /// de la evaluación (lo demás, vacío).
+    fn eval_worker(&self) -> ScriptHost {
+        ScriptHost {
+            sample_rate: self.sample_rate,
+            time_limit: self.time_limit,
+            memory_limit: self.memory_limit,
+            memory_peak: 0,
+            samples: self.samples.clone(),
+            slots: Default::default(),
+            song: None,
+            other: None,
+            seed: self.seed,
+            sample_dir: self.sample_dir.clone(),
+            default_bpm: self.default_bpm,
+            labels: self.labels.clone(),
+            positions: self.positions.clone(),
+            edits: self.edits.clone(),
+            imported: self.imported.clone(),
+            stretched: self.stretched.clone(),
+            deformed: self.deformed.clone(),
+            last_tag: self.last_tag,
+            macro_values: HashMap::new(),
+            learned: Vec::new(),
+            abandoned: Vec::new(),
+            busy: self.busy.clone(),
+        }
+    }
+
+    /// [`ScriptHost::eval`] en este hilo, sin vigilante.
+    fn eval_here(
+        &mut self,
+        source: &str,
+        name: &str,
+        base_dir: &Path,
+    ) -> Result<Song, ScriptError> {
+        // Hasta que empieza Lua, trabajo de Rust (y lo largo de Rust dentro
+        // de la API lo marca `Busy::here`).
+        let _counter = Busy::install(&self.busy);
+        let busy = Busy::here();
         // Un pánico de Rust dentro de una función de la API no se puede
         // atrapar con `pcall`: sale entero y lo recoge `panics::catch_at`.
         let lua = Lua::new_with(
@@ -1209,6 +1344,10 @@ impl ScriptHost {
         let line = Rc::new(Cell::new(0usize));
         let peak = Rc::new(Cell::new(0usize));
         let (hook_line, hook_peak) = (line.clone(), peak.clone());
+        // Pasado el límite, su mensaje: desde entonces `pcall` y `xpcall`
+        // no atrapan nada (ver `sandbox`).
+        let expired: sandbox::Expired = Rc::default();
+        let hook_expired = expired.clone();
         let script_name = name.to_string();
         lua.set_hook(
             HookTriggers::new().every_nth_instruction(HOOK_INSTRUCTIONS),
@@ -1222,17 +1361,20 @@ impl ScriptHost {
                         0 => String::new(),
                         l => format!("{script_name}:{l}: "),
                     };
-                    Err(mlua::Error::runtime(format!(
+                    let message = format!(
                         "{at}el script tarda más de {:.1} s (¿bucle infinito?; el límite es \
                          [script] tiempo)",
                         limit.as_secs_f32()
-                    )))
+                    );
+                    hook_expired.borrow_mut().get_or_insert(message.clone());
+                    Err(mlua::Error::runtime(message))
                 } else {
                     Ok(VmState::Continue)
                 }
             },
         )
         .map_err(|e| ScriptError::from_lua(&e))?;
+        sandbox::harden(&lua, &expired).map_err(|e| ScriptError::from_lua(&e))?;
 
         let warnings: Rc<RefCell<Vec<String>>> = Rc::default();
         // Semilla del azar de la carga: `chance` y, sin semilla propia,
@@ -1277,6 +1419,8 @@ impl ScriptHost {
         // Un pánico (un fallo del programa) pasa a ser el error de la carga,
         // con la línea del script por la que iba.
         let probe = lua.clone();
+        // Lo que sigue es Lua: el vigilante mira.
+        drop(busy);
         let result = panics::catch_at(
             move || location(&probe),
             || {
@@ -1296,6 +1440,8 @@ impl ScriptHost {
                 .and_then(|()| run_bodies(&state))
             },
         );
+        // Montar la canción: Rust otra vez.
+        let _busy = Busy::here();
         self.samples = std::mem::take(&mut *cache.borrow_mut());
         self.imported = std::mem::take(&mut imports.borrow_mut().used);
         self.memory_peak = peak.get().max(lua.used_memory());
@@ -2176,6 +2322,7 @@ impl ScriptHost {
                 if let Some(options) = options {
                     let options = import_options(lua, &name, &options)?;
                     if !options.is_empty() {
+                        let _busy = Busy::here();
                         sample = imports.borrow_mut().get(&sample, options);
                     }
                 }
@@ -3155,6 +3302,7 @@ fn load_cached(
     path: &Path,
     rate: u32,
 ) -> Result<Arc<Sample>, engine::LoadError> {
+    let _busy = Busy::here();
     let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok();
     if let Some((when, sample)) = cache.get(path)
         && *when == modified
@@ -3165,6 +3313,52 @@ fn load_cached(
     let sample = Arc::new(Sample::load_wav(path, rate)?);
     cache.insert(path.to_path_buf(), (modified, sample.clone()));
     Ok(sample)
+}
+
+thread_local! {
+    /// El contador de trabajo de Rust de la evaluación que corre en este
+    /// hilo (ver [`ScriptHost::eval`]).
+    static BUSY: RefCell<Option<Arc<AtomicUsize>>> = const { RefCell::new(None) };
+}
+
+/// Trabajo de Rust dentro de una evaluación (cargar un sample, detectar
+/// sus cortes, montar la canción): mientras viva, el vigilante no abandona
+/// la carga, que no está atascada sino trabajando.
+struct Busy(Option<Arc<AtomicUsize>>);
+
+impl Busy {
+    /// Pone el contador de la evaluación de este hilo; al soltarlo, se
+    /// quita.
+    fn install(counter: &Arc<AtomicUsize>) -> BusyCounter {
+        BUSY.with(|b| *b.borrow_mut() = Some(counter.clone()));
+        BusyCounter
+    }
+
+    /// Marca trabajo de Rust en la evaluación de este hilo (si hay una).
+    fn here() -> Busy {
+        let counter = BUSY.with(|b| b.borrow().clone());
+        if let Some(c) = &counter {
+            c.fetch_add(1, Ordering::AcqRel);
+        }
+        Busy(counter)
+    }
+}
+
+impl Drop for Busy {
+    fn drop(&mut self) {
+        if let Some(c) = &self.0 {
+            c.fetch_sub(1, Ordering::AcqRel);
+        }
+    }
+}
+
+/// El contador de [`Busy`] puesto en este hilo (ver [`Busy::install`]).
+struct BusyCounter;
+
+impl Drop for BusyCounter {
+    fn drop(&mut self) {
+        BUSY.with(|b| *b.borrow_mut() = None);
+    }
 }
 
 /// Error de una función de la API con la posición del script que la llamó.
@@ -4064,7 +4258,10 @@ impl UserData for SampleHandle {
                 ));
             }
             let zero = cut_options(lua, &format!("slice({n})"), options.as_ref())?;
-            let slices = Slices::detect(&this.sample, n as usize);
+            let slices = {
+                let _busy = Busy::here();
+                Slices::detect(&this.sample, n as usize)
+            };
             cut_sample(lua, this, slices, Cut::detect(n as usize), zero)
         });
 

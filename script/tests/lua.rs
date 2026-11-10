@@ -422,3 +422,115 @@ track("drums", amen):steps("1 . . .  . . . .  . . . .  . . . ."):gain(0.5)
         "{err}"
     );
 }
+
+/// Los rodeos del límite de tiempo (N4 de `docs/AUDITORIA-2.md`): un
+/// `pcall` o un `xpcall` en un bucle que se traga el error del límite, un
+/// patrón de `string.find` con vuelta atrás (C, donde el hook no llega) y
+/// un `__gc` con un bucle (Lua apaga los hooks en los finalizadores). Cada
+/// uno colgaba la carga para siempre; ahora acaba poco después del límite,
+/// con su error, y la carga siguiente entra. Cada caso corre en su hilo
+/// con su propio host: si no vuelve, el test falla en vez de colgarse.
+#[test]
+fn the_time_limit_cannot_be_dodged() {
+    let limit = Duration::from_millis(500);
+    let cases: [(&str, &str); 8] = [
+        (
+            "pcall",
+            "bpm(120)\nwhile true do pcall(function() while true do end end) end\n",
+        ),
+        (
+            "pcall anidado",
+            "bpm(120)\nwhile true do pcall(pcall, function() while true do end end) end\n",
+        ),
+        (
+            "xpcall",
+            "bpm(120)\nwhile true do xpcall(function() while true do end end, function(e) return e end) end\n",
+        ),
+        (
+            "pcall con error()",
+            "bpm(120)\nwhile true do pcall(error, \"x\") end\n",
+        ),
+        (
+            "string.find",
+            "bpm(120)\nlocal s = (\"a\"):rep(5000)\nlocal r = s:find((\"a-\"):rep(25) .. \"b\")\n",
+        ),
+        // Un patrón que el filtro deja pasar (dos cuantificadores, coste
+        // justo en el máximo) pero que tarda minutos en C: lo para el
+        // vigilante.
+        (
+            "patrón lento en C",
+            "bpm(120)\nlocal s = (\"a\"):rep(10000)\nlocal r = s:find(\".-.-x\")\n",
+        ),
+        (
+            "__gc",
+            "bpm(120)\nsetmetatable({}, { __gc = function() while true do end end })\ncollectgarbage()\n",
+        ),
+        (
+            "__tostring del error",
+            "error(setmetatable({}, { __tostring = function() while true do end end }))\n",
+        ),
+    ];
+    let dir = fixture("dodge");
+    for (what, source) in cases {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (source, dir_) = (source.to_string(), dir.clone());
+        let started = std::time::Instant::now();
+        std::thread::spawn(move || {
+            let (mut controller, _engine) = new_engine(RATE);
+            let mut host = ScriptHost::new(RATE);
+            host.set_time_limit(limit);
+            load(&mut host, &mut controller, &dir_, SONG_A).unwrap();
+            let error = load(&mut host, &mut controller, &dir_, &source).err();
+            // Sigue la de antes y la siguiente entra.
+            let kept = host.song().map(|s| s.tracks.len());
+            let next = load(&mut host, &mut controller, &dir_, SONG_A);
+            let _ = tx.send((error, kept, next));
+        });
+        let (error, kept, next) = rx
+            .recv_timeout(limit + Duration::from_secs(5))
+            .unwrap_or_else(|_| panic!("{what}: la carga no vuelve"));
+        let took = started.elapsed();
+        let error = error.unwrap_or_else(|| panic!("{what}: cargó sin error"));
+        assert!(
+            ["tarda más de", "patrón", "__gc", "se abandona"]
+                .iter()
+                .any(|m| error.contains(m)),
+            "{what}: {error}"
+        );
+        assert_eq!(kept, Some(2), "{what}: no sigue lo de antes");
+        assert_eq!(next, Ok(()), "{what}: la siguiente no entra");
+        assert!(
+            took < limit + Duration::from_secs(3),
+            "{what}: tardó {took:?}"
+        );
+    }
+}
+
+/// Lo que cuesta evaluar en un hilo vigilado (N4): una evaluación de una
+/// canción corta y, aparte, lo que cuesta solo crear el hilo (con su pila
+/// de 16 MB) y recibir el resultado: `cargo test --release -p script --test
+/// lua medida_del_vigilante -- --ignored --nocapture`.
+#[test]
+#[ignore = "medida: cargo test --release -p script --test lua medida_del_vigilante -- --ignored --nocapture"]
+fn medida_del_vigilante() {
+    let dir = fixture("vigilante");
+    let mut host = ScriptHost::new(RATE);
+    host.eval(SONG_A, "song.lua", &dir).unwrap();
+    let rounds = 500;
+    let start = std::time::Instant::now();
+    for _ in 0..rounds {
+        host.eval(SONG_A, "song.lua", &dir).unwrap();
+    }
+    let eval = start.elapsed() / rounds;
+    let start = std::time::Instant::now();
+    for _ in 0..rounds {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .stack_size(16 << 20)
+            .spawn(move || tx.send(1).unwrap())
+            .unwrap();
+        rx.recv().unwrap();
+    }
+    let thread = start.elapsed() / rounds;
+    println!("evaluar SONG_A: {eval:?} por carga; el hilo solo: {thread:?}");
+}
