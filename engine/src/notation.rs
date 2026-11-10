@@ -124,6 +124,40 @@ pub fn step_texts(text: &str) -> Vec<String> {
         .collect()
 }
 
+/// Largo máximo del texto de un patrón, en bytes: 64 pasos de 512 bytes,
+/// con efectos por paso de sobra. Partir un texto enorme en pasos reserva
+/// memoria de Rust que no cuenta en el límite del intérprete (40 MB de
+/// patrón llegaban a 1,6 GB): se rechaza antes de partirlo.
+pub const MAX_PATTERN_BYTES: usize = 32 * 1024;
+
+/// Error si `text` pasa de [`MAX_PATTERN_BYTES`].
+pub fn check_length(text: &str) -> Result<(), NotationError> {
+    if text.len() > MAX_PATTERN_BYTES {
+        return Err(NotationError {
+            step: None,
+            token: String::new(),
+            message: format!(
+                "el patrón ocupa {} bytes y el máximo es {MAX_PATTERN_BYTES}",
+                text.len()
+            ),
+        });
+    }
+    Ok(())
+}
+
+/// Un paso para un mensaje de error: entero si es corto, y si no, su
+/// principio (un paso de 300 000 caracteres no cabe en el editor).
+fn shown(token: &str) -> String {
+    const SHOWN: usize = 40;
+    if token.chars().count() <= SHOWN {
+        token.to_string()
+    } else {
+        let mut short: String = token.chars().take(SHOWN).collect();
+        short.push('…');
+        short
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct NotationError {
     /// Paso donde está el error (desde 1), si es de un paso concreto.
@@ -186,6 +220,7 @@ pub fn parse_pattern_with(
             "la longitud del patrón va de 1 a {MAX_STEPS} pasos (es {length})"
         )));
     }
+    check_length(text)?;
     let tokens = step_texts(text);
     // Unas llaves sin cerrar se tragan el resto del patrón: el error, en
     // su paso.
@@ -213,14 +248,14 @@ pub fn parse_pattern_with(
         let token = token.as_str();
         let step = parse_step_with(token, labels, fx).map_err(|message| NotationError {
             step: Some(i + 1),
-            token: token.to_string(),
+            token: shown(token),
             message,
         })?;
         if token == HOLD {
             let Some(j) = held else {
                 return Err(NotationError {
                     step: Some(i + 1),
-                    token: token.to_string(),
+                    token: shown(token),
                     message: "_ alarga el golpe de antes y aquí no hay ninguno".into(),
                 });
             };

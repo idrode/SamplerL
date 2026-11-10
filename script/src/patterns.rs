@@ -9,6 +9,8 @@ use engine::{MAX_STEPS, STEPS};
 /// Pasos de un patrón (de 1 a `MAX_STEPS`; los cuenta `steps` con la
 /// longitud de la pista), o un error con quién lo pidió.
 pub fn tokens(text: &str, who: &str) -> Result<Vec<String>, String> {
+    // Antes de partirlo: un texto enorme reserva mucha memoria de Rust.
+    engine::notation::check_length(text).map_err(|e| format!("{who}: {e}"))?;
     let tokens = engine::notation::step_texts(text);
     if !(1..=MAX_STEPS).contains(&tokens.len()) {
         return Err(format!(

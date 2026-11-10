@@ -468,3 +468,58 @@ fn fill_sounds_like_the_bars_it_writes() {
         error(&dir, "track(\"d\", amen):fill(\"stutter\", 4, 2, 40)").contains("fuera de rango")
     );
 }
+
+/// La memoria que reserva Rust al partir un patrón no cuenta en el límite
+/// del intérprete: un patrón de 40 MB llegaba a 1,6 GB antes de dar su
+/// error (N7 de `docs/AUDITORIA-2.md`). Un texto más largo que
+/// `MAX_PATTERN_BYTES` se rechaza antes de partirlo, en `steps` y en las
+/// funciones de patrones; y el error no repite un paso enorme entero.
+#[test]
+fn a_huge_pattern_is_refused_before_splitting_it() {
+    let (mut controller, _engine) = engine::new_engine(48_000);
+    let mut host = script::ScriptHost::new(48_000);
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("huge-pattern");
+    std::fs::create_dir_all(&dir).unwrap();
+    engine::offline::write_wav(dir.join("a.wav"), &[0.5; 1000], 1, 48_000).unwrap();
+    let max = engine::notation::MAX_PATTERN_BYTES;
+    for (what, source) in [
+        (
+            "steps",
+            "local a = sample(\"a.wav\"):slice(1)\ntrack(\"d\", a):steps((\"1 \"):rep(4e6))\n",
+        ),
+        (
+            "reverse_pattern",
+            "local p = reverse_pattern((\"1 \"):rep(4e6))\n",
+        ),
+        ("rotate", "local p = rotate((\"1 \"):rep(4e6), 1)\n"),
+    ] {
+        let started = std::time::Instant::now();
+        let error = host
+            .load(&mut controller, source, "song.lua", &dir)
+            .err()
+            .expect("tenía que fallar")
+            .message;
+        assert!(
+            error.contains(&format!("el máximo es {max}")),
+            "{what}: {error}"
+        );
+        assert!(error.starts_with("song.lua:"), "{what}: {error}");
+        // Sin partirlo: al momento.
+        assert!(
+            started.elapsed() < std::time::Duration::from_millis(500),
+            "{what}"
+        );
+    }
+    // Un paso larguísimo (pero dentro del máximo) sale recortado.
+    let source = format!(
+        "local a = sample(\"a.wav\"):slice(1)\ntrack(\"d\", a):steps(\"1{} . . .  . . . .  . . . .  . . . .\")\n",
+        "^7".repeat(10_000)
+    );
+    let error = host
+        .load(&mut controller, &source, "song.lua", &dir)
+        .err()
+        .expect("tenía que fallar")
+        .message;
+    assert!(error.len() < 300, "{error}");
+    assert!(error.contains("…"), "{error}");
+}
