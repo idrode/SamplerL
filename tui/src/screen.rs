@@ -176,14 +176,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             &mut lanes_area,
         );
     };
-    for panel in [
-        Panel::Tracker,
-        Panel::Mixer,
-        Panel::Fx,
-        Panel::Lanes,
-        Panel::Scope,
-        Panel::Spectrum,
-    ] {
+    for panel in [Panel::Tracker, Panel::Mixer, Panel::Fx, Panel::Lanes] {
         if let Some(area) = grid.area_of(panel) {
             place(panel, area, frame, &mut panels);
         }

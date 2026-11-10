@@ -184,8 +184,6 @@ pub struct Grid {
     pub mixer: Option<Rect>,
     pub fx: Option<Rect>,
     pub lanes: Option<Rect>,
-    pub scope: Option<Rect>,
-    pub spectrum: Option<Rect>,
     /// La referencia de teclas del foco.
     pub reference: Option<Rect>,
     pub dock: Option<Dock>,
@@ -205,10 +203,10 @@ impl Grid {
             Panel::Mixer => self.mixer,
             Panel::Fx => self.fx,
             Panel::Lanes => self.lanes,
-            Panel::Scope => self.scope,
-            Panel::Spectrum => self.spectrum,
             Panel::Files => self.explorer,
-            Panel::Occupancy => None,
+            // El scope y el espectro del master son siempre pestañas del
+            // dock, como la ocupación.
+            Panel::Scope | Panel::Spectrum | Panel::Occupancy => None,
         }
     }
 
@@ -262,8 +260,6 @@ impl Grid {
             self.mixer,
             self.fx,
             self.lanes,
-            self.scope,
-            self.spectrum,
             self.reference,
             self.dock.as_ref().map(|d| d.area),
             self.message,
@@ -411,8 +407,6 @@ impl Grid {
             mixer: None,
             fx: None,
             lanes: None,
-            scope: None,
-            spectrum: None,
             reference: None,
             dock: None,
             message: None,
@@ -878,7 +872,7 @@ mod tests {
         let dock = g.dock.as_ref().unwrap().area;
         assert_eq!((dock.x, dock.right()), (files.right(), 120));
         assert_eq!(dock.bottom(), editor.y);
-        assert!(g.spectrum.is_none() && g.scope.is_none());
+        assert!(g.area_of(Panel::Spectrum).is_none() && g.area_of(Panel::Scope).is_none());
         assert!(g.docked(Tab::Panel(Panel::Fx)) && g.docked(Tab::Panel(Panel::Scope)));
         assert!(g.docked(Tab::Panel(Panel::Spectrum)));
         // Sin pedirlos, ni pestañas.
@@ -922,7 +916,7 @@ mod tests {
         assert_eq!(mixer.width, WIDE_RIGHT);
         // El scope y el espectro del master, pedidos, en las pestañas; la
         // referencia de teclas debajo del mezclador.
-        assert!(g.scope.is_none() && g.spectrum.is_none());
+        assert!(g.area_of(Panel::Scope).is_none() && g.area_of(Panel::Spectrum).is_none());
         assert!(g.docked(Tab::Panel(Panel::Spectrum)) && g.docked(Tab::Panel(Panel::Scope)));
         assert_eq!(g.reference.unwrap().y, mixer.bottom());
         assert!(g.tracker.unwrap().height >= TRACKER_FULL - 3);
@@ -973,7 +967,7 @@ mod tests {
             },
         );
         // Con poco alto, como en el pequeño: el tracker es una pestaña.
-        assert!(g.tracker.is_none() && g.spectrum.is_none());
+        assert!(g.tracker.is_none() && g.area_of(Panel::Spectrum).is_none());
         assert!(g.docked(Tab::Panel(Panel::Tracker)));
         assert!(g.docked(Tab::Panel(Panel::Spectrum)));
         let g = grid(
@@ -984,7 +978,7 @@ mod tests {
             },
         );
         // El ancho pasa a ser como el mediano.
-        assert!(g.scope.is_none() && g.tracker.is_some());
+        assert!(g.area_of(Panel::Scope).is_none() && g.tracker.is_some());
     }
 
     #[test]

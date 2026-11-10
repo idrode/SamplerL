@@ -201,7 +201,7 @@ fn shrinking_takes_away_the_explorer_first_then_the_tracker() {
     assert!(g.explorer.is_none() && g.tracker.is_some());
     // Más baja: el tracker, a las pestañas (el espectro siempre lo está).
     let g = at(&mut app, 99, 29);
-    assert!(g.spectrum.is_none() && g.tracker.is_none());
+    assert!(g.area_of(crate::focus::Panel::Spectrum).is_none() && g.tracker.is_none());
     let dock = g.dock.unwrap();
     assert_eq!(
         dock.tabs[0],
