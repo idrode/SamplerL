@@ -846,16 +846,26 @@ impl App {
         }
     }
 
-    /// `exportar [archivo.wav] [compases]`: renderiza offline lo último
-    /// cargado (en un motor aparte, sin tocar lo que suena) y lo guarda.
+    /// `exportar [archivo.wav] [compases] [metronomo] [16bits|24bits|32f]
+    /// [dither]`: renderiza offline lo último cargado (en un motor aparte,
+    /// sin tocar lo que suena) y lo guarda.
     fn export(&mut self, args: &[&str]) {
-        // `metronomo` en cualquier sitio añade el clic; el resto, por orden.
+        // `metronomo`, el formato y `dither`, en cualquier sitio; el resto,
+        // por orden.
         let click = ["metronomo", "metrónomo", "clic"];
         let metronome = args.iter().any(|a| click.contains(a));
+        let format_of = |a: &str| match a {
+            "16bits" => Some(engine::offline::WavFormat::Int16),
+            "24bits" => Some(engine::offline::WavFormat::Int24),
+            "32f" | "float" => Some(engine::offline::WavFormat::Float32),
+            _ => None,
+        };
+        let format = args.iter().find_map(|a| format_of(a)).unwrap_or_default();
+        let dither = args.contains(&"dither") && format != engine::offline::WavFormat::Float32;
         let args: Vec<&str> = args
             .iter()
             .copied()
-            .filter(|a| !click.contains(a))
+            .filter(|a| !click.contains(a) && format_of(a).is_none() && *a != "dither")
             .collect();
         let args = &args[..];
         let Some(song) = self.host.song() else {
@@ -885,8 +895,11 @@ impl App {
             .map_err(|e| e.to_string())
             .and_then(|audio| {
                 script::atomic::write_with(&path, |tmp| {
-                    engine::offline::write_wav(tmp, &audio, 2, self.sample_rate)
-                        .map_err(std::io::Error::other)
+                    let mut file =
+                        engine::offline::WavOut::create(tmp, 2, self.sample_rate, format, dither)
+                            .map_err(std::io::Error::other)?;
+                    file.write(&audio).map_err(std::io::Error::other)?;
+                    file.finalize().map_err(std::io::Error::other)
                 })
                 .map(|()| audio.len() / 2)
                 .map_err(|e| e.to_string())
@@ -899,6 +912,13 @@ impl App {
         .to_string();
         if metronome {
             note.push_str(" con metrónomo");
+        }
+        if format != engine::offline::WavFormat::Int16 || dither {
+            note.push_str(&format!(
+                " · {}{}",
+                format.label(),
+                if dither { " con dither" } else { "" }
+            ));
         }
         self.message = match result {
             Ok(frames) => format!(

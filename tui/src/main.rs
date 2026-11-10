@@ -60,6 +60,7 @@ uso: tui --edit <canción.lua | proyecto.sampler> [--allow-audio] [--allow-midi]
      tui <archivo.wav> --render <salida.wav>
      tui <archivo.wav> --detect-bpm               (propone bpm() y compases)
      tui --script <canción.lua> --render <salida.wav> [--bars M] [--from N] [--metronome] [--track pista]
+                [--bits 16|24|32f] [--dither]
      tui --script <canción.lua> --allow-audio     (reproduce y recarga al guardar)
      tui --script <canción.lua> --analyze-masking (choques de frecuencia entre pistas)
      tui <archivo.wav> --render <salida.wav> --pattern \"1 . 3 . ...\" \
@@ -79,6 +80,9 @@ uso: tui --edit <canción.lua | proyecto.sampler> [--allow-audio] [--allow-midi]
   --min-gap  separación mínima entre cortes en ms (por defecto 40)
   --detector detección de transitorios: flux (flujo espectral, por defecto) o energy
   --metronome  añade al render el clic del metrónomo (si no, nunca lo lleva)
+  --bits     formato del WAV del render: 16 (por defecto), 24 o 32f (coma flotante,
+               sin recortar); el render dura como mucho dos horas
+  --dither   con --bits 16 o 24: ruido TPDF de un escalón antes de redondear
   --analyze-masking  renderiza offline cada pista en solo (un ciclo entero de la
                canción, hasta 256 compases) y dice en qué bandas chocan
   --allow-midi abre los puertos MIDI virtuales «sampler entrada» y «sampler salida» (ALSA)
@@ -105,8 +109,10 @@ Sin --render, tui se niega a reproducir por la tarjeta de sonido salvo con
 --allow-audio (ver CLAUDE.md: no usarlo en sesiones automáticas).";
 /// Frecuencia del motor cuando se renderiza sin dispositivo.
 const RENDER_RATE: u32 = 48_000;
-/// Límite del render offline.
-const MAX_RENDER_SECONDS: usize = 600;
+/// Límite del render offline: dos horas (se escribe a trozos, así que no
+/// es por la memoria sino por el WAV, que no pasa de 4 GB: dos horas en 32
+/// bits en coma flotante son 2,8 GB).
+const MAX_RENDER_SECONDS: usize = 7200;
 const DEFAULT_SLICES: usize = 8;
 const DEFAULT_BARS: u64 = 4;
 
@@ -160,6 +166,7 @@ fn run() -> Result<(), BoxError> {
     let mut list_devices = false;
     let mut window_devices = None;
     let mut window_roll = None;
+    let mut wav = WavOptions::default();
     while let Some(arg) = args.next() {
         let mut value = || {
             args.next()
@@ -176,6 +183,12 @@ fn run() -> Result<(), BoxError> {
             "--window-devices" => window_devices = Some(value()?),
             "--window-roll" => window_roll = Some(value()?),
             "--metronome" => metronome = true,
+            "--bits" => {
+                let text = value()?;
+                wav.format = engine::offline::WavFormat::parse(&text)
+                    .ok_or_else(|| format!("--bits es 16, 24 o 32f (no \"{text}\")"))?;
+            }
+            "--dither" => wav.dither = true,
             "--detect-bpm" => detect = true,
             "--analyze-masking" => masking = true,
             "--pattern" => {
@@ -334,8 +347,8 @@ fn run() -> Result<(), BoxError> {
         }
         return match render_to {
             Some(out) => match track {
-                Some(track) => render_track(&script, &out, &track, bars),
-                None => render_script(&script, &out, bars, from.unwrap_or(0), metronome),
+                Some(track) => render_track(&script, &out, &track, bars, wav),
+                None => render_script(&script, &out, bars, from.unwrap_or(0), metronome, wav),
             },
             None if allow_audio => play_script(&script),
             None => Err(format!(
@@ -381,8 +394,8 @@ fn run() -> Result<(), BoxError> {
     };
 
     match (render_to, sequence) {
-        (Some(out), Some(sequence)) => render_sequence(&path, &out, &sequence),
-        (Some(out), None) => render(&path, &out),
+        (Some(out), Some(sequence)) => render_sequence(&path, &out, &sequence, wav),
+        (Some(out), None) => render(&path, &out, wav),
         (None, Some(_)) => Err(format!("--pattern solo funciona con --render\n{USAGE}").into()),
         (None, None) if allow_audio => play(&path),
         (None, None) => Err(format!(
@@ -421,18 +434,23 @@ fn play(path: &str) -> Result<(), BoxError> {
     Ok(())
 }
 
-fn render(path: &str, out: &str) -> Result<(), BoxError> {
+fn render(path: &str, out: &str, wav: WavOptions) -> Result<(), BoxError> {
     let (mut controller, mut engine) = engine::new_engine(RENDER_RATE);
     controller.play(load(path, RENDER_RATE)?)?;
     let max_frames = MAX_RENDER_SECONDS * RENDER_RATE as usize;
     let audio = engine::offline::render_until_stopped(&controller, &mut engine, 2, max_frames);
-    write_wav(out, &audio)?;
+    write_wav(out, &audio, wav)?;
     println!("{out}: {} frames renderizados", audio.len() / 2);
     Ok(())
 }
 
 /// Renderiza exactamente `bars` compases del patrón (el WAV se puede poner en loop).
-fn render_sequence(path: &str, out: &str, sequence: &Sequence) -> Result<(), BoxError> {
+fn render_sequence(
+    path: &str,
+    out: &str,
+    sequence: &Sequence,
+    wav: WavOptions,
+) -> Result<(), BoxError> {
     let sample = load(path, RENDER_RATE)?;
     let slices = Slices::detect_with(&sample, sequence.slices, &sequence.detect);
     println!(
@@ -466,11 +484,8 @@ fn render_sequence(path: &str, out: &str, sequence: &Sequence) -> Result<(), Box
     controller.start()?;
 
     let frames = sequence.bars * engine::bar_frames(sequence.bpm, RENDER_RATE);
-    if frames > (MAX_RENDER_SECONDS as u64) * RENDER_RATE as u64 {
-        return Err(format!("render demasiado largo (máximo {MAX_RENDER_SECONDS} s)").into());
-    }
-    let audio = engine::offline::render(&mut engine, frames as usize, 2);
-    write_wav(out, &audio)?;
+    check_length(frames)?;
+    render_to_file(&mut engine, frames as usize, out, wav)?;
     println!(
         "{out}: {} a {} BPM, {} frames ({:.2} s)",
         script::bars_text(sequence.bars),
@@ -508,12 +523,50 @@ fn detect_tempo(path: &str) -> Result<(), BoxError> {
     Ok(())
 }
 
-/// Escribe la mezcla en `out` (WAV de 16 bits a la frecuencia del render)
-/// sin dejarlo a medias si algo falla (ver `script::atomic`).
-fn write_wav(out: &str, audio: &[f32]) -> std::io::Result<()> {
+/// Formato del WAV del render (`--bits`, `--dither`).
+#[derive(Debug, Clone, Copy, Default)]
+struct WavOptions {
+    format: engine::offline::WavFormat,
+    dither: bool,
+}
+
+/// Escribe la mezcla en `out` (a la frecuencia del render, en el formato
+/// de `wav`) sin dejarlo a medias si algo falla (ver `script::atomic`).
+fn write_wav(out: &str, audio: &[f32], wav: WavOptions) -> std::io::Result<()> {
     script::atomic::write_with(out, |tmp| {
-        engine::offline::write_wav(tmp, audio, 2, RENDER_RATE).map_err(std::io::Error::other)
+        let mut file = engine::offline::WavOut::create(tmp, 2, RENDER_RATE, wav.format, wav.dither)
+            .map_err(std::io::Error::other)?;
+        file.write(audio).map_err(std::io::Error::other)?;
+        file.finalize().map_err(std::io::Error::other)
     })
+}
+
+/// Renderiza `frames` frames del motor directamente a `out`, a trozos (sin
+/// la mezcla entera en memoria), y sin dejarlo a medias si algo falla.
+fn render_to_file(
+    engine: &mut engine::Engine,
+    frames: usize,
+    out: &str,
+    wav: WavOptions,
+) -> std::io::Result<()> {
+    script::atomic::write_with(out, |tmp| {
+        let mut file = engine::offline::WavOut::create(tmp, 2, RENDER_RATE, wav.format, wav.dither)
+            .map_err(std::io::Error::other)?;
+        engine::offline::render_into(engine, frames, &mut file).map_err(std::io::Error::other)?;
+        file.finalize().map_err(std::io::Error::other)
+    })
+}
+
+/// Error si `frames` pasa del límite del render.
+fn check_length(frames: u64) -> Result<(), BoxError> {
+    if frames > (MAX_RENDER_SECONDS as u64) * RENDER_RATE as u64 {
+        return Err(format!(
+            "render demasiado largo: {:.0} s (máximo {MAX_RENDER_SECONDS} s)",
+            frames as f64 / RENDER_RATE as f64
+        )
+        .into());
+    }
+    Ok(())
 }
 
 /// Un `ScriptHost` con los límites de `[script]` de la configuración (la
@@ -532,7 +585,13 @@ fn script_host(sample_rate: u32) -> script::ScriptHost {
 /// Carga una canción en Lua y renderiza `bars` compases a su tempo.
 /// `--script canción.lua --render salida.wav --track pista`: solo esa
 /// pista (remuestreo), por defecto lo que tarda en repetirse.
-fn render_track(path: &str, out: &str, track: &str, bars: Option<u64>) -> Result<(), BoxError> {
+fn render_track(
+    path: &str,
+    out: &str,
+    track: &str,
+    bars: Option<u64>,
+    wav: WavOptions,
+) -> Result<(), BoxError> {
     let mut host = script_host(RENDER_RATE);
     let (mut controller, _engine) = engine::new_engine(RENDER_RATE);
     let song = host
@@ -544,7 +603,7 @@ fn render_track(path: &str, out: &str, track: &str, bars: Option<u64>) -> Result
     let audio = song
         .render_track(RENDER_RATE, bars, track)
         .ok_or_else(|| format!("--track: no hay ninguna pista \"{track}\""))??;
-    write_wav(out, &audio)?;
+    write_wav(out, &audio, wav)?;
     println!("{out}: pista \"{track}\", {}", script::bars_text(bars));
     Ok(())
 }
@@ -572,6 +631,7 @@ fn render_script(
     bars: Option<u64>,
     from: u64,
     metronome: bool,
+    wav: WavOptions,
 ) -> Result<(), BoxError> {
     let mut host = script_host(RENDER_RATE);
     let (mut controller, mut engine) = engine::new_engine(RENDER_RATE);
@@ -628,11 +688,8 @@ fn render_script(
 
     // Con la rampa de tempo y el compás de la canción, como suena.
     let frames = song.frames(RENDER_RATE, from + bars) - song.frames(RENDER_RATE, from);
-    if frames > (MAX_RENDER_SECONDS as u64) * RENDER_RATE as u64 {
-        return Err(format!("render demasiado largo (máximo {MAX_RENDER_SECONDS} s)").into());
-    }
-    let audio = engine::offline::render(&mut engine, frames as usize, 2);
-    write_wav(out, &audio)?;
+    check_length(frames)?;
+    render_to_file(&mut engine, frames as usize, out, wav)?;
     let start = if from > 0 {
         format!(" desde el compás {from}")
     } else {

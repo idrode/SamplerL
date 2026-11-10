@@ -95,3 +95,97 @@ fn render_until_stopped_writes_a_readable_wav() {
         assert!((r as f32 / i16::MAX as f32 - a).abs() <= 1.0 / i16::MAX as f32);
     }
 }
+
+/// El render a disco por bloques (`render_into`) da el mismo audio que
+/// `render` en memoria, y en 16 bits sin dither el mismo archivo que
+/// `write_wav` (N13 de `docs/AUDITORIA-2.md`: el render ya no tiene que
+/// guardar la mezcla entera).
+#[test]
+fn rendering_into_a_file_is_the_same_as_in_memory() {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("render_into");
+    std::fs::create_dir_all(&dir).unwrap();
+    let source = dir.join("sine.wav");
+    write_sine_wav(&source, 0.5);
+    let frames = 3 * BLOCK_FRAMES + 77;
+    let run = || {
+        let (mut controller, engine) = new_engine(ENGINE_RATE);
+        controller
+            .play(Arc::new(Sample::load_wav(&source, ENGINE_RATE).unwrap()))
+            .unwrap();
+        engine
+    };
+    let audio = offline::render(&mut run(), frames, CHANNELS);
+    offline::write_wav(dir.join("memoria.wav"), &audio, 2, ENGINE_RATE).unwrap();
+    let mut out = offline::WavOut::create(
+        dir.join("disco.wav"),
+        2,
+        ENGINE_RATE,
+        offline::WavFormat::Int16,
+        false,
+    )
+    .unwrap();
+    offline::render_into(&mut run(), frames, &mut out).unwrap();
+    out.finalize().unwrap();
+    assert_eq!(
+        std::fs::read(dir.join("memoria.wav")).unwrap(),
+        std::fs::read(dir.join("disco.wav")).unwrap()
+    );
+    // En 32 bits en coma flotante, las muestras tal cual.
+    let mut out = offline::WavOut::create(
+        dir.join("float.wav"),
+        2,
+        ENGINE_RATE,
+        offline::WavFormat::Float32,
+        false,
+    )
+    .unwrap();
+    offline::render_into(&mut run(), frames, &mut out).unwrap();
+    out.finalize().unwrap();
+    let read: Vec<f32> = hound::WavReader::open(dir.join("float.wav"))
+        .unwrap()
+        .samples::<f32>()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(read, audio);
+}
+
+/// 24 bits (M6 de la primera auditoría): cada muestra a su escalón más
+/// cercano; con dither, a uno o dos escalones como mucho y distinto de sin
+/// él, pero el mismo en dos renders (determinista).
+#[test]
+fn twenty_four_bits_and_dither() {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("wav_formats");
+    std::fs::create_dir_all(&dir).unwrap();
+    let audio: Vec<f32> = (0..4000).map(|i| 0.3 * (i as f32 * 0.01).sin()).collect();
+    let write = |name: &str, format, dither| {
+        let path = dir.join(name);
+        let mut out = offline::WavOut::create(&path, 2, ENGINE_RATE, format, dither).unwrap();
+        out.write(&audio).unwrap();
+        out.finalize().unwrap();
+        let reader = hound::WavReader::open(&path).unwrap();
+        let bits = reader.spec().bits_per_sample;
+        let samples: Vec<i32> = reader.into_samples::<i32>().map(Result::unwrap).collect();
+        (bits, samples)
+    };
+    let full = 8_388_607.0f32;
+    let (bits, plain) = write("24.wav", offline::WavFormat::Int24, false);
+    assert_eq!(bits, 24);
+    for (&s, &x) in plain.iter().zip(&audio) {
+        assert_eq!(s, (x * full).round() as i32);
+    }
+    let (_, dithered) = write("24d.wav", offline::WavFormat::Int24, true);
+    assert_ne!(dithered, plain);
+    assert!(
+        dithered
+            .iter()
+            .zip(&audio)
+            .all(|(&s, &x)| (s as f32 - x * full).abs() <= 2.0)
+    );
+    let (_, again) = write("24d2.wav", offline::WavFormat::Int24, true);
+    assert_eq!(dithered, again);
+    assert_eq!(
+        offline::WavFormat::parse("32f"),
+        Some(offline::WavFormat::Float32)
+    );
+    assert_eq!(offline::WavFormat::parse("8"), None);
+}

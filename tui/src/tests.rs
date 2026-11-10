@@ -2784,3 +2784,29 @@ fn edit_refuses_a_missing_script_unless_new() {
         );
     }
 }
+
+/// `exportar` en 24 bits y en coma flotante (M6 de la primera auditoría):
+/// las palabras del formato van en cualquier sitio, como `metronomo`.
+#[test]
+fn export_in_24_bits_and_float() {
+    let (path, mut app, _engine) = open("export_formats", Some(SONG));
+    command(&mut app, "exportar hondo.wav 1 24bits dither");
+    let message = app.view().message;
+    assert!(message.contains("24 bits con dither"), "{message}");
+    let reader = hound::WavReader::open(path.parent().unwrap().join("hondo.wav")).unwrap();
+    assert_eq!(reader.spec().bits_per_sample, 24);
+    assert_eq!(reader.len() as usize / 2, 16 * STEP);
+    command(&mut app, "exportar 32f flotante.wav 1");
+    let reader = hound::WavReader::open(path.parent().unwrap().join("flotante.wav")).unwrap();
+    assert_eq!(reader.spec().sample_format, hound::SampleFormat::Float);
+}
+
+/// El render de la línea de órdenes ya no se limita a 10 minutos (N13): se
+/// escribe a trozos y el tope es de dos horas.
+#[test]
+fn the_command_line_render_allows_two_hours() {
+    let rate = u64::from(crate::RENDER_RATE);
+    assert!(crate::check_length(11 * 60 * rate).is_ok());
+    assert!(crate::check_length(2 * 3600 * rate).is_ok());
+    assert!(crate::check_length(2 * 3600 * rate + 1).is_err());
+}
