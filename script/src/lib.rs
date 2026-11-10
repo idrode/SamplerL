@@ -1377,6 +1377,7 @@ impl ScriptHost {
         sandbox::harden(&lua, &expired).map_err(|e| ScriptError::from_lua(&e))?;
 
         let warnings: Rc<RefCell<Vec<String>>> = Rc::default();
+        sandbox::restrict(&lua, &warnings).map_err(|e| ScriptError::from_lua(&e))?;
         // Semilla del azar de la carga: `chance` y, sin semilla propia,
         // `mutate` y `shuffle` (con un generador aparte, para que unos no
         // cambien los resultados de los otros).

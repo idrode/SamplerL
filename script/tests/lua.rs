@@ -534,3 +534,28 @@ fn medida_del_vigilante() {
     let thread = start.elapsed() / rounds;
     println!("evaluar SONG_A: {eval:?} por carga; el hilo solo: {thread:?}");
 }
+
+/// La biblioteca base sin `dofile` ni `loadfile` (leían cualquier archivo
+/// como Lua), y `print` en los avisos de la carga en vez de en la salida
+/// estándar, que ensuciaba la pantalla de la interfaz (N9 de
+/// `docs/AUDITORIA-2.md`).
+#[test]
+fn print_goes_to_the_warnings_and_there_is_no_dofile() {
+    let (dir, mut host, mut controller, _engine) = setup("print");
+    std::fs::write(dir.join("otro.lua"), "bpm(99)\n").unwrap();
+    for source in ["dofile(\"otro.lua\")\n", "loadfile(\"otro.lua\")()\n"] {
+        let error = load(&mut host, &mut controller, &dir, source).unwrap_err();
+        assert!(error.contains("nil"), "{source}: {error}");
+    }
+    let source = format!("{SONG_A}print(\"hola\", 3, nil)\nfor i = 1, 30 do print(i) end\n");
+    host.load(&mut controller, &source, "song.lua", &dir)
+        .unwrap();
+    let warnings = &host.song().unwrap().warnings;
+    assert!(
+        warnings.contains(&"song.lua:6: print: hola\t3\tnil".to_string()),
+        "{warnings:?}"
+    );
+    let prints = warnings.iter().filter(|w| w.contains("print:")).count();
+    assert_eq!(prints, script::sandbox::MAX_PRINTS + 1, "{warnings:?}");
+    assert!(warnings.iter().any(|w| w.contains("hay más líneas")));
+}

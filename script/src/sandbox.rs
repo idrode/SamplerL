@@ -19,7 +19,7 @@
 //! Lo que quede (otra función de C que tarde) lo para el vigilante de
 //! [`crate::ScriptHost::eval`], que abandona la carga.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use mlua::{Function, Lua, MultiValue, Table, Value};
@@ -31,6 +31,52 @@ pub(crate) type Expired = Rc<RefCell<Option<String>>>;
 /// Coste máximo, en el peor caso, de buscar un patrón (ver
 /// [`pattern_cost`]): unos pocos segundos de C.
 pub const MAX_PATTERN_COST: f64 = 1e12;
+
+/// Líneas de `print` que llegan a los avisos de una carga.
+pub const MAX_PRINTS: usize = 20;
+/// Caracteres de cada línea de `print` que se muestran.
+const PRINT_CHARS: usize = 200;
+
+/// Lo que se quita o se cambia de la biblioteca base (N9 de
+/// `docs/AUDITORIA-2.md`): `dofile` y `loadfile` leían cualquier archivo
+/// como Lua (el script es uno solo y el vigilante de cambios no veía esos
+/// archivos), y `print` escribía en la salida estándar, encima de la
+/// pantalla de la interfaz. Ahora `print` deja su línea en los avisos de la
+/// carga (`warnings`), con dónde se llamó; como mucho [`MAX_PRINTS`].
+pub(crate) fn restrict(lua: &Lua, warnings: &Rc<RefCell<Vec<String>>>) -> mlua::Result<()> {
+    let globals = lua.globals();
+    globals.raw_remove("dofile")?;
+    globals.raw_remove("loadfile")?;
+    let tostring: Function = globals.get("tostring")?;
+    let warnings = warnings.clone();
+    let printed = Rc::new(Cell::new(0usize));
+    globals.set(
+        "print",
+        lua.create_function(move |lua, args: MultiValue| {
+            let n = printed.get();
+            printed.set(n + 1);
+            if n < MAX_PRINTS {
+                let mut parts = Vec::new();
+                for value in args {
+                    parts.push(tostring.call::<String>(value)?);
+                }
+                let mut text: String = parts.join("\t").chars().take(PRINT_CHARS).collect();
+                if text.chars().count() == PRINT_CHARS {
+                    text.push('…');
+                }
+                warnings
+                    .borrow_mut()
+                    .push(format!("{}print: {text}", crate::location(lua)));
+            } else if n == MAX_PRINTS {
+                warnings.borrow_mut().push(format!(
+                    "print: hay más líneas (solo se muestran las {MAX_PRINTS} primeras)"
+                ));
+            }
+            Ok(())
+        })?,
+    )?;
+    Ok(())
+}
 
 /// Instala los cambios en `lua`.
 pub(crate) fn harden(lua: &Lua, expired: &Expired) -> mlua::Result<()> {
