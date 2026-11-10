@@ -312,3 +312,49 @@ fn grid_split_and_without() {
     assert!(grid.without(0).is_none());
     assert!(grid.without(3).is_none());
 }
+
+/// El mismo break a distintos niveles da los mismos cortes (N8 de
+/// `docs/AUDITORIA-2.md`): los umbrales del detector son absolutos y, grabado
+/// bajo, perdía golpes. Si faltan, se detecta otra vez normalizado; a nivel
+/// pleno, igual que antes.
+#[test]
+fn a_quiet_break_gets_the_same_slices() {
+    const RATE: u32 = 48_000;
+    // Ocho golpes: ruido que decae (caja, charles) y senos graves (bombo),
+    // con colas que se solapan un poco.
+    let mut seed = 12345u32;
+    let mut noise = move || {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        seed as f32 / u32::MAX as f32 * 2.0 - 1.0
+    };
+    let mut mono = vec![0.0f32; 8 * 6000 + 4000];
+    for hit in 0..8 {
+        let start = hit * 6000;
+        for i in 0..5000 {
+            let decay = (-(i as f32) / 900.0).exp();
+            let x = if hit % 2 == 0 {
+                (i as f32 * 2.0 * std::f32::consts::PI * 60.0 / RATE as f32).sin()
+            } else {
+                noise() * 0.7
+            };
+            mono[start + i] += 0.9 * decay * x;
+        }
+    }
+    let at = |gain: f32| {
+        let scaled: Vec<f32> = mono.iter().map(|x| x * gain).collect();
+        let sample = Sample::from_interleaved(&scaled, 1, RATE, RATE).unwrap();
+        Slices::detect(&sample, 8)
+    };
+    let full = at(1.0);
+    assert_eq!(full.len(), 8);
+    for db in [-3.0f32, -6.0, -12.0, -20.0, -30.0] {
+        let quiet = at(10f32.powf(db / 20.0));
+        assert_eq!(quiet.len(), 8, "a {db} dB");
+        for i in 0..8 {
+            let (a, b) = (full.get(i).unwrap().start, quiet.get(i).unwrap().start);
+            assert!(a.abs_diff(b) <= 256, "a {db} dB, corte {i}: {a} y {b}");
+        }
+    }
+}

@@ -78,9 +78,33 @@ impl Slices {
     }
 
     /// Como [`Slices::detect`], con parámetros de detección propios.
+    ///
+    /// Los umbrales del detector son absolutos: un sample grabado bajo da
+    /// menos golpes (el mismo break, 8 cortes a 0 dB y 4 a −12 dB; N8 de
+    /// `docs/AUDITORIA-2.md`). Si salen menos de `n`, se repite con el
+    /// sample normalizado (pico a 0 dB) y se queda la que encuentre más. Lo
+    /// que ya daba `n` cortes no cambia.
     pub fn detect_with(sample: &Sample, n: usize, options: &DetectOptions) -> Self {
         let frames = sample.frames();
         let mut starts = detect_onsets(sample, n, options);
+        if starts.len() < n {
+            let peak = (0..frames)
+                .map(|i| {
+                    let (l, r) = sample.frame(i);
+                    l.abs().max(r.abs())
+                })
+                .fold(0.0f32, f32::max);
+            if peak > 0.0 && peak < 1.0 {
+                let loud = sample.processed(&crate::ImportOptions {
+                    normalize_db: Some(0.0),
+                    ..Default::default()
+                });
+                let again = detect_onsets(&loud, n, options);
+                if again.len() > starts.len() {
+                    starts = again;
+                }
+            }
+        }
         if starts.is_empty() && frames > 0 && n > 0 {
             starts.push(0);
         }
