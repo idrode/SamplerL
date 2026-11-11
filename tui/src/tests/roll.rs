@@ -799,7 +799,11 @@ mod window {
         assert_eq!(
             crate::app::roll_command(&["foot".into(), "-e".into()], Path::new("/bin/tui"), &path)
                 [2..],
-            ["/bin/tui", "--window-roll", &path.display().to_string()]
+            [
+                "/bin/tui",
+                "--window-roll",
+                &path.canonicalize().unwrap().display().to_string()
+            ]
         );
     }
 

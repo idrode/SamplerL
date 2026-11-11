@@ -2686,6 +2686,7 @@ mod consumo;
 mod devices;
 mod devices_panel;
 mod dock;
+mod editor_window;
 mod files;
 mod float;
 mod focus;

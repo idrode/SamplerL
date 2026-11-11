@@ -33,7 +33,8 @@ pub fn devices_command(terminal: &[String], exe: &Path, target: &Path) -> Vec<St
     let mut args = terminal.to_vec();
     args.push(exe.display().to_string());
     args.push("--window-devices".into());
-    args.push(target.display().to_string());
+    // La ruta completa: la terminal nueva puede arrancar en otra carpeta.
+    args.push(crate::target::full_path(target).display().to_string());
     args
 }
 
@@ -209,7 +210,7 @@ impl App {
             self.message = "los dispositivos están en la ventana principal: ábrelo allí".into();
             return;
         }
-        let target = self.project.clone().unwrap_or_else(|| self.path.clone());
+        let target = crate::target::full_path(self.project.as_deref().unwrap_or(&self.path));
         if self.devices_link.is_none() {
             let dir = match self.socket_dir.clone() {
                 Some(dir) => Ok(dir),
@@ -261,6 +262,10 @@ impl App {
             ));
             return;
         };
+        if let Some(problem) = crate::target::terminal_problem(&terminal) {
+            self.fall_back_to_popup(format!("{problem}: el panel de dispositivos, aquí"));
+            return;
+        }
         let exe = std::env::current_exe().unwrap_or_else(|_| "tui".into());
         let args = devices_command(&terminal, &exe, &target);
         let spawned = Command::new(&args[0])

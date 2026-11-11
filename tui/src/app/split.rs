@@ -205,7 +205,8 @@ pub fn editor_command(terminal: &[String], exe: &Path, target: &Path) -> Vec<Str
     let mut args = terminal.to_vec();
     args.push(exe.display().to_string());
     args.push("--window-editor".into());
-    args.push(target.display().to_string());
+    // La ruta completa: la terminal nueva puede arrancar en otra carpeta.
+    args.push(crate::target::full_path(target).display().to_string());
     args
 }
 
@@ -220,16 +221,17 @@ impl App {
         sample_rate: u32,
         socket_dir: &Path,
     ) -> Result<App, Box<dyn std::error::Error>> {
-        let is_project = path
-            .extension()
-            .is_some_and(|e| e == script::project::EXTENSION);
-        let mut app = if is_project {
-            let project = script::Project::load(path)?;
+        // La ruta canónica, y un error claro si no existe: nunca la
+        // plantilla ni otro archivo (la principal pasa la ruta completa).
+        let (target, script) = crate::target::window_target(path, true)?;
+        let mut app = if target != script {
+            let mut project = script::Project::load(&target)?;
+            project.script = script;
             let mut app = App::build(&project.script, controller, sample_rate)?;
-            app.set_project(path, &project)?;
+            app.set_project(&target, &project)?;
             app
         } else {
-            App::build(path, controller, sample_rate)?
+            App::build(&script, controller, sample_rate)?
         };
         let socket = link::socket_path(socket_dir, &app.path);
         app.attach(&socket);
@@ -458,7 +460,7 @@ impl App {
     /// En la principal: abre el editor en una terminal nueva con el
     /// comando de `[editor] terminal`.
     pub fn launch_editor(&mut self) {
-        let target = self.project.clone().unwrap_or_else(|| self.path.clone());
+        let target = crate::target::full_path(self.project.as_deref().unwrap_or(&self.path));
         if self.link.is_none() {
             self.detach_editor();
             return;
@@ -470,14 +472,36 @@ impl App {
             self.message = "el editor ya está abierto en su ventana".into();
             return;
         }
-        let Some(terminal) = main.terminal.clone().filter(|t| !t.is_empty()) else {
+        let terminal = main.terminal.clone().filter(|t| !t.is_empty());
+        let exe = main.exe.clone();
+        // La ventana abre lo que hay en el disco y recibe de aquí lo que no
+        // esté guardado: el archivo tiene que existir.
+        let saved = match self.ensure_on_disk() {
+            Ok(saved) => saved,
+            Err(e) => {
+                self.message = e;
+                return;
+            }
+        };
+        let Some(terminal) = terminal else {
             self.message = format!(
-                "sin [editor] terminal en config.toml: ábrelo a mano con tui --window-editor {}",
+                "{saved}sin [editor] terminal en config.toml: ábrelo a mano con tui \
+                 --window-editor {}",
                 target.display()
             );
             return;
         };
-        let args = editor_command(&terminal, &main.exe, &target);
+        if let Some(problem) = crate::target::terminal_problem(&terminal) {
+            self.message = format!(
+                "{saved}{problem}; o ábrelo a mano con tui --window-editor {}",
+                target.display()
+            );
+            return;
+        }
+        let args = editor_command(&terminal, &exe, &target);
+        let Some(Link::Main(main)) = &mut self.link else {
+            return;
+        };
         let spawned = Command::new(&args[0])
             .args(&args[1..])
             .stdin(Stdio::null())
@@ -487,10 +511,46 @@ impl App {
         self.message = match spawned {
             Ok(child) => {
                 main.child = Some(child);
-                format!("abriendo el editor: {}", args.join(" "))
+                format!("{saved}abriendo el editor: {}", args.join(" "))
             }
             Err(e) => format!("no se pudo abrir «{}»: {e}", args[0]),
         };
+    }
+
+    /// Antes de abrir el editor en su ventana: el script tiene que estar en
+    /// el disco (y el proyecto, si lo hay). Un script nuevo que aún no se
+    /// guardó se guarda con lo que tiene (con `script::atomic`) y se dice;
+    /// uno que ya existe no se toca: lo que no esté guardado viaja por el
+    /// enlace. Devuelve el aviso (vacío si no hizo nada).
+    fn ensure_on_disk(&mut self) -> Result<String, String> {
+        if let Some(project) = &self.project
+            && !project.exists()
+        {
+            return Err(format!(
+                "el proyecto {} ya no está en el disco: guárdalo otra vez (la orden \
+                 «guardar {}») antes de abrir el editor en su ventana",
+                project.display(),
+                project.display()
+            ));
+        }
+        if self.path.exists() {
+            return Ok(String::new());
+        }
+        let text = self.text();
+        match script::atomic::write(&self.path, &text) {
+            Ok(()) => {
+                self.saved = text;
+                self.external = None;
+                Ok(format!(
+                    "guardado {} (no estaba en el disco) · ",
+                    self.path.display()
+                ))
+            }
+            Err(e) => Err(format!(
+                "no se pudo guardar {} para abrirlo en su ventana: {e}",
+                self.path.display()
+            )),
+        }
     }
 
     /// Estado de la principal (en el editor separado).
@@ -611,7 +671,7 @@ impl App {
     fn welcome(&self) -> ToEditor {
         ToEditor::Welcome {
             version: link::VERSION,
-            path: self.path.clone(),
+            path: crate::target::full_path(&self.path),
             samples: self.sample_folder(),
             rev: 0,
             text: self.text(),

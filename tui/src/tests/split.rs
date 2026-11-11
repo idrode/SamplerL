@@ -558,7 +558,7 @@ fn the_main_window_opens_the_editor_with_the_configured_terminal() {
             "sh",
             "/bin/tui",
             "--window-editor",
-            &path.display().to_string()
+            &path.canonicalize().unwrap().display().to_string()
         ]
     );
     let (mut main, _engine) = main_window(&path, Some(terminal));
@@ -574,7 +574,13 @@ fn the_main_window_opens_the_editor_with_the_configured_terminal() {
         std::thread::sleep(Duration::from_millis(20));
     }
     let args = std::fs::read_to_string(&out).unwrap();
-    assert_eq!(args, format!("tui\n--window-editor\n{}\n", path.display()));
+    assert_eq!(
+        args,
+        format!(
+            "tui\n--window-editor\n{}\n",
+            path.canonicalize().unwrap().display()
+        )
+    );
 
     // Sin terminal configurada, dice cómo abrirlo a mano.
     let path = fixture("split_launch_none", Some(SONG));

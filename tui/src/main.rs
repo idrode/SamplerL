@@ -35,6 +35,7 @@ mod safe_draw;
 mod screen;
 mod sidechain;
 mod tap;
+mod target;
 #[cfg(test)]
 mod tests;
 mod theme;
@@ -258,7 +259,7 @@ fn run() -> Result<(), BoxError> {
             )
             .into());
         }
-        return run_devices_window(std::path::Path::new(&target));
+        return in_own_window(run_devices_window(std::path::Path::new(&target)));
     }
     if let Some(target) = window_roll {
         if std::env::args().count() != 3 {
@@ -268,7 +269,7 @@ fn run() -> Result<(), BoxError> {
             )
             .into());
         }
-        return run_roll_window(std::path::Path::new(&target));
+        return in_own_window(run_roll_window(std::path::Path::new(&target)));
     }
     if device_flags && edit.is_none() {
         return Err(
@@ -299,7 +300,7 @@ fn run() -> Result<(), BoxError> {
             )
             .into());
         }
-        return run_window_editor(std::path::Path::new(&target));
+        return in_own_window(run_window_editor(std::path::Path::new(&target)));
     }
     if split && edit.is_none() {
         return Err(format!("--split va con --edit\n{USAGE}").into());
@@ -928,6 +929,23 @@ fn run_editor(path: &std::path::Path, args: DeviceArgs, split: bool) -> Result<(
     run_terminal(&mut app, poll, ui::draw)
 }
 
+/// Una ventana aparte la abre la principal con `kitty -e` o similar: si
+/// falla al arrancar, la terminal se cerraría sin dejar leer el error. Con
+/// una terminal delante, el error se queda hasta pulsar Enter.
+fn in_own_window(result: Result<(), BoxError>) -> Result<(), BoxError> {
+    use std::io::{IsTerminal, Write};
+    let Err(error) = result else {
+        return Ok(());
+    };
+    if std::io::stdin().is_terminal() {
+        let _ = ratatui::try_restore();
+        eprintln!("error: {error}\n\nPulsa Enter para cerrar esta ventana.");
+        let _ = std::io::stderr().flush();
+        let _ = std::io::stdin().read_line(&mut String::new());
+    }
+    Err(error)
+}
+
 /// `--window-editor`: solo el editor, conectado con la ventana principal
 /// del mismo script (si aún no está, se reintenta). Nunca abre la tarjeta
 /// ni el MIDI: su motor no se mueve; todo lo que suena es de la principal.
@@ -952,15 +970,9 @@ fn run_window_editor(path: &std::path::Path) -> Result<(), BoxError> {
 /// abre la tarjeta ni el MIDI: se lo pide todo a la principal.
 fn run_devices_window(path: &std::path::Path) -> Result<(), BoxError> {
     use ratatui::crossterm::event::{self, Event, KeyEventKind};
-    // El socket va por el script (también si se abrió un proyecto).
-    let script = if path
-        .extension()
-        .is_some_and(|e| e == script::project::EXTENSION)
-    {
-        script::Project::load(path)?.script
-    } else {
-        path.to_path_buf()
-    };
+    // El socket va por el script (también si se abrió un proyecto), con
+    // su ruta canónica; lo que no existe es un error, no otra instancia.
+    let (_, script) = target::window_target(path, false)?;
     let socket = link::devices_socket_path(&link::runtime_dir()?, &script);
     let config = match config::dir() {
         Some(dir) => config::Config::load(&dir.join("config.toml"), theme::truecolor()),
@@ -1029,14 +1041,7 @@ fn mouse_action(m: &ratatui::crossterm::event::MouseEvent) -> Option<app::MouseA
 /// defecto, sí) y la terminal lo deja.
 fn run_roll_window(path: &std::path::Path) -> Result<(), BoxError> {
     use ratatui::crossterm::event::{self, Event, KeyEventKind};
-    let script = if path
-        .extension()
-        .is_some_and(|e| e == script::project::EXTENSION)
-    {
-        script::Project::load(path)?.script
-    } else {
-        path.to_path_buf()
-    };
+    let (_, script) = target::window_target(path, false)?;
     let socket = link::roll_socket_path(&link::runtime_dir()?, &script);
     let config = match config::dir() {
         Some(dir) => config::Config::load(&dir.join("config.toml"), theme::truecolor()),

@@ -1088,9 +1088,7 @@ pub fn private_dir(dir: &Path) -> io::Result<()> {
 /// también si se abrió un proyecto), para poder tener varias canciones
 /// abiertas a la vez.
 pub fn socket_path(dir: &Path, script: &Path) -> PathBuf {
-    let full = std::fs::canonicalize(script)
-        .or_else(|_| std::path::absolute(script))
-        .unwrap_or_else(|_| script.to_path_buf());
+    let full = crate::target::full_path(script);
     let stem = full
         .file_stem()
         .map_or_else(|| "script".into(), |s| s.to_string_lossy().into_owned());

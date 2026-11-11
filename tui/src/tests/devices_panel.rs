@@ -346,7 +346,11 @@ fn the_launcher_uses_its_terminal_and_falls_back_to_the_popup() {
     ];
     assert_eq!(
         crate::app::devices_command(&terminal, Path::new("/bin/tui"), &path)[4..],
-        ["/bin/tui", "--window-devices", &path.display().to_string()]
+        [
+            "/bin/tui",
+            "--window-devices",
+            &path.canonicalize().unwrap().display().to_string()
+        ]
     );
     // Sin [dispositivos] terminal, la del editor.
     app.set_terminals(Some(terminal), None);
@@ -358,7 +362,10 @@ fn the_launcher_uses_its_terminal_and_falls_back_to_the_popup() {
     }
     let args = std::fs::read_to_string(&out).unwrap();
     assert!(
-        args.ends_with(&format!("--window-devices\n{}\n", path.display())),
+        args.ends_with(&format!(
+            "--window-devices\n{}\n",
+            path.canonicalize().unwrap().display()
+        )),
         "{args}"
     );
     // La «terminal» se cerró sin que se conectara nadie: el panel, aquí.

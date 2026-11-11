@@ -882,7 +882,7 @@ impl App {
     /// en una terminal nueva (`[roll] terminal` o, si no, `[editor]
     /// terminal`). Si no se puede lanzar, lo dice y lo deja aquí.
     pub(super) fn launch_roll_window(&mut self) {
-        let target = self.project.clone().unwrap_or_else(|| self.path.clone());
+        let target = crate::target::full_path(self.project.as_deref().unwrap_or(&self.path));
         if self.roll.link.is_none() {
             let dir = match self.socket_dir.clone() {
                 Some(dir) => Ok(dir),
@@ -929,6 +929,10 @@ impl App {
             ));
             return;
         };
+        if let Some(problem) = crate::target::terminal_problem(&terminal) {
+            self.roll_here(format!("{problem}: el piano roll, aquí"));
+            return;
+        }
         let exe = std::env::current_exe().unwrap_or_else(|_| "tui".into());
         let args = roll_command(&terminal, &exe, &target);
         let Some(link) = &mut self.roll.link else {
@@ -1158,6 +1162,7 @@ pub fn roll_command(terminal: &[String], exe: &Path, target: &Path) -> Vec<Strin
     let mut args = terminal.to_vec();
     args.push(exe.display().to_string());
     args.push("--window-roll".into());
-    args.push(target.display().to_string());
+    // La ruta completa: la terminal nueva puede arrancar en otra carpeta.
+    args.push(crate::target::full_path(target).display().to_string());
     args
 }
