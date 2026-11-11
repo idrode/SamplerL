@@ -4092,6 +4092,113 @@ una principal de otro script en el socket; lo escrito antes de conectar; y
 - **La carpeta de la terminal no se usa**: con la ruta completa da igual;
   solo se avisa si la que se pide no existe, en vez de lanzar.
 
+## Explorador de samples y samples del proyecto
+
+Pedido por el usuario: el árbol de archivos salía siempre vacío, y quería
+añadir samples (los suyos están en `~/songsproject/samples`, compartida
+entre las canciones de `~/songsproject/1`, `/2` y `/3`) y que se quedaran
+en el proyecto.
+
+### Dónde abría el árbol y por qué salía vacío
+
+- **Dónde abría**: en `App::base_dir()`, la carpeta del `.sampler` o, sin
+  proyecto, la del script: `path.parent()`, con `.` si no había. Nada de
+  `config.toml` ni rutas fijas.
+- **La causa** (test `a_script_opened_by_its_bare_name_shows_its_folder`,
+  falla con el código de antes): con `tui --edit song.lua` desde la carpeta
+  de la canción, `Path::new("song.lua").parent()` es `Some("")`, no `None`;
+  el `unwrap_or(".")` no saltaba y el árbol leía `read_dir("")`, que falla.
+  La raíz salía sin nombre y con «no se puede leer: N…» cortado por el
+  ancho del panel: vacío a la vista. Además, los samples de la carpeta
+  compartida no estaban en ninguna raíz (no hay forma de ver una carpeta
+  fuera de la del script).
+- **Hipótesis descartadas**: el filtro de extensiones ya aceptaba `.WAV`
+  (minúsculas al comparar) y los cinco formatos del motor; la carga
+  perezosa sí se disparaba al abrir; no hay hilo de lectura; el panel tenía
+  su alto. Sí se escondía en silencio lo que no era audio cargable (m4a...).
+- **Arreglo**: `base_dir()` da `.` si `parent()` es vacío y el árbol pasa
+  cada raíz a completa y canónica (`target::full_path`); `reveal`, el
+  script marcado `◂`, abrir, renombrar y borrar comparan rutas completas.
+
+### El árbol (`tui/src/files.rs`, `tui/src/app/files.rs`)
+
+- **Raíces** (`Tree::with_roots`, `App::files_roots`), en orden y con su
+  nombre: `[proyecto]` (`samples/` junto al script si existe, y la de
+  `samples =` si es otra), `[global]` (`[samples] carpeta`) y `[script]`
+  (la carpeta del proyecto o del script). Una carpeta repetida sale una
+  vez. Las filas llevan su sitio en el árbol (`Row::at`) en vez de
+  buscarse por ruta, porque una misma carpeta puede estar bajo dos raíces.
+  Con más de una raíz, cada una se pliega. El árbol se rehace al abrir un
+  proyecto, cambiar la carpeta de samples o la global, al refrescar si
+  cambió qué raíces hay, y al abrir un script de fuera de las raíces.
+- **`[samples] carpeta`** en `config.toml` (`Config::samples_dir`): `~` y
+  `~/…` con `$HOME`; relativa, respecto a la carpeta de `config.toml` (la
+  resuelve `Config::load`).
+- **Lo que se ve**: el audio que el motor no carga
+  (`files::UNSUPPORTED_AUDIO`: m4a, aac, opus...) como `Kind::Unsupported`,
+  atenuado y con «formato no soportado: m4a» (Enter lo explica y propone
+  ffmpeg); una nota cuenta los archivos que no son audio ni scripts; una
+  carpeta vacía o que no existe y un error de lectura, con la ruta
+  completa. Un enlace a una carpeta que contiene a la suya (o a sí misma)
+  se marca y no se lee.
+- **Refrescar**: `R` con el foco y la acción «Refrescar el explorador»
+  (menú Ver). Solo se releen las carpetas abiertas; en reposo no se lee el
+  disco (las raíces solo se miran al abrir proyecto o refrescar).
+
+### Dónde busca `sample("...")` (`script/src/sample_path.rs`)
+
+En orden: (1) la carpeta de antes (la de `samples =` o `muestras`; si no
+hay, la del script), (2) la del script, (3) `samples/` junto al script,
+(4) la global. Gana la primera. Así **un script de antes carga los mismos
+archivos que antes** (lo que antes se encontraba estaba en la primera) y
+`golden.rs` no cambia. Si una carpeta de después tiene un archivo distinto
+con el mismo nombre (se compara el contenido hasta 64 MB), aviso. Si no
+está en ninguna, aviso con dónde se buscó y diez segundos de silencio
+(`missing_sample`, en la caché); `slice(n)` de ese silencio da `n` cortes
+en rejilla, para que los pasos existan y callen, y `stretch()` sin tempo no
+hace nada. Un archivo que existe pero está roto sigue siendo un error (y
+sigue sonando lo anterior). El render por la línea de órdenes también usa
+la carpeta global (`script_host` en `main.rs`). No hace falta API nueva:
+`sample()` es la misma, con su documentación del registro al día.
+
+### Añadir samples al proyecto (`tui/src/add_samples.rs`)
+
+- `plan` decide qué se copia: el audio cargable de cada archivo o carpeta
+  (recursivo, hasta 2000 archivos y 16 niveles, sin ocultos, sin enlaces
+  que salgan de la carpeta ni vueltas), con su sitio dentro de `samples/`.
+- `start` copia en un hilo aparte; la interfaz lo mira en cada vuelta
+  (`poll_adding`) y pone una barra de progreso en la línea de mensajes
+  (solo cambia el mensaje cuando cambia el porcentaje: el dibujo en reposo
+  sigue sin redibujar). Cada copia: nombre válido (UTF-8, sin control, no
+  oculto, ≤ 255 bytes, sin `..`), se prueba a cargar con
+  `engine::Sample::load_wav` (los pánicos, atrapados), espacio libre con
+  `statvfs` (más 16 MB) y `script::atomic::write_with`.
+- Decisiones:
+  - **Copiar, no referenciar, por defecto** (preferencia del usuario): el
+    proyecto se mueve entero. Referenciar (`A`) existe con aviso.
+  - **Mismo nombre**: igual, se reutiliza; distinto, `nombre-2.ext` (el
+    primer libre, o uno igual que ya esté), sin preguntar: nunca se
+    sobrescribe y el mensaje lo dice. Preguntar en mitad de una copia de
+    una carpeta entera sería una pregunta por archivo.
+  - **Qué se escribe**: el nombre más corto que, con el orden de búsqueda,
+    encuentra justo esa copia (`sample_name_for`): `amen.wav` si nada lo
+    tapa; si otro `amen.wav` distinto junto al script lo taparía,
+    `samples/amen.wav`. Una carpeta o varios marcados no escriben nada.
+  - **Lo que ya está en el proyecto** no se copia; solo se escribe.
+- «Recoger los samples en el proyecto»: los `sample("...")` literales del
+  texto (`sample_literals`, sin comentarios) que se resuelven fuera de la
+  carpeta del script se copian igual y, al acabar, su texto se cambia en un
+  paso de deshacer (`replace_text`) y se carga. Los generados por código y
+  los que faltan se cuentan en el mensaje.
+- Teclas: `a` añade, `A` referencia, `m` marca; arrastrar del árbol al
+  editor añade. Acciones «Añadir sample al proyecto», «Referenciar sample
+  sin copiar» y «Recoger los samples en el proyecto» (menú Archivo).
+- **Orden de los commits**: la resolución de rutas va antes que añadir
+  (añadir escribe nombres relativos a `samples/`, que solo se encuentran
+  con la resolución nueva).
+- El motor no cambia: el sample nuevo llega con la carga de siempre, fuera
+  del audio y al compás; `no_alloc.rs` no tiene camino nuevo que probar.
+
 ## Audio de prueba y problemas conocidos
 
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`

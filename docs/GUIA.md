@@ -246,9 +246,24 @@ es silencio o un sample de menos de una décima de segundo.
 
 ### Usar un sample propio
 
-Solo se leen archivos **WAV** (cualquier frecuencia; se resamplean al
-cargar). `sample("archivo.wav")` busca la ruta relativa a la carpeta del
-script. Pon el WAV junto al `.lua`:
+Se leen WAV, FLAC, MP3, OGG y AIFF (cualquier frecuencia; se resamplean
+al cargar). `sample("archivo.wav")` busca el archivo, en este orden:
+
+1. en la carpeta de samples de `samples =` del proyecto (o la orden
+   `muestras`), si la hay; si no, junto al script;
+2. junto al script (si la de antes era otra);
+3. en `samples/` junto al script (la carpeta de samples del proyecto);
+4. en la carpeta global de `[samples] carpeta` (`config.toml`).
+
+Gana la primera que lo tenga, así que un script de antes carga los mismos
+samples que antes. Si otra carpeta de después tiene **otro** archivo con
+el mismo nombre, sale un aviso (el nombre es ambiguo). Si no está en
+ninguna, sale un aviso con dónde se buscó y esa pista **suena en
+silencio** (diez segundos de silencio, con los cortes que pida
+`slice(n)`): lo demás sigue sonando. Un archivo que está pero no se puede
+leer (roto) es un error, y sigue sonando lo anterior. Pon el WAV junto al
+`.lua` o en `samples/`, o añádelo desde el explorador (ver «Añadir samples
+al proyecto»):
 
 ```lua
 bpm(170)
@@ -515,12 +530,35 @@ mensajes lo dice; el audio no se para.
 
 ### El explorador de archivos
 
-A la izquierda, el árbol de la carpeta del proyecto (o la del script),
-con las carpetas, los scripts (`λ`), los proyectos (`◆`) y los samples
-WAV (`♪`); el script del editor lleva `◂`. Solo se lee una carpeta al
-abrirla, y de una carpeta enorme las primeras 500 entradas (una fila dice
-cuántas quedan sin leer), así que nunca para el dibujo. Lo que cambie en
-el disco se ve al volver a abrir la carpeta o con `R`.
+A la izquierda, un árbol con varias **raíces**, cada una con su nombre
+delante y en este orden:
+
+1. `[proyecto]`: la carpeta de samples del proyecto, `samples/` junto al
+   script (si existe; y la de `samples =` del `.sampler`, si es otra);
+2. `[global]`: la carpeta de samples global de `[samples] carpeta` en
+   `config.toml` (por ejemplo `carpeta = "~/songsproject/samples"`,
+   compartida entre canciones);
+3. `[script]`: la carpeta del proyecto o del script.
+
+Las rutas salen siempre completas: la carpeta del script se toma de la
+ruta con que lo abriste (`tui --edit song.lua` desde su carpeta abre esa
+carpeta), y una `carpeta` relativa en `config.toml` va respecto a la
+carpeta de `config.toml`, nunca respecto a desde dónde se lanzó el
+programa. (Antes, con un script abierto por su nombre a secas, el árbol
+salía vacío.)
+
+En cada carpeta: las carpetas, los scripts (`λ`), los proyectos (`◆`) y
+los samples que se cargan (`♪`: WAV, FLAC, MP3, OGG y AIFF, también en
+mayúsculas); el script del editor lleva `◂`. El audio que no se carga
+(m4a, opus, aac...) sale **atenuado** con «formato no soportado: m4a», y
+una nota cuenta los demás archivos que no son audio ni scripts. Una
+carpeta vacía o que no existe lo dice con su ruta completa, y un error al
+leerla, con su motivo. Un enlace que vuelve a una carpeta de arriba no se
+sigue. Solo se lee una carpeta al abrirla, y de una carpeta enorme las
+primeras 500 entradas (una fila dice cuántas quedan sin leer), así que
+nunca para el dibujo; las cerradas no se leen. Lo que cambie en el disco
+se ve al volver a abrir la carpeta, con `R` o con «Refrescar el
+explorador» (menú Ver).
 
 Alt-0 le da el foco (Esc lo devuelve) y Alt-E lo esconde o lo vuelve a
 poner; en una terminal de menos de 120 columnas no cabe, y Alt-E (o Alt-0)
@@ -533,7 +571,9 @@ lo abre **encima** de lo demás, con el foco, hasta Esc. Con el foco:
 | ← (o `h`) | Cierra la carpeta, o sube a la que la contiene |
 | Enter | Una carpeta, la abre o la cierra; un `.lua`, lo abre en el editor y lo carga; un `.sampler`, lo abre como proyecto; un sample, lo escucha |
 | Espacio | Escucha el sample (en la voz aparte: no toca las pistas) y lo enseña en el panel del sample y al pie del árbol |
-| `a` | Escribe `sample("...")` del elegido en el cursor del editor (la ruta, desde la carpeta de los samples) |
+| `a` | **Añade al proyecto** el sample elegido (o la carpeta entera, o lo marcado con `m`): ver «Añadir samples al proyecto», abajo |
+| `A` | Solo escribe `sample("...")` del elegido en el cursor, sin copiarlo |
+| `m` | Marca o desmarca el sample o la carpeta (`●`) para añadirlos juntos |
 | `n` | Un archivo nuevo junto al elegido (sin extensión, `.lua`) |
 | `r` | Renombra el archivo elegido |
 | Supr (o `d`) | Borra el archivo elegido, tras preguntar (`s` o Enter, sí; otra tecla, no) |
@@ -546,8 +586,47 @@ Ctrl-S antes para no perderlos). Las carpetas no se crean, renombran ni
 borran desde aquí, y el script del editor no se borra. Con el ratón: un
 clic elige (y da el foco), un clic en el icono de una carpeta la abre o la
 cierra, dos clics hacen lo de Enter, la rueda recorre y **arrastrar su
-borde derecho** cambia el ancho. El ancho y si se ve se guardan en
-`[interfaz]` (`ancho_explorador`, `explorador`).
+borde derecho** cambia el ancho; **arrastrar un sample** (o una carpeta)
+y soltarlo en el editor lo añade al proyecto como `a`. El ancho y si se ve
+se guardan en `[interfaz]` (`ancho_explorador`, `explorador`).
+
+#### Añadir samples al proyecto
+
+Cada proyecto tiene su carpeta de samples, `samples/` junto al script, y
+en el código las rutas van **relativas a ella**: `sample("amen.wav")`
+encuentra `samples/amen.wav`, y la carpeta del proyecto se puede mover o
+copiar entera.
+
+- **Añadir** (`a`, «Añadir sample al proyecto» en el menú Archivo, o
+  arrastrar al editor) **copia** el sample a `samples/` (la crea si no
+  está) y, si es uno solo, escribe `sample("amen.wav")` en el cursor (un
+  paso de deshacer). El original **nunca** se mueve ni se borra. Una
+  carpeta se copia entera con sus subcarpetas (`samples/breaks/...`),
+  solo el audio que se carga y sin seguir enlaces que salgan de ella; con
+  varios marcados (`m`) se copian todos; en los dos casos no se escribe
+  nada en el código.
+- Lo que **ya está en el proyecto** no se copia: `a` solo lo escribe.
+- **Solo referenciar** (`A`, «Referenciar sample sin copiar»): escribe el
+  nombre con el que se encuentra, sin copiarlo. Si está en la carpeta
+  global, avisa de que en otra máquina hace falta la misma; si no está en
+  ninguna carpeta de samples, va con su ruta entera y avisa de que el
+  proyecto **deja de poder moverse**.
+- **Mismo nombre**: si en `samples/` ya hay un `amen.wav` igual, se usa
+  ese; si es distinto, **nunca se sobrescribe**: la copia se llama
+  `amen-2.wav` (o el primer número libre) y el mensaje lo dice.
+- **Antes de copiar** se prueba a cargar (un WAV roto no se copia y dice
+  por qué), se mira el nombre (sin caracteres raros, ocultos ni más de 255
+  bytes) y el espacio libre. La copia es atómica (un temporal en la misma
+  carpeta, volcado al disco y renombrado: nunca queda a medias), va en un
+  hilo aparte con una **barra de progreso** en la línea de mensajes, y no
+  para la interfaz ni el sonido.
+- **Recoger** («Recoger los samples en el proyecto», menú Archivo): para
+  proyectos de antes. Copia a `samples/` los samples que el script usa
+  desde fuera del proyecto (con su ruta entera o de la carpeta global) y
+  cambia su texto en el código, todo en un paso de deshacer. Los
+  `sample(nombre)` que se calculan en el código no se tocan (lo dice).
+
+El `.sampler` guarda las rutas, nunca el audio.
 
 ### El editor abajo, maximizado o flotante
 
@@ -2836,9 +2915,9 @@ bpm(174)
 
 Devuelve: sample.
 
-Carga un WAV (y, con opciones, lo prepara: recorte, normalizado, fundidos). La ruta es relativa a la carpeta del script o, en un proyecto, a su carpeta `samples`. Recargar el script no vuelve a leer el archivo si no ha cambiado. Las opciones (tabla de abajo) preparan el sample al cargarlo, en este orden: recortar el silencio de los extremos, normalizar el pico y los fundidos; se guarda para la carga siguiente. Los cortes, los ajustes en ms y `stretch` van sobre el sample ya preparado (recortar desplaza los ms).
+Carga un WAV (y, con opciones, lo prepara: recorte, normalizado, fundidos). La ruta se busca, en orden: en la carpeta de samples del proyecto (`samples =` del `.sampler`) o, sin ella, junto al script; junto al script; en `samples/` junto al script; y en la carpeta global (`[samples] carpeta` de `config.toml`). Gana la primera; si otra tiene un archivo distinto con ese nombre, avisa. Si no está en ninguna, avisa con dónde se buscó y suena en silencio (el resto de la canción sigue). Recargar el script no vuelve a leer el archivo si no ha cambiado. Las opciones (tabla de abajo) preparan el sample al cargarlo, en este orden: recortar el silencio de los extremos, normalizar el pico y los fundidos; se guarda para la carga siguiente. Los cortes, los ajustes en ms y `stretch` van sobre el sample ya preparado (recortar desplaza los ms).
 
-- `ruta`: archivo WAV (cualquier frecuencia; se resamplea al cargar)
+- `ruta`: archivo WAV, FLAC, MP3, OGG o AIFF (cualquier frecuencia; se resamplea al cargar)
 - `opciones`: tabla con las de la tabla de abajo
 
 | Parámetro | Qué es | Por defecto | Valores |
@@ -5745,6 +5824,22 @@ su ventana». Si dice que contesta la principal de otro script, ciérrala y
 terminal no existe», corrige o quita el `--directory` de `[editor]
 terminal`. Antes de este arreglo, la principal pasaba la ruta relativa y
 una terminal que arrancaba en otra carpeta abría la plantilla.
+
+### El explorador sale vacío o no veo mis samples
+
+Mira las raíces (`[proyecto]`, `[global]`, `[script]`; ver «El
+explorador de archivos»). Para ver una carpeta de samples compartida,
+ponla en `config.toml`:
+
+```toml
+[samples]
+carpeta = "~/songsproject/samples"
+```
+
+Una raíz que no existe dice «no existe:» con su ruta completa; una
+carpeta sin nada que enseñar, «(vacía: …)». El audio que no se carga sale
+atenuado con «formato no soportado»: conviértelo a WAV (por ejemplo
+`ffmpeg -i entrada.m4a salida.wav`). Lo nuevo en el disco sale con `R`.
 
 ### Un corte hace clic al empezar
 

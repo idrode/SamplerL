@@ -472,8 +472,13 @@ pub const FUNCTIONS: &[Function] = &[
         signature: "sample(ruta [, opciones])",
         returns: Some(Receiver::Sample),
         summary: "Carga un WAV (y, con opciones, lo prepara: recorte, normalizado, fundidos).",
-        doc: "La ruta es relativa a la carpeta del script o, en un proyecto, a su \
-              carpeta `samples`. Recargar el script no vuelve a leer el archivo si \
+        doc: "La ruta se busca, en orden: en la carpeta de samples del proyecto \
+              (`samples =` del `.sampler`) o, sin ella, junto al script; junto al \
+              script; en `samples/` junto al script; y en la carpeta global \
+              (`[samples] carpeta` de `config.toml`). Gana la primera; si otra tiene \
+              un archivo distinto con ese nombre, avisa. Si no está en ninguna, avisa \
+              con dónde se buscó y suena en silencio (el resto de la canción sigue). \
+              Recargar el script no vuelve a leer el archivo si \
               no ha cambiado. Las opciones (tabla de abajo) preparan el sample al \
               cargarlo, en este orden: recortar el silencio de los extremos, \
               normalizar el pico y los fundidos; se guarda para la carga siguiente. \
@@ -482,7 +487,7 @@ pub const FUNCTIONS: &[Function] = &[
         params: &[
             Param {
                 name: "ruta",
-                description: "archivo WAV (cualquier frecuencia; se resamplea al cargar)",
+                description: "archivo WAV, FLAC, MP3, OGG o AIFF (cualquier frecuencia; se resamplea al cargar)",
             },
             Param {
                 name: "opciones",

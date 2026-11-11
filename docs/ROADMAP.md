@@ -936,3 +936,17 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
        principal, no pisa lo que ella tenga sin guardar y no se une a la
        principal de otro script.
     3. ✅ **Documentación**.
+26. ✅ **Explorador de samples y samples del proyecto** (pedida por el
+    usuario). Detalle en «Explorador de samples y samples del proyecto» de
+    [docs/ESTADO.md](ESTADO.md).
+    1. ✅ **El árbol vacío**: con un script abierto por su nombre a secas
+       se leía la carpeta `""`; ahora la completa. Lo que no se carga sale
+       atenuado con su nota; errores y carpetas vacías, con la ruta.
+    2. ✅ **Raíces**: `samples/` del proyecto, la global (`[samples]
+       carpeta`) y la del script, con su nombre.
+    3. ✅ **Dónde busca `sample()`**: la carpeta de antes, el script,
+       `samples/` y la global; lo que falta suena en silencio con aviso.
+    4. ✅ **Añadir y recoger**: copiar a `samples/` (atómico, en un hilo,
+       sin sobrescribir), referenciar, marcar, carpetas, arrastrar, y
+       recoger los samples de fuera de un script de antes.
+    5. ✅ **Documentación**.
