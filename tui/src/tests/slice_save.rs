@@ -195,3 +195,84 @@ fn with_the_editor_in_its_window_the_edit_reaches_it() {
     let (again, _engine) = reopen(&path);
     assert_eq!(slices_of(&again, "drums"), edited);
 }
+
+/// Un break cuyo largo no cae en un número redondo de ms (6007 frames a 48
+/// kHz, 125,1458 ms): el final del último corte se escribe como `125.15`,
+/// que pasa unas milésimas del largo. Antes, el código escrito no cargaba
+/// («pasado el final»), la edición se deshacía y el corte volvía a su
+/// sitio: con samples reales (un amen de 250 508 frames a 44,1 kHz) no se
+/// fijaba ningún arrastre.
+fn odd_fixture(test: &str, song: &str) -> PathBuf {
+    let path = fixture(test, Some(song));
+    let mut mono = vec![0.0f32; 6007];
+    for k in 0..4 {
+        mono[k * 1500..k * 1500 + 200].fill(0.4);
+    }
+    offline::write_wav(path.parent().unwrap().join("odd.wav"), &mono, 1, RATE).unwrap();
+    path
+}
+
+/// Arrastra el borde `end` (o el inicio) del corte `k` de la pista
+/// seleccionada `columns` columnas, soltando, y deja que el motor lea la
+/// cola.
+fn drag_edge(app: &mut App, engine: &mut Engine, track: &str, k: usize, end: bool, columns: i32) {
+    draw(app, 160, 40);
+    let s = slices_of(app, track);
+    let layout = app.wave_layout().expect("se dibujó la onda");
+    let (x, y) = layout.point_of(if end { s[k].end } else { s[k].start });
+    let to = (x as i32 + columns) as u16;
+    app.mouse(MouseAction::Down, x, y);
+    app.mouse(MouseAction::Drag, to, y);
+    app.mouse(MouseAction::Up, to, y);
+    offline::render(engine, 64, 2);
+}
+
+#[test]
+fn every_slice_of_a_sample_with_an_odd_length_can_be_dragged_saved_and_reopened() {
+    for (name, call) in [
+        ("grid", "slice_grid(4)"),
+        ("detector", "slice(4)"),
+        (
+            "table",
+            "slice({ {0, 31.25}, {31.25, 62.5}, {62.5, 93.75}, {93.75, 125.1458} })",
+        ),
+        ("stretch", "stretch(130):slice_grid(4)"),
+    ] {
+        let song = format!(
+            "bpm(120)\nlocal b = sample(\"odd.wav\"):{call}\n\
+             track(\"b\", b):steps(\"1 . . .  . . . .  . . . .  . . . .\")\n"
+        );
+        let path = odd_fixture(&format!("slice_save_odd_{name}"), &song);
+        let (controller, mut engine) = new_engine(RATE);
+        let mut app = App::open(&path, controller, RATE).unwrap();
+        assert!(app.view().error.is_none(), "{name}: {:?}", app.view().error);
+        let n = slices_of(&app, "b").len();
+        assert!(n >= 2, "{name}: {n} cortes");
+        // Cada corte, por su inicio (salvo el primero, que está en 0) y por
+        // su final (que es el inicio del siguiente, salvo el último).
+        for k in 0..n {
+            for (end, columns) in [(false, 2), (true, -2)] {
+                if !end && k == 0 {
+                    continue;
+                }
+                let before = slices_of(&app, "b");
+                drag_edge(&mut app, &mut engine, "b", k, end, columns);
+                assert_ne!(
+                    slices_of(&app, "b"),
+                    before,
+                    "{name}: corte {} ({}) no se fijó: {}",
+                    k + 1,
+                    if end { "final" } else { "inicio" },
+                    app.view().message
+                );
+                assert!(app.text_for_test().contains("slice({"), "{name}");
+            }
+        }
+        let edited = slices_of(&app, "b");
+        app.handle(ctrl('s'));
+        assert!(!app.dirty(), "{name}");
+        let (again, _engine) = reopen(&path);
+        assert!(again.view().error.is_none(), "{name}");
+        assert_eq!(slices_of(&again, "b"), edited, "{name}");
+    }
+}

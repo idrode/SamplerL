@@ -950,3 +950,9 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
        sin sobrescribir), referenciar, marcar, carpetas, arrastrar, y
        recoger los samples de fuera de un script de antes.
     5. ✅ **Documentación**.
+27. ✅ **Arrastrar un corte no quedaba fijado** (fallo encontrado por el
+    usuario en ARM64; continuación de los cortes independientes). Detalle
+    en «Arrastrar un corte no quedaba fijado» de [docs/ESTADO.md](ESTADO.md).
+    1. ✅ **El final del sample**: escrito con los decimales justos podía
+       pasar unas milésimas del largo en ms y el código reescrito no
+       cargaba; ahora se comprueba en frames.

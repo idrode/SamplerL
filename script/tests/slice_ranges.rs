@@ -319,3 +319,29 @@ fn everything_about_a_slice_uses_its_own_bounds() {
     assert!(audio.iter().all(|s| s.is_finite()));
     assert!(audio.iter().any(|&s| s != 0.0));
 }
+
+#[test]
+fn the_end_of_a_sample_written_with_few_decimals_still_fits() {
+    // 6007 frames a 48 kHz: 125,1458 ms. La interfaz escribe el final como
+    // 125.15 (los decimales justos para volver al frame 6007), que pasa unas
+    // milésimas del largo en ms: antes, «pasado el final» y la edición en la
+    // onda se deshacía.
+    let dir = fixture("odd_end");
+    offline::write_wav(dir.join("odd.wav"), &vec![0.1f32; 6007], 1, RATE).unwrap();
+    assert_eq!(script::slice_call::frame_ms_text(6007, RATE), "125.15");
+    let song = eval(
+        &dir,
+        "local s = sample(\"odd.wav\"):slice({ {0, 60}, {60, 125.15} })\n\
+         track(\"a\", s):steps(\"1 2 . .  . . . .  . . . .  . . . .\")\n",
+    )
+    .unwrap();
+    assert_eq!(slices(&song, "a"), vec![0..2880, 2880..6007]);
+    // Lo que de verdad pasa del final sigue siendo un error.
+    let Err(err) = eval(
+        &dir,
+        "local s = sample(\"odd.wav\"):slice({ {0, 125.2} })\ntrack(\"a\", s):steps(\"1 . . .  . . . .  . . . .  . . . .\")\n",
+    ) else {
+        panic!("125.2 ms pasa del final");
+    };
+    assert!(err.contains("pasado el final de odd.wav"), "{err}");
+}

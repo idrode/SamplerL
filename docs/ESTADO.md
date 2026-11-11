@@ -4199,6 +4199,44 @@ la carpeta global (`script_host` en `main.rs`). No hace falta API nueva:
 - El motor no cambia: el sample nuevo llega con la carga de siempre, fuera
   del audio y al compás; `no_alloc.rs` no tiene camino nuevo que probar.
 
+## Arrastrar un corte no quedaba fijado
+
+Continuación de «Cortes independientes y guardar su edición» (sin fase
+propia), encontrado al probar en el MacBook con Asahi Linux (ARM64, kitty
+sobre Hyprland, sin tmux).
+
+### La causa: el final del sample escrito con pocos decimales
+
+- **Síntoma**: al soltar el borde de un corte, el corte volvía a su sitio.
+  La línea de mensajes decía «no se cambia: el código escrito no carga
+  (cancion.lua:5: slice({...}): el corte 16 acaba en 5680.46 ms, pasado el
+  final de amenidm.wav (5680.5 ms))», pero el siguiente clic la pisaba.
+- **No es de la arquitectura**: depende del largo del sample. `amenidm.wav`
+  tiene 250 508 frames a 44,1 kHz (5680,4535 ms). Al reescribir la llamada,
+  `frame_ms_text` escribe el final del último corte con los menos decimales
+  que vuelven a su frame: `5680.46`. Ese número pasa unas milésimas del largo
+  exacto en ms, y `cut_explicit` comparaba en ms (`end > length + 1e-6`):
+  el código escrito no cargaba, `write_slices` lo deshacía y el corte
+  volvía. Pasaba con cualquier arrastre (cada reescritura incluye el final
+  del último corte) y con cualquier sample cuyo largo en ms no sea redondo
+  al redondear hacia arriba; el break de los tests (6000 frames a 48 kHz,
+  125 ms justos) no lo veía, por eso los tests estaban en verde en las dos
+  máquinas.
+- **Arreglo**: la comprobación del final va en frames
+  (`ms_to_frame(end) > frames`), como ya hacía `cortes:move`. Lo que de
+  verdad pasa del final (aunque sea medio frame) sigue siendo un error.
+- **Tests**: `script/tests/slice_ranges.rs`
+  (`the_end_of_a_sample_written_with_few_decimals_still_fits`: 6007 frames a
+  48 kHz, que se escriben `125.15`) y `tui/src/tests/slice_save.rs`
+  (`every_slice_of_a_sample_with_an_odd_length_can_be_dragged_saved_and_reopened`:
+  el inicio y el final de cada corte, con `slice_grid(4)`, `slice(4)`, la
+  tabla explícita y `stretch(130):slice_grid(4)`, cada arrastre se fija;
+  Ctrl-S y abrir de nuevo dan los mismos cortes). Los dos fallaban antes del
+  arreglo con el mensaje de arriba. Con una copia de la canción del usuario
+  (`slice_grid(16)` y `stretch(140):slice_grid(16)`, abriendo el `.lua` y
+  el `.sampler` con sus `corte =` de antes), los 64 arrastres de inicio y
+  final de las dos pistas se fijan y sobreviven a guardar y abrir.
+
 ## Audio de prueba y problemas conocidos
 
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`

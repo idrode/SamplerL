@@ -4475,7 +4475,11 @@ fn explicit_slices(
                 "acaba ({end} ms) antes de empezar ({start} ms)"
             )));
         }
-        if end > length + 1e-6 {
+        // Por frames, no por ms: la interfaz escribe el final del sample
+        // con los decimales justos para volver a su frame, y ese número
+        // puede pasar unas milésimas del largo exacto en ms (5680.46 en un
+        // sample de 5680.4535 ms).
+        if ms_to_frame(end, &this.sample) > this.sample.frames() {
             return Err(at(format!(
                 "acaba en {end} ms, pasado el final de {} ({length:.1} ms)",
                 this.name
