@@ -10,9 +10,10 @@ use std::time::{Duration, Instant};
 use engine::{Engine, new_engine};
 use ratatui_textarea::CursorMove;
 
-use super::split::{pump_until, socket_dir};
+use super::split::{main_window, pump, pump_until, socket_dir};
 use super::{RATE, SONG, ctrl, fixture, type_text};
 use crate::app::App;
+use crate::link::{self, Server, ToEditor};
 use crate::palette::Action;
 
 /// Una «terminal» que apunta sus argumentos en `out`, uno por línea (con
@@ -271,6 +272,81 @@ fn two_projects_open_at_once_do_not_mix_their_editor_windows() {
     assert!(!editor_two.text_for_test().contains("-- uno"));
     assert_eq!(editor_one.text_for_test(), main_one.text_for_test());
     assert_eq!(editor_two.text_for_test(), main_two.text_for_test());
+}
+
+/// Si lo que contesta en el socket es la principal de otro script (un
+/// choque de nombres, o una principal de antes que se abrió con otra
+/// ruta), el editor no se queda con su texto: lo dice y no se une.
+#[test]
+fn the_editor_refuses_a_main_window_of_another_script() {
+    let script = fixture("ew_other_main", Some(SONG));
+    let other = fixture("ew_other_main_b", Some("bpm(90)\n"));
+    let sockets = socket_dir(&script);
+    let socket = link::socket_path(&sockets, &script);
+    let mut server = Server::bind(&socket).unwrap();
+    let (mut editor, _idle) =
+        editor_in(&elsewhere(), &script.display().to_string(), &sockets).expect("abre el script");
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !server.connected() {
+        assert!(Instant::now() < deadline, "no se conectó");
+        editor.tick();
+        server.accept();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let welcome = ToEditor::Welcome {
+        version: link::VERSION,
+        path: other.canonicalize().unwrap(),
+        samples: other.parent().unwrap().to_path_buf(),
+        rev: 0,
+        text: "bpm(90)\n".into(),
+    };
+    server.client().unwrap().send(&welcome).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !editor.view().message.contains("otro script") {
+        assert!(
+            Instant::now() < deadline,
+            "no lo rechazó: {}",
+            editor.view().message
+        );
+        editor.tick();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(editor.text_for_test(), SONG);
+}
+
+/// Lo escrito en la ventana del editor antes de que la principal conteste
+/// no pisa lo que la principal tenía sin guardar: se queda el texto de la
+/// principal y Ctrl-Z en el editor recupera lo de aquí.
+#[test]
+fn text_typed_before_connecting_does_not_overwrite_unsaved_text_in_the_main_window() {
+    let script = fixture("ew_early", Some(SONG));
+    let (mut editor, _idle) = editor_in(
+        &elsewhere(),
+        &script.display().to_string(),
+        &socket_dir(&script),
+    )
+    .unwrap();
+    editor.editor.move_cursor(CursorMove::Bottom);
+    type_text(&mut editor, "-- aquí\n");
+    let here = editor.text_for_test();
+
+    let (mut main, _engine) = main_window(&script, None);
+    // (`main_window` ya escucha: se escribe en su texto como lo habría
+    // escrito antes de sacar el editor.)
+    main.editor.move_cursor(CursorMove::Bottom);
+    for c in "-- allí".chars() {
+        main.editor.insert_char(c);
+    }
+    main.editor.insert_newline();
+    let there = main.text_for_test();
+    pump_until(&mut main, &mut editor, |_, e| {
+        e.view().message.contains("Ctrl-Z")
+    });
+    pump(&mut main, &mut editor);
+    assert_eq!(main.text_for_test(), there);
+    assert_eq!(editor.text_for_test(), there);
+    editor.handle(ctrl('z'));
+    assert_eq!(editor.text_for_test(), here);
 }
 
 #[test]

@@ -764,7 +764,6 @@ impl App {
     }
 
     fn poll_editor(&mut self) {
-        let text = self.text();
         let Some(Link::Editor(editor)) = &mut self.link else {
             return;
         };
@@ -785,11 +784,14 @@ impl App {
             self.editor_message(message);
         }
         // El texto, mientras se escribe (para que lo que cambie la
-        // principal parta de él).
+        // principal parta de él): el de ahora, tras lo que haya llegado.
+        let text = self.text();
         let Some(Link::Editor(editor)) = &mut self.link else {
             return;
         };
-        if text != editor.sent && editor.last_sync.elapsed() >= TEXT_SYNC {
+        // (Hasta el saludo de la principal no se manda nada: su texto puede
+        // tener cambios sin guardar que no hay que pisar.)
+        if editor.welcomed && text != editor.sent && editor.last_sync.elapsed() >= TEXT_SYNC {
             editor.rev += 1;
             let rev = editor.rev;
             let sent = editor.client.conn().map(|c| {
@@ -818,6 +820,7 @@ impl App {
         let Some(Link::Editor(editor)) = &mut self.link else {
             return;
         };
+        let mut take_theirs = None;
         match message {
             ToEditor::Welcome {
                 version,
@@ -835,6 +838,21 @@ impl App {
                     );
                     return;
                 }
+                // Que sea la principal de este script: el socket va por un
+                // resumen de la ruta, y una principal de antes pudo mandar
+                // la suya relativa (entonces no se puede comprobar).
+                let ours = crate::target::full_path(&self.path);
+                if path.is_absolute() && crate::target::full_path(&path) != ours {
+                    editor.client.disconnect();
+                    editor.client.stopped = true;
+                    self.message = format!(
+                        "en el socket contesta la ventana principal de otro script ({}), no la \
+                         de {}: no se une; cierra esta ventana y ábrela desde la principal",
+                        path.display(),
+                        ours.display()
+                    );
+                    return;
+                }
                 editor.rev = rev;
                 let first = !std::mem::replace(&mut editor.welcomed, true);
                 self.host.set_sample_dir(Some(samples));
@@ -847,6 +865,17 @@ impl App {
                     }
                     self.message =
                         format!("conectado con la ventana principal ({})", path.display());
+                } else if first && theirs != editor.opened && theirs != text {
+                    // Se escribió aquí antes de conectar y la principal
+                    // también tiene cambios sin guardar: manda la principal
+                    // (lo suyo es lo que suena y lo que se ve allí) y lo de
+                    // aquí queda a un Ctrl-Z.
+                    editor.sent = theirs.clone();
+                    take_theirs = Some(theirs);
+                    self.message = "la ventana principal tenía cambios sin guardar: se queda su \
+                                    texto; Ctrl-Z recupera lo que escribiste aquí antes de \
+                                    conectar"
+                        .into();
                 } else {
                     // Reconectado: el texto es el de aquí; se le manda.
                     editor.sent = theirs.clone();
@@ -904,6 +933,11 @@ impl App {
             ToEditor::GiveBack => {
                 self.return_to_main();
             }
+        }
+        if let Some(theirs) = take_theirs {
+            let message = std::mem::take(&mut self.message);
+            self.replace_text(&theirs);
+            self.message = message;
         }
     }
 
