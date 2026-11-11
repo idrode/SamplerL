@@ -280,6 +280,12 @@ pub struct App {
     controller: Controller,
     error: Option<ScriptError>,
     message: String,
+    /// Por qué no se fijó el último cambio de cortes en la onda (se movió y
+    /// volvió, o no se puede guardar en el código): se queda en el borde
+    /// del panel del sample hasta el siguiente cambio que se fija o la
+    /// siguiente carga, porque la línea de mensajes la pisa el siguiente
+    /// clic y no cabe entera.
+    slice_warning: Option<String>,
     started: bool,
     /// Compás en que empieza el siguiente arranque (ver `app::cue`).
     cue: Option<u64>,
@@ -558,6 +564,7 @@ impl App {
             controller,
             error: None,
             message: String::new(),
+            slice_warning: None,
             started: false,
             cue: None,
             selected: 0,
@@ -2397,6 +2404,7 @@ impl App {
             Ok(song) => {
                 self.loads += 1;
                 self.error = None;
+                self.slice_warning = None;
                 self.loaded_text = Some(text.clone());
                 self.message = "cargado: entra en el siguiente compás".into();
                 for warning in &song.warnings {
@@ -5562,6 +5570,7 @@ impl App {
                 .and_then(|p| p.file_name())
                 .map(|n| n.to_string_lossy().into()),
             message: self.message.clone(),
+            slice_warning: self.slice_warning.clone(),
             transport,
             metronome: self.metronome,
             recording: self.recording_text(),

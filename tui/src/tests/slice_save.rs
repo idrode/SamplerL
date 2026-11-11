@@ -276,3 +276,69 @@ fn every_slice_of_a_sample_with_an_odd_length_can_be_dragged_saved_and_reopened(
         assert_eq!(slices_of(&again, "b"), edited, "{name}");
     }
 }
+
+/// El aviso de un cambio de cortes que no se fijó sigue en el borde del
+/// panel del sample aunque otro mensaje pise la línea de mensajes, y se va
+/// con el siguiente cambio que se fija.
+#[test]
+fn a_slice_change_that_does_not_stick_stays_visible_on_the_sample_panel() {
+    let cases = [
+        (
+            "variable",
+            SONG.replace(
+                "local amen = sample(\"break.wav\"):slice(2)",
+                "local n = 2\nlocal amen = sample(\"break.wav\"):slice(n)",
+            ),
+            "los cortes movidos no se guardan",
+        ),
+        (
+            "table",
+            SONG.replace(
+                "local amen = sample(\"break.wav\"):slice(2)",
+                "local t = { {0, 60}, {60, 125} }\nlocal amen = sample(\"break.wav\"):slice(t)",
+            ),
+            "los cortes movidos no se guardan",
+        ),
+        (
+            "move",
+            SONG.replace(
+                "local amen = sample(\"break.wav\"):slice(2)",
+                "local amen = sample(\"break.wav\"):slice(2)\namen:move(2, 62.5)",
+            ),
+            "el cambio de cortes no se fijó",
+        ),
+    ];
+    for (name, song, warning) in cases {
+        let (_, mut app, _engine) = open(&format!("slice_save_warning_{name}"), Some(&song));
+        assert!(app.view().error.is_none(), "{name}: {:?}", app.view().error);
+        let start = slices_of(&app, "drums")[1].start;
+        drag_mark(&mut app, start, 6);
+        assert!(
+            app.view().slice_warning.is_some(),
+            "{name}: {}",
+            app.view().message
+        );
+        // Otro mensaje (un clic sin mover, que suena y elige el corte).
+        draw(&mut app, 160, 40);
+        let layout = app.wave_layout().unwrap();
+        let (x, y) = layout.point_of(1500);
+        app.mouse(MouseAction::Down, x, y);
+        app.mouse(MouseAction::Up, x, y);
+        assert!(!app.view().message.contains(warning), "{name}");
+        let screen = text(&draw(&mut app, 160, 40));
+        assert!(
+            screen.contains(&format!("⚠ {warning}")),
+            "{name}:\n{screen}"
+        );
+    }
+    // Un cambio que se fija lo quita.
+    let (_, mut app, _engine) = open("slice_save_warning_clears", Some(SONG));
+    type_text(&mut app, "-- algo\n");
+    drag_mark(&mut app, 3000, 6);
+    assert!(app.view().slice_warning.is_some());
+    app.handle(ctrl('s'));
+    assert!(app.view().slice_warning.is_none(), "la carga lo quita");
+    drag_mark(&mut app, 3000, 6);
+    assert!(app.view().slice_warning.is_none());
+    assert!(app.text_for_test().contains("slice({"));
+}

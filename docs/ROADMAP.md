@@ -956,3 +956,8 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
     1. ✅ **El final del sample**: escrito con los decimales justos podía
        pasar unas milésimas del largo en ms y el código reescrito no
        cargaba; ahora se comprueba en frames.
+    2. ✅ **El aviso a la vista**: lo que no se fija o no se guarda se queda
+       en el borde del panel del sample hasta el siguiente cambio que se
+       fija o la siguiente carga.
+    3. ✅ **El ratón real**: comprobado en una PTY con secuencias SGR
+       (modos, orden de Down, Drag y Up, soltar fuera, modificadores).

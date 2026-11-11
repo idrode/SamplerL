@@ -1441,6 +1441,10 @@ de verdad.
   una tabla generada, no se cambia.
 - Si al releer no da esos cortes (un `:move()` o un `:add()` después de
   `slice()` los cambia) o cambiaría los de otra pista, se deshace y lo dice.
+- Cuando un cambio no se fija o no se puede guardar, además del mensaje, el
+  motivo se queda en el borde de abajo del panel del sample, con `⚠`, hasta
+  el siguiente cambio que se fija o la siguiente carga: el corte vuelve a su
+  sitio, pero no en silencio.
 
 **Cada corte tiene su inicio y su final.** Mover el borde de un corte no
 toca a sus vecinos: si acortas el 1, el 2 sigue donde estaba y queda un

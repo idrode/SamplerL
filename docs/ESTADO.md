@@ -4237,6 +4237,53 @@ sobre Hyprland, sin tmux).
   el `.sampler` con sus `corte =` de antes), los 64 arrastres de inicio y
   final de las dos pistas se fijan y sobreviven a guardar y abrir.
 
+### El aviso se perdía: ahora se queda en el panel del sample
+
+- **Problema de usabilidad** (aparte de la causa): cuando un cambio de
+  cortes no se fija (el código reescrito no carga, el texto no está
+  cargado, un `:move()` después manda) o no se puede guardar (`slice(n)` con
+  una variable, una tabla generada), el motivo solo iba a la línea de
+  mensajes: una fila, que se trunca con los mensajes largos (el de arriba
+  pasa de 170 caracteres) y que pisa el siguiente clic o la siguiente carga.
+  El corte volvía a su sitio sin nada a la vista.
+- **Arreglo**: `App::slice_warning` guarda el motivo
+  (`not_written_message` lo pone: «el cambio de cortes no se fijó: …» o
+  «los cortes movidos no se guardan: …») y el panel del sample (el normal y
+  el grande) lo dibuja en su borde de abajo con `⚠` en el color de los
+  avisos. Se quita con el siguiente cambio que se fija (`write_slices`) o
+  con la siguiente carga que va bien (el texto es otro: el motivo ya no
+  vale). La línea de mensajes sigue diciendo lo mismo que antes.
+- Test: `a_slice_change_that_does_not_stick_stays_visible_on_the_sample_panel`
+  (`slice(n)` con una variable, una tabla en una variable y `:move()`
+  después; tras un clic que cambia el mensaje, el aviso sigue en pantalla; y
+  se va con una carga y con un cambio que se fija).
+
+### El ratón por la terminal real
+
+- **En una PTY** (un script de Python con `pty` y `pyte` como terminal,
+  fuera del repositorio; sin `--allow-audio`, salida nula), con secuencias
+  SGR 1006 reales: pulsar, movimientos con el botón (`32`) columna a
+  columna y soltar. Llegan Down, Drag y Up en orden; el arrastre se fija y
+  Ctrl-S lo escribe en el archivo, también soltando fuera del panel (en la
+  fila del editor) y con Alt, Ctrl o Shift en los bits del evento.
+- **Modos**: `EnableMouseCapture` de crossterm pide 1000, 1002, 1003, 1006 y
+  1015, y `DisableMouseCapture` los quita al salir (también con error o
+  pánico, con la guarda `TerminalModes`). Comprobado en la salida de la PTY.
+- **El bucle de eventos** no pierde el Up: lo leído de una vez se procesa
+  entero, y solo se salta un lote si todo él son movimientos sin botón
+  (`only_motion`). Un clic nuevo suelta un arrastre que se quedó sin Up
+  (soltado fuera de la ventana).
+- **Lo que la terminal se queda**: en kitty, Shift y arrastrar selecciona
+  texto aunque el programa tenga el ratón (por eso Shift no es modificador
+  en la onda), y Ctrl-Alt y arrastrar es la selección rectangular; Alt o
+  Ctrl solos llegan al programa. Hyprland mueve ventanas con Super y
+  arrastrar (su configuración de ejemplo). No hay tmux en esta máquina.
+- **Clic o arrastre**: soltar en la misma columna es un clic (suena); una
+  columna de movimiento ya es arrastre. No se cambia: es lo que permite
+  afinar columna a columna.
+- **Sin traza**: la causa se reprodujo con tests, así que no se añadió el
+  modo de traza de eventos del ratón.
+
 ## Audio de prueba y problemas conocidos
 
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`

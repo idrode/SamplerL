@@ -86,6 +86,10 @@ pub struct ViewModel {
     pub project: Option<String>,
     /// Mensaje informativo de la última acción.
     pub message: String,
+    /// Por qué no se fijó el último cambio de cortes en la onda (en el
+    /// borde del panel del sample, hasta el siguiente que se fija o la
+    /// siguiente carga).
+    pub slice_warning: Option<String>,
     /// Atajos principales del modo actual (de la configuración); vacío: los
     /// de siempre.
     pub key_help: String,

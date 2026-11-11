@@ -86,6 +86,7 @@ impl App {
         });
         self.completion = None;
         self.marks.clear();
+        self.slice_warning = None;
         self.replace_text(&text);
         self.load();
         // Solo se miran los cortes que cambian (los demás los puede cambiar
@@ -161,15 +162,25 @@ impl App {
         None
     }
 
-    /// El mensaje para un cambio de cortes que no se pudo escribir.
-    pub(super) fn not_written_message(&self, why: NotWritten) -> String {
-        match why {
-            NotWritten::Refused(why) => format!("no se cambia: {why}"),
-            NotWritten::Generated(why) => format!(
-                "no se puede guardar en el código: {why}; para editarlos desde la onda, \
-                 escribe la llamada tal cual: slice(8) o slice({{ {{0, 120}}, {{120, 250}} }})"
+    /// El mensaje para un cambio de cortes que no se pudo escribir. El
+    /// motivo se queda además en el borde del panel del sample
+    /// ([`App::slice_warning`]).
+    pub(super) fn not_written_message(&mut self, why: NotWritten) -> String {
+        let (warning, message) = match why {
+            NotWritten::Refused(why) => (
+                format!("el cambio de cortes no se fijó: {why}"),
+                format!("no se cambia: {why}"),
             ),
-        }
+            NotWritten::Generated(why) => (
+                format!("los cortes movidos no se guardan: {why}"),
+                format!(
+                    "no se puede guardar en el código: {why}; para editarlos desde la onda, \
+                     escribe la llamada tal cual: slice(8) o slice({{ {{0, 120}}, {{120, 250}} }})"
+                ),
+            ),
+        };
+        self.slice_warning = Some(warning);
+        message
     }
 
     /// Las parejas (sample, corte) del proyecto que ya no usa ninguna

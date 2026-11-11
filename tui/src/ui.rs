@@ -1352,7 +1352,10 @@ impl Widget for SamplePanel<'_> {
             synth_panel(track, synth, area, buf);
             return;
         }
-        let block = panel_block(view, crate::focus::Panel::Wave).title(sample_title(view, track));
+        let block = slice_warning(
+            view,
+            panel_block(view, crate::focus::Panel::Wave).title(sample_title(view, track)),
+        );
         let inner = block.inner(area);
         block.render(area, buf);
         if inner.width < 2 || inner.height < 2 || track.sample_frames == 0 {
@@ -1377,6 +1380,18 @@ fn synth_panel(
         .wrap(Wrap { trim: true })
         .block(Block::bordered().title(title))
         .render(area, buf);
+}
+
+/// El motivo de que el último cambio de cortes no se fijara, en el borde de
+/// abajo del panel del sample y en el color de los avisos (se queda: la
+/// línea de mensajes la pisa el siguiente clic).
+fn slice_warning<'a>(view: &ViewModel, block: Block<'a>) -> Block<'a> {
+    match &view.slice_warning {
+        Some(warning) => block.title_bottom(
+            Line::from(format!(" ⚠ {warning} ")).style(Style::new().fg(warning_color()).bold()),
+        ),
+        None => block,
+    }
 }
 
 /// Título del panel del sample: pista, archivo, duración, cortes y el
@@ -1753,7 +1768,10 @@ impl Widget for BigSamplePanel<'_> {
             synth_panel(track, synth, area, buf);
             return;
         }
-        let block = panel_block(view, crate::focus::Panel::Wave).title(sample_title(view, track));
+        let block = slice_warning(
+            view,
+            panel_block(view, crate::focus::Panel::Wave).title(sample_title(view, track)),
+        );
         let inner = block.inner(area);
         block.render(area, buf);
         if inner.width < 2 || track.sample_frames == 0 {
