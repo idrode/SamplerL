@@ -102,6 +102,7 @@ pub enum Action {
     /// Lleva el foco a un panel (Alt-0…9).
     Focus(crate::focus::Panel),
     ToggleExplorer,
+    RefreshFiles,
     EditorTaller,
     EditorShorter,
     Wider,
@@ -737,6 +738,12 @@ pub const ACTIONS: &[ActionDef] = &[
         name: "Explorador de archivos",
         description: "Muestra o esconde el árbol de la carpeta del proyecto a la izquierda; en una terminal estrecha, lo abre encima",
         keys: "Alt-E",
+    },
+    ActionDef {
+        action: Action::RefreshFiles,
+        name: "Refrescar el explorador",
+        description: "Vuelve a leer las carpetas abiertas del explorador de archivos (las cerradas se leen al abrirlas); con el foco en él, R",
+        keys: "",
     },
     ActionDef {
         action: Action::EditorTaller,

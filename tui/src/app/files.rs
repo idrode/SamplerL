@@ -63,6 +63,9 @@ pub(crate) struct Explorer {
     /// Dónde se dibujó (el ratón lo usa) y si se arrastra su borde.
     layout: Option<FilesLayout>,
     drag: bool,
+    /// El script del editor tal como se abrió y su ruta completa (la del
+    /// árbol); se recalcula solo si cambia.
+    current: Option<(PathBuf, PathBuf)>,
 }
 
 impl Default for Explorer {
@@ -78,6 +81,7 @@ impl Default for Explorer {
             last_click: None,
             layout: None,
             drag: false,
+            current: None,
         }
     }
 }
@@ -93,7 +97,7 @@ impl App {
     fn ensure_files(&mut self) {
         if self.files.tree.is_none() {
             let mut tree = Tree::new(&self.base_dir());
-            tree.reveal(&self.path);
+            tree.reveal(&crate::target::full_path(&self.path));
             self.files.tree = Some(tree);
         }
     }
@@ -107,6 +111,10 @@ impl App {
             self.files.overlay = false;
         }
         self.ensure_files();
+        if self.files.current.as_ref().map(|c| &c.0) != Some(&self.path) {
+            let full = crate::target::full_path(&self.path);
+            self.files.current = Some((self.path.clone(), full));
+        }
         let mut view = self.files_view();
         let layout = FilesLayout::new(&view, area);
         if let Some(tree) = &mut self.files.tree {
@@ -118,6 +126,20 @@ impl App {
             ..layout
         });
         view
+    }
+
+    /// Las filas del árbol (en los tests).
+    #[cfg(test)]
+    pub fn view_files_rows(&self) -> Vec<files::Row> {
+        self.files.tree.as_ref().map(Tree::rows).unwrap_or_default()
+    }
+
+    /// Elige la fila `i` del árbol (en los tests).
+    #[cfg(test)]
+    pub fn select_file_for_test(&mut self, i: usize) {
+        if let Some(tree) = &mut self.files.tree {
+            tree.select(i);
+        }
     }
 
     #[cfg(test)]
@@ -136,7 +158,7 @@ impl App {
             rows: tree.map(Tree::rows).unwrap_or_default(),
             selected: tree.map_or(0, |t| t.selected),
             top: tree.map_or(0, |t| t.top),
-            current: Some(self.path.clone()),
+            current: self.files.current.as_ref().map(|c| c.1.clone()),
             focused: self.chosen_focus == Some(Panel::Files),
             input: self.files.ask.as_ref().map(|(ask, text)| {
                 let label = match ask {
@@ -311,7 +333,7 @@ impl App {
             },
             Key::Delete | Key::Char('d') => match row {
                 Some(r) if r.kind != Kind::Dir && !r.note => {
-                    if r.path == self.path {
+                    if self.is_current_script(&r.path) {
                         self.message = "es el script del editor: no se borra desde aquí".into();
                     } else {
                         self.files.ask = Some((Ask::Delete(r.path.clone()), String::new()));
@@ -321,12 +343,7 @@ impl App {
                     self.message = "Supr: elige un archivo (las carpetas no se borran aquí)".into()
                 }
             },
-            Key::Char('R') => {
-                if let Some(tree) = &mut self.files.tree {
-                    tree.refresh(None);
-                }
-                self.message = "explorador: vuelto a leer".into();
-            }
+            Key::Char('R') => self.refresh_files(),
             Key::Char('<') | Key::Char('-') => self.resize_explorer(-(WIDTH_STEP as i32)),
             Key::Char('>') | Key::Char('+') => self.resize_explorer(WIDTH_STEP as i32),
             _ => {}
@@ -334,11 +351,25 @@ impl App {
         Some(Flow::Continue)
     }
 
+    /// «Refrescar el explorador» (R con el foco): vuelve a leer las
+    /// carpetas abiertas (las cerradas no se leen).
+    pub(super) fn refresh_files(&mut self) {
+        if let Some(tree) = &mut self.files.tree {
+            tree.refresh(None);
+        }
+        self.message = "explorador: vuelto a leer".into();
+    }
+
     fn files_step(&mut self, delta: isize) {
         if let Some(tree) = &mut self.files.tree {
             tree.step(delta);
         }
         self.files.open_armed = None;
+    }
+
+    /// `path` es el script del editor (con la ruta que sea).
+    fn is_current_script(&self, path: &Path) -> bool {
+        path == self.path || crate::target::full_path(path) == crate::target::full_path(&self.path)
     }
 
     /// Enter en la fila elegida.
@@ -367,13 +398,14 @@ impl App {
                 }
             }
             Kind::Audio => self.preview_tree_file(&row.path),
+            Kind::Unsupported => self.message = unsupported_message(&row.path),
         }
     }
 
     /// Abre `path` en el editor y lo carga (con cambios sin guardar, hay
     /// que pedirlo otra vez).
     pub(super) fn open_script(&mut self, path: &Path) {
-        if path == self.path {
+        if self.is_current_script(path) {
             self.message = "ya está en el editor".into();
             return;
         }
@@ -450,7 +482,10 @@ impl App {
             self.message = "el editor está en su ventana".into();
             return;
         }
-        let file = relative(path, &self.sample_folder());
+        let file = relative(
+            &crate::target::full_path(path),
+            &crate::target::full_path(&self.sample_folder()),
+        );
         let text = format!("sample(\"{file}\")");
         self.marks.clear();
         self.grouped(|editor| editor.insert_str(&text));
@@ -522,7 +557,7 @@ impl App {
                 match made {
                     Ok(path) => {
                         if let Ask::Rename(from) = &ask
-                            && *from == self.path
+                            && self.is_current_script(from)
                         {
                             self.path = path.clone();
                         }
@@ -617,9 +652,22 @@ impl App {
     }
 }
 
+/// Lo que se dice de un archivo de audio que el motor no carga.
+fn unsupported_message(path: &Path) -> String {
+    let ext = path
+        .extension()
+        .map_or_else(String::new, |e| e.to_string_lossy().to_lowercase());
+    format!(
+        "{}: formato no soportado: {ext} (se cargan {}); conviértelo, por ejemplo con ffmpeg -i \
+         entrada salida.wav",
+        path.file_name().unwrap_or_default().to_string_lossy(),
+        files::AUDIO.join(", ")
+    )
+}
+
 /// Las teclas del explorador, para el mensaje.
 pub fn files_keys() -> &'static str {
-    "ARCHIVOS: ↑↓ elegir · Enter abre · ←→ plegar · Espacio escucha · a sample() · n nuevo · r renombra · Supr borra · </> ancho · Esc vuelve"
+    "ARCHIVOS: ↑↓ elegir · Enter abre · ←→ plegar · Espacio escucha · a sample() · n nuevo · r renombra · Supr borra · R refresca · </> ancho · Esc vuelve"
 }
 
 /// `path` respecto a `base` (con `/`), o entera si no está dentro.

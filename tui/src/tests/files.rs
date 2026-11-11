@@ -5,6 +5,7 @@
 use super::*;
 use crate::app::MouseAction;
 use crate::files_panel::{FilesHit, FilesPanel, FilesView};
+use crate::palette::Action;
 use crate::theme;
 
 fn alt(c: char) -> Input {
@@ -83,7 +84,12 @@ fn enter_on_a_script_opens_it_and_esc_gives_the_focus_back() {
     app.handle(special(Key::Enter));
     app.handle(special(Key::Down));
     app.handle(special(Key::Enter));
-    let other = path.parent().unwrap().join("scripts/otro.lua");
+    let other = path
+        .parent()
+        .unwrap()
+        .join("scripts/otro.lua")
+        .canonicalize()
+        .unwrap();
     assert_eq!(app.path_for_test(), other.as_path());
     assert!(app.text_for_test().starts_with("bpm(90)"));
     assert!(app.view().error.is_none(), "{:?}", app.view().error);
@@ -106,7 +112,7 @@ fn enter_on_a_script_opens_it_and_esc_gives_the_focus_back() {
     );
     assert_eq!(app.path_for_test(), other.as_path());
     app.handle(special(Key::Enter));
-    assert_eq!(app.path_for_test(), path.as_path());
+    assert_eq!(app.path_for_test(), path.canonicalize().unwrap().as_path());
 }
 
 #[test]
@@ -255,4 +261,83 @@ fn new_rename_and_delete_with_confirmation() {
         app.view().message
     );
     assert!(path.exists());
+}
+
+/// El fallo del árbol vacío: con el script abierto por su nombre a secas
+/// (`tui --edit song.lua` desde su carpeta), `Path::parent` da `""` y el
+/// árbol intentaba leer `""`: una raíz sin nombre y «no se puede leer».
+/// Ahora es la carpeta actual, completa (la de los tests es la del crate).
+#[test]
+fn a_script_opened_by_its_bare_name_shows_its_folder() {
+    let (controller, _engine) = new_engine(RATE);
+    let mut app = App::open(Path::new("zz-explorador-suelto.lua"), controller, RATE).unwrap();
+    let screen = text(&draw(&mut app, 120, 30));
+    assert!(!screen.contains("no se puede leer"), "{screen}");
+    assert!(!screen.contains("no existe"), "{screen}");
+    let cwd = std::env::current_dir().unwrap().canonicalize().unwrap();
+    let name = cwd.file_name().unwrap().to_string_lossy().into_owned();
+    assert!(screen.contains(&format!("▾ {name}")), "{screen}");
+    assert!(screen.contains("▸ src"), "{screen}");
+}
+
+/// Un directorio con WAV en mayúsculas y minúsculas, subcarpetas, una
+/// carpeta vacía, audio que el motor no carga y archivos que no son audio.
+#[test]
+fn the_tree_lists_samples_folders_and_says_what_it_does_not_load() {
+    let (path, mut app, _engine) = open("files_formats", Some(SONG));
+    let dir = path.parent().unwrap();
+    std::fs::create_dir_all(dir.join("breaks/viejos")).unwrap();
+    std::fs::create_dir_all(dir.join("vacia")).unwrap();
+    for f in ["Think.WAV", "breaks/apache.wav", "loop.m4a", "notas.txt"] {
+        std::fs::write(dir.join(f), "").unwrap();
+    }
+    app.handle(alt('0'));
+    let buffer = draw(&mut app, 120, 40);
+    let screen = text(&buffer);
+    for row in [
+        "▸ breaks",
+        "▸ vacia",
+        "♪ break.wav",
+        "♪ Think.WAV",
+        "♪ loop.m4a  formato n",
+        "(1 archivo más que ",
+    ] {
+        assert!(screen.contains(row), "falta «{row}»\n{screen}");
+    }
+    let rows = app.view_files_rows();
+    let m4a = rows.iter().find(|r| r.name == "loop.m4a").unwrap();
+    assert_eq!(m4a.hint.as_deref(), Some("formato no soportado: m4a"));
+    assert!(
+        rows.iter()
+            .any(|r| r.note && r.name == "(1 archivo más que no es audio ni script)")
+    );
+    // Lo no soportado, atenuado.
+    let (x, y) = row_of(&buffer, "loop.m4a");
+    assert_eq!(buffer[(x, y)].fg, theme::get().dim);
+    // Enter en él dice por qué y cómo convertirlo.
+    let rows = app.view_files_rows();
+    let i = rows.iter().position(|r| r.name == "loop.m4a").unwrap();
+    app.select_file_for_test(i);
+    app.handle(special(Key::Enter));
+    assert!(
+        app.view().message.contains("formato no soportado: m4a"),
+        "{}",
+        app.view().message
+    );
+    // Una carpeta vacía lo dice con su ruta completa.
+    let i = rows.iter().position(|r| r.name == "vacia").unwrap();
+    app.select_file_for_test(i);
+    app.handle(special(Key::Enter));
+    let full = dir.canonicalize().unwrap().join("vacia");
+    let rows = app.view_files_rows();
+    assert!(
+        rows.iter()
+            .any(|r| r.note && r.name == format!("(vacía: {})", full.display())),
+        "{rows:?}"
+    );
+    // Lo nuevo aparece al refrescar desde el menú (la paleta).
+    std::fs::write(dir.join("nuevo.wav"), "").unwrap();
+    assert!(!text(&draw(&mut app, 120, 40)).contains("nuevo.wav"));
+    app.run_action(Action::RefreshFiles);
+    assert!(text(&draw(&mut app, 120, 40)).contains("♪ nuevo.wav"));
 }

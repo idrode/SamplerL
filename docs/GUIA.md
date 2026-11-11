@@ -1173,6 +1173,7 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Foco: ocupación | Lleva el foco a la vista de ocupación con su cursor; Esc vuelve | Alt-9 |
 | Foco: archivos | Lleva el foco a el explorador de archivos (si no se veía, aparece); Esc vuelve | Alt-0 |
 | Explorador de archivos | Muestra o esconde el árbol de la carpeta del proyecto a la izquierda; en una terminal estrecha, lo abre encima | Alt-E |
+| Refrescar el explorador | Vuelve a leer las carpetas abiertas del explorador de archivos (las cerradas se leen al abrirlas); con el foco en él, R | — |
 | Editor más alto | Una fila más para el editor de abajo (o el flotante); el sonido se aprieta. También arrastrando su borde de arriba | Ctrl-Alt-↑ |
 | Editor más bajo | Una fila menos para el editor de abajo (o el flotante) | Ctrl-Alt-↓ |
 | Más ancho | El editor flotante, si flota; si no, el explorador de archivos: dos columnas más | Ctrl-Alt-→ |

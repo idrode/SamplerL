@@ -18,11 +18,20 @@ pub enum Kind {
     Script,
     Project,
     Audio,
+    /// Audio que el motor no sabe cargar: se ve atenuado, con su nota.
+    Unsupported,
 }
 
 /// Las extensiones de los samples que se pueden cargar (`sample()` lee
 /// WAV, FLAC, MP3, OGG y AIFF, como el explorador de samples).
 pub const AUDIO: [&str; engine::SAMPLE_EXTENSIONS.len()] = engine::SAMPLE_EXTENSIONS;
+
+/// Extensiones de audio que el motor no sabe cargar: se enseñan atenuadas
+/// con «formato no soportado», nunca se esconden sin decirlo.
+pub const UNSUPPORTED_AUDIO: [&str; 17] = [
+    "m4a", "aac", "opus", "wma", "alac", "ape", "wv", "caf", "mp2", "mpc", "ac3", "amr", "au",
+    "snd", "w64", "rf64", "mka",
+];
 
 impl Kind {
     /// Qué es `path` (`None`: no se enseña).
@@ -35,6 +44,7 @@ impl Kind {
             "lua" => Kind::Script,
             "sampler" => Kind::Project,
             e if AUDIO.contains(&e) => Kind::Audio,
+            e if UNSUPPORTED_AUDIO.contains(&e) => Kind::Unsupported,
             _ => return None,
         })
     }
@@ -53,6 +63,8 @@ impl Kind {
             (Kind::Project, true) => "p",
             (Kind::Audio, false) => "♪",
             (Kind::Audio, true) => "~",
+            (Kind::Unsupported, false) => "♪",
+            (Kind::Unsupported, true) => "~",
         }
     }
 }
@@ -70,6 +82,11 @@ struct Entry {
     more: usize,
     /// No se pudo leer (el error).
     error: Option<String>,
+    /// Archivos de la carpeta que no se enseñan (ni audio ni scripts).
+    hidden: usize,
+    /// Un enlace a una carpeta que la contiene (o a sí misma): no se
+    /// sigue, para no dar vueltas sin fin.
+    cycle: bool,
 }
 
 impl Entry {
@@ -86,6 +103,8 @@ impl Entry {
             open: false,
             more: 0,
             error: None,
+            hidden: 0,
+            cycle: false,
         }
     }
 
@@ -95,6 +114,14 @@ impl Entry {
         let mut out = Vec::new();
         self.more = 0;
         self.error = None;
+        self.hidden = 0;
+        if self.cycle {
+            self.children = Some(out);
+            return;
+        }
+        // La carpeta de verdad, para reconocer los enlaces que vuelven a
+        // ella o a una de las de arriba.
+        let real = std::fs::canonicalize(&self.path).ok();
         match std::fs::read_dir(&self.path) {
             Ok(entries) => {
                 for entry in entries.flatten() {
@@ -111,8 +138,15 @@ impl Entry {
                         Err(_) => false,
                     };
                     let Some(kind) = Kind::of(&path, is_dir) else {
+                        self.hidden += 1;
                         continue;
                     };
+                    let cycle = is_dir
+                        && entry.file_type().is_ok_and(|t| t.is_symlink())
+                        && match (std::fs::canonicalize(&path), &real) {
+                            (Ok(target), Some(real)) => real.starts_with(target),
+                            _ => false,
+                        };
                     if out.len() >= MAX_ENTRIES {
                         self.more += 1;
                         // Contar sin fin tampoco: se para en el doble.
@@ -121,10 +155,19 @@ impl Entry {
                         }
                         continue;
                     }
-                    out.push(Entry::new(path, kind));
+                    let mut child = Entry::new(path, kind);
+                    child.cycle = cycle;
+                    out.push(child);
                 }
             }
-            Err(e) => self.error = Some(e.to_string()),
+            Err(e) => {
+                let full = crate::target::full_path(&self.path);
+                self.error = Some(if e.kind() == std::io::ErrorKind::NotFound {
+                    format!("no existe: {}", full.display())
+                } else {
+                    format!("no se puede leer {}: {e}", full.display())
+                });
+            }
         }
         out.sort_by(|a, b| {
             (a.kind != Kind::Dir)
@@ -163,6 +206,9 @@ pub struct Row {
     pub open: bool,
     /// Una fila de aviso (`… 300 más`, el error al leer), no un archivo.
     pub note: bool,
+    /// Lo que se dice detrás del nombre, atenuado (`formato no soportado:
+    /// m4a`).
+    pub hint: Option<String>,
 }
 
 /// El árbol, con la fila elegida y la primera que se ve.
@@ -176,7 +222,7 @@ pub struct Tree {
 impl Tree {
     /// El árbol de `dir`, con la raíz abierta (se lee solo esa carpeta).
     pub fn new(dir: &Path) -> Tree {
-        let mut root = Entry::new(dir.to_path_buf(), Kind::Dir);
+        let mut root = Entry::new(crate::target::full_path(dir), Kind::Dir);
         root.open = true;
         root.read();
         Tree {
@@ -267,6 +313,7 @@ impl Tree {
     /// Abre las carpetas hasta `path` (si está dentro de la raíz) y lo
     /// elige.
     pub fn reveal(&mut self, path: &Path) {
+        let path = &crate::target::full_path(path);
         let Ok(rel) = path.strip_prefix(&self.root.path) else {
             return;
         };
@@ -284,7 +331,7 @@ impl Tree {
             entry = child;
         }
         set_open(entry, true);
-        if let Some(i) = self.rows().iter().position(|r| r.path == path && !r.note) {
+        if let Some(i) = self.rows().iter().position(|r| r.path == *path && !r.note) {
             self.selected = i;
         }
     }
@@ -335,6 +382,17 @@ fn find_mut<'a>(entry: &'a mut Entry, path: &Path) -> Option<&'a mut Entry> {
 }
 
 fn flatten(entry: &Entry, depth: usize, out: &mut Vec<Row>) {
+    let hint = match entry.kind {
+        Kind::Unsupported => Some(format!(
+            "formato no soportado: {}",
+            entry
+                .path
+                .extension()
+                .map_or_else(String::new, |e| e.to_string_lossy().to_lowercase())
+        )),
+        Kind::Dir if entry.cycle => Some("enlace a una carpeta de arriba: no se sigue".into()),
+        _ => None,
+    };
     out.push(Row {
         depth,
         name: entry.name.clone(),
@@ -342,6 +400,7 @@ fn flatten(entry: &Entry, depth: usize, out: &mut Vec<Row>) {
         kind: entry.kind,
         open: entry.open,
         note: false,
+        hint,
     });
     if !entry.open {
         return;
@@ -353,9 +412,10 @@ fn flatten(entry: &Entry, depth: usize, out: &mut Vec<Row>) {
         kind: Kind::Dir,
         open: false,
         note: true,
+        hint: None,
     };
     if let Some(error) = &entry.error {
-        out.push(note(format!("no se puede leer: {error}")));
+        out.push(note(error.clone()));
     }
     for child in entry.children.iter().flatten() {
         flatten(child, depth + 1, out);
@@ -368,8 +428,23 @@ fn flatten(entry: &Entry, depth: usize, out: &mut Vec<Row>) {
         };
         out.push(note(more));
     }
-    if entry.children.as_ref().is_some_and(|c| c.is_empty()) && entry.error.is_none() {
-        out.push(note("(vacía)".into()));
+    if entry.hidden > 0 {
+        let what = if entry.hidden == 1 {
+            "1 archivo más que no es audio ni script".to_string()
+        } else {
+            format!("{} archivos más que no son audio ni scripts", entry.hidden)
+        };
+        out.push(note(format!("({what})")));
+    }
+    if entry.children.as_ref().is_some_and(|c| c.is_empty())
+        && entry.error.is_none()
+        && entry.hidden == 0
+        && !entry.cycle
+    {
+        out.push(note(format!(
+            "(vacía: {})",
+            crate::target::full_path(&entry.path).display()
+        )));
     }
 }
 
@@ -437,7 +512,8 @@ mod tests {
                 "  samples",
                 "  scripts",
                 "  p.sampler",
-                "  song.lua"
+                "  song.lua",
+                "  (1 archivo más que no es audio ni script)"
             ]
         );
         // Nada leído aún dentro de las carpetas cerradas.
@@ -448,10 +524,10 @@ mod tests {
             ["  samples", "    breaks", "    amen.wav", "    Think.WAV"]
         );
         tree.toggle(1);
-        assert_eq!(names(&tree).len(), 5);
+        assert_eq!(names(&tree).len(), 6);
         // Reabierta, ya leída.
         tree.open(1);
-        assert_eq!(names(&tree).len(), 8);
+        assert_eq!(names(&tree).len(), 10);
     }
 
     #[test]
@@ -502,6 +578,42 @@ mod tests {
         tree.refresh(Some(&dir.join("scripts/02-drop.lua")));
         assert_eq!(tree.selected_row().unwrap().name, "02-drop.lua");
         assert!(names(&tree).contains(&"    01-intro.lua".to_string()));
+    }
+
+    #[test]
+    fn a_link_back_up_is_not_followed_and_a_missing_root_says_so() {
+        let dir = dir("cycle");
+        std::os::unix::fs::symlink(&dir, dir.join("samples/vuelta")).unwrap();
+        std::os::unix::fs::symlink(dir.join("scripts"), dir.join("samples/otra")).unwrap();
+        let mut tree = Tree::new(&dir);
+        tree.toggle(1);
+        let rows = tree.rows();
+        let back = rows.iter().find(|r| r.name == "vuelta").unwrap();
+        assert_eq!(
+            back.hint.as_deref(),
+            Some("enlace a una carpeta de arriba: no se sigue")
+        );
+        let i = rows.iter().position(|r| r.name == "vuelta").unwrap();
+        tree.toggle(i);
+        assert_eq!(tree.rows().len(), rows.len(), "no se abre");
+        // Un enlace a una carpeta de al lado sí se sigue.
+        let i = rows.iter().position(|r| r.name == "otra").unwrap();
+        tree.toggle(i);
+        assert!(tree.rows().iter().any(|r| r.name == "01-intro.lua"));
+
+        let missing = dir.join("no-esta");
+        let tree = Tree::new(&missing);
+        let rows = tree.rows();
+        assert_eq!(
+            rows[1].name,
+            format!(
+                "no existe: {}",
+                missing
+                    .canonicalize()
+                    .unwrap_or(crate::target::full_path(&missing))
+                    .display()
+            )
+        );
     }
 
     #[test]

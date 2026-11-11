@@ -724,11 +724,16 @@ impl App {
 
     /// Carpeta respecto a la que se resuelven las rutas de las órdenes: la
     /// del proyecto o, si no hay, la del script.
+    ///
+    /// La carpeta de un `song.lua` a secas (`tui --edit song.lua`) es `.`:
+    /// `Path::parent` da `""`, no `None`, y `read_dir("")` falla; por eso
+    /// el explorador salía vacío. (El árbol la pasa a completa y canónica.)
     fn base_dir(&self) -> PathBuf {
         self.project
             .as_deref()
             .unwrap_or(&self.path)
             .parent()
+            .filter(|p| !p.as_os_str().is_empty())
             .unwrap_or(Path::new("."))
             .to_path_buf()
     }
@@ -4154,6 +4159,7 @@ impl App {
             Action::RollBack => self.reclaim_roll_window(),
             Action::Focus(panel) => self.set_focus(panel),
             Action::ToggleExplorer => self.toggle_explorer(),
+            Action::RefreshFiles => self.refresh_files(),
             Action::EditorTaller => self.resize_editor(1),
             Action::EditorShorter => self.resize_editor(-1),
             Action::Wider => self.widen(true),

@@ -163,7 +163,7 @@ impl Widget for FilesPanel<'_> {
             let y = tree.y + row_y as u16;
             let selected = i == view.selected;
             let current = view.current.as_ref() == Some(&row.path) && !row.note;
-            let mut style = if row.note {
+            let mut style = if row.note || row.kind == Kind::Unsupported {
                 Style::new().fg(theme.dim)
             } else if row.kind == Kind::Dir {
                 Style::new().fg(theme.accent)
@@ -193,8 +193,16 @@ impl Widget for FilesPanel<'_> {
             } else {
                 row.kind.icon(row.open, ascii)
             };
-            let mark = if current { " ◂" } else { "" };
-            let text = format!(" {indent}{icon} {}{mark}", row.name);
+            let mark = match (current, ascii) {
+                (true, false) => " ◂",
+                (true, true) => " <",
+                _ => "",
+            };
+            let hint = row
+                .hint
+                .as_ref()
+                .map_or_else(String::new, |h| format!("  {h}"));
+            let text = format!(" {indent}{icon} {}{mark}{hint}", row.name);
             let text: String = text.chars().take(tree.width as usize).collect();
             buf.set_string(tree.x, y, text, style);
         }
