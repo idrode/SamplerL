@@ -1,3 +1,4 @@
+mod add_samples;
 mod app;
 mod browser;
 mod clipboard;

@@ -2678,6 +2678,7 @@ fn slices_are_nudged_with_keys_and_saved_in_the_code() {
 }
 
 mod acid;
+mod add_samples;
 mod automation;
 mod blocks;
 mod browser;

@@ -68,7 +68,9 @@ pub fn menu_of(action: Action) -> Option<Menu> {
     Some(match action {
         SaveAndLoad | Load | ReloadExternal | Export | Commands | Versions | SaveBlock
         | InsertBlock | UpdateBlock | DeleteBlock | YankSlot | PasteSlot | Browser | Resample
-        | Freeze | Unfreeze | ExportKnobs | Quit => Menu::File,
+        | Freeze | Unfreeze | ExportKnobs | AddSample | ReferenceSample | GatherSamples | Quit => {
+            Menu::File
+        }
         Undo | Redo | ToggleComment | DuplicateLines | MoveLinesUp | MoveLinesDown | TextStart
         | TextEnd | GotoLine | Find | FindNext | FindPrevious | Complete | GotoError
         | ToggleVim | EditTracker | EditRoll | FillGap | SuggestFills => Menu::Edit,

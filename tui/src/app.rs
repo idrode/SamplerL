@@ -4163,6 +4163,9 @@ impl App {
             Action::Focus(panel) => self.set_focus(panel),
             Action::ToggleExplorer => self.toggle_explorer(),
             Action::RefreshFiles => self.refresh_files(),
+            Action::AddSample => self.add_to_project(),
+            Action::ReferenceSample => self.reference_sample(),
+            Action::GatherSamples => self.gather_samples(),
             Action::EditorTaller => self.resize_editor(1),
             Action::EditorShorter => self.resize_editor(-1),
             Action::Wider => self.widen(true),
@@ -5047,6 +5050,7 @@ impl App {
         self.poll_link();
         self.poll_devices();
         self.poll_key_analysis();
+        self.poll_adding();
         if self.last_external_check.elapsed() >= EXTERNAL_CHECK {
             self.last_external_check = Instant::now();
             self.check_external();

@@ -70,6 +70,33 @@ pub(crate) struct Explorer {
     current: Option<(PathBuf, PathBuf)>,
     /// La carpeta de samples global (`[samples] carpeta`).
     global: Option<PathBuf>,
+    /// Los marcados con `m` para añadirlos juntos.
+    marked: Vec<PathBuf>,
+    /// La copia en marcha al proyecto.
+    adding: Option<Adding>,
+    /// Lo que se arrastra del árbol con el ratón.
+    dragging: Option<PathBuf>,
+}
+
+/// Una copia al proyecto en marcha y lo que hay que hacer al acabar.
+pub(crate) struct Adding {
+    running: crate::add_samples::Running,
+    /// Escribir `sample("...")` del (único) añadido en el cursor.
+    insert: bool,
+    /// De «Recoger»: cada texto de `sample("...")` y su archivo de fuera.
+    gather: Vec<(String, PathBuf)>,
+    /// Lo que se dejó al preparar la copia.
+    skipped: Vec<String>,
+    /// Lo último que se enseñó de la barra (para no redibujar sin cambio).
+    shown: (u64, usize),
+}
+
+impl std::fmt::Debug for Adding {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Adding")
+            .field("files", &self.running.files)
+            .finish()
+    }
 }
 
 impl Default for Explorer {
@@ -87,6 +114,9 @@ impl Default for Explorer {
             drag: false,
             current: None,
             global: None,
+            marked: Vec::new(),
+            adding: None,
+            dragging: None,
         }
     }
 }
@@ -209,6 +239,21 @@ impl App {
         self.files.tree.as_ref().map(Tree::rows).unwrap_or_default()
     }
 
+    /// Los avisos de la última carga (en los tests).
+    #[cfg(test)]
+    pub fn host_warnings_for_test(&self) -> Vec<String> {
+        self.host
+            .song()
+            .map(|s| s.warnings.clone())
+            .unwrap_or_default()
+    }
+
+    /// La copia al proyecto acabó (en los tests).
+    #[cfg(test)]
+    pub fn adding_done(&self) -> bool {
+        self.files.adding.is_none()
+    }
+
     /// Elige la fila `i` del árbol (en los tests).
     #[cfg(test)]
     pub fn select_file_for_test(&mut self, i: usize) {
@@ -247,6 +292,7 @@ impl App {
                 (label, text.clone())
             }),
             preview: self.files.preview.clone(),
+            marked: self.files.marked.clone(),
         }
     }
 
@@ -386,10 +432,9 @@ impl App {
                 Some(r) if r.kind == Kind::Audio => self.preview_tree_file(&r.path),
                 _ => self.activate_file(),
             },
-            Key::Char('a') => match row {
-                Some(r) if r.kind == Kind::Audio => self.insert_sample_file(&r.path),
-                _ => self.message = "a: solo con un sample elegido".into(),
-            },
+            Key::Char('a') => self.add_to_project(),
+            Key::Char('A') => self.reference_sample(),
+            Key::Char('m') => self.toggle_mark(),
             Key::Char('n') => {
                 let dir = match &row {
                     Some(r) if r.kind == Kind::Dir => r.path.clone(),
@@ -562,21 +607,357 @@ impl App {
         }
     }
 
-    /// `a`: `sample("...")` del archivo en el cursor del editor (la ruta,
-    /// respecto a la carpeta de los samples si está dentro).
-    fn insert_sample_file(&mut self, path: &Path) {
-        if self.is_main_window() {
-            self.message = "el editor está en su ventana".into();
+    /// `m`: marca o desmarca la fila elegida (un sample o una carpeta)
+    /// para añadirla con las demás.
+    fn toggle_mark(&mut self) {
+        let Some(row) = self.files.tree.as_ref().and_then(Tree::selected_row) else {
+            return;
+        };
+        if row.note || !matches!(row.kind, Kind::Audio | Kind::Dir) {
+            self.message = "m: marca samples o carpetas para añadirlos juntos".into();
             return;
         }
-        let file = relative(
-            &crate::target::full_path(path),
-            &crate::target::full_path(&self.sample_folder()),
+        if let Some(i) = self.files.marked.iter().position(|p| *p == row.path) {
+            self.files.marked.remove(i);
+        } else {
+            self.files.marked.push(row.path.clone());
+        }
+        self.message = format!(
+            "{} marcados: a los copia al proyecto · m desmarca",
+            self.files.marked.len()
         );
-        let text = format!("sample(\"{file}\")");
+        self.files_step(1);
+    }
+
+    /// `path` está dentro del proyecto (la carpeta del script).
+    fn in_project(&self, path: &Path) -> bool {
+        crate::target::full_path(path).starts_with(crate::target::full_path(&self.script_dir()))
+    }
+
+    /// Lo que se añade: lo marcado o, si no hay, la fila elegida.
+    fn chosen_for_adding(&self) -> Vec<PathBuf> {
+        if !self.files.marked.is_empty() {
+            return self.files.marked.clone();
+        }
+        self.files
+            .tree
+            .as_ref()
+            .and_then(Tree::selected_row)
+            .filter(|r| !r.note)
+            .map(|r| vec![r.path])
+            .unwrap_or_default()
+    }
+
+    /// «Añadir sample al proyecto» (`a`, o soltar en el editor lo
+    /// arrastrado del árbol): lo de fuera del proyecto se copia a
+    /// `samples/` y, si es un solo sample, se escribe su `sample("...")` en
+    /// el cursor; lo que ya está dentro, solo se escribe.
+    pub(super) fn add_to_project(&mut self) {
+        let chosen = self.chosen_for_adding();
+        self.add_paths(chosen);
+    }
+
+    pub(super) fn add_paths(&mut self, chosen: Vec<PathBuf>) {
+        if chosen.is_empty() {
+            self.message =
+                "elige un sample o una carpeta en el explorador (Alt-0), o márcalos con m".into();
+            return;
+        }
+        if chosen.len() == 1 && !chosen[0].is_dir() {
+            let path = &chosen[0];
+            match Kind::of(path, false) {
+                Some(Kind::Audio) => {}
+                Some(Kind::Unsupported) => {
+                    self.message = unsupported_message(path);
+                    return;
+                }
+                _ => {
+                    self.message = "a: elige un sample (o una carpeta con samples)".into();
+                    return;
+                }
+            }
+            if self.in_project(path) {
+                self.insert_reference(path);
+                return;
+            }
+        }
+        let outside: Vec<PathBuf> = chosen
+            .iter()
+            .filter(|p| !self.in_project(p))
+            .cloned()
+            .collect();
+        if outside.is_empty() {
+            self.message = "ya está en el proyecto: no hace falta copiarlo".into();
+            return;
+        }
+        let single = chosen.len() == 1 && !chosen[0].is_dir();
+        self.start_adding(&outside, single, Vec::new());
+        self.files.marked.clear();
+    }
+
+    /// Empieza a copiar `paths` a `samples/` (en un hilo aparte).
+    fn start_adding(&mut self, paths: &[PathBuf], insert: bool, gather: Vec<(String, PathBuf)>) {
+        if self.files.adding.is_some() {
+            self.message = "ya se están copiando samples: espera a que acabe".into();
+            return;
+        }
+        let (copies, skipped) = crate::add_samples::plan(paths);
+        if copies.is_empty() {
+            self.message = if skipped.is_empty() {
+                "no hay samples que copiar".into()
+            } else {
+                format!("nada que copiar: {}", skipped.join(" · "))
+            };
+            return;
+        }
+        let dest = self.project_samples();
+        let files = copies.len();
+        let running = crate::add_samples::start(dest, copies, self.sample_rate);
+        self.files.adding = Some(Adding {
+            running,
+            insert,
+            gather,
+            skipped,
+            shown: (u64::MAX, usize::MAX),
+        });
+        self.message = format!("copiando {files} al proyecto…");
+    }
+
+    /// Mira cómo va la copia (en cada vuelta): la barra en el mensaje y,
+    /// al acabar, lo que se hizo.
+    pub(super) fn poll_adding(&mut self) {
+        let Some(adding) = &mut self.files.adding else {
+            return;
+        };
+        let Some(outcomes) = adding.running.finished() else {
+            let percent = (adding.running.fraction() * 100.0) as u64;
+            let done = adding
+                .running
+                .done_files
+                .load(std::sync::atomic::Ordering::Relaxed) as usize;
+            if adding.shown != (percent, done) {
+                adding.shown = (percent, done);
+                self.message = format!(
+                    "copiando al proyecto {} {percent}% · {done}/{}",
+                    progress_bar(adding.running.fraction(), 20, crate::theme::ascii()),
+                    adding.running.files
+                );
+            }
+            return;
+        };
+        let Some(adding) = self.files.adding.take() else {
+            return;
+        };
+        self.finish_adding(adding, outcomes);
+    }
+
+    fn finish_adding(&mut self, adding: Adding, outcomes: Vec<crate::add_samples::Outcome>) {
+        use crate::add_samples::Outcome;
+        let dest = self.project_samples();
+        // `samples/` puede ser nueva: las raíces del árbol cambian.
+        self.refresh_files();
+        let placed: Vec<(PathBuf, PathBuf)> = outcomes
+            .iter()
+            .filter_map(Outcome::placed)
+            .map(|(from, to)| (from.to_path_buf(), dest.join(to)))
+            .collect();
+        let failed: Vec<String> = outcomes
+            .iter()
+            .filter(|o| matches!(o, Outcome::Failed { .. }))
+            .map(Outcome::describe)
+            .chain(adding.skipped.iter().cloned())
+            .collect();
+        let mut notes: Vec<String> = outcomes
+            .iter()
+            .filter(|o| !matches!(o, Outcome::Failed { .. }))
+            .map(Outcome::describe)
+            .collect();
+        if !adding.gather.is_empty() {
+            notes.insert(0, self.rewrite_gathered(&adding.gather, &placed));
+        } else if adding.insert
+            && let [(_, full)] = placed.as_slice()
+        {
+            let full = full.clone();
+            self.insert_reference(&full);
+            notes.push(std::mem::take(&mut self.message));
+        } else if !placed.is_empty() {
+            notes.insert(0, format!("{} en samples/ del proyecto", placed.len()));
+        }
+        let mut message = notes.join(" · ");
+        if !failed.is_empty() {
+            message = format!("{message} · sin copiar: {}", failed.join(" · "));
+        }
+        self.message = message.trim_start_matches(" · ").to_string();
+    }
+
+    /// El texto más corto de `sample("...")` que encuentra `full` desde el
+    /// script (ver `script::sample_path`): su ruta respecto a la primera
+    /// carpeta donde se busca que lo tenga y en la que no lo tape otro; si
+    /// no hay, la ruta entera.
+    fn sample_name_for(&self, full: &Path) -> String {
+        let full = crate::target::full_path(full);
+        let dirs = self.host.sample_dirs(&self.script_dir());
+        let mut best: Option<String> = None;
+        for dir in dirs.order() {
+            let dir = crate::target::full_path(&dir);
+            let Ok(rel) = full.strip_prefix(&dir) else {
+                continue;
+            };
+            let name = relative(rel, Path::new(""));
+            if let script::sample_path::Resolved::Found { path, .. } = dirs.resolve(&name)
+                && crate::target::full_path(&path) == full
+                && best.as_ref().is_none_or(|b| name.len() < b.len())
+            {
+                best = Some(name);
+            }
+        }
+        if let Some(name) = best {
+            return name;
+        }
+        // Tapado por otro con el mismo nombre: con su carpeta delante.
+        if let Ok(rel) = full.strip_prefix(crate::target::full_path(&self.script_dir())) {
+            return relative(rel, Path::new(""));
+        }
+        full.display().to_string()
+    }
+
+    /// Escribe `sample("...")` de `path` en el cursor del editor (un paso de
+    /// deshacer), con el aviso si el proyecto deja de poder moverse.
+    fn insert_reference(&mut self, path: &Path) {
+        let name = self.sample_name_for(path);
+        if self.is_main_window() {
+            self.message = format!("escribe sample(\"{name}\") en el editor de su ventana");
+            return;
+        }
+        let text = format!("sample(\"{name}\")");
         self.marks.clear();
         self.grouped(|editor| editor.insert_str(&text));
-        self.message = format!("{text} en el script");
+        let full = crate::target::full_path(path);
+        self.message = if self.in_project(&full) {
+            format!("{text} en el script")
+        } else if self
+            .files
+            .global
+            .as_ref()
+            .is_some_and(|g| full.starts_with(crate::target::full_path(g)))
+        {
+            format!(
+                "{text} en el script: está en la carpeta global, no en el proyecto (en otra \
+                 máquina hace falta la misma; a lo copia dentro)"
+            )
+        } else {
+            format!(
+                "{text} en el script: con su ruta entera, el proyecto deja de poder moverse \
+                 (a lo copia dentro)"
+            )
+        };
+    }
+
+    /// «Referenciar sample sin copiar» (`A`): escribe `sample("...")` de la
+    /// fila elegida con la ruta que lo encuentra, sin copiarlo.
+    pub(super) fn reference_sample(&mut self) {
+        let Some(row) = self.files.tree.as_ref().and_then(Tree::selected_row) else {
+            self.message = "elige un sample en el explorador (Alt-0)".into();
+            return;
+        };
+        match row.kind {
+            Kind::Audio if !row.note => self.insert_reference(&row.path),
+            Kind::Unsupported => self.message = unsupported_message(&row.path),
+            _ => self.message = "A: elige un sample".into(),
+        }
+    }
+
+    /// «Recoger los samples en el proyecto»: los `sample("...")` del código
+    /// cuyo archivo está fuera del proyecto se copian a `samples/` y se
+    /// reescribe su texto (un paso de deshacer). Para proyectos de antes.
+    pub(super) fn gather_samples(&mut self) {
+        if self.is_main_window() {
+            self.message = "el editor está en su ventana: recógelos desde allí".into();
+            return;
+        }
+        let text = self.text();
+        let (literals, generated) = crate::add_samples::sample_literals(&text);
+        let dirs = self.host.sample_dirs(&self.script_dir());
+        let mut gather: Vec<(String, PathBuf)> = Vec::new();
+        let mut missing = Vec::new();
+        for (name, _) in &literals {
+            if gather.iter().any(|(n, _)| n == name) {
+                continue;
+            }
+            match dirs.resolve(name) {
+                script::sample_path::Resolved::Found { path, .. } => {
+                    if !self.in_project(&path) {
+                        gather.push((name.clone(), path));
+                    }
+                }
+                script::sample_path::Resolved::Missing { .. } => missing.push(name.clone()),
+            }
+        }
+        let mut notes = Vec::new();
+        if generated > 0 {
+            notes.push(format!(
+                "{generated} sample(...) sin un nombre escrito (generados por código): no se recogen"
+            ));
+        }
+        if !missing.is_empty() {
+            notes.push(format!("no están: {}", missing.join(", ")));
+        }
+        if gather.is_empty() {
+            notes.insert(
+                0,
+                "todos los samples del script ya están en el proyecto".into(),
+            );
+            self.message = notes.join(" · ");
+            return;
+        }
+        let paths: Vec<PathBuf> = gather.iter().map(|(_, p)| p.clone()).collect();
+        self.start_adding(&paths, false, gather);
+        if !notes.is_empty() {
+            self.message = format!("{} · {}", self.message, notes.join(" · "));
+        }
+    }
+
+    /// Al acabar de recoger: cada `sample("viejo")` pasa a la ruta de su
+    /// copia, todo en un paso de deshacer, y se carga.
+    fn rewrite_gathered(
+        &mut self,
+        gather: &[(String, PathBuf)],
+        placed: &[(PathBuf, PathBuf)],
+    ) -> String {
+        let mut renames: Vec<(String, String)> = Vec::new();
+        for (old, from) in gather {
+            if let Some((_, full)) = placed.iter().find(|(f, _)| f == from) {
+                let new = self.sample_name_for(full);
+                if new != *old {
+                    renames.push((old.clone(), new));
+                }
+            }
+        }
+        if renames.is_empty() {
+            return format!("{} recogidos", placed.len());
+        }
+        let text = self.text();
+        let (literals, _) = crate::add_samples::sample_literals(&text);
+        let mut out = text.clone();
+        // De atrás adelante, para que los sitios sigan valiendo.
+        for (name, range) in literals.iter().rev() {
+            if let Some((_, new)) = renames.iter().find(|(old, _)| old == name) {
+                out.replace_range(range.clone(), new);
+            }
+        }
+        if out != text {
+            self.replace_text(&out);
+            self.load();
+        }
+        format!(
+            "{} recogidos en samples/ y su ruta cambiada en el código (Ctrl-Z lo deshace): {}",
+            placed.len(),
+            renames
+                .iter()
+                .map(|(a, b)| format!("{a} → {b}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
     }
 
     /// Una tecla mientras se escribe un nombre o se confirma un borrado.
@@ -665,6 +1046,41 @@ impl App {
     /// dos clics la abren; la rueda recorre; arrastrar el borde derecho
     /// cambia el ancho.
     pub(super) fn files_mouse(&mut self, action: MouseAction, x: u16, y: u16) -> bool {
+        // Un clic nuevo empieza de cero (un arrastre a medias se olvida).
+        if action == MouseAction::Down {
+            self.files.dragging = None;
+        }
+        // Un sample (o carpeta) arrastrado del árbol: soltarlo en el editor
+        // lo añade al proyecto; en otro sitio, nada.
+        if let Some(path) = self.files.dragging.clone()
+            && matches!(action, MouseAction::Drag | MouseAction::Up)
+        {
+            if action == MouseAction::Up {
+                self.files.dragging = None;
+                let over_editor = self
+                    .editor_area
+                    .is_some_and(|area| area.contains((x, y).into()));
+                if over_editor {
+                    self.add_paths(vec![path]);
+                } else if !self
+                    .files
+                    .layout
+                    .is_some_and(|l| l.area.contains((x, y).into()))
+                {
+                    self.message = "suéltalo en el editor para añadirlo al proyecto".into();
+                }
+            } else if self
+                .files
+                .layout
+                .is_some_and(|l| !l.area.contains((x, y).into()))
+            {
+                self.message = format!(
+                    "arrastrando {}: suéltalo en el editor para añadirlo al proyecto",
+                    path.file_name().unwrap_or_default().to_string_lossy()
+                );
+            }
+            return true;
+        }
         if self.files.drag {
             match action {
                 MouseAction::Drag => {
@@ -724,6 +1140,14 @@ impl App {
                 if let Some(tree) = &mut self.files.tree {
                     tree.select(i);
                 }
+                // Puede empezar a arrastrarse (un sample o una carpeta).
+                self.files.dragging = self
+                    .files
+                    .tree
+                    .as_ref()
+                    .and_then(Tree::selected_row)
+                    .filter(|r| !r.note && matches!(r.kind, Kind::Audio | Kind::Dir))
+                    .map(|r| r.path);
                 if double {
                     self.files.last_click = None;
                     self.activate_file();
@@ -737,6 +1161,21 @@ impl App {
         }
         true
     }
+}
+
+/// Una barra de progreso de `width` celdas.
+fn progress_bar(fraction: f64, width: usize, ascii: bool) -> String {
+    let full = ((fraction.clamp(0.0, 1.0) * width as f64).round()) as usize;
+    let (on, off, open, close) = if ascii {
+        ("#", ".", "[", "]")
+    } else {
+        ("█", "░", "▕", "▏")
+    };
+    format!(
+        "{open}{}{}{close}",
+        on.repeat(full),
+        off.repeat(width - full)
+    )
 }
 
 /// Lo que se dice de un archivo de audio que el motor no carga.
@@ -754,7 +1193,7 @@ fn unsupported_message(path: &Path) -> String {
 
 /// Las teclas del explorador, para el mensaje.
 pub fn files_keys() -> &'static str {
-    "ARCHIVOS: ↑↓ elegir · Enter abre · ←→ plegar · Espacio escucha · a sample() · n nuevo · r renombra · Supr borra · R refresca · </> ancho · Esc vuelve"
+    "ARCHIVOS: ↑↓ elegir · Enter abre · ←→ plegar · Espacio escucha · a añadir al proyecto · A solo referenciar · m marcar · n nuevo · r renombra · Supr borra · R refresca · </> ancho · Esc vuelve"
 }
 
 /// `path` respecto a `base` (con `/`), o entera si no está dentro.

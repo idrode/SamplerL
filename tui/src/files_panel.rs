@@ -29,6 +29,8 @@ pub struct FilesView {
     pub input: Option<(String, String)>,
     /// La vista previa del sample elegido.
     pub preview: Option<Preview>,
+    /// Los marcados con `m` para añadirlos juntos.
+    pub marked: Vec<PathBuf>,
 }
 
 /// La vista previa de un sample.
@@ -206,7 +208,12 @@ impl Widget for FilesPanel<'_> {
                 .label
                 .as_ref()
                 .map_or_else(String::new, |l| format!("[{l}] "));
-            let text = format!(" {indent}{icon} {label}{}{mark}{hint}", row.name);
+            let marked = if !row.note && view.marked.contains(&row.path) {
+                if ascii { "* " } else { "● " }
+            } else {
+                ""
+            };
+            let text = format!(" {indent}{marked}{icon} {label}{}{mark}{hint}", row.name);
             let text: String = text.chars().take(tree.width as usize).collect();
             buf.set_string(tree.x, y, text, style);
         }

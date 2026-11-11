@@ -1173,6 +1173,9 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Foco: ocupación | Lleva el foco a la vista de ocupación con su cursor; Esc vuelve | Alt-9 |
 | Foco: archivos | Lleva el foco a el explorador de archivos (si no se veía, aparece); Esc vuelve | Alt-0 |
 | Explorador de archivos | Muestra o esconde el árbol de la carpeta del proyecto a la izquierda; en una terminal estrecha, lo abre encima | Alt-E |
+| Añadir sample al proyecto | Copia el sample (o la carpeta, o lo marcado con m) elegido en el explorador a samples/ junto al script, sin tocar el original; con un solo sample escribe su sample("...") en el cursor. Con el foco en el explorador, a; también arrastrándolo al editor | — |
+| Referenciar sample sin copiar | Escribe sample("...") del sample elegido en el explorador con la ruta que lo encuentra, sin copiarlo (si está fuera del proyecto, el proyecto deja de poder moverse entero). Con el foco en el explorador, A | — |
+| Recoger los samples en el proyecto | Copia a samples/ los samples que usa el script desde fuera del proyecto y cambia su ruta en el código, en un paso de deshacer (para proyectos de antes) | — |
 | Refrescar el explorador | Vuelve a leer las carpetas abiertas del explorador de archivos (las cerradas se leen al abrirlas); con el foco en él, R | — |
 | Editor más alto | Una fila más para el editor de abajo (o el flotante); el sonido se aprieta. También arrastrando su borde de arriba | Ctrl-Alt-↑ |
 | Editor más bajo | Una fila menos para el editor de abajo (o el flotante) | Ctrl-Alt-↓ |
