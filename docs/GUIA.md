@@ -644,6 +644,34 @@ principal lo vuelve a abrir; el nuevo recupera el texto, también lo que
 estaba sin guardar. Solo hay un editor a la vez: uno nuevo sustituye al
 anterior.
 
+**Qué abre la ventana aparte.** Siempre el mismo script (y el mismo
+`.sampler`) que la principal, con lo que haya en su editor:
+
+- La principal le pasa la **ruta completa** del script o del proyecto, así
+  que da igual en qué carpeta arranque la terminal nueva (`kitty
+  --directory ~`, un servidor de terminal) o desde dónde abrieras la
+  principal.
+- **Lo no guardado no se pierde ni se guarda solo**: la ventana lee el
+  archivo y, al unirse, se queda con el texto de la principal, que viaja
+  por el socket. Desde ahí es un solo texto: lo que se escribe en una
+  ventana llega a la otra, y Ctrl-S en cualquiera de las dos guarda el
+  mismo archivo (con el guardado atómico de siempre).
+- Si escribiste en la ventana aparte antes de que se uniera y la principal
+  también tenía cambios sin guardar, se queda el texto de la principal y
+  Ctrl-Z en la ventana aparte recupera lo tuyo.
+- Un script nuevo que aún no está en el disco (`--new` sin guardar) se
+  guarda antes de abrir la ventana, y lo dice.
+- La ventana aparte **nunca abre la plantilla ni otro archivo**: si el
+  script o el proyecto no existe (se borró, se movió, o la ruta escrita a
+  mano no está desde esa carpeta), dice cuál y por qué, y espera a Enter
+  antes de cerrarse para que se pueda leer. Si en el socket contesta la
+  principal de otro script, lo dice y no se une.
+- Con dos canciones abiertas a la vez, cada ventana aparte se une a la
+  principal de su script, aunque los archivos se llamen igual.
+- Si `[editor] terminal` fija una carpeta (`--directory`,
+  `--working-directory`, `--cwd`...) que no existe, la principal avisa y
+  no lanza nada; la carpeta no hace falta.
+
 **Cambiar en caliente**, sin volver a arrancar y sin que deje de sonar:
 
 - Con una sola ventana (`tui --edit`, sin `--split`), F1 «Abrir el editor
@@ -5697,6 +5725,18 @@ arrange({ {"intro", 4}, {"drop", 8} })
   `:remove()` después de `slice()` cambia ese corte; quítalo o edítalo ahí.
 - **Con la ventana del editor aparte**, el cambio llega a esa ventana y se
   guarda desde ella (Ctrl-S allí).
+
+### La ventana aparte del editor no tiene lo que escribí
+
+Debe mostrar lo mismo que el editor de la principal, guardado o no (ver
+«Qué abre la ventana aparte», en «El editor en su propia ventana»). Si
+dice «no existe…», el script o el proyecto ya no está en esa ruta:
+guárdalo desde la principal y vuelve a abrirla con F1 «Abrir el editor en
+su ventana». Si dice que contesta la principal de otro script, ciérrala y
+ábrela desde la principal de tu canción. Si dice «la carpeta de la
+terminal no existe», corrige o quita el `--directory` de `[editor]
+terminal`. Antes de este arreglo, la principal pasaba la ruta relativa y
+una terminal que arrancaba en otra carpeta abría la plantilla.
 
 ### Un corte hace clic al empezar
 

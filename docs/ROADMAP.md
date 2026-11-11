@@ -925,3 +925,14 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
     4. ✅ **API de Lua**: `slice({ {inicio, fin}, ... })`, `move(i, ms,
        fin)` y `range(i)`.
     5. ✅ **Documentación**.
+25. ✅ **La ventana aparte del editor abre el mismo proyecto, con su
+    progreso** (fallo encontrado por el usuario; continuación de la ventana
+    del editor). Detalle en «La ventana aparte del editor abre el mismo
+    proyecto» de [docs/ESTADO.md](ESTADO.md).
+    1. ✅ **Ruta completa**: la principal lanza las ventanas aparte (editor,
+       dispositivos, piano roll) con la ruta canónica; la ventana no abre
+       la plantilla ni otro archivo si no existe, y lo dice.
+    2. ✅ **Un solo texto**: el editor no manda nada hasta el saludo de la
+       principal, no pisa lo que ella tenga sin guardar y no se une a la
+       principal de otro script.
+    3. ✅ **Documentación**.

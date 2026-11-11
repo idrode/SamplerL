@@ -4011,6 +4011,87 @@ teclado, la API de Lua y esta documentación.
 - En el registro (`api.rs`), con la guía regenerada; los enlaces del
   tutorial al ancla nueva de `slice`.
 
+## La ventana aparte del editor abre el mismo proyecto
+
+Fallo: con un proyecto abierto y código escrito, «Abrir el editor en su
+ventana» (menú Ventanas) abría una ventana sin ese progreso, con la
+plantilla o con otro contenido. Tests en `tui/src/tests/editor_window.rs`
+(fallaban antes del arreglo): un script o proyecto abierto con ruta
+relativa, con y sin texto sin guardar, la ventana arrancada en otra
+carpeta; con ruta absoluta (ya funcionaba); un archivo que no existe; un
+script nuevo sin guardar; dos principales con scripts del mismo nombre;
+una principal de otro script en el socket; lo escrito antes de conectar; y
+`[editor] terminal` con `--directory`.
+
+### Causas (con las hipótesis de partida)
+
+1. **Ruta relativa y carpeta: confirmada, la causa principal.**
+   `launch_editor` pasaba `self.project` o `self.path` tal como se abrió
+   (`tui --edit cancion.sampler` desde la carpeta del proyecto, o lo que
+   abriera el explorador). La terminal nueva no tiene por qué arrancar en
+   esa carpeta (`kitty --directory`, servidores de terminal, o el comando a
+   mano que dice la principal sin `[editor] terminal`), así que la ventana
+   resolvía otra ruta y además buscaba el socket con un resumen de esa otra
+   ruta: nunca se unía a la principal y nunca recibía su texto. Igual en
+   las ventanas de dispositivos y del piano roll.
+2. **El búfer sin guardar: descartada como causa, con un fallo al lado.**
+   Unida a la principal, la ventana ya recibía su texto en el saludo
+   (`Welcome`) y el historial (`History`). Pero al conectar mandaba su texto
+   antes del saludo, y con el texto leído antes de atender los mensajes: lo
+   escrito en la ventana mientras se conectaba pisaba lo que la principal
+   tenía sin guardar.
+3. **La plantilla: confirmada.** `App::build` usa `read_script`, que da la
+   plantilla si el archivo no existe (lo correcto para `tui --edit x --new`,
+   no para la ventana aparte). Con un proyecto, `Project::load` fallaba y la
+   terminal se cerraba sin dejar leer el error.
+4. **Varios proyectos: descartada.** El socket va por un resumen de la
+   ruta canónica del script; dos principales con scripts del mismo nombre
+   en carpetas distintas no se pisan (test). Faltaba que el editor
+   comprobara que quien contesta es la principal de su script.
+5. **`--directory` en la config: confirmada como desencadenante** (con la
+   causa 1); una carpeta que no existe hacía fallar la terminal sin aviso.
+
+### Arreglos
+
+- `tui/src/target.rs`: `full_path` (canónica; si el archivo aún no existe,
+  la carpeta canónica y el nombre), `window_target` (lo que abre una
+  ventana aparte: error con el motivo y la carpeta desde la que se buscó si
+  no existe el archivo o el script del proyecto) y `terminal_problem`
+  (`--directory`, `--working-directory`, `--workdir`, `--cwd`, `--dir`, con
+  `=` o aparte y `~`). `link::socket_path` usa `full_path`.
+- `editor_command`, `devices_command` y `roll_command` pasan la ruta
+  completa; los mensajes de «ábrelo a mano» también.
+- `App::open_editor` abre solo lo que existe; `--window-editor`,
+  `--window-devices` y `--window-roll` dejan el error en la terminal hasta
+  pulsar Enter (`in_own_window` en `main.rs`).
+- `launch_editor` llama a `ensure_on_disk`: un script nuevo que aún no está
+  en el disco se guarda con `script::atomic` y lo dice; uno que existe no
+  se toca. Un proyecto que ya no está es un error con la orden para
+  guardarlo.
+- En el editor (`poll_editor`, `editor_message`): nada se manda antes del
+  saludo; el texto que se manda es el de después de atender los mensajes;
+  si el saludo trae una ruta absoluta que no es la de su script, se
+  desconecta con el motivo; si los dos lados cambiaron el texto antes de
+  unirse, se queda el de la principal.
+
+### Decisiones
+
+- **Lo no guardado viaja por el socket, no se guarda solo.** Guardar antes
+  de abrir la ventana cambiaría el archivo sin pedirlo; el texto ya iba en
+  el saludo. Solo se guarda un script que no existe (sin archivo, la
+  ventana no tiene qué abrir), y se dice.
+- **Si los dos lados tienen cambios al unirse, manda la principal**: lo
+  suyo es lo que suena y lo que había antes de abrir la ventana; lo de la
+  ventana queda a un Ctrl-Z (un paso de deshacer), nunca se pierde.
+- **Un solo texto, como hasta ahora**: las dos ventanas tienen una copia
+  sincronizada por revisiones (el protocolo de la fase L); no se cambia a
+  un búfer compartido de verdad, que pediría otro protocolo.
+- **Sin cambiar el protocolo (sigue el 8)**: la ruta del saludo ya iba;
+  ahora es la completa. Si una principal de antes manda una relativa, el
+  editor no la comprueba (no puede) y se une como antes.
+- **La carpeta de la terminal no se usa**: con la ruta completa da igual;
+  solo se avisa si la que se pide no existe, en vez de lanzar.
+
 ## Audio de prueba y problemas conocidos
 
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`
