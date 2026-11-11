@@ -120,12 +120,12 @@ track("d", amen):steps("1 . . .  . . . .  . . . .  . . . .")
 "#;
     let (mut controller, _engine) = new_engine(RATE);
     let mut host = ScriptHost::new(RATE);
-    // Sin carpeta de samples, se busca junto al script: no está.
-    let err = host
+    // Sin carpeta de samples, se busca junto al script y luego en su
+    // `samples/`: allí está, sin avisos.
+    let song = host
         .load(&mut controller, without_bpm, "song.lua", &dir)
-        .err()
         .unwrap();
-    assert!(err.message.contains("break.wav"), "{err}");
+    assert!(song.warnings.is_empty(), "{:?}", song.warnings);
 
     host.set_sample_dir(Some(dir.join("samples")));
     host.set_default_bpm(Some(140.0));

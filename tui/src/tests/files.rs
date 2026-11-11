@@ -409,3 +409,30 @@ fn the_roots_are_the_project_samples_the_global_folder_and_the_script() {
         "{rows:?}"
     );
 }
+
+/// `sample("x.wav")` busca también en `samples/` del proyecto y en la
+/// carpeta global de `[samples] carpeta`.
+#[test]
+fn sample_finds_the_project_samples_and_the_global_folder() {
+    let song = r#"bpm(120)
+local a = sample("de-proyecto.wav"):slice(2)
+local b = sample("global.wav"):slice(2)
+track("a", a):steps("1 . . .  . . . .  . . . .  . . . .")
+track("b", b):steps("1 . . .  . . . .  . . . .  . . . .")
+"#;
+    let (path, mut app, _engine) = open("files_resolve", Some(song));
+    let dir = path.parent().unwrap().to_path_buf();
+    let global = dir.join("compartida");
+    std::fs::create_dir_all(dir.join("samples")).unwrap();
+    std::fs::create_dir_all(&global).unwrap();
+    std::fs::copy(dir.join("break.wav"), dir.join("samples/de-proyecto.wav")).unwrap();
+    std::fs::copy(dir.join("break.wav"), global.join("global.wav")).unwrap();
+    app.set_config(&crate::config::Config {
+        samples_dir: Some(global),
+        ..Default::default()
+    });
+    app.load();
+    let view = app.view();
+    assert!(view.error.is_none(), "{:?}", view.error);
+    assert_eq!(view.tracks.len(), 2);
+}

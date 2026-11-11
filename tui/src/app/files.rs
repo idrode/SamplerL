@@ -170,6 +170,7 @@ impl App {
 
     /// La carpeta de samples global (`[samples] carpeta`).
     pub(super) fn set_global_samples(&mut self, dir: Option<PathBuf>) {
+        self.host.set_global_sample_dir(dir.clone());
         if self.files.global != dir {
             self.files.global = dir;
             self.reset_files();

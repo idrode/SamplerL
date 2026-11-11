@@ -1197,9 +1197,10 @@ fn samples_command_changes_the_sample_folder() {
     command(&mut app, "muestras");
     assert_eq!(app.view().message, "samples junto al script");
     command(&mut app, "muestras vacía");
-    // En esa carpeta no está break.wav: error en el editor, sigue lo anterior.
+    // En esa carpeta no está break.wav: se busca después junto al script
+    // (ver `script::sample_path`), y allí sí.
     let view = app.view();
-    assert!(view.error.is_some());
+    assert!(view.error.is_none(), "{:?}", view.error);
     assert_eq!(view.tracks.len(), 2);
     command(&mut app, "muestras .");
     assert!(app.view().error.is_none());

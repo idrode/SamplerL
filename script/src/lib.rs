@@ -77,6 +77,7 @@ pub mod patterns;
 pub mod project;
 pub mod step_fx;
 pub use lanes::{LaneDef, LaneTarget, number_text, parse_points, points_text};
+pub mod sample_path;
 pub mod slice_call;
 mod watch;
 mod written;
@@ -723,6 +724,9 @@ pub struct ScriptHost {
     seed: Option<u64>,
     /// Carpeta de los samples (del proyecto); `None`: la del script.
     sample_dir: Option<PathBuf>,
+    /// La carpeta de samples global (`[samples] carpeta`), la última donde
+    /// se busca (ver [`sample_path`]).
+    global_sample_dir: Option<PathBuf>,
     /// Tempo si el script no llama a `bpm()` (del proyecto).
     default_bpm: Option<f64>,
     /// Etiquetas de corte del proyecto (las de `:name()` mandan).
@@ -769,6 +773,7 @@ impl ScriptHost {
             other: None,
             seed: None,
             sample_dir: None,
+            global_sample_dir: None,
             default_bpm: None,
             labels: Vec::new(),
             positions: Vec::new(),
@@ -970,6 +975,23 @@ impl ScriptHost {
     /// defecto): la carpeta del script.
     pub fn set_sample_dir(&mut self, dir: Option<PathBuf>) {
         self.sample_dir = dir;
+    }
+
+    pub fn set_global_sample_dir(&mut self, dir: Option<PathBuf>) {
+        self.global_sample_dir = dir;
+    }
+
+    pub fn global_sample_dir(&self) -> Option<&Path> {
+        self.global_sample_dir.as_deref()
+    }
+
+    /// Dónde busca `sample("...")` desde `script_dir` (ver [`sample_path`]).
+    pub fn sample_dirs(&self, script_dir: &Path) -> sample_path::SampleDirs {
+        sample_path::SampleDirs {
+            declared: self.sample_dir.clone(),
+            script: script_dir.to_path_buf(),
+            global: self.global_sample_dir.clone(),
+        }
     }
 
     pub fn sample_dir(&self) -> Option<&Path> {
@@ -1306,6 +1328,7 @@ impl ScriptHost {
             other: None,
             seed: self.seed,
             sample_dir: self.sample_dir.clone(),
+            global_sample_dir: self.global_sample_dir.clone(),
             default_bpm: self.default_bpm,
             labels: self.labels.clone(),
             positions: self.positions.clone(),
@@ -2308,11 +2331,15 @@ impl ScriptHost {
         let cache = cache.clone();
         let cache_for_frozen = cache.clone();
         let imports = imports.clone();
-        let base_dir = self
+        let sample_dirs = sample_path::SampleDirs {
+            declared: self.sample_dir.clone(),
+            script: base_dir.to_path_buf(),
+            global: self.global_sample_dir.clone(),
+        };
+        let frozen_dir = self
             .sample_dir
             .clone()
             .unwrap_or_else(|| base_dir.to_path_buf());
-        let frozen_dir = base_dir.clone();
         let rate = self.sample_rate;
         let g = guard.clone();
         let labels = Rc::new(self.labels.clone());
@@ -2323,9 +2350,28 @@ impl ScriptHost {
             "sample",
             lua.create_function(move |lua, (name, options): (String, Option<Table>)| {
                 g(lua, "sample")?;
-                let path = base_dir.join(&name);
-                let mut sample = load_cached(&mut cache.borrow_mut(), &path, rate)
-                    .map_err(|e| fail(lua, format!("{}: {e}", path.display())))?;
+                // Dónde está (ver `sample_path`): un nombre ambiguo o que
+                // no está, con aviso; uno que no está suena en silencio y el
+                // resto de la canción sigue.
+                let resolved = sample_dirs.resolve(&name);
+                if let Some(warning) = resolved.warning(&name) {
+                    let mut list = warnings.borrow_mut();
+                    if !list.contains(&warning) {
+                        list.push(warning);
+                    }
+                }
+                let (path, missing) = match resolved {
+                    sample_path::Resolved::Found { path, .. } => (path, false),
+                    sample_path::Resolved::Missing { searched } => {
+                        (searched.into_iter().next().unwrap_or_default(), true)
+                    }
+                };
+                let mut sample = if missing {
+                    missing_sample(&mut cache.borrow_mut(), rate)
+                } else {
+                    load_cached(&mut cache.borrow_mut(), &path, rate)
+                        .map_err(|e| fail(lua, format!("{}: {e}", path.display())))?
+                };
                 // Un WAV con NaN, infinitos o valores enormes se carga
                 // saneado (ver `Sample::from_interleaved`), con aviso.
                 let repairs = sample.repairs();
@@ -2352,6 +2398,7 @@ impl ScriptHost {
                     warnings: warnings.clone(),
                     stretch: None,
                     edits: edits.clone(),
+                    missing,
                 })
             })?,
         )?;
@@ -3314,6 +3361,25 @@ impl Song {
 type SampleCache = HashMap<PathBuf, (Option<SystemTime>, Arc<Sample>)>;
 
 /// Carga un WAV o lo reutiliza de la caché si no ha cambiado en disco.
+/// Lo que suena con un sample que no está: diez segundos de silencio,
+/// uno por frecuencia, guardado en la caché con una clave que no es una
+/// ruta.
+const MISSING_SECONDS: u32 = 10;
+
+fn missing_sample(cache: &mut SampleCache, rate: u32) -> Arc<Sample> {
+    let key = PathBuf::from(format!("\0sin-archivo-{rate}"));
+    if let Some((_, sample)) = cache.get(&key) {
+        return sample.clone();
+    }
+    let silence = vec![0.0f32; (MISSING_SECONDS * rate) as usize];
+    let sample = Arc::new(
+        Sample::from_interleaved(&silence, 1, rate, rate)
+            .unwrap_or_else(|_| Sample::from_interleaved(&[0.0], 1, rate, rate).unwrap()),
+    );
+    cache.insert(key, (None, sample.clone()));
+    sample
+}
+
 fn load_cached(
     cache: &mut SampleCache,
     path: &Path,
@@ -4187,6 +4253,8 @@ struct SampleHandle {
     stretch: Option<f64>,
     /// Cortes añadidos y quitados en el proyecto.
     edits: Rc<Vec<SliceEdit>>,
+    /// El archivo no está: suena en silencio ([`missing_sample`]).
+    missing: bool,
 }
 
 impl UserData for SampleHandle {
@@ -4206,6 +4274,8 @@ impl UserData for SampleHandle {
                         ),
                     ));
                 }
+                // Sin el archivo no hay tempo que detectar: no se estira.
+                None if this.missing => return Ok(this.clone()),
                 None => engine::detect_bpm(&this.sample)
                     .map(|g| g.rounded())
                     .ok_or_else(|| {
@@ -4302,7 +4372,12 @@ impl UserData for SampleHandle {
                     ));
                 }
                 let zero = cut_options(lua, &format!("slice({n})"), options.as_ref())?;
-                let slices = {
+                let slices = if this.missing {
+                    // El silencio de un sample que falta no tiene golpes: n
+                    // cortes iguales, para que los pasos que los tocan
+                    // existan (y callen).
+                    Slices::grid(&this.sample, n as usize)
+                } else {
                     let _busy = Busy::here();
                     Slices::detect(&this.sample, n as usize)
                 };

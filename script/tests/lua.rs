@@ -141,6 +141,9 @@ track("drums", amen):steps("2 . . .  2 . . .  . . . .  . . . .")
 fn errors_keep_the_previous_pattern_playing() {
     let (dir, mut host, mut controller, mut engine) = setup("errors");
     host.set_time_limit(Duration::from_millis(100));
+    // Un WAV corrupto es un error (uno que falta, no: ver
+    // `a_missing_sample_is_silent_and_the_rest_plays`).
+    std::fs::write(dir.join("roto.wav"), b"RIFF\x10\0\0\0WAVEbasura").unwrap();
     load(&mut host, &mut controller, &dir, SONG_A).unwrap();
     controller.start().unwrap();
     let mut audio = render_left(&mut engine, BAR + 1234);
@@ -164,7 +167,7 @@ fn errors_keep_the_previous_pattern_playing() {
             "local a = sample(\"break.wav\"):slice(2)\ntrack(\"d\", a):steps(\"1@9 . . .  . . . .  . . . .  . . . .\")\n".into(),
             &["song.lua:2:", "ganancia"],
         ),
-        ("sample(\"nope.wav\")\n".into(), &["song.lua:1:", "nope.wav"]),
+        ("sample(\"roto.wav\")\n".into(), &["song.lua:1:", "roto.wav"]),
         ("track(\"hats\"):steps(\"1\")\n".into(), &["song.lua:1:", "\"hats\" no existe"]),
         ("bpm(1000)\n".into(), &["song.lua:1:", "BPM 1000"]),
         ("while true do end\n".into(), &["tarda"]),
@@ -568,4 +571,32 @@ fn print_goes_to_the_warnings_and_there_is_no_dofile() {
     let prints = warnings.iter().filter(|w| w.contains("print:")).count();
     assert_eq!(prints, script::sandbox::MAX_PRINTS + 1, "{warnings:?}");
     assert!(warnings.iter().any(|w| w.contains("hay más líneas")));
+}
+
+/// Un sample que no está no tumba la canción: aviso con dónde se buscó,
+/// su pista en silencio (los cortes que pide existen) y lo demás suena.
+#[test]
+fn a_missing_sample_is_silent_and_the_rest_plays() {
+    let (dir, mut host, mut controller, mut engine) = setup("missing_sample");
+    let src = r#"
+bpm(120)
+local amen = sample("break.wav"):slice(2)
+local falta = sample("no-esta.wav"):slice(8)
+track("drums", amen):steps("1 . . .  . . . .  . . . .  . . . .")
+track("falta", falta):steps("8 . 3 .  . . . .  . . . .  . . . .")
+"#;
+    load(&mut host, &mut controller, &dir, src).unwrap();
+    let warnings = &host.song().unwrap().warnings;
+    let warning = warnings
+        .iter()
+        .find(|w| w.contains("no-esta.wav"))
+        .unwrap_or_else(|| panic!("{warnings:?}"));
+    assert!(warning.contains("no está"), "{warning}");
+    assert!(warning.contains(&dir.join("samples/no-esta.wav").display().to_string()));
+    controller.start().unwrap();
+    let l = render_left(&mut engine, BAR);
+    // Suena el corte 1 de drums como siempre.
+    assert!((l[SETTLE] - 0.5).abs() < EPS);
+    // Y nada más: la pista que falta, callada.
+    assert!(l[2 * STEP..].iter().all(|&s| s == 0.0));
 }

@@ -580,6 +580,9 @@ fn script_host(sample_rate: u32) -> script::ScriptHost {
         .map(|dir| config::Config::load(&dir.join("config.toml"), theme::truecolor()))
         .unwrap_or_default();
     config.script.apply(&mut host);
+    // La carpeta de samples global, como en la interfaz: una canción que
+    // suena allí también se renderiza.
+    host.set_global_sample_dir(config.samples_dir);
     host
 }
 
