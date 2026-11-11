@@ -27,6 +27,8 @@ use crate::files_panel::{FilesHit, FilesLayout, FilesView, Preview};
 use crate::focus::Panel;
 use crate::model::Waveform;
 
+/// La carpeta de samples de un proyecto, junto a su script.
+pub const PROJECT_SAMPLES: &str = "samples";
 /// Dos clics en la misma fila en menos de esto: doble clic (abre).
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 /// Columnas que cambia el ancho cada `<` o `>` (y Ctrl-Alt-←→).
@@ -66,6 +68,8 @@ pub(crate) struct Explorer {
     /// El script del editor tal como se abrió y su ruta completa (la del
     /// árbol); se recalcula solo si cambia.
     current: Option<(PathBuf, PathBuf)>,
+    /// La carpeta de samples global (`[samples] carpeta`).
+    global: Option<PathBuf>,
 }
 
 impl Default for Explorer {
@@ -82,6 +86,7 @@ impl Default for Explorer {
             layout: None,
             drag: false,
             current: None,
+            global: None,
         }
     }
 }
@@ -92,13 +97,82 @@ impl App {
         self.grid.as_ref().is_some_and(|g| g.explorer.is_some())
     }
 
-    /// Crea el árbol la primera vez que hace falta: la carpeta del
-    /// proyecto (o la del script), con el script elegido.
+    /// Crea el árbol la primera vez que hace falta (o tras cambiar sus
+    /// raíces), con el script elegido.
     fn ensure_files(&mut self) {
         if self.files.tree.is_none() {
-            let mut tree = Tree::new(&self.base_dir());
+            let mut tree = Tree::with_roots(&self.files_roots());
             tree.reveal(&crate::target::full_path(&self.path));
             self.files.tree = Some(tree);
+        }
+    }
+
+    /// La carpeta del script (la de un `song.lua` a secas, `.`).
+    pub(super) fn script_dir(&self) -> PathBuf {
+        self.path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."))
+            .to_path_buf()
+    }
+
+    /// La carpeta de samples del proyecto: `samples/` junto al script.
+    pub(super) fn project_samples(&self) -> PathBuf {
+        self.script_dir().join(PROJECT_SAMPLES)
+    }
+
+    /// Las raíces del árbol, en orden: la carpeta de samples del proyecto
+    /// (`samples/` junto al script, si existe, y la de `samples =` del
+    /// `.sampler` si es otra), la global (`[samples] carpeta`) y la del
+    /// proyecto o el script. Solo mira si existe `samples/`: no lee nada.
+    pub(super) fn files_roots(&self) -> Vec<files::Root> {
+        let root = |label: &str, dir: PathBuf| files::Root {
+            label: label.into(),
+            dir,
+        };
+        let mut roots = Vec::new();
+        let samples = self.project_samples();
+        if samples.is_dir() {
+            roots.push(root("proyecto", samples));
+        }
+        if let Some(dir) = self.host.sample_dir()
+            && crate::target::full_path(dir) != crate::target::full_path(&self.base_dir())
+        {
+            roots.push(root("proyecto", dir.to_path_buf()));
+        }
+        if let Some(dir) = &self.files.global {
+            roots.push(root("global", dir.clone()));
+        }
+        roots.push(root("script", self.base_dir()));
+        roots
+    }
+
+    /// Las raíces que tocan ya no son las del árbol.
+    fn files_roots_changed(&self) -> bool {
+        let Some(tree) = &self.files.tree else {
+            return false;
+        };
+        let mut dirs: Vec<PathBuf> = Vec::new();
+        for root in self.files_roots() {
+            let dir = crate::target::full_path(&root.dir);
+            if !dirs.contains(&dir) {
+                dirs.push(dir);
+            }
+        }
+        tree.root_dirs() != dirs
+    }
+
+    /// Las raíces del árbol cambian (otro script o proyecto, otra carpeta
+    /// global, `samples/` recién creada): se vuelve a hacer al verse.
+    pub(super) fn reset_files(&mut self) {
+        self.files.tree = None;
+    }
+
+    /// La carpeta de samples global (`[samples] carpeta`).
+    pub(super) fn set_global_samples(&mut self, dir: Option<PathBuf>) {
+        if self.files.global != dir {
+            self.files.global = dir;
+            self.reset_files();
         }
     }
 
@@ -354,7 +428,11 @@ impl App {
     /// «Refrescar el explorador» (R con el foco): vuelve a leer las
     /// carpetas abiertas (las cerradas no se leen).
     pub(super) fn refresh_files(&mut self) {
-        if let Some(tree) = &mut self.files.tree {
+        // Si cambió qué raíces hay (se creó `samples/`), el árbol de nuevo;
+        // si no, solo lo abierto.
+        if self.files_roots_changed() {
+            self.reset_files();
+        } else if let Some(tree) = &mut self.files.tree {
             tree.refresh(None);
         }
         self.message = "explorador: vuelto a leer".into();
@@ -383,8 +461,8 @@ impl App {
         match row.kind {
             Kind::Dir => {
                 let i = self.files.tree.as_ref().map_or(0, |t| t.selected);
-                if i > 0
-                    && let Some(tree) = &mut self.files.tree
+                if let Some(tree) = &mut self.files.tree
+                    && tree.can_toggle(i)
                 {
                     tree.toggle(i);
                 }
@@ -443,6 +521,14 @@ impl App {
         if self.project.is_some() {
             self.project = None;
             self.host.set_sample_dir(None);
+        }
+        // Un script de fuera de las raíces: el árbol de nuevo, con las suyas
+        // (uno de dentro, el árbol de siempre).
+        let full = crate::target::full_path(path);
+        if let Some(tree) = &self.files.tree
+            && !tree.root_dirs().iter().any(|dir| full.starts_with(dir))
+        {
+            self.reset_files();
         }
         self.load();
         if self.error.is_none() {
@@ -621,7 +707,7 @@ impl App {
                 self.chosen_focus = Some(Panel::Files);
                 if let Some(tree) = &mut self.files.tree {
                     tree.select(i);
-                    if i > 0 {
+                    if tree.can_toggle(i) {
                         tree.toggle(i);
                     }
                 }

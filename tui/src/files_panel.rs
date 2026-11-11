@@ -202,7 +202,11 @@ impl Widget for FilesPanel<'_> {
                 .hint
                 .as_ref()
                 .map_or_else(String::new, |h| format!("  {h}"));
-            let text = format!(" {indent}{icon} {}{mark}{hint}", row.name);
+            let label = row
+                .label
+                .as_ref()
+                .map_or_else(String::new, |l| format!("[{l}] "));
+            let text = format!(" {indent}{icon} {label}{}{mark}{hint}", row.name);
             let text: String = text.chars().take(tree.width as usize).collect();
             buf.set_string(tree.x, y, text, style);
         }

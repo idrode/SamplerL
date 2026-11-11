@@ -570,6 +570,14 @@ const VOICES_KEYS: &[(&str, &str, &str)] = &[(
     "`64`",
 )];
 
+/// Claves de `[samples]` (para la guía).
+#[cfg(test)]
+const SAMPLES_KEYS: &[(&str, &str, &str)] = &[(
+    "carpeta",
+    "carpeta de samples global, compartida entre canciones (`\"~/songsproject/samples\"`; `~` es tu carpeta de casa; relativa, respecto a la de `config.toml`): sale en el explorador y `sample(\"x.wav\")` la mira después de la carpeta del script y la `samples/` del proyecto",
+    "—",
+)];
+
 /// Claves de `[dispositivos]` (para la guía).
 #[cfg(test)]
 const DEVICES_KEYS: &[(&str, &str, &str)] = &[
@@ -1001,6 +1009,10 @@ pub struct Config {
     /// `[midi] mandos`: los mandos MIDI de un proyecto que no tiene los
     /// suyos (MIDI learn; ver `script::learn`).
     pub learned: Vec<script::learn::Learned>,
+    /// `[samples] carpeta`: la carpeta de samples global (compartida entre
+    /// canciones), con `~` ya expandida; si es relativa, respecto a la
+    /// carpeta de `config.toml` (la resuelve [`Config::load`]).
+    pub samples_dir: Option<PathBuf>,
     /// Avisos (archivo que falta o roto, claves desconocidas, choques...).
     pub warnings: Vec<String>,
 }
@@ -1015,7 +1027,17 @@ impl Config {
     /// Lee el archivo (si falta o está roto, por defecto y un aviso).
     pub fn load(path: &Path, truecolor: bool) -> Config {
         match std::fs::read_to_string(path) {
-            Ok(text) => Config::parse(&text, truecolor, &path.display().to_string()),
+            Ok(text) => {
+                let mut config = Config::parse(&text, truecolor, &path.display().to_string());
+                // Una carpeta relativa, respecto a la de `config.toml` (nunca a
+                // la carpeta desde la que se lanzó el programa).
+                if let (Some(dir), Some(base)) = (&config.samples_dir, path.parent())
+                    && dir.is_relative()
+                {
+                    config.samples_dir = Some(base.join(dir));
+                }
+                config
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Config {
                 warnings: vec![format!(
                     "sin {}: teclas y colores por defecto (ver la guía)",
@@ -1348,8 +1370,24 @@ impl Config {
                         }
                     }
                 }
+                "samples" => {
+                    for (key, value) in inner {
+                        match (key.as_str(), value.as_str()) {
+                            ("carpeta", Some(dir)) if !dir.trim().is_empty() => {
+                                config.samples_dir = Some(expand_home(dir.trim()));
+                            }
+                            ("carpeta", _) => config.warnings.push(
+                                "[samples] carpeta: una ruta entre comillas, como \"~/samples\""
+                                    .into(),
+                            ),
+                            (other, _) => config
+                                .warnings
+                                .push(format!("[samples] «{other}» no existe (hay: carpeta)")),
+                        }
+                    }
+                }
                 other => config.warnings.push(format!(
-                    "{name}: sección [{other}] desconocida (hay: teclas, colores, midi, editor, resaltado, ocupacion, roll, voces, dispositivos)"
+                    "{name}: sección [{other}] desconocida (hay: teclas, colores, midi, editor, resaltado, ocupacion, roll, voces, dispositivos, samples)"
                 )),
             }
         }
@@ -1561,7 +1599,21 @@ fn guide_markdown() -> String {
     for (name, what, default) in DEVICES_KEYS {
         out.push_str(&format!("| `{name}` | {what} | {default} |\n"));
     }
+    out.push_str("\n| En `[samples]` | Para | Por defecto |\n| --- | --- | --- |\n");
+    for (name, what, default) in SAMPLES_KEYS {
+        out.push_str(&format!("| `{name}` | {what} | {default} |\n"));
+    }
     out
+}
+
+/// `~` y `~/…` al principio, con la carpeta de casa (`$HOME`).
+pub fn expand_home(path: &str) -> PathBuf {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    match (path, home) {
+        ("~", Some(home)) => home,
+        (p, Some(home)) if p.starts_with("~/") => home.join(&p[2..]),
+        (p, _) => PathBuf::from(p),
+    }
 }
 
 /// Un comando de terminal: un texto (se parte por los espacios) o una
@@ -1928,6 +1980,33 @@ mod tests {
             "docs/GUIA.md no coincide con tui/src/config.rs: \
              ACTUALIZAR_GUIA=1 cargo test -p tui the_guide_lists_the_config"
         );
+    }
+
+    #[test]
+    fn the_samples_folder_expands_home_and_is_relative_to_the_config() {
+        let config = Config::parse(
+            "[samples]\ncarpeta = \"~/songsproject/samples\"\n",
+            true,
+            "c",
+        );
+        let home = PathBuf::from(std::env::var_os("HOME").unwrap());
+        assert_eq!(config.samples_dir, Some(home.join("songsproject/samples")));
+        assert!(config.warnings.is_empty(), "{:?}", config.warnings);
+        let dir = Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../target/tmp/config_samples"
+        ));
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(
+            dir.join("config.toml"),
+            "[samples]\ncarpeta = \"mis-samples\"\n",
+        )
+        .unwrap();
+        let config = Config::load(&dir.join("config.toml"), true);
+        assert_eq!(config.samples_dir, Some(dir.join("mis-samples")));
+        let config = Config::parse("[samples]\ncarpeta = 3\notra = 1\n", true, "c");
+        assert_eq!(config.samples_dir, None);
+        assert_eq!(config.warnings.len(), 2, "{:?}", config.warnings);
     }
 
     #[test]

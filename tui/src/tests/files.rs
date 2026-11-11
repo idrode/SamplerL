@@ -43,7 +43,7 @@ fn the_tree_draws_folded_and_unfolded_with_the_selection() {
     assert_eq!((files.x, files.y), (0, 3));
     assert!(screen.contains("┌ 0 archivos"), "{screen}");
     // La raíz abierta, la carpeta cerrada y el script del editor marcado.
-    assert!(screen.contains("▾ tui_files_draw"), "{screen}");
+    assert!(screen.contains("▾ [script] tui_files_dr"), "{screen}");
     assert!(screen.contains("▸ scripts"), "{screen}");
     assert!(screen.contains("♪ break.wav"), "{screen}");
     assert!(screen.contains("λ song.lua ◂"), "{screen}");
@@ -276,7 +276,7 @@ fn a_script_opened_by_its_bare_name_shows_its_folder() {
     assert!(!screen.contains("no existe"), "{screen}");
     let cwd = std::env::current_dir().unwrap().canonicalize().unwrap();
     let name = cwd.file_name().unwrap().to_string_lossy().into_owned();
-    assert!(screen.contains(&format!("▾ {name}")), "{screen}");
+    assert!(screen.contains(&format!("▾ [script] {name}")), "{screen}");
     assert!(screen.contains("▸ src"), "{screen}");
 }
 
@@ -340,4 +340,72 @@ fn the_tree_lists_samples_folders_and_says_what_it_does_not_load() {
     assert!(!text(&draw(&mut app, 120, 40)).contains("nuevo.wav"));
     app.run_action(Action::RefreshFiles);
     assert!(text(&draw(&mut app, 120, 40)).contains("♪ nuevo.wav"));
+}
+
+/// Las raíces del árbol, en orden y con su nombre: la `samples/` del
+/// proyecto, la global de `[samples] carpeta` y la del script; una global
+/// que no existe lo dice, y `samples/` creada después sale al refrescar.
+#[test]
+fn the_roots_are_the_project_samples_the_global_folder_and_the_script() {
+    let (path, mut app, _engine) = open("files_roots", Some(SONG));
+    let dir = path.parent().unwrap().to_path_buf();
+    let global = dir.with_file_name("tui_files_roots_global");
+    let _ = std::fs::remove_dir_all(&global);
+    std::fs::create_dir_all(global.join("breaks")).unwrap();
+    std::fs::write(global.join("think.wav"), "").unwrap();
+    let config = crate::config::Config {
+        samples_dir: Some(global.clone()),
+        ..Default::default()
+    };
+    app.set_config(&config);
+    let roots = |app: &mut App| -> Vec<String> {
+        draw(app, 120, 40);
+        app.view_files_rows()
+            .iter()
+            .filter(|r| r.depth == 0)
+            .map(|r| format!("{} {}", r.label.clone().unwrap_or_default(), r.name))
+            .collect()
+    };
+    assert_eq!(
+        roots(&mut app),
+        ["global tui_files_roots_global", "script tui_files_roots"]
+    );
+    let screen = text(&draw(&mut app, 120, 40));
+    assert!(screen.contains("▾ [global] tui_files_ro"), "{screen}");
+    assert!(screen.contains("♪ think.wav"), "{screen}");
+
+    // `samples/` del proyecto, creada después: primera al refrescar.
+    std::fs::create_dir_all(dir.join("samples")).unwrap();
+    std::fs::write(dir.join("samples/amen.wav"), "").unwrap();
+    app.run_action(Action::RefreshFiles);
+    assert_eq!(
+        roots(&mut app),
+        [
+            "proyecto samples",
+            "global tui_files_roots_global",
+            "script tui_files_roots"
+        ]
+    );
+    // Las raíces se pliegan (hay más de una); la carpeta sigue en el script.
+    app.select_file_for_test(0);
+    app.handle(alt('0'));
+    app.handle(special(Key::Enter));
+    let rows = app.view_files_rows();
+    assert!(!rows[0].open);
+    assert!(!rows.iter().any(|r| r.name == "amen.wav" && r.depth == 1));
+
+    // Una global que no existe lo dice con su ruta.
+    let config = crate::config::Config {
+        samples_dir: Some(dir.join("no-esta")),
+        ..Default::default()
+    };
+    app.set_config(&config);
+    draw(&mut app, 120, 40);
+    let rows = app.view_files_rows();
+    let missing = dir.canonicalize().unwrap().join("no-esta");
+    assert!(
+        rows.iter()
+            .any(|r| r.note && r.name == format!("no existe: {}", missing.display())),
+        "{rows:?}"
+    );
 }

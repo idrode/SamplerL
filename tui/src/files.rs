@@ -87,6 +87,8 @@ struct Entry {
     /// Un enlace a una carpeta que la contiene (o a sí misma): no se
     /// sigue, para no dar vueltas sin fin.
     cycle: bool,
+    /// De una raíz: cuál es.
+    label: Option<String>,
 }
 
 impl Entry {
@@ -105,6 +107,7 @@ impl Entry {
             error: None,
             hidden: 0,
             cycle: false,
+            label: None,
         }
     }
 
@@ -209,33 +212,72 @@ pub struct Row {
     /// Lo que se dice detrás del nombre, atenuado (`formato no soportado:
     /// m4a`).
     pub hint: Option<String>,
+    /// De una raíz: cuál es (`proyecto`, `global`, `script`).
+    pub label: Option<String>,
+    /// Dónde está en el árbol: la raíz y el hijo de cada carpeta (una
+    /// misma carpeta puede estar bajo dos raíces).
+    pub at: Vec<usize>,
+}
+
+/// Una raíz del árbol: qué es y su carpeta.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Root {
+    pub label: String,
+    pub dir: PathBuf,
 }
 
 /// El árbol, con la fila elegida y la primera que se ve.
 #[derive(Debug, Clone)]
 pub struct Tree {
-    root: Entry,
+    roots: Vec<Entry>,
     pub selected: usize,
     pub top: usize,
 }
 
 impl Tree {
     /// El árbol de `dir`, con la raíz abierta (se lee solo esa carpeta).
+    #[cfg(test)]
     pub fn new(dir: &Path) -> Tree {
-        let mut root = Entry::new(crate::target::full_path(dir), Kind::Dir);
-        root.open = true;
-        root.read();
+        Tree::with_roots(&[Root {
+            label: String::new(),
+            dir: dir.to_path_buf(),
+        }])
+    }
+
+    /// Un árbol con varias raíces, en ese orden, cada una abierta (se lee
+    /// solo cada raíz) y con su nombre delante; la misma carpeta dos veces
+    /// solo sale la primera.
+    pub fn with_roots(roots: &[Root]) -> Tree {
+        let mut entries: Vec<Entry> = Vec::new();
+        for root in roots {
+            let dir = crate::target::full_path(&root.dir);
+            if entries.iter().any(|e| e.path == dir) {
+                continue;
+            }
+            let mut entry = Entry::new(dir, Kind::Dir);
+            entry.label = (!root.label.is_empty()).then(|| root.label.clone());
+            entry.open = true;
+            entry.read();
+            entries.push(entry);
+        }
         Tree {
-            root,
+            roots: entries,
             selected: 0,
             top: 0,
         }
     }
 
+    /// Las carpetas de las raíces, en orden.
+    pub fn root_dirs(&self) -> Vec<PathBuf> {
+        self.roots.iter().map(|r| r.path.clone()).collect()
+    }
+
     /// Las filas que se ven, de arriba abajo.
     pub fn rows(&self) -> Vec<Row> {
         let mut out = Vec::new();
-        flatten(&self.root, 0, &mut out);
+        for (i, root) in self.roots.iter().enumerate() {
+            flatten(root, 0, &mut vec![i], &mut out);
+        }
         out
     }
 
@@ -257,6 +299,13 @@ impl Tree {
             return;
         }
         self.selected = (self.selected as isize + delta).clamp(0, n - 1) as usize;
+    }
+
+    /// La fila `i` se puede plegar: una carpeta que no es la única raíz.
+    pub fn can_toggle(&self, i: usize) -> bool {
+        self.rows().get(i).is_some_and(|r| {
+            r.kind == Kind::Dir && !r.note && (r.depth > 0 || self.roots.len() > 1)
+        })
     }
 
     /// Abre o cierra la carpeta de la fila `i` (la lee la primera vez).
@@ -285,7 +334,7 @@ impl Tree {
         let Some(row) = rows.get(self.selected) else {
             return;
         };
-        if row.kind == Kind::Dir && row.open && self.selected > 0 {
+        if row.open && self.can_toggle(self.selected) {
             let i = self.selected;
             self.toggle(i);
             return;
@@ -302,7 +351,9 @@ impl Tree {
     /// Vuelve a leer lo abierto (tras crear, renombrar o borrar, o a mano)
     /// y elige `path` si está.
     pub fn refresh(&mut self, select: Option<&Path>) {
-        self.root.refresh();
+        for root in &mut self.roots {
+            root.refresh();
+        }
         if let Some(path) = select {
             self.reveal(path);
         }
@@ -310,28 +361,41 @@ impl Tree {
         self.selected = self.selected.min(n.saturating_sub(1));
     }
 
-    /// Abre las carpetas hasta `path` (si está dentro de la raíz) y lo
-    /// elige.
+    /// Abre las carpetas hasta `path` (en la primera raíz que lo tenga) y
+    /// lo elige.
     pub fn reveal(&mut self, path: &Path) {
-        let path = &crate::target::full_path(path);
-        let Ok(rel) = path.strip_prefix(&self.root.path) else {
+        let path = crate::target::full_path(path);
+        let Some(r) = self.roots.iter().position(|e| path.starts_with(&e.path)) else {
             return;
         };
-        let mut entry = &mut self.root;
+        let mut at = vec![r];
+        let mut entry = &mut self.roots[r];
+        let rel = path
+            .strip_prefix(&entry.path)
+            .unwrap_or(Path::new(""))
+            .to_path_buf();
         for part in rel.parent().into_iter().flat_map(|p| p.components()) {
             let next = entry.path.join(part);
             set_open(entry, true);
-            let Some(child) = entry
+            let Some(i) = entry
                 .children
-                .as_mut()
-                .and_then(|c| c.iter_mut().find(|e| e.path == next))
+                .as_ref()
+                .and_then(|c| c.iter().position(|e| e.path == next))
             else {
+                return;
+            };
+            at.push(i);
+            let Some(child) = entry.children.as_mut().and_then(|c| c.get_mut(i)) else {
                 return;
             };
             entry = child;
         }
         set_open(entry, true);
-        if let Some(i) = self.rows().iter().position(|r| r.path == *path && !r.note) {
+        if let Some(i) = self
+            .rows()
+            .iter()
+            .position(|row| row.path == path && !row.note && row.at.starts_with(&at))
+        {
             self.selected = i;
         }
     }
@@ -352,8 +416,13 @@ impl Tree {
 
     /// La entrada de la carpeta de la fila `i`.
     fn entry_at(&mut self, i: usize) -> Option<&mut Entry> {
-        let path = self.rows().get(i).filter(|r| !r.note)?.path.clone();
-        find_mut(&mut self.root, &path).filter(|e| e.kind == Kind::Dir)
+        let at = self.rows().get(i).filter(|r| !r.note)?.at.clone();
+        let (first, rest) = at.split_first()?;
+        let mut entry = self.roots.get_mut(*first)?;
+        for &i in rest {
+            entry = entry.children.as_mut()?.get_mut(i)?;
+        }
+        (entry.kind == Kind::Dir).then_some(entry)
     }
 }
 
@@ -367,21 +436,7 @@ fn set_open(entry: &mut Entry, open: bool) {
     entry.open = open;
 }
 
-fn find_mut<'a>(entry: &'a mut Entry, path: &Path) -> Option<&'a mut Entry> {
-    if entry.path == path {
-        return Some(entry);
-    }
-    if !path.starts_with(&entry.path) {
-        return None;
-    }
-    entry
-        .children
-        .as_mut()?
-        .iter_mut()
-        .find_map(|c| find_mut(c, path))
-}
-
-fn flatten(entry: &Entry, depth: usize, out: &mut Vec<Row>) {
+fn flatten(entry: &Entry, depth: usize, at: &mut Vec<usize>, out: &mut Vec<Row>) {
     let hint = match entry.kind {
         Kind::Unsupported => Some(format!(
             "formato no soportado: {}",
@@ -401,10 +456,13 @@ fn flatten(entry: &Entry, depth: usize, out: &mut Vec<Row>) {
         open: entry.open,
         note: false,
         hint,
+        label: entry.label.clone(),
+        at: at.clone(),
     });
     if !entry.open {
         return;
     }
+    let here = at.clone();
     let note = |name: String| Row {
         depth: depth + 1,
         name,
@@ -413,12 +471,16 @@ fn flatten(entry: &Entry, depth: usize, out: &mut Vec<Row>) {
         open: false,
         note: true,
         hint: None,
+        label: None,
+        at: here.clone(),
     };
     if let Some(error) = &entry.error {
         out.push(note(error.clone()));
     }
-    for child in entry.children.iter().flatten() {
-        flatten(child, depth + 1, out);
+    for (i, child) in entry.children.iter().flatten().enumerate() {
+        at.push(i);
+        flatten(child, depth + 1, at, out);
+        at.pop();
     }
     if entry.more > 0 {
         let more = if entry.more >= MAX_ENTRIES {
@@ -517,7 +579,11 @@ mod tests {
             ]
         );
         // Nada leído aún dentro de las carpetas cerradas.
-        assert!(tree.root.children.as_ref().unwrap()[0].children.is_none());
+        assert!(
+            tree.roots[0].children.as_ref().unwrap()[0]
+                .children
+                .is_none()
+        );
         tree.toggle(1);
         assert_eq!(
             names(&tree)[1..5],

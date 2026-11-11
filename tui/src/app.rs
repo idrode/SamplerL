@@ -719,6 +719,7 @@ impl App {
         self.host.set_positions(project.positions.clone());
         self.host.set_edits(project.edits.clone());
         self.reload_blocks();
+        self.reset_files();
         Ok(())
     }
 
@@ -747,6 +748,7 @@ impl App {
     /// Aplica la configuración del usuario (atajos; el tema lo pone `main`
     /// en el hilo que dibuja). Sus avisos van al mensaje.
     pub fn set_config(&mut self, config: &Config) {
+        self.set_global_samples(config.samples_dir.clone());
         // Lo que diga la configuración; sin ella, lo decide `main` al
         // arrancar (por `LANG`).
         if let Some(ascii) = config.interface.ascii {
@@ -2245,6 +2247,7 @@ impl App {
             Some(dir) => {
                 let dir = self.base_dir().join(dir);
                 self.host.set_sample_dir(Some(dir));
+                self.reset_files();
                 self.load();
             }
         }

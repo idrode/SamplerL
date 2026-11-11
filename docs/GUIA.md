@@ -1749,6 +1749,10 @@ paleta de 256.
 | `midi_salida` | puerto MIDI de salida, igual; `--midi-out` manda sobre él | el puerto virtual |
 | `terminal` | comando que abre una terminal nueva para el panel de dispositivos en su ventana (`"kitty --class sampler-dispositivos -e"`); detrás va `tui --window-devices <script>` | la de `[editor] terminal` |
 
+| En `[samples]` | Para | Por defecto |
+| --- | --- | --- |
+| `carpeta` | carpeta de samples global, compartida entre canciones (`"~/songsproject/samples"`; `~` es tu carpeta de casa; relativa, respecto a la de `config.toml`): sale en el explorador y `sample("x.wav")` la mira después de la carpeta del script y la `samples/` del proyecto | — |
+
 <!-- config:fin -->
 
 ### MIDI
