@@ -953,6 +953,31 @@ pub fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rec
             }
         }
     }
+    // Números de línea relativos al cursor (con los números enteros a la
+    // vista: sin desplazar de lado).
+    let numbers = app.editor.line_number_width();
+    if app.editor_config.relative_numbers && left == 0 && numbers > 2 {
+        let digits = (numbers - 2) as usize;
+        let cursor_row = app.editor.cursor().0;
+        let rows = app.editor.lines().len();
+        for y in 0..editor_area.height {
+            let row = top as usize + y as usize;
+            if row >= rows {
+                break;
+            }
+            let (n, style) = if row == cursor_row {
+                (row + 1, Style::new().fg(accent()))
+            } else {
+                (row.abs_diff(cursor_row), Style::new().fg(dim()))
+            };
+            frame.buffer_mut().set_string(
+                editor_area.x + 1,
+                editor_area.y + y,
+                format!("{n:>digits$}"),
+                style,
+            );
+        }
+    }
     // La pareja del paréntesis, corchete o llave junto al cursor.
     if app.editor_config.match_pairs && !view.playing_mode {
         let cursor = app.editor.cursor();

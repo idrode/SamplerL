@@ -1824,6 +1824,7 @@ paleta de 256.
 | `pareja` | resaltar la pareja del paréntesis, corchete o llave junto al cursor (`true`/`false`) | `true` |
 | `cerrar_pares` | al escribir `(`, `[`, `{` o una comilla, poner también la que cierra; escribir la que cierra delante de ella la salta, y Retroceso entre las dos las borra (`true`/`false`) | `false` |
 | `guias` | líneas finas en la sangría, una por nivel (`true`/`false`) | `false` |
+| `numeros_relativos` | los números de línea cuentan desde el cursor (la del cursor, con su número de siempre), como en vim (`true`/`false`) | `false` |
 
 | En `[resaltado]` | Para | Por defecto |
 | --- | --- | --- |
@@ -2244,6 +2245,9 @@ igual. Las tres teclas se cambian en `[teclas]` (`buscar`,
 - Con `guias = true` (apagado por defecto), una línea fina por cada nivel
   de sangría (el nivel es la sangría más pequeña del texto, de 2 a 8
   espacios).
+- Con `numeros_relativos = true` (apagado por defecto), los números de
+  línea dicen a cuántas líneas del cursor está cada una (la del cursor
+  lleva su número de siempre), como en vim.
 - Comentar y descomentar: «Comentar o descomentar líneas» en la paleta,
   con la línea del cursor o las seleccionadas.
 - Buscar resalta todas las veces que sale el texto (ver arriba).

@@ -92,3 +92,39 @@ fn indent_guides_mark_each_level_when_asked() {
     crate::theme::set_ascii(false);
     assert_eq!(buffer[(x - 2, y)].symbol(), "|");
 }
+
+#[test]
+fn relative_line_numbers_count_from_the_cursor_when_asked() {
+    let lines: String = (1..=20).map(|i| format!("-- línea {i}\n")).collect();
+    let (_, mut app, _engine) = open("extras_relative", Some(&lines));
+    app.editor
+        .move_cursor(ratatui_textarea::CursorMove::Jump(3, 0));
+    let number = |app: &mut App, needle: &str| {
+        let buffer = draw(app, 120, 40);
+        let area = app.editor_area.unwrap();
+        let (_, y) = find(&buffer, needle).unwrap();
+        (area.x..area.x + 4)
+            .map(|x| buffer[(x, y)].symbol().to_string())
+            .collect::<String>()
+            .trim()
+            .to_string()
+    };
+    assert_eq!(
+        number(&mut app, "-- línea 2 "),
+        "2",
+        "apagado: los de siempre"
+    );
+    app.set_config(&Config::parse(
+        "[editor]\nnumeros_relativos = true\n",
+        true,
+        "c.toml",
+    ));
+    assert_eq!(number(&mut app, "-- línea 2 "), "2");
+    assert_eq!(
+        number(&mut app, "-- línea 4 "),
+        "4",
+        "la del cursor, la de siempre"
+    );
+    assert_eq!(number(&mut app, "-- línea 1 "), "3");
+    assert_eq!(number(&mut app, "-- línea 7 "), "3");
+}

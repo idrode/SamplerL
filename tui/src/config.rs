@@ -996,6 +996,8 @@ pub struct EditorConfig {
     pub close_pairs: bool,
     /// Guías de sangría (`guias`).
     pub indent_guides: bool,
+    /// Números de línea relativos al cursor (`numeros_relativos`).
+    pub relative_numbers: bool,
 }
 
 impl Default for EditorConfig {
@@ -1013,6 +1015,7 @@ impl Default for EditorConfig {
             match_pairs: true,
             close_pairs: false,
             indent_guides: false,
+            relative_numbers: false,
         }
     }
 }
@@ -1039,6 +1042,7 @@ const EDITOR_KEY_NAMES: &[&str] = &[
     "pareja",
     "cerrar_pares",
     "guias",
+    "numeros_relativos",
 ];
 
 /// Un entero de `value` dentro de `range`.
@@ -1109,6 +1113,11 @@ const EDITOR_KEYS: &[(&str, &str, &str)] = &[
     (
         "guias",
         "líneas finas en la sangría, una por nivel (`true`/`false`)",
+        "`false`",
+    ),
+    (
+        "numeros_relativos",
+        "los números de línea cuentan desde el cursor (la del cursor, con su número de siempre), como en vim (`true`/`false`)",
         "`false`",
     ),
 ];
@@ -1359,6 +1368,12 @@ impl Config {
                                 None => config
                                     .warnings
                                     .push("[editor] linter: true o false".into()),
+                            },
+                            ("numeros_relativos", _) => match value.as_bool() {
+                                Some(on) => config.editor.relative_numbers = on,
+                                None => config
+                                    .warnings
+                                    .push("[editor] numeros_relativos: true o false".into()),
                             },
                             ("guias", _) => match value.as_bool() {
                                 Some(on) => config.editor.indent_guides = on,

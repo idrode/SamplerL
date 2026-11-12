@@ -4473,6 +4473,11 @@ tocan. Lo nuevo, cada una en su commit y en `[editor]`:
   en ASCII) tenue en los espacios de la sangría de cada línea a la vista,
   una por nivel; el nivel es la sangría más pequeña del texto (de 2 a 8).
   Las líneas en blanco no llevan. Apagadas, no se mira nada.
+- **Números relativos** (`numeros_relativos`, apagados): el widget dibuja
+  los números de siempre y, encima, en sus mismas celdas, la distancia al
+  cursor (la del cursor, su número, con el acento), como `relativenumber`
+  y `number` juntos en vim. Solo sin desplazamiento horizontal (con él, el
+  widget desplaza también los números).
 
 ## Audio de prueba y problemas conocidos
 
