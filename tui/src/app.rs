@@ -38,6 +38,7 @@ mod lint;
 mod macros;
 mod menu;
 mod mouse;
+mod pairs;
 mod scroll;
 pub use lint::Problem;
 mod slices;
@@ -4964,7 +4965,10 @@ impl App {
                     Key::Char(c) if !input.ctrl && !input.alt => Some(c),
                     _ => None,
                 };
-                self.editor.input(input);
+                // Los pares (`[editor] cerrar_pares`); si no, el widget.
+                if !self.auto_pair(&input) {
+                    self.editor.input(input);
+                }
                 self.refresh_completion(typed);
                 return Flow::Continue;
             }

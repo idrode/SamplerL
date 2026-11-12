@@ -20,3 +20,50 @@ fn the_pair_of_the_bracket_at_the_cursor_is_highlighted() {
     let buffer = draw(&mut app, 120, 40);
     assert_ne!(buffer[(x + 7, y)].bg, crate::ui::accent());
 }
+
+/// Teclea `text` en el cursor.
+fn typed(app: &mut App, text: &str) {
+    for c in text.chars() {
+        app.handle(key(c));
+    }
+}
+
+#[test]
+fn pairs_close_themselves_when_asked() {
+    let (_, mut app, _engine) = open("extras_close", Some("\n"));
+    // Apagado por defecto: lo de siempre.
+    typed(&mut app, "f(");
+    assert_eq!(app.editor.lines()[0], "f(");
+    app.set_config(&Config::parse(
+        "[editor]\ncerrar_pares = true\n",
+        true,
+        "c.toml",
+    ));
+    app.handle(special(Key::End));
+    app.handle(special(Key::Enter));
+    // Escribiendo todo, también lo que cierra: sale igual (se salta).
+    typed(&mut app, "track(\"kick\"):fx(\"gain\", { gain = 1 })");
+    assert_eq!(
+        app.editor.lines()[1],
+        "track(\"kick\"):fx(\"gain\", { gain = 1 })"
+    );
+    // Sin escribir lo que cierra: queda cerrado, con el cursor dentro.
+    app.handle(special(Key::Enter));
+    typed(&mut app, "bpm(");
+    assert_eq!(app.editor.lines()[2], "bpm()");
+    assert_eq!(app.editor.cursor(), (2, 4));
+    // Retroceso entre los dos: los dos, y un solo deshacer los devuelve.
+    app.handle(special(Key::Backspace));
+    assert_eq!(app.editor.lines()[2], "bpm");
+    app.handle(ctrl('z'));
+    assert_eq!(app.editor.lines()[2], "bpm()");
+    app.handle(ctrl('r'));
+    assert_eq!(app.editor.lines()[2], "bpm");
+    // Una comilla tras una letra no se dobla; delante de una palabra, nada
+    // se dobla.
+    typed(&mut app, " -- don't");
+    assert_eq!(app.editor.lines()[2], "bpm -- don't");
+    app.handle(special(Key::Home));
+    typed(&mut app, "(");
+    assert_eq!(app.editor.lines()[2], "(bpm -- don't");
+}

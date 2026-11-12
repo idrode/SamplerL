@@ -991,6 +991,9 @@ pub struct EditorConfig {
     /// Resaltar la pareja del paréntesis, corchete o llave del cursor
     /// (`pareja`).
     pub match_pairs: bool,
+    /// Cerrar solos los paréntesis, corchetes, llaves y comillas
+    /// (`cerrar_pares`).
+    pub close_pairs: bool,
 }
 
 impl Default for EditorConfig {
@@ -1006,6 +1009,7 @@ impl Default for EditorConfig {
             linter: true,
             linter_ms: 300,
             match_pairs: true,
+            close_pairs: false,
         }
     }
 }
@@ -1030,6 +1034,7 @@ const EDITOR_KEY_NAMES: &[&str] = &[
     "linter",
     "linter_ms",
     "pareja",
+    "cerrar_pares",
 ];
 
 /// Un entero de `value` dentro de `range`.
@@ -1091,6 +1096,11 @@ const EDITOR_KEYS: &[(&str, &str, &str)] = &[
         "pareja",
         "resaltar la pareja del paréntesis, corchete o llave junto al cursor (`true`/`false`)",
         "`true`",
+    ),
+    (
+        "cerrar_pares",
+        "al escribir `(`, `[`, `{` o una comilla, poner también la que cierra; escribir la que cierra delante de ella la salta, y Retroceso entre las dos las borra (`true`/`false`)",
+        "`false`",
     ),
 ];
 
@@ -1340,6 +1350,12 @@ impl Config {
                                 None => config
                                     .warnings
                                     .push("[editor] linter: true o false".into()),
+                            },
+                            ("cerrar_pares", _) => match value.as_bool() {
+                                Some(on) => config.editor.close_pairs = on,
+                                None => config
+                                    .warnings
+                                    .push("[editor] cerrar_pares: true o false".into()),
                             },
                             ("pareja", _) => match value.as_bool() {
                                 Some(on) => config.editor.match_pairs = on,

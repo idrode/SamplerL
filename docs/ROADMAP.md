@@ -979,3 +979,4 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
     3. **Mejoras ligeras** (comentar y el resaltado de la búsqueda ya
        estaban):
        1. ✅ **La pareja del paréntesis** resaltada (`pareja`).
+       2. ✅ **Cierre de pares** y comillas (`cerrar_pares`, apagado).

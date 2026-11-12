@@ -4459,6 +4459,16 @@ tocan. Lo nuevo, cada una en su commit y en `[editor]`:
   largas de varias líneas sí cuentan: haría falta leer el texto entero en
   cada cuadro). Solo cuesta algo con el cursor junto a uno de los seis
   caracteres.
+- **Cierre de pares** (`cerrar_pares`, **apagado**; `tui/src/app/pairs.rs`):
+  `(`, `[`, `{`, `"` y `'` ponen su pareja (un solo paso de deshacer, con
+  `insert_str`); el que cierra delante del cursor se salta (una comilla,
+  solo si cierra una cadena abierta en la línea); Retroceso entre una
+  pareja vacía borra las dos (un paso). Solo dobla si detrás no hay nada,
+  un espacio o algo que cierra, y una comilla no tras una letra, un número
+  o `_` ni dentro de una cadena. Con selección, lo de siempre. Apagado por
+  defecto: cambia lo que sale al teclear en directo, y quien escribe todo
+  (como hacen los tests de siempre) no debe encontrarse caracteres que no
+  escribió; quien lo quiera, lo enciende.
 
 ## Audio de prueba y problemas conocidos
 

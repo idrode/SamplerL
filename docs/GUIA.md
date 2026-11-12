@@ -1822,6 +1822,7 @@ paleta de 256.
 | `linter` | revisar el código mientras se escribe, sin ejecutarlo: sintaxis y uso de la API (`true`/`false`) | `true` |
 | `linter_ms` | la pausa al escribir, en ms, tras la que se revisa (de 50 a 5000) | `300` |
 | `pareja` | resaltar la pareja del paréntesis, corchete o llave junto al cursor (`true`/`false`) | `true` |
+| `cerrar_pares` | al escribir `(`, `[`, `{` o una comilla, poner también la que cierra; escribir la que cierra delante de ella la salta, y Retroceso entre las dos las borra (`true`/`false`) | `false` |
 
 | En `[resaltado]` | Para | Por defecto |
 | --- | --- | --- |
@@ -2233,6 +2234,12 @@ igual. Las tres teclas se cambian en `[teclas]` (`buscar`,
 - Con el cursor sobre un paréntesis, corchete o llave (o justo detrás),
   se resaltan él y su pareja (`pareja`, encendida). Los de dentro de
   cadenas y comentarios no cuentan.
+- Con `cerrar_pares = true` (apagado por defecto), al escribir `(`, `[`,
+  `{` o una comilla se pone también la que cierra, con el cursor en
+  medio; escribir la que cierra justo delante de ella la salta, y
+  Retroceso entre las dos borra las dos (un Ctrl-Z las devuelve). No se
+  dobla delante de una palabra ya escrita, ni una comilla tras una letra
+  (`don't`) o dentro de una cadena.
 - Comentar y descomentar: «Comentar o descomentar líneas» en la paleta,
   con la línea del cursor o las seleccionadas.
 - Buscar resalta todas las veces que sale el texto (ver arriba).
