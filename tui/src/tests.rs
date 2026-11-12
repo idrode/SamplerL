@@ -2742,6 +2742,7 @@ mod variants;
 mod vim;
 mod viz;
 mod wave_zoom;
+mod wheel;
 
 const PASTED: &str = "track(\"hats\", amen)\r\n  :steps(\"x . x .\") -- abiertos\r\n  :gain(0.5)";
 

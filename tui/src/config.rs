@@ -953,7 +953,8 @@ impl Keymap {
     }
 }
 
-/// `[editor]`, además de `terminal`: el ratón y el modo vim.
+/// `[editor]`, además de `terminal`: el ratón, el modo vim y el
+/// desplazamiento.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct EditorConfig {
     /// El ratón en el editor (`raton`): clic, arrastrar y rueda. Sin él,
@@ -963,6 +964,16 @@ pub struct EditorConfig {
     pub vim: bool,
     /// Las dos teclas que salen de Insert en vim (`salir_insert`).
     pub insert_exit: [char; 2],
+    /// Líneas que desplaza un paso suelto de la rueda (`rueda_lineas`).
+    pub wheel_lines: u16,
+    /// Columnas que desplaza un paso suelto de la rueda horizontal
+    /// (`rueda_columnas`).
+    pub wheel_columns: u16,
+    /// Líneas que se dejan a la vista por encima y por debajo del cursor al
+    /// moverlo con las teclas (`margen`).
+    pub margin: u16,
+    /// Barras de desplazamiento finas (`barras`).
+    pub bars: bool,
 }
 
 impl Default for EditorConfig {
@@ -971,9 +982,78 @@ impl Default for EditorConfig {
             mouse: true,
             vim: false,
             insert_exit: crate::app::VIM_EXIT,
+            wheel_lines: 3,
+            wheel_columns: 6,
+            margin: 2,
+            bars: false,
         }
     }
 }
+
+/// Lo que se acepta en `[editor] rueda_lineas`, `rueda_columnas` y `margen`.
+pub const WHEEL_LINES: std::ops::RangeInclusive<u16> = 1..=20;
+pub const WHEEL_COLUMNS: std::ops::RangeInclusive<u16> = 1..=40;
+pub const EDITOR_MARGIN: std::ops::RangeInclusive<u16> = 0..=10;
+
+/// Los nombres de las claves de `[editor]` (para el aviso de una que no
+/// existe).
+const EDITOR_KEY_NAMES: &[&str] = &[
+    "terminal",
+    "raton",
+    "modo",
+    "salir_insert",
+    "rueda_lineas",
+    "rueda_columnas",
+    "margen",
+    "barras",
+];
+
+/// Un entero de `value` dentro de `range`.
+fn ranged(value: &toml::Value, range: std::ops::RangeInclusive<u16>) -> Option<u16> {
+    let n = value.as_integer()?;
+    u16::try_from(n).ok().filter(|n| range.contains(n))
+}
+
+/// Claves de `[editor]`, qué hacen y su valor por defecto (para la guía).
+#[cfg(test)]
+const EDITOR_KEYS: &[(&str, &str, &str)] = &[
+    (
+        "terminal",
+        "comando que abre una terminal nueva para el editor en su ventana (`--split`); detrás va `tui --window-editor <script>`",
+        "—",
+    ),
+    (
+        "raton",
+        "el ratón en la interfaz: clic, arrastrar y rueda (`true`/`false`)",
+        "`true`",
+    ),
+    ("modo", "`\"clasico\"` o `\"vim\"`", "`\"clasico\"`"),
+    (
+        "salir_insert",
+        "las dos teclas seguidas que salen de Insert en vim",
+        "`\"jk\"`",
+    ),
+    (
+        "rueda_lineas",
+        "líneas que desplaza cada paso suelto de la rueda (de 1 a 20); en una ráfaga (touchpad, rueda girada deprisa), un tercio",
+        "`3`",
+    ),
+    (
+        "rueda_columnas",
+        "columnas que desplaza cada paso suelto de la rueda horizontal o de Shift y la rueda (de 1 a 40); en una ráfaga, un tercio",
+        "`6`",
+    ),
+    (
+        "margen",
+        "líneas que se dejan a la vista por encima y por debajo del cursor al moverlo con las teclas o escribir (de 0 a 10)",
+        "`2`",
+    ),
+    (
+        "barras",
+        "barras de desplazamiento finas a la derecha y abajo del editor, que se arrastran con el ratón (`true`/`false`)",
+        "`false`",
+    ),
+];
 
 /// Lo que se lee del archivo.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -1188,8 +1268,37 @@ impl Config {
                                     ),
                                 }
                             }
+                            ("rueda_lineas", _) => {
+                                match ranged(value, WHEEL_LINES) {
+                                    Some(n) => config.editor.wheel_lines = n,
+                                    None => config.warnings.push(
+                                        "[editor] rueda_lineas: un número de 1 a 20".into(),
+                                    ),
+                                }
+                            }
+                            ("rueda_columnas", _) => {
+                                match ranged(value, WHEEL_COLUMNS) {
+                                    Some(n) => config.editor.wheel_columns = n,
+                                    None => config.warnings.push(
+                                        "[editor] rueda_columnas: un número de 1 a 40".into(),
+                                    ),
+                                }
+                            }
+                            ("margen", _) => match ranged(value, EDITOR_MARGIN) {
+                                Some(n) => config.editor.margin = n,
+                                None => config
+                                    .warnings
+                                    .push("[editor] margen: un número de 0 a 10".into()),
+                            },
+                            ("barras", _) => match value.as_bool() {
+                                Some(on) => config.editor.bars = on,
+                                None => config
+                                    .warnings
+                                    .push("[editor] barras: true o false".into()),
+                            },
                             _ => config.warnings.push(format!(
-                                "[editor] «{key}» no existe (hay: terminal, raton, modo, salir_insert)"
+                                "[editor] «{key}» no existe (hay: {})",
+                                EDITOR_KEY_NAMES.join(", ")
                             )),
                         }
                     }
@@ -1565,6 +1674,10 @@ fn guide_markdown() -> String {
     out.push_str("\n| En `[colores]` | Para |\n| --- | --- |\n");
     for (name, what) in theme::NAMES.iter().zip(theme::DESCRIPTIONS) {
         out.push_str(&format!("| `{name}` | {what} |\n"));
+    }
+    out.push_str("\n| En `[editor]` | Para | Por defecto |\n| --- | --- | --- |\n");
+    for (name, what, default) in EDITOR_KEYS {
+        out.push_str(&format!("| `{name}` | {what} | {default} |\n"));
     }
     out.push_str("\n| En `[resaltado]` | Para | Por defecto |\n| --- | --- | --- |\n");
     for (name, what, default) in HIGHLIGHT_KEYS {
@@ -2362,7 +2475,9 @@ brillo = "red"
         let config = Config::parse("[editor]\nterminal = 3\nventana = 1\n", true, "c.toml");
         assert_eq!(config.editor_terminal, None);
         assert_eq!(config.warnings.len(), 2, "{:?}", config.warnings);
-        assert!(config.warnings[1].contains("(hay: terminal, raton, modo, salir_insert)"));
+        assert!(
+            config.warnings[1].contains("(hay: terminal, raton, modo, salir_insert, rueda_lineas")
+        );
     }
 
     #[test]

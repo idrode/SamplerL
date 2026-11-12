@@ -872,9 +872,9 @@ pub fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rec
         .set_cursor_line_style(Style::new().add_modifier(Modifier::UNDERLINED));
     app.editor
         .set_search_style(Style::new().fg(Color::Black).bg(warning_color()));
-    frame.render_widget(&app.editor, editor_area);
-    // Dónde quedó el texto: lo que necesita el ratón para saber qué se pulsa.
-    app.editor_area = Some(editor_area);
+    // Con la vista libre de la rueda y las barras; dónde quedó el texto es
+    // lo que necesita el ratón para saber qué se pulsa.
+    let editor_area = app.render_editor(frame, editor_area);
 
     // Celdas de unas columnas de una fila del texto, si están a la vista.
     let (top, left) = app.editor.scroll_offset();

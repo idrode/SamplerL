@@ -43,9 +43,6 @@ pub enum MouseAction {
     ZoomOut,
 }
 
-/// Líneas que mueve cada paso de la rueda.
-const WHEEL_LINES: i16 = 3;
-
 /// Lo que se deja como mínimo de largo a un corte al arrastrar, en ms:
 /// algo más que el mínimo de 1 ms del script, para que el redondeo a
 /// 0,1 ms no lo pise.
@@ -83,6 +80,19 @@ impl App {
     /// agarrar la marca de un corte la mueve con los vecinos que la
     /// comparten). Shift no vale: la terminal lo usa para seleccionar.
     pub fn mouse_with(&mut self, action: MouseAction, column: u16, row: u16, held: bool) {
+        self.mouse_at(action, column, row, held, std::time::Instant::now());
+    }
+
+    /// Como [`App::mouse_with`], en el instante `now` (las ráfagas de la
+    /// rueda dependen de lo seguidos que lleguen los pasos).
+    pub(crate) fn mouse_at(
+        &mut self,
+        action: MouseAction,
+        column: u16,
+        row: u16,
+        held: bool,
+        now: std::time::Instant,
+    ) {
         if !self.mouse_enabled {
             return;
         }
@@ -155,23 +165,23 @@ impl App {
         let Some(area) = self.editor_area else {
             return;
         };
+        // Las barras de desplazamiento (fuera del texto, a su lado).
+        if self.drag_from.is_none() && self.bars_mouse(action, column, row) {
+            return;
+        }
+        let inside = area.contains(ratatui::layout::Position::new(column, row));
         match action {
-            MouseAction::RightDown
+            MouseAction::RightDown | MouseAction::ZoomIn | MouseAction::ZoomOut => {}
+            // La rueda desplaza la vista, no el cursor (la siguiente tecla
+            // que lo mueve vuelve a él).
+            MouseAction::ScrollUp if inside => self.wheel_editor(-1, 0, now),
+            MouseAction::ScrollDown if inside => self.wheel_editor(1, 0, now),
+            MouseAction::ScrollLeft if inside => self.wheel_editor(0, -1, now),
+            MouseAction::ScrollRight if inside => self.wheel_editor(0, 1, now),
+            MouseAction::ScrollUp
+            | MouseAction::ScrollDown
             | MouseAction::ScrollLeft
-            | MouseAction::ScrollRight
-            | MouseAction::ZoomIn
-            | MouseAction::ZoomOut => {}
-            MouseAction::ScrollUp | MouseAction::ScrollDown => {
-                let inside = area.contains(ratatui::layout::Position::new(column, row));
-                if inside {
-                    let rows = if action == MouseAction::ScrollUp {
-                        -WHEEL_LINES
-                    } else {
-                        WHEEL_LINES
-                    };
-                    self.editor.scroll(Scrolling::Delta { rows, cols: 0 });
-                }
-            }
+            | MouseAction::ScrollRight => {}
             MouseAction::Down => {
                 if !area.contains(ratatui::layout::Position::new(column, row)) {
                     return;
@@ -184,11 +194,15 @@ impl App {
                 self.quit_armed = false;
                 let at = self.text_at(column, row);
                 self.editor.cancel_selection();
+                // El clic es sobre lo que se ve: la vista se queda donde
+                // está (el widget la guardó al dibujarla).
+                self.view.free = None;
                 self.jump(at);
                 self.drag_from = Some(at);
             }
             MouseAction::Drag => {
                 let Some(from) = self.drag_from else { return };
+                self.view.free = None;
                 // Fuera del texto, arriba o abajo: desplaza y sigue.
                 if row < area.y {
                     self.editor.scroll(Scrolling::Delta { rows: -1, cols: 0 });

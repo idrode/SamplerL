@@ -4283,6 +4283,77 @@ sobre Hyprland, sin tmux).
   afinar columna a columna.
 - **Sin traza**: la causa se reprodujo con tests, así que no se añadió el
   modo de traza de eventos del ratón.
+## Editor: rueda, linter y mejoras ligeras
+
+Pedido por el usuario: la rueda del ratón (y los gestos del touchpad) en
+el editor, un linter que avise mientras se escribe y unas cuantas
+comodidades. Una sola implementación sirve para el editor integrado, el de
+su ventana (`--window-editor`, que corre la misma `App` con `run_terminal`
+y ya pedía el ratón) y el flotante (se dibuja con el mismo `draw_editor`).
+
+### Qué había ya
+
+- La rueda vertical en el editor (tres líneas, con `TextArea::scroll`, que
+  arrastra el cursor con la vista); la horizontal llegaba como
+  `ScrollLeft`/`ScrollRight` (también Shift y la rueda, en `mouse_action`)
+  pero el editor la ignoraba. Clic, arrastrar y seleccionar (fase R).
+- El reparto del ratón por paneles (`App::mouse_with`: menús, bordes,
+  flotante, pestañas y foco, piano roll, lanes, tracker y mezclador, onda,
+  y el editor al final), y la geometría de cada panel en `ui.rs`.
+- Diagnóstico en vivo de la notación (`tui/src/diagnose.rs`: `steps`,
+  `melody` y los nombres de `:fx`), con caché por huella del texto,
+  subrayado y la primera línea al pie; Ctrl-G va a la línea del error de
+  la última carga.
+- Comentar y descomentar líneas (`editing::toggle_comment`, en la paleta)
+  y el resaltado de todas las coincidencias de la búsqueda (el `search` del
+  widget pinta todas con `search_style`): de la parte 3, no hacían falta.
+- El ajuste de línea: el widget lo tiene (`WrapMode`), pero la aplicación
+  no lo usa (los subrayados, el resaltado en vivo y el ratón cuentan con
+  líneas sin partir). No se añade.
+
+### Rueda y barras (`tui/src/app/scroll.rs`)
+
+- **Vista libre.** `TextArea::scroll` mueve el cursor para que quede en
+  la vista, y al dibujarse el widget se desplaza hasta el cursor; no hay
+  una vista aparte. La rueda guarda la suya (`EditorView::free`: primera
+  fila y primera columna, en las columnas del widget, con los números de
+  línea) y `render_editor` dibuja con ella: mueve el viewport del widget
+  (con `scroll` y devolviendo el cursor a su sitio), y si el cursor no
+  cae dentro, lo pone un momento en una celda a la vista, sin estilo de
+  cursor ni de su línea, dibuja y lo devuelve. La selección se conserva
+  (su inicio no cambia) y se pinta encima donde de verdad está. Nada del
+  texto ni del historial se toca.
+- **Volver al cursor.** `App::handle` y `App::paste` comparan una huella
+  barata (cursor, número de líneas y largo de la línea del cursor) antes y
+  después: si cambió, se suelta la vista libre y, al dibujar, la vista se
+  mueve lo justo para dejar `[editor] margen` líneas (2) por encima y por
+  debajo del cursor (`keep_margin`). Solo tras una tecla: un clic no
+  desplaza la vista bajo el ratón. Una tecla que no mueve nada (F6 sin
+  búsqueda) no suelta la vista. El modo vim pasa por `handle`: `j` vuelve.
+- **Límites.** Abajo, la última línea abajo del todo; a la derecha, el
+  final de la línea más ancha **a la vista** en el borde (sin líneas
+  anchas a la vista no se va de lado).
+- **Ráfagas.** Un paso suelto mueve `rueda_lineas` (3) o `rueda_columnas`
+  (6); dos pasos a menos de 40 ms son una ráfaga (touchpad, o una rueda
+  girada deprisa) y cada uno mueve un tercio (1 y 2): el gesto se desliza
+  en vez de saltar de tres en tres. Se decide con el instante que llega
+  con el evento (`App::mouse_at`, así se prueba).
+- **Barras** (`[editor] barras`, apagadas): la última columna del editor
+  y, si alguna línea no cabe, la última fila; guía tenue y la parte que se
+  ve con el acento (`│┃` y `─━`, en ASCII `|#` y `-=`). Pulsar salta ahí y
+  arrastrar las lleva (centrando la vista en el punto); no mueven el
+  cursor. Apagadas no cuestan nada (ni se mira la línea más ancha).
+- **Reparto del ratón.** La rueda solo desplaza el editor si cae dentro de
+  su texto; en la onda sigue el zoom, y en el tracker, la ocupación, el
+  explorador y los menús, lo de siempre (van antes en `mouse_with`).
+- Tests: `tui/src/tests/wheel.rs` (vertical, horizontal, límites, la línea
+  ancha, ráfagas y su ajuste, margen y su ajuste, clics y arrastres sobre
+  la vista desplazada, selección conservada, vim, barras y ASCII) y
+  `tui/tests/pty_wheel.rs`: `tui --edit` en un pseudoterminal con las
+  secuencias SGR 1006 de una terminal (botones 64, 65, 67 y 68, que es
+  Shift y la rueda), leyendo la pantalla con un intérprete mínimo de lo
+  que escribe ratatui; lo escrito después va a la línea 1 (el cursor no se
+  movió) y se guarda.
 
 ## Audio de prueba y problemas conocidos
 

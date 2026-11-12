@@ -961,3 +961,12 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
        fija o la siguiente carga.
     3. ✅ **El ratón real**: comprobado en una PTY con secuencias SGR
        (modos, orden de Down, Drag y Up, soltar fuera, modificadores).
+27. **Editor: rueda, linter y mejoras ligeras** (pedida por el usuario;
+    una sola implementación para el editor integrado, el de su ventana y
+    el flotante). Detalle en «Editor: rueda, linter y mejoras ligeras» de
+    [docs/ESTADO.md](ESTADO.md).
+    1. ✅ **Rueda y barras**: la rueda (vertical, horizontal y Shift y la
+       rueda) desplaza una vista libre sin mover el cursor, a pasos
+       configurables y más finos en las ráfagas del touchpad; la siguiente
+       tecla vuelve al cursor con `margen`; desplazamiento horizontal de
+       verdad; barras finas opcionales que se arrastran.

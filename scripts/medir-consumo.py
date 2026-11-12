@@ -34,6 +34,8 @@ Escenarios:
            (scripts/consumo/larga.lua)
   raton    sonando, con el ratón moviéndose sin botón a 60 eventos por segundo
   raton-parado  parado, con el ratón moviéndose
+  editando sonando, escribiendo en el editor: una letra y su borrado, unas
+           7 teclas por segundo (el diagnóstico en vivo y el linter)
 
 --teclas manda esas teclas al abrir, antes de medir y en todos los
 escenarios, con los escapes de Python: '\\x1bm' es Alt-M (el scope y el
@@ -192,6 +194,16 @@ def mouse_mover(term, cols, rows, stop):
         time.sleep(1 / 60)
 
 
+def typist(term, stop):
+    """Escribe en el editor: una letra y la borra, ~7 teclas por segundo
+    (como quien escribe despacio, con pausas que dejan correr el linter)."""
+    i = 0
+    while not stop.is_set():
+        term.send(b"x" if i % 2 == 0 else b"\x7f")
+        i += 1
+        time.sleep(0.15)
+
+
 def measure(args, binary, scenario, cols, rows, env):
     script = {
         "visual": "scripts/consumo/visual.lua",
@@ -214,6 +226,10 @@ def measure(args, binary, scenario, cols, rows, env):
     mover = None
     if scenario.startswith("raton"):
         mover = threading.Thread(target=mouse_mover, args=(term, cols, rows, stop), daemon=True)
+        mover.start()
+        time.sleep(0.5)
+    if scenario == "editando":
+        mover = threading.Thread(target=typist, args=(term, stop), daemon=True)
         mover.start()
         time.sleep(0.5)
     t0 = thread_times(term.pid)

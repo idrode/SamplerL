@@ -37,6 +37,7 @@ mod learn;
 mod macros;
 mod menu;
 mod mouse;
+mod scroll;
 mod slices;
 mod vim;
 mod zoom;
@@ -261,6 +262,11 @@ pub struct App {
     diagnostics_cache: std::cell::RefCell<Option<(u64, Vec<diagnose::Diagnostic>)>>,
     /// El ratón en el editor (`[editor] raton`).
     mouse_enabled: bool,
+    /// `[editor]`: la rueda, el margen y las barras.
+    pub(crate) editor_config: crate::config::EditorConfig,
+    /// La vista del editor: libre (desplazada con la rueda) o siguiendo al
+    /// cursor.
+    pub(crate) view: scroll::EditorView,
     /// El modo vim (`[editor] modo = "vim"`): su modo y lo que lleva entre
     /// teclas; `None`, el editor de siempre.
     vim: Option<vim::Vim>,
@@ -551,6 +557,8 @@ impl App {
             wave_zoom: None,
             zoom_cache: Default::default(),
             diagnostics_cache: Default::default(),
+            editor_config: Default::default(),
+            view: Default::default(),
             mouse_enabled: true,
             vim: None,
             vim_exit: vim::DEFAULT_EXIT,
@@ -779,6 +787,7 @@ impl App {
         self.editor_terminal = config.editor_terminal.clone();
         self.devices_terminal = config.devices_terminal.clone();
         self.mouse_enabled = config.editor.mouse;
+        self.editor_config = config.editor;
         self.vim_exit = config.editor.insert_exit;
         // El modo vim se queda como estaba si ya lo era (con su modo).
         self.vim = match (config.editor.vim, self.vim.take()) {
@@ -4645,6 +4654,13 @@ impl App {
     /// Atiende una tecla: atajos propios; si no, en modo tocar dispara
     /// cortes y en modo editor escribe.
     pub fn handle(&mut self, input: Input) -> Flow {
+        let before = self.editor_fingerprint();
+        let flow = self.handle_input(input);
+        self.after_input(before);
+        flow
+    }
+
+    fn handle_input(&mut self, input: Input) -> Flow {
         // El pánico antes que nada: con cualquier cosa abierta.
         if let Some(Bound::Action(a @ (Action::Panic | Action::PanicPause))) =
             self.keys.lookup(&input)
@@ -4985,7 +5001,9 @@ impl App {
         self.marks.clear();
         self.mark_selected = false;
         self.quit_armed = false;
+        let before = self.editor_fingerprint();
         self.grouped(|editor| editor.insert_str(text));
+        self.after_input(before);
     }
 
     fn then(&mut self, f: impl FnOnce(&mut App)) -> Flow {

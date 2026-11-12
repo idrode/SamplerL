@@ -45,12 +45,22 @@ fn a_click_follows_the_scroll() {
     click_on(&mut app, &buffer, "-- línea 75", 3);
     assert_eq!(app.editor.cursor(), (74 + SONG.lines().count(), 3));
 
-    // La rueda desplaza (tres líneas cada paso).
+    // La rueda desplaza la vista (tres líneas cada paso suelto) sin mover
+    // el cursor.
+    let cursor = app.editor.cursor();
     let (x, y) = find(&buffer, "-- línea 75").unwrap();
-    app.mouse(MouseAction::ScrollUp, x, y);
-    app.mouse(MouseAction::ScrollUp, x, y);
+    let t = std::time::Instant::now();
+    app.mouse_at(MouseAction::ScrollUp, x, y, false, t);
+    app.mouse_at(
+        MouseAction::ScrollUp,
+        x,
+        y,
+        false,
+        t + std::time::Duration::from_secs(1),
+    );
     draw(&mut app, 120, 40);
     assert_eq!(app.editor.scroll_offset().0, top - 6);
+    assert_eq!(app.editor.cursor(), cursor);
 }
 
 #[test]

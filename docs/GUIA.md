@@ -1660,8 +1660,9 @@ sonando = 22
 
 La sección `[editor]` tiene `terminal`, el comando que abre el editor en
 su ventana con `--split` (ver «El editor en su propia ventana»), `raton`
-(`true` por defecto), `modo` (`"clasico"` o `"vim"`) y `salir_insert` (las
-dos teclas que salen de Insert en vim, `"jk"` por defecto; ver «Editor»).
+(`true` por defecto), `modo` (`"clasico"` o `"vim"`), `salir_insert` (las
+dos teclas que salen de Insert en vim, `"jk"` por defecto; ver «Editor») y
+las de la rueda, el margen y las barras (en la tabla de abajo).
 
 Las teclas son `ctrl-`, `alt-` y/o `shift-` con una letra, un número o
 `space` (también `espacio`), `f1` a `f12` o `esc`. Una letra o un espacio
@@ -1760,6 +1761,17 @@ paleta de 256.
 | `borde` | bordes de los paneles sin el foco |
 | `borde_foco` | borde y título del panel con el foco |
 | `cabecera` | fondo de la cabecera y de la barra de menús |
+
+| En `[editor]` | Para | Por defecto |
+| --- | --- | --- |
+| `terminal` | comando que abre una terminal nueva para el editor en su ventana (`--split`); detrás va `tui --window-editor <script>` | — |
+| `raton` | el ratón en la interfaz: clic, arrastrar y rueda (`true`/`false`) | `true` |
+| `modo` | `"clasico"` o `"vim"` | `"clasico"` |
+| `salir_insert` | las dos teclas seguidas que salen de Insert en vim | `"jk"` |
+| `rueda_lineas` | líneas que desplaza cada paso suelto de la rueda (de 1 a 20); en una ráfaga (touchpad, rueda girada deprisa), un tercio | `3` |
+| `rueda_columnas` | columnas que desplaza cada paso suelto de la rueda horizontal o de Shift y la rueda (de 1 a 40); en una ráfaga, un tercio | `6` |
+| `margen` | líneas que se dejan a la vista por encima y por debajo del cursor al moverlo con las teclas o escribir (de 0 a 10) | `2` |
+| `barras` | barras de desplazamiento finas a la derecha y abajo del editor, que se arrastran con el ratón (`true`/`false`) | `false` |
 
 | En `[resaltado]` | Para | Por defecto |
 | --- | --- | --- |
@@ -2186,8 +2198,18 @@ línea de órdenes (F2) solo entra la primera línea, y en el modo tocar no
 se pega nada.
 
 **Ratón.** Un clic lleva el cursor a donde se pulsa (también con el texto
-desplazado y en las líneas largas), arrastrar selecciona (Ctrl-C lo copia)
-y la rueda desplaza el texto tres líneas. Funciona en el modo editor sin
+desplazado y en las líneas largas) y arrastrar selecciona (Ctrl-C lo
+copia). La rueda desplaza el texto **sin mover el cursor**: tres líneas
+cada paso (`rueda_lineas` en `[editor]`); la rueda horizontal, o Shift y
+la rueda, lo lleva de lado por las líneas largas (seis columnas,
+`rueda_columnas`), hasta el final de la más ancha que se ve. Los gestos
+del touchpad llegan como muchos pasos seguidos: dentro de esa ráfaga cada
+paso mueve un tercio, y el texto se desliza en vez de saltar. En cuanto
+escribes o mueves el cursor con las teclas, la vista vuelve a él con dos
+líneas de margen por encima y por debajo (`margen`, de 0 a 10). Con
+`barras = true`, el editor tiene barras de desplazamiento finas a la
+derecha (y abajo, si alguna línea no cabe) que dicen qué parte se ve; se
+pulsan o se arrastran para ir a otra parte. Funciona en el modo editor sin
 nada abierto encima (la paleta, la línea de órdenes...), también en la
 ventana del editor de `--split`. En la vista del sample, arrastra las
 marcas de los cortes (ver «ajuste manual de cortes»). Mientras la interfaz tiene el ratón, la
@@ -2235,7 +2257,7 @@ segundo clic, como con Enter.
 
 | Dónde | Qué hace | Más |
 | --- | --- | --- |
-| Editor | clic mueve el cursor, arrastrar selecciona, la rueda desplaza; arrastrar su borde de arriba cambia su alto; flotante, arrastrar su título lo mueve y sus bordes de abajo y de la derecha, su tamaño | [Editor](#editor), [El editor abajo](#el-editor-abajo-maximizado-o-flotante) |
+| Editor | clic mueve el cursor, arrastrar selecciona, la rueda desplaza sin mover el cursor (Shift y la rueda, o la horizontal, de lado), las barras se arrastran (`barras`); arrastrar su borde de arriba cambia su alto; flotante, arrastrar su título lo mueve y sus bordes de abajo y de la derecha, su tamaño | [Editor](#editor), [El editor abajo](#el-editor-abajo-maximizado-o-flotante) |
 | Explorador de archivos | clic elige, clic en el icono de una carpeta la abre o la cierra, dos clics abren, la rueda recorre, arrastrar su borde derecho cambia el ancho | [El explorador de archivos](#el-explorador-de-archivos) |
 | Vista del sample | arrastrar un borde mueve el inicio o el final de ese corte sin tocar a los demás, arrastrar dentro de un corte lo mueve entero, Alt o Ctrl y arrastrar mueve la marca con los vecinos; clic lo elige y suena, clic derecho pone o quita un corte, la rueda acerca y aleja; se escribe en el código (Ctrl-S lo guarda) | [Modo tocar](#modo-tocar-esc) |
 | Piano roll | clic pone una nota, arrastrar la mueve o la alarga, clic derecho la borra; nunca suena | [Piano roll](#piano-roll) |
