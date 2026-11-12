@@ -825,9 +825,33 @@ pub fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rec
         }
         None => inner,
     };
+    // El diagnóstico de la línea del cursor, entero, en la línea de la
+    // ayuda (manda sobre la ayuda de la función).
+    let cursor_row = app.editor.cursor().0;
+    let line_problem = view
+        .problems
+        .iter()
+        .filter(|p| p.row == cursor_row)
+        .min_by_key(|p| p.severity);
+    let editor_area = match line_problem {
+        Some(problem) if editor_area.height > 3 => {
+            let [editor, line] =
+                Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(editor_area);
+            let (mark, color) = problem_mark(problem.severity);
+            frame.render_widget(
+                Line::from(vec![
+                    Span::from(format!("{mark} {}: ", problem.severity.label())).fg(color),
+                    Span::from(problem.message.clone()).fg(color),
+                ]),
+                line,
+            );
+            editor
+        }
+        _ => editor_area,
+    };
     // Ayuda de la función bajo el cursor, en la última línea del editor.
     let editor_area = match &view.help {
-        Some(help) if editor_area.height > 3 => {
+        Some(help) if line_problem.is_none() && editor_area.height > 3 => {
             let [editor, line] =
                 Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(editor_area);
             frame.render_widget(
@@ -904,15 +928,40 @@ pub fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rec
             frame.buffer_mut().set_style(area, highlight_style(h));
         }
     }
-    // Subrayar los pasos con error de `steps("...")` que estén a la vista.
-    for d in &view.diagnostics {
-        if let Some(area) = cells(d.row, &d.cols) {
-            frame.buffer_mut().set_style(
-                area,
-                Style::new()
-                    .fg(diagnostic())
-                    .underline_color(diagnostic())
-                    .add_modifier(Modifier::UNDERLINED),
+    // Subrayar lo que dicen el linter y la notación (en orden de
+    // gravedad: el más grave, encima) y marcarlo en el margen.
+    let mut marks: Vec<(usize, script::lint::Severity)> = Vec::new();
+    for p in view.problems.iter().rev() {
+        let (_, color) = problem_mark(p.severity);
+        if let Some(area) = cells(p.row, &p.cols) {
+            let mut style = Style::new()
+                .underline_color(color)
+                .add_modifier(Modifier::UNDERLINED);
+            if p.severity != script::lint::Severity::Hint {
+                style = style.fg(color);
+            }
+            frame.buffer_mut().set_style(area, style);
+        }
+        match marks.iter_mut().find(|(row, _)| *row == p.row) {
+            Some((_, s)) => *s = (*s).min(p.severity),
+            None => marks.push((p.row, p.severity)),
+        }
+    }
+    // En la primera columna de los números de línea (si se ven).
+    if (left as usize) < app.editor.line_number_width() as usize {
+        for (row, severity) in marks {
+            let Some(y) = row
+                .checked_sub(top as usize)
+                .filter(|r| *r < editor_area.height as usize)
+            else {
+                continue;
+            };
+            let (mark, color) = problem_mark(severity);
+            frame.buffer_mut().set_string(
+                editor_area.x,
+                editor_area.y + y as u16,
+                mark,
+                Style::new().fg(color).add_modifier(Modifier::BOLD),
             );
         }
     }
@@ -957,6 +1006,17 @@ pub fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rec
         }
     }
     popup
+}
+
+/// La marca del margen y el color de cada gravedad (en ASCII, una letra).
+pub fn problem_mark(severity: script::lint::Severity) -> (&'static str, Color) {
+    use script::lint::Severity;
+    let ascii = theme::ascii();
+    match severity {
+        Severity::Error => (if ascii { "E" } else { "●" }, error_color()),
+        Severity::Warning => (if ascii { "W" } else { "▲" }, diagnostic()),
+        Severity::Hint => (if ascii { "i" } else { "•" }, accent()),
+    }
 }
 
 /// Estilo de un token que suena, según `[resaltado] estilo`, con el color

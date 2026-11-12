@@ -52,6 +52,16 @@ pub const BINDABLE: &[(&str, Bound, &[&str])] = &[
         &["shift-ctrl-space", "f9"],
     ),
     ("ir_al_error", Bound::Action(Action::GotoError), &["ctrl-g"]),
+    (
+        "diagnostico_siguiente",
+        Bound::Action(Action::NextProblem),
+        &["alt-j"],
+    ),
+    (
+        "diagnostico_anterior",
+        Bound::Action(Action::PreviousProblem),
+        &["alt-k"],
+    ),
     ("ir_a_linea", Bound::Action(Action::GotoLine), &["alt-g"]),
     ("buscar", Bound::Action(Action::Find), &["ctrl-f"]),
     ("buscar_siguiente", Bound::Action(Action::FindNext), &["f6"]),
@@ -974,6 +984,10 @@ pub struct EditorConfig {
     pub margin: u16,
     /// Barras de desplazamiento finas (`barras`).
     pub bars: bool,
+    /// El linter mientras se escribe (`linter`).
+    pub linter: bool,
+    /// La pausa al escribir tras la que se lanza, en ms (`linter_ms`).
+    pub linter_ms: u16,
 }
 
 impl Default for EditorConfig {
@@ -986,6 +1000,8 @@ impl Default for EditorConfig {
             wheel_columns: 6,
             margin: 2,
             bars: false,
+            linter: true,
+            linter_ms: 300,
         }
     }
 }
@@ -994,6 +1010,7 @@ impl Default for EditorConfig {
 pub const WHEEL_LINES: std::ops::RangeInclusive<u16> = 1..=20;
 pub const WHEEL_COLUMNS: std::ops::RangeInclusive<u16> = 1..=40;
 pub const EDITOR_MARGIN: std::ops::RangeInclusive<u16> = 0..=10;
+pub const LINTER_MS: std::ops::RangeInclusive<u16> = 50..=5000;
 
 /// Los nombres de las claves de `[editor]` (para el aviso de una que no
 /// existe).
@@ -1006,6 +1023,8 @@ const EDITOR_KEY_NAMES: &[&str] = &[
     "rueda_columnas",
     "margen",
     "barras",
+    "linter",
+    "linter_ms",
 ];
 
 /// Un entero de `value` dentro de `range`.
@@ -1052,6 +1071,16 @@ const EDITOR_KEYS: &[(&str, &str, &str)] = &[
         "barras",
         "barras de desplazamiento finas a la derecha y abajo del editor, que se arrastran con el ratón (`true`/`false`)",
         "`false`",
+    ),
+    (
+        "linter",
+        "revisar el código mientras se escribe, sin ejecutarlo: sintaxis y uso de la API (`true`/`false`)",
+        "`true`",
+    ),
+    (
+        "linter_ms",
+        "la pausa al escribir, en ms, tras la que se revisa (de 50 a 5000)",
+        "`300`",
     ),
 ];
 
@@ -1295,6 +1324,18 @@ impl Config {
                                 None => config
                                     .warnings
                                     .push("[editor] barras: true o false".into()),
+                            },
+                            ("linter", _) => match value.as_bool() {
+                                Some(on) => config.editor.linter = on,
+                                None => config
+                                    .warnings
+                                    .push("[editor] linter: true o false".into()),
+                            },
+                            ("linter_ms", _) => match ranged(value, LINTER_MS) {
+                                Some(n) => config.editor.linter_ms = n,
+                                None => config
+                                    .warnings
+                                    .push("[editor] linter_ms: un número de 50 a 5000".into()),
                             },
                             _ => config.warnings.push(format!(
                                 "[editor] «{key}» no existe (hay: {})",

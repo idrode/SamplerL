@@ -970,3 +970,9 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
        configurables y más finos en las ráfagas del touchpad; la siguiente
        tecla vuelve al cursor con `margen`; desplazamiento horizontal de
        verdad; barras finas opcionales que se arrastran.
+    2. ✅ **Linter**: sintaxis sin ejecutar (intérprete desechable, sin
+       bibliotecas, solo texto, con el límite de memoria) y uso de la API
+       contra el registro, solo con literales y sin falsos positivos en la
+       guía, el tutorial y las recetas; tres gravedades; tras una pausa,
+       en un hilo, con huella del texto; margen, subrayado, línea ⓘ,
+       cabecera, Alt-J/Alt-K, `]d` `[d` y Ctrl-G.

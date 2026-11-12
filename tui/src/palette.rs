@@ -28,6 +28,8 @@ pub enum Action {
     Cue,
     ClearCue,
     GotoError,
+    NextProblem,
+    PreviousProblem,
     NextTrack,
     PlayMode,
     ReloadExternal,
@@ -247,8 +249,20 @@ pub const ACTIONS: &[ActionDef] = &[
     ActionDef {
         action: Action::GotoError,
         name: "Ir al error",
-        description: "Lleva el cursor a la línea del error",
+        description: "Lleva el cursor a la línea del error de la última carga; sin él, al siguiente diagnóstico del texto (los errores antes)",
         keys: "Ctrl-G",
+    },
+    ActionDef {
+        action: Action::NextProblem,
+        name: "Diagnóstico siguiente",
+        description: "Lleva el cursor al siguiente error, aviso o pista del linter o de la notación (da la vuelta); en vim, ]d",
+        keys: "Alt-J",
+    },
+    ActionDef {
+        action: Action::PreviousProblem,
+        name: "Diagnóstico anterior",
+        description: "Lleva el cursor al diagnóstico anterior (da la vuelta); en vim, [d",
+        keys: "Alt-K",
     },
     ActionDef {
         action: Action::NextTrack,

@@ -110,6 +110,8 @@ fn editor_side(action: Action) -> bool {
             | Action::SaveAndLoad
             | Action::Load
             | Action::GotoError
+            | Action::NextProblem
+            | Action::PreviousProblem
             | Action::ReloadExternal
             | Action::Commands
             | Action::SaveBlock

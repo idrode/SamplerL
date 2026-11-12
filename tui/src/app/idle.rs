@@ -51,7 +51,7 @@ impl App {
         (status.section_lost, status.heard.map(f64::to_bits)).hash(&mut h);
         self.message.hash(&mut h);
         self.error.as_ref().map(|e| &e.message).hash(&mut h);
-        (self.loads, self.midi_events).hash(&mut h);
+        (self.loads, self.midi_events, self.lint.generation).hash(&mut h);
         Some(h.finish())
     }
 }

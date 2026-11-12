@@ -4,7 +4,8 @@
 //! deja escribir como siempre.
 //!
 //! Normal: `h j k l w b e 0 $ gg G`; `i a o O A I`; `x dd yy p P`; `u` y
-//! Ctrl-R; `/` con `n` y `N`; `:w`. Sin cuentas, macros, registros, `:s`,
+//! Ctrl-R; `/` con `n` y `N`; `:w`; `]d` y `[d` (diagnóstico siguiente y
+//! anterior). Sin cuentas, macros, registros, `:s`,
 //! marcas, operadores compuestos, Visual ni `.` (para después).
 //!
 //! Esc sigue pasando del editor al modo tocar también aquí (decidido por
@@ -146,10 +147,13 @@ impl App {
             (Some('g'), 'g') => self.editor.move_cursor(CursorMove::Top),
             (Some('d'), 'd') => self.delete_line(),
             (Some('y'), 'y') => self.yank_line(),
+            // Al diagnóstico siguiente y al anterior (como en Neovim).
+            (Some(']'), 'd') => self.goto_problem(true, false),
+            (Some('['), 'd') => self.goto_problem(false, false),
             (Some(first), _) => {
                 self.message = format!("vim: «{first}{c}» no está (fase 1)");
             }
-            (None, 'g' | 'd' | 'y') => vim.pending = Some(c),
+            (None, 'g' | 'd' | 'y' | ']' | '[') => vim.pending = Some(c),
             (None, 'h') => self.vim_left(),
             (None, 'l') => self.vim_right(),
             (None, 'j') => self.editor.move_cursor(CursorMove::Down),

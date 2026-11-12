@@ -4355,6 +4355,97 @@ y ya pedía el ratón) y el flotante (se dibuja con el mismo `draw_editor`).
   que escribe ratatui; lo escrito después va a la línea 1 (el cursor no se
   movió) y se guarda.
 
+### Linter (`script/src/lint.rs`, `tui/src/app/lint.rs`)
+
+- **Sintaxis sin ejecutar.** `lint::syntax` compila el texto con un
+  `Lua::new_with(StdLib::NONE, ...)` recién hecho, con el límite de
+  memoria de `[script] memoria`, en `ChunkMode::Text` (un trozo
+  precompilado se rechaza) y con `into_function`: compila y no llama a
+  nada. Un bucle infinito arriba del todo se analiza en lo que tarda en
+  compilarse. El tiempo: el análisis va en su hilo y, si pasa de `[script]
+  tiempo` (más medio segundo), se abandona sin esperarlo y ese texto no se
+  vuelve a mirar (el compilador de Lua es lineal: no debería pasar; tras
+  cuatro abandonos el linter se apaga hasta reiniciar). El mensaje de Lua
+  se traduce (`lint::spanish`: «falta «)» antes de «amen»», «cadena sin
+  cerrar», «número mal escrito»...; lo que no se conoce sale como viene) y
+  se sitúa: el token de «near» en su línea, y lo que no se cierra, en la
+  línea que lo abre.
+- **API, contra el registro.** Un léxico de Lua propio (comentarios y
+  cadenas largas incluidos) y, sobre los tokens:
+  - funciones globales que no son de la API, de Lua ni del script
+    (definidas de cualquier forma: asignadas, locales, `function`,
+    parámetros, variables de `for`, campos) y métodos que no tiene ningún
+    objeto de la API, ni las cadenas, ni define el script: **error**, con
+    «¿quisiste decir…?» si hay un nombre único a 1 de distancia (2 en los
+    de más de cinco letras, con trasposiciones, o igual sin distinguir
+    mayúsculas);
+  - las tablas `{ ... }` literales de las llamadas que tienen una tabla de
+    parámetros (`api::call_table`, que ahora usan también el
+    autocompletado y la ayuda: antes estaba en `complete.rs`; y las capas
+    del subharm, `api::layer_call`): clave desconocida, valor de una lista
+    cerrada que no está en ella, texto que no es un número o `true`/`false`
+    en un parámetro numérico, y `ramp()`/`lfo()`/`lane()`/`macro()` en uno
+    que no admite curvas (con el porqué del registro): **error**; un número
+    fuera del rango `a–b` de `valid`: **aviso**;
+  - el nombre del sintetizador de `synth("...")` y del bus de `bus("...")`:
+    **error** (el del efecto de `:fx("...")` ya lo decía el diagnóstico de
+    la notación);
+  - un método que existe, pero no en el objeto sobre el que se llama,
+    cuando el objeto se sabe seguro (una cadena de llamadas de la API, o
+    una variable `local` asignada una sola vez con una cadena así, sin
+    `or` ni nada detrás): **pista**.
+- **Qué se deja sin analizar.** Todo lo que no es literal (variables,
+  expresiones, tablas construidas), los parámetros de las funciones (su
+  tipo no se sabe: el compás de `every` tampoco), los valores de los
+  argumentos posicionales (sus rangos no están en el registro como datos,
+  solo en texto), las variables asignadas más de una vez, y todo nombre
+  desconocido si el script usa `_G`, `_ENV`, `load`, `rawset`,
+  `setmetatable`, `getmetatable` o `require`. Tampoco hay «variable sin
+  usar»: los ejemplos de la guía definen locales que no usan, y avisar ahí
+  sería avisar en código válido.
+- **Severidades.** Error: falla seguro (un test lo comprueba: cada caso de
+  error de las tablas, más de 200, y los nombres de sintetizador y bus,
+  falla de verdad al cargar; también cada aviso de rango).
+  Aviso: casi seguro (el rango documentado); los avisos de la notación de
+  `diagnose.rs` entran como avisos en el recuento y en la navegación.
+  Pista: lo que puede no ser un fallo.
+- **Cuándo.** La huella del texto se toma al construir la vista de un
+  cuadro que se dibuja (la misma pasada que la caché de los avisos de la
+  notación, que ahora reutiliza esa huella); `tick` lanza el análisis si
+  la huella es distinta de la analizada y lleva `linter_ms` (300) sin
+  cambiar. Un solo análisis a la vez; el resultado se queda hasta que
+  llega el siguiente. En reposo no se dibuja, así que no se toma ninguna
+  huella; `tick` solo compara dos números. El resultado cambia
+  `generation`, que entra en la huella del reposo (`idle_key`) para que
+  se dibuje. Con `linter = false`, ni huella ni hilo.
+- **Pánicos.** El hilo corre el análisis dentro de `script::panics::catch`
+  (que además calla el aviso en la terminal): con un pánico, no se marca
+  nada y la interfaz sigue.
+- **Cómo se ve** (`ui::draw_editor`): la marca de la gravedad mayor de cada
+  línea en la primera columna de los números de línea (si se ven: con el
+  texto desplazado de lado, no), el subrayado del color de su gravedad
+  (los errores y avisos, también el texto), el mensaje entero en la línea
+  `ⓘ` con el cursor en esa línea (manda sobre la ayuda de la función), y
+  en la cabecera, `●N ▲N •N` (en ASCII, `E`, `W`, `i`). El pie con el
+  primer aviso de la notación sigue como estaba.
+- **Navegación.** «Diagnóstico siguiente» y «anterior» (Alt-J y Alt-K,
+  `diagnostico_siguiente` y `diagnostico_anterior` en `[teclas]`; en vim,
+  `]d` y `[d`), con el mensaje «error 1 de 2, línea 4: ...». Ctrl-G no se
+  duplica: va al error de la carga si lo hay y, si no, al siguiente error
+  del texto (o al siguiente diagnóstico si no hay errores).
+- `cargo run -p script --example lint -- *.lua` revisa archivos fuera del
+  editor (para comprobar canciones sin abrirlas).
+- Tests: `script/src/lint.rs` (cada categoría con su ejemplo bueno y malo,
+  la sintaxis en español, que nunca ejecuta, las sugerencias, el léxico),
+  `script/tests/guide.rs` (`the_linter_finds_nothing_in_working_scripts`:
+  ningún diagnóstico en los bloques de la guía, cada paso del tutorial,
+  las recetas y los scripts de medir el consumo), `script/tests/registry.rs`
+  (`every_linter_error_in_a_table_fails_to_load`) y
+  `tui/src/tests/lint.rs` (la pausa y no en cada tecla, sin cambios no se
+  relanza, configurable y apagado, margen, subrayado, línea ⓘ, cabecera,
+  ASCII, el bucle infinito, Alt-J/Alt-K, Ctrl-G, `]d` `[d` y los avisos
+  de la notación).
+
 ## Audio de prueba y problemas conocidos
 
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`

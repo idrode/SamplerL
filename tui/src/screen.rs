@@ -16,7 +16,7 @@ use crate::app::{App, PanelAreas};
 use crate::focus::Panel;
 use crate::layout::{self, Dock, Needs, Size, Tab};
 use crate::model::ViewModel;
-use crate::ui::{self, accent, dim, error_color, warning_color};
+use crate::ui::{self, accent, dim, error_color};
 
 /// Lo que pide la vista a la rejilla.
 pub fn needs(view: &ViewModel) -> Needs {
@@ -497,10 +497,21 @@ impl Widget for Header<'_> {
                     .bold(),
             );
         }
-        if !view.diagnostics.is_empty() {
-            left.push_span(
-                Span::from(format!("   ⚠ {}", view.diagnostics.len())).fg(warning_color()),
-            );
+        // Los diagnósticos del texto, por gravedad.
+        if !view.problems.is_empty() {
+            use script::lint::Severity;
+            left.push_span(Span::from("  "));
+            for severity in [Severity::Error, Severity::Warning, Severity::Hint] {
+                let n = view
+                    .problems
+                    .iter()
+                    .filter(|p| p.severity == severity)
+                    .count();
+                if n > 0 {
+                    let (mark, color) = ui::problem_mark(severity);
+                    left.push_span(Span::from(format!(" {mark}{n}")).fg(color));
+                }
+            }
         }
         // Con el editor en su ventana, el archivo y el enlace (aquí no hay
         // borde del editor que los diga).

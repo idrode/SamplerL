@@ -2706,6 +2706,7 @@ mod instrument;
 mod lanes;
 mod learn;
 mod length;
+mod lint;
 mod main_window;
 mod masking;
 mod menu;

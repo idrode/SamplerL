@@ -73,7 +73,8 @@ pub fn menu_of(action: Action) -> Option<Menu> {
         }
         Undo | Redo | ToggleComment | DuplicateLines | MoveLinesUp | MoveLinesDown | TextStart
         | TextEnd | GotoLine | Find | FindNext | FindPrevious | Complete | GotoError
-        | ToggleVim | EditTracker | EditRoll | FillGap | SuggestFills => Menu::Edit,
+        | NextProblem | PreviousProblem | ToggleVim | EditTracker | EditRoll | FillGap
+        | SuggestFills => Menu::Edit,
         NextTrack | Mute | Solo | ClearMuteSolo | LabelSlice | SliceNotes | SampleKey | Preview
         | SliceEarlier | SliceLater | SliceEdge | ClearSliceAdjust | NextSlice | PreviousSlice
         | SplitSlice | JoinSlice | ZoomIn | ZoomOut | ZoomReset | DetectBpm | MidiLearn

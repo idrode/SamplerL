@@ -13,6 +13,7 @@ use script::ScriptHost;
 use script::api::{
     self, CHANCE_EFFECTS, EFFECTS, FUNCTIONS, Receiver, SNIPPETS, expand_template, functions,
 };
+use script::lint::{self, Severity};
 
 const RATE: u32 = 48_000;
 
@@ -97,32 +98,7 @@ fn every_registered_function_exists_in_lua() {
 #[test]
 fn no_global_function_is_missing_from_the_registry() {
     // Las funciones de la librería base de Lua; el resto son de la API.
-    let base = [
-        "assert",
-        "collectgarbage",
-        "error",
-        "getmetatable",
-        "ipairs",
-        "load",
-        "next",
-        "pairs",
-        "pcall",
-        "print",
-        "rawequal",
-        "rawget",
-        "rawlen",
-        "rawset",
-        "select",
-        "setmetatable",
-        "tonumber",
-        "tostring",
-        "type",
-        "xpcall",
-        "warn",
-        "dofile",
-        "loadfile",
-        "require",
-    ];
+    let base = api::LUA_BASE;
     let registered: Vec<String> = functions(Receiver::Global)
         .map(|f| format!("\"{}\"", f.name))
         .collect();
@@ -560,4 +536,121 @@ fn step_shape_keys_are_slice_params() {
             "{key} no está en SLICE_PARAMS"
         );
     }
+}
+
+/// La tabla `base` (`{ ... }`) con `item` al final.
+fn with_item(base: &str, item: &str) -> String {
+    let inner = base
+        .trim()
+        .trim_start_matches('{')
+        .trim_end_matches('}')
+        .trim()
+        .trim_end_matches(',');
+    if inner.is_empty() {
+        format!("{{ {item} }}")
+    } else {
+        format!("{{ {inner}, {item} }}")
+    }
+}
+
+/// Si `valid` es un rango de números `a–b` (lo que el linter compara).
+fn numeric(p: &api::FxParam) -> bool {
+    p.values.is_empty()
+        && p.valid.split_once('–').is_some_and(|(a, b)| {
+            a.trim().parse::<f64>().is_ok() && b.trim().parse::<f64>().is_ok()
+        })
+}
+
+/// Lo que el linter del editor llama error en una tabla de parámetros
+/// (clave desconocida, valor fuera de la lista, tipo, curva donde no se
+/// admite) falla de verdad al cargar; y un número fuera del rango
+/// documentado, que es un aviso, también.
+#[test]
+fn every_linter_error_in_a_table_fails_to_load() {
+    let mut sites: Vec<(String, &api::Effect)> = Vec::new();
+    for e in EFFECTS {
+        sites.push((format!("track(\"x\", amen):fx(\"{}\", TABLA)", e.name), e));
+    }
+    for b in api::BUSES {
+        sites.push((format!("bus(\"{}\", TABLA)", b.name), b));
+    }
+    for sy in api::SYNTHS {
+        sites.push((format!("track(\"x\", synth(\"{}\", TABLA))", sy.name), sy));
+    }
+    sites.push(("amen:set(1, TABLA)".into(), &api::SLICE_TABLE));
+    sites.push(("sample(\"amen.wav\", TABLA)".into(), &api::SAMPLE_TABLE));
+    sites.push(("s:slice(4, TABLA)".into(), &api::CUT_TABLE));
+    sites.push(("s:instrument(TABLA)".into(), &api::INSTRUMENT_TABLE));
+    sites.push((
+        "track(\"x\", s:slice(2)):steps(\"1 _ . .\"):grains(TABLA)".into(),
+        &api::GRAINS_TABLE,
+    ));
+    sites.push((
+        "track(\"x\", amen):auto(\"gain\", { {0, 0}, {1, 1} }, TABLA)".into(),
+        &api::LANE_TABLE,
+    ));
+    sites.push(("track(\"x\", amen):scope(TABLA)".into(), &api::VIZ_TABLE));
+    let mut all: Vec<(String, Severity)> = Vec::new();
+    for (site, table) in &sites {
+        let (base, _) = expand_template(table.template);
+        let mut cases = vec![("zzz_clave = 1".to_string(), Severity::Error)];
+        for p in table.params {
+            if !p.values.is_empty() {
+                cases.push((format!("{} = \"zzz\"", p.name), Severity::Error));
+            }
+            if numeric(p) {
+                let (a, _) = bounds(p.valid);
+                let below: f64 = a.parse::<f64>().unwrap() - 1000.0;
+                cases.push((format!("{} = \"zzz\"", p.name), Severity::Error));
+                cases.push((format!("{} = true", p.name), Severity::Error));
+                cases.push((format!("{} = {below}", p.name), Severity::Warning));
+            }
+            if !p.automate.curves() && p.valid != "tabla de capa" {
+                cases.push((format!("{} = ramp(0, 1, 4)", p.name), Severity::Error));
+            }
+        }
+        for (item, severity) in cases {
+            all.push((site.replace("TABLA", &with_item(&base, &item)), severity));
+        }
+    }
+    // Los nombres de sintetizador y de bus.
+    all.push(("track(\"x\", synth(\"zzz\", {}))".into(), Severity::Error));
+    all.push(("bus(\"zzz\", {})".into(), Severity::Error));
+    assert!(all.len() > 200, "solo {}", all.len());
+    let dir = samples();
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+    let chunk = all.len().div_ceil(threads);
+    let problems: Vec<String> = std::thread::scope(|scope| {
+        let handles: Vec<_> = all
+            .chunks(chunk)
+            .map(|cases| {
+                let dir = dir.clone();
+                scope.spawn(move || {
+                    let mut problems = Vec::new();
+                    for (line, severity) in cases {
+                        let source = format!("{PRELUDE}{line}\n");
+                        let lints = lint::check(&source, script::DEFAULT_MEMORY_LIMIT);
+                        if !lints.iter().any(|l| l.severity == *severity) {
+                            problems.push(format!("el linter no lo ve: {line} → {lints:?}"));
+                            continue;
+                        }
+                        let mut host = ScriptHost::new(RATE);
+                        host.set_seed(Some(1));
+                        if host.eval(&source, "linter.lua", &dir).is_ok() {
+                            problems.push(format!(
+                                "el linter lo marca ({}) y carga: {line}",
+                                severity.label()
+                            ));
+                        }
+                    }
+                    problems
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .flat_map(|h| h.join().unwrap())
+            .collect()
+    });
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
 }

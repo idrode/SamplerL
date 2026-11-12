@@ -740,12 +740,8 @@ impl Scan {
             Frame::Brace { .. },
         ] = &self.frames[..]
         {
-            let subharm = match (name.as_str(), *arg) {
-                ("subharm", 0) => true,
-                ("synth", 1) => strings.first()?.as_deref() == Some("subharm"),
-                _ => false,
-            };
-            return subharm.then_some(&api::LAYER_TABLE);
+            let strings: Vec<Option<&str>> = strings.iter().map(Option::as_deref).collect();
+            return api::layer_call(name, *arg, &strings).then_some(&api::LAYER_TABLE);
         }
         let [
             ..,
@@ -757,28 +753,10 @@ impl Scan {
         else {
             return None;
         };
-        // La tabla de `fx("efecto", { ... })`, de `bus("delay", { ... })`, de
-        // `cortes:set([i,] { ... })`, de `sample(ruta, { ... })` o de
-        // `sample:instrument({ ... })`, o de `synth("tipo", { ... })`.
-        match (name.as_str(), *arg) {
-            ("fx", 1) => api::effect(strings.first()?.as_deref()?),
-            // `cortes:fx(cuál, "efecto", { ... })`.
-            ("fx", 2) => api::effect(strings.get(1)?.as_deref()?),
-            ("bus", 1) => api::bus(strings.first()?.as_deref()?),
-            ("set", 0 | 1) => Some(&api::SLICE_TABLE),
-            ("sample", 1) => Some(&api::SAMPLE_TABLE),
-            ("slice" | "slice_grid", 1) => Some(&api::CUT_TABLE),
-            ("instrument", 0) => Some(&api::INSTRUMENT_TABLE),
-            ("synth", 1) => api::synth(strings.first()?.as_deref()?),
-            ("subharm", 0) => api::synth("subharm"),
-            ("sh101", 0) => api::synth("sh101"),
-            ("grains", 0) | ("freeze", 1) => Some(&api::GRAINS_TABLE),
-            ("auto", 2) | ("lane", 1) => Some(&api::LANE_TABLE),
-            ("punchcard" | "pianoroll" | "scope" | "spectrum" | "pitchwheel" | "spiral", 0) => {
-                Some(&api::VIZ_TABLE)
-            }
-            _ => None,
-        }
+        // La tabla de `fx("efecto", { ... })`, de `bus("delay", { ... })`,
+        // de `sample(ruta, { ... })`... (ver `api::call_table`).
+        let strings: Vec<Option<&str>> = strings.iter().map(Option::as_deref).collect();
+        api::call_table(name, *arg, &strings)
     }
 }
 

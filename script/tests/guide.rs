@@ -157,38 +157,91 @@ fn replace_paragraph(song: &str, block: &str, name: &str) -> String {
 #[test]
 fn the_tutorial_song_grows_step_by_step() {
     let dir = samples("tutorial");
-    let tutorial = doc(TUTORIAL);
-    let mut song = String::new();
-    let (mut changes, mut wholes) = (0, 0);
-    for (line, tag, block) in tagged_blocks(&tutorial) {
-        let name = format!("{TUTORIAL}:{line}");
-        match tag.as_str() {
-            "entero" if song.is_empty() => song = block,
-            "entero" => {
-                assert_eq!(
-                    song, block,
-                    "{name}: el script entero no es lo que llevan los pasos"
-                );
-                wholes += 1;
-            }
-            "añade" => {
-                song.push('\n');
-                song.push_str(&block);
-                changes += 1;
-            }
-            "cambia" => {
-                song = replace_paragraph(&song, &block, &name);
-                changes += 1;
-            }
-            "" => continue,
-            other => panic!("{name}: bloque ```lua {other} desconocido"),
-        }
-        check(&song, &name, &dir);
+    let states = tutorial_states();
+    let changes = states.iter().filter(|(_, whole, _)| !whole).count();
+    let wholes = states.iter().filter(|(_, whole, _)| *whole).count();
+    for (name, _, song) in &states {
+        check(song, name, &dir);
     }
     assert!(
         changes >= 21 && wholes >= 4,
         "{changes} cambios, {wholes} scripts enteros"
     );
+}
+
+/// Cada estado del script del tutorial: nombre (archivo y línea), si es un
+/// `lua entero` posterior al primero, y el script.
+fn tutorial_states() -> Vec<(String, bool, String)> {
+    let tutorial = doc(TUTORIAL);
+    let mut song = String::new();
+    let mut states = Vec::new();
+    for (line, tag, block) in tagged_blocks(&tutorial) {
+        let name = format!("{TUTORIAL}:{line}");
+        let whole = match tag.as_str() {
+            "entero" if song.is_empty() => {
+                song = block;
+                false
+            }
+            "entero" => {
+                assert_eq!(
+                    song, block,
+                    "{name}: el script entero no es lo que llevan los pasos"
+                );
+                true
+            }
+            "añade" => {
+                song.push('\n');
+                song.push_str(&block);
+                false
+            }
+            "cambia" => {
+                song = replace_paragraph(&song, &block, &name);
+                false
+            }
+            "" => continue,
+            other => panic!("{name}: bloque ```lua {other} desconocido"),
+        };
+        states.push((name, whole, song.clone()));
+    }
+    states
+}
+
+/// El linter del editor no marca nada en ningún script de la guía, del
+/// tutorial (en cada paso), de las recetas ni de los de medir el consumo:
+/// la prueba de que no da falsos positivos en código que funciona.
+#[test]
+fn the_linter_finds_nothing_in_working_scripts() {
+    let mut scripts: Vec<(String, String)> = Vec::new();
+    for file in [GUIDE, TUTORIAL] {
+        for (line, source) in lua_blocks(&doc(file)) {
+            scripts.push((format!("{file}:{line}"), source));
+        }
+    }
+    for (name, _, song) in tutorial_states() {
+        scripts.push((name, song));
+    }
+    for folder in ["scripts/ejemplos", "scripts/consumo"] {
+        for entry in std::fs::read_dir(format!("{ROOT}/{folder}")).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_some_and(|e| e == "lua") {
+                let source = std::fs::read_to_string(&path).unwrap();
+                scripts.push((path.display().to_string(), source));
+            }
+        }
+    }
+    assert!(scripts.len() > 100, "solo {} scripts", scripts.len());
+    let mut found = Vec::new();
+    for (name, source) in &scripts {
+        for lint in script::lint::check(source, script::DEFAULT_MEMORY_LIMIT) {
+            found.push(format!(
+                "{name} (línea {} del bloque): {} {}",
+                lint.row + 1,
+                lint.severity.label(),
+                lint.message
+            ));
+        }
+    }
+    assert!(found.is_empty(), "{}", found.join("\n"));
 }
 
 #[test]

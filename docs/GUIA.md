@@ -1139,6 +1139,49 @@ elegido en `fx("...")`, en `cortes:fx(cuál, "...")` o en
 `clave =`, el rango y el valor por defecto de ese parámetro. Sale del mismo registro que
 la sección 4.
 
+### Diagnósticos mientras escribes
+
+Al dejar de escribir un momento (300 ms, `linter_ms` en `[editor]`), el
+editor revisa el código **sin ejecutarlo** y marca lo que está mal. Nada
+de esto carga el script ni cambia lo que suena: eso sigue pasando solo con
+Ctrl-S o Ctrl-L.
+
+- **Sintaxis**: un paréntesis o un `end` que falta, una cadena sin cerrar,
+  un número mal escrito... Lo que no se cierra se marca en la línea que lo
+  abre («falta «end» para cerrar el «function» de la línea 3»).
+- **Uso de la API**, solo con lo que está escrito tal cual (un número, una
+  cadena, una tabla `{ ... }`): una función o un método que no existe
+  (`trak("a")`: «¿quisiste decir «track»?»), un parámetro que no es del
+  efecto (`{ cutof = 800 }`), un valor que no está en su lista
+  (`type = "lowpas"`), un texto o `true` donde va un número, `ramp()` o
+  `lfo()` donde no se admiten, y un número fuera del rango de la tabla de
+  la sección 4. Lo que depende de variables o de código que se ejecuta no
+  se mira: si escribes `{ cutoff = c }`, no se sabe qué vale `c`. Si el
+  script usa `_G`, `load` o `setmetatable`, no se avisa de nombres
+  desconocidos (pueden salir de cualquier parte).
+
+Tres gravedades, con su marca en el margen (la primera columna de los
+números de línea) y su color en el subrayado:
+
+| Marca | Gravedad | Qué quiere decir |
+| --- | --- | --- |
+| `●` (`E` en ASCII) | error | falla seguro al cargar (o al llegar a esa línea) |
+| `▲` (`W`) | aviso | casi seguro que falla: un número fuera del rango; también los avisos de la notación de `steps()` y `melody()` |
+| `•` (`i`) | pista | parece un despiste, pero no se puede saber del todo: un método de otro objeto (`amen:steps(...)` cuando `amen` son unos cortes) |
+
+Con el cursor en una línea marcada, la línea `ⓘ` del pie dice el mensaje
+entero (en vez de la ayuda de la función). La cabecera cuenta los de cada
+gravedad (`●2 ▲1`). **Alt-J** y **Alt-K** llevan al diagnóstico siguiente
+y al anterior (dan la vuelta; en vim, `]d` y `[d`; se cambian en `[teclas]`
+con `diagnostico_siguiente` y `diagnostico_anterior`), y **Ctrl-G** va al
+error de la última carga o, si no lo hay, al primer error del texto. Con
+`linter = false` en `[editor]` no se revisa nada (los avisos de la
+notación siguen).
+
+Para revisar archivos fuera del editor (tus canciones, por ejemplo):
+`cargo run -p script --example lint -- canción.lua otra.lua` escribe cada
+diagnóstico como `archivo:línea:columna: gravedad: mensaje`.
+
 ### Paleta de comandos (F1)
 
 F1 abre una lista con todas las acciones del editor. Escribe para
@@ -1169,7 +1212,9 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Marcha / paro | Arranca o para el secuenciador (en el cue, si hay uno) | Ctrl-Espacio o Ctrl-T o F8 |
 | Fijar el cue | El siguiente arranque empieza ahí: el compás que suena (con secciones, su entrada) o, parado, el del cursor del tracker | Shift-Ctrl-Espacio o F9 |
 | Borrar el cue | Vuelve a arrancar desde el principio | — |
-| Ir al error | Lleva el cursor a la línea del error | Ctrl-G |
+| Ir al error | Lleva el cursor a la línea del error de la última carga; sin él, al siguiente diagnóstico del texto (los errores antes) | Ctrl-G |
+| Diagnóstico siguiente | Lleva el cursor al siguiente error, aviso o pista del linter o de la notación (da la vuelta); en vim, ]d | Alt-J |
+| Diagnóstico anterior | Lleva el cursor al diagnóstico anterior (da la vuelta); en vim, [d | Alt-K |
 | Siguiente pista | Selecciona la pista siguiente (vista del sample y modo tocar) | Ctrl-O |
 | Modo tocar | Entra o sale del modo tocar | Esc |
 | Recargar del disco | Recarga el archivo si cambió fuera del editor | F3 |
@@ -1687,6 +1732,8 @@ paleta de 256.
 | `marcha` | Marcha / paro | `ctrl-space`, `ctrl-t`, `f8` |
 | `cue` | Fijar el cue | `shift-ctrl-space`, `f9` |
 | `ir_al_error` | Ir al error | `ctrl-g` |
+| `diagnostico_siguiente` | Diagnóstico siguiente | `alt-j` |
+| `diagnostico_anterior` | Diagnóstico anterior | `alt-k` |
 | `ir_a_linea` | Ir a la línea | `alt-g` |
 | `buscar` | Buscar | `ctrl-f` |
 | `buscar_siguiente` | Buscar el siguiente | `f6` |
@@ -1772,6 +1819,8 @@ paleta de 256.
 | `rueda_columnas` | columnas que desplaza cada paso suelto de la rueda horizontal o de Shift y la rueda (de 1 a 40); en una ráfaga, un tercio | `6` |
 | `margen` | líneas que se dejan a la vista por encima y por debajo del cursor al moverlo con las teclas o escribir (de 0 a 10) | `2` |
 | `barras` | barras de desplazamiento finas a la derecha y abajo del editor, que se arrastran con el ratón (`true`/`false`) | `false` |
+| `linter` | revisar el código mientras se escribe, sin ejecutarlo: sintaxis y uso de la API (`true`/`false`) | `true` |
+| `linter_ms` | la pausa al escribir, en ms, tras la que se revisa (de 50 a 5000) | `300` |
 
 | En `[resaltado]` | Para | Por defecto |
 | --- | --- | --- |

@@ -3834,7 +3834,7 @@ pub const LAYER_PARAMS: &[FxParam] = &[
 
 /// La tabla de una capa de `subharm`, como un efecto (para el
 /// autocompletado y la ayuda de sus claves).
-pub const LAYER_TABLE: Effect = Effect {
+pub static LAYER_TABLE: Effect = Effect {
     name: "capa",
     aliases: &[],
     summary: "Una capa del subharm: divisor de frecuencia, divisor rítmico, pan y nivel.",
@@ -4311,7 +4311,7 @@ pub fn synth(name: &str) -> Option<&'static Effect> {
 
 /// La tabla de `sample:instrument()`, como un efecto (para el
 /// autocompletado y la ayuda de sus claves).
-pub const INSTRUMENT_TABLE: Effect = Effect {
+pub static INSTRUMENT_TABLE: Effect = Effect {
     name: "instrument",
     aliases: &[],
     summary: "Cómo se toca el sample como instrumento.",
@@ -4379,7 +4379,7 @@ pub const LANE_PARAMS: &[FxParam] = &[
 
 /// La tabla de opciones de `auto()` y `lane()`, como un efecto (para el
 /// autocompletado y la ayuda de sus claves).
-pub const LANE_TABLE: Effect = Effect {
+pub static LANE_TABLE: Effect = Effect {
     name: "lane",
     aliases: &[],
     summary: "Cómo dura y cómo acaba una lane de automatización.",
@@ -4420,7 +4420,7 @@ pub const VIZ_PARAMS: &[FxParam] = &[
 
 /// La tabla de opciones de las visualizaciones, como un efecto (para el
 /// autocompletado y la ayuda de sus claves).
-pub const VIZ_TABLE: Effect = Effect {
+pub static VIZ_TABLE: Effect = Effect {
     name: "viz",
     aliases: &[],
     summary: "Cómo se ve una visualización.",
@@ -4507,7 +4507,7 @@ pub const GRAIN_PARAMS: &[FxParam] = &[
 
 /// La tabla de `pista:grains()` y `pista:freeze()`, como un efecto (para
 /// el autocompletado y la ayuda de sus claves).
-pub const GRAINS_TABLE: Effect = Effect {
+pub static GRAINS_TABLE: Effect = Effect {
     name: "grains",
     aliases: &[],
     summary: "Cómo nacen y suenan los granos.",
@@ -4517,7 +4517,7 @@ pub const GRAINS_TABLE: Effect = Effect {
 
 /// La tabla de opciones de `sample()`, como un efecto (para el
 /// autocompletado y la ayuda de sus claves).
-pub const SAMPLE_TABLE: Effect = Effect {
+pub static SAMPLE_TABLE: Effect = Effect {
     name: "sample",
     aliases: &[],
     summary: "Cómo se prepara el sample al importarlo.",
@@ -4527,7 +4527,7 @@ pub const SAMPLE_TABLE: Effect = Effect {
 
 /// La tabla de opciones de `slice()` y `slice_grid()`, como un efecto
 /// (para el autocompletado y la ayuda de sus claves).
-pub const CUT_TABLE: Effect = Effect {
+pub static CUT_TABLE: Effect = Effect {
     name: "slice",
     aliases: &[],
     summary: "Cómo se corta el sample.",
@@ -4537,7 +4537,7 @@ pub const CUT_TABLE: Effect = Effect {
 
 /// La tabla de `cortes:set()`, como un efecto (para el autocompletado y la
 /// ayuda de sus claves).
-pub const SLICE_TABLE: Effect = Effect {
+pub static SLICE_TABLE: Effect = Effect {
     name: "set",
     aliases: &[],
     summary: "Forma del corte.",
@@ -4892,6 +4892,100 @@ pub const SNIPPETS: &[Snippet] = &[
 ];
 
 /// Snippet por nombre.
+/// Las funciones globales de la biblioteca base de Lua que hay en el
+/// entorno del script (el resto de las globales son de la API; un test lo
+/// comprueba). `dofile` y `loadfile` se quitan al cargar, pero se dejan
+/// aquí: su ausencia la dice la carga.
+pub const LUA_BASE: &[&str] = &[
+    "assert",
+    "collectgarbage",
+    "error",
+    "getmetatable",
+    "ipairs",
+    "load",
+    "next",
+    "pairs",
+    "pcall",
+    "print",
+    "rawequal",
+    "rawget",
+    "rawlen",
+    "rawset",
+    "select",
+    "setmetatable",
+    "tonumber",
+    "tostring",
+    "type",
+    "xpcall",
+    "warn",
+    "dofile",
+    "loadfile",
+    "require",
+];
+
+/// Las tablas de la biblioteca estándar de Lua (se usan con `.`).
+pub const LUA_LIBRARIES: &[&str] = &[
+    "string",
+    "table",
+    "math",
+    "utf8",
+    "coroutine",
+    "os",
+    "io",
+    "debug",
+    "package",
+    "_G",
+    "_ENV",
+    "_VERSION",
+];
+
+/// Los métodos de las cadenas de Lua (`s:upper()`).
+pub const LUA_STRING_METHODS: &[&str] = &[
+    "byte", "char", "dump", "find", "format", "gmatch", "gsub", "len", "lower", "match", "rep",
+    "reverse", "sub", "upper", "pack", "packsize", "unpack",
+];
+
+/// La tabla de parámetros que recibe la llamada `name` en su argumento
+/// `arg` (desde 0); `strings` es la primera cadena de cada argumento, si
+/// la tiene. La de `fx("efecto", { ... })` (y `cortes:fx(cuál, "efecto",
+/// { ... })`), `bus("delay", { ... })`, `cortes:set([i,] { ... })`,
+/// `sample(ruta, { ... })`, `slice`/`slice_grid`, `instrument`,
+/// `synth("tipo", { ... })`, `subharm{}`, `sh101{}`, `grains`/`freeze`,
+/// `auto`/`lane` y las visualizaciones. La usan el autocompletado, la ayuda
+/// y el linter del editor.
+pub fn call_table(name: &str, arg: usize, strings: &[Option<&str>]) -> Option<&'static Effect> {
+    let string = |i: usize| strings.get(i).copied().flatten();
+    match (name, arg) {
+        ("fx", 1) => effect(string(0)?),
+        ("fx", 2) => effect(string(1)?),
+        ("bus", 1) => bus(string(0)?),
+        ("set", 0 | 1) => Some(&SLICE_TABLE),
+        ("sample", 1) => Some(&SAMPLE_TABLE),
+        ("slice" | "slice_grid", 1) => Some(&CUT_TABLE),
+        ("instrument", 0) => Some(&INSTRUMENT_TABLE),
+        ("synth", 1) => synth(string(0)?),
+        ("subharm", 0) => synth("subharm"),
+        ("sh101", 0) => synth("sh101"),
+        ("grains", 0) | ("freeze", 1) => Some(&GRAINS_TABLE),
+        ("auto", 2) | ("lane", 1) => Some(&LANE_TABLE),
+        ("punchcard" | "pianoroll" | "scope" | "spectrum" | "pitchwheel" | "spiral", 0) => {
+            Some(&VIZ_TABLE)
+        }
+        _ => None,
+    }
+}
+
+/// Si una tabla dentro de la del argumento `arg` de `name` es la de una
+/// capa del subharm: `subharm{ o1 = { ... } }` o `synth("subharm", { o1 =
+/// { ... } })`.
+pub fn layer_call(name: &str, arg: usize, strings: &[Option<&str>]) -> bool {
+    match (name, arg) {
+        ("subharm", 0) => true,
+        ("synth", 1) => strings.first().copied().flatten() == Some("subharm"),
+        _ => false,
+    }
+}
+
 pub fn snippet(name: &str) -> Option<&'static Snippet> {
     SNIPPETS.iter().find(|s| s.name == name)
 }

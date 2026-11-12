@@ -41,6 +41,7 @@ use engine::{
 };
 pub mod api;
 pub mod atomic;
+pub mod lint;
 pub mod panics;
 pub mod sandbox;
 

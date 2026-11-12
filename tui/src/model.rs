@@ -98,6 +98,9 @@ pub struct ViewModel {
     /// Problemas de la notación de `steps("...")` en el texto actual (en
     /// vivo, sin cargar).
     pub diagnostics: Vec<Diagnostic>,
+    /// Los diagnósticos del linter y de la notación, por posición (el
+    /// margen, el subrayado, la línea ⓘ y la cabecera).
+    pub problems: Vec<crate::app::Problem>,
     /// Tokens de la mini-notación que se oyen ahora, en el orden en que se
     /// dibujan (resaltado en vivo, fase M).
     pub highlights: Vec<crate::highlight::Highlight>,

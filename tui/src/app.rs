@@ -34,10 +34,12 @@ mod freeze;
 mod idle;
 mod key;
 mod learn;
+mod lint;
 mod macros;
 mod menu;
 mod mouse;
 mod scroll;
+pub use lint::Problem;
 mod slices;
 mod vim;
 mod zoom;
@@ -267,6 +269,11 @@ pub struct App {
     /// La vista del editor: libre (desplazada con la rueda) o siguiendo al
     /// cursor.
     pub(crate) view: scroll::EditorView,
+    /// El linter: el último resultado y el análisis en marcha.
+    pub(crate) lint: lint::LintState,
+    /// `[script]`: los límites de memoria y tiempo (también los del
+    /// linter).
+    script_config: crate::config::ScriptConfig,
     /// El modo vim (`[editor] modo = "vim"`): su modo y lo que lleva entre
     /// teclas; `None`, el editor de siempre.
     vim: Option<vim::Vim>,
@@ -559,6 +566,8 @@ impl App {
             diagnostics_cache: Default::default(),
             editor_config: Default::default(),
             view: Default::default(),
+            lint: Default::default(),
+            script_config: Default::default(),
             mouse_enabled: true,
             vim: None,
             vim_exit: vim::DEFAULT_EXIT,
@@ -807,6 +816,7 @@ impl App {
         self.set_occupancy(config.occupancy.visible);
         self.apply_roll_config(&config.roll);
         config.script.apply(&mut self.host);
+        self.script_config = config.script;
         if let Err(e) = self.controller.set_voice_limit(config.voices.limit) {
             self.message = format!("motor: {e}");
         }
@@ -2516,7 +2526,8 @@ impl App {
         };
     }
 
-    /// Lleva el cursor a la línea del error, si la hay.
+    /// Lleva el cursor a la línea del error de la última carga, si lo hay;
+    /// si no, al siguiente diagnóstico del texto (los errores antes).
     pub fn goto_error(&mut self) {
         let name = self.file_name();
         if let Some(line) = self
@@ -2526,7 +2537,9 @@ impl App {
         {
             let row = (line.saturating_sub(1)).min(u16::MAX as usize) as u16;
             self.editor.move_cursor(CursorMove::Jump(row, 0));
+            return;
         }
+        self.goto_problem(true, true);
     }
 
     /// `linea N`: lleva el cursor al principio de la línea N (desde 1). Más
@@ -3256,8 +3269,14 @@ impl App {
     fn diagnostics(&self) -> Vec<diagnose::Diagnostic> {
         use std::hash::{Hash, Hasher};
         let labels = self.known_labels();
+        // La huella del texto: también la que mira el linter (solo en los
+        // cuadros que se dibujan; en reposo, nada).
+        let text = self.text_hash();
+        if self.editor_config.linter {
+            self.lint.note_text(text, Instant::now());
+        }
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        self.editor.lines().hash(&mut h);
+        text.hash(&mut h);
         labels.hash(&mut h);
         let key = h.finish();
         let mut cache = self.diagnostics_cache.borrow_mut();
@@ -4095,6 +4114,8 @@ impl App {
             Action::ToggleVim => self.toggle_vim(),
             Action::ClearCue => self.clear_cue(),
             Action::GotoError => self.goto_error(),
+            Action::NextProblem => self.goto_problem(true, false),
+            Action::PreviousProblem => self.goto_problem(false, false),
             Action::NextTrack => self.next_track(),
             Action::PlayMode => self.toggle_mode(),
             Action::ReloadExternal => self.reload_external(),
@@ -5073,6 +5094,7 @@ impl App {
 
     pub fn tick(&mut self) {
         self.retry_note_offs();
+        self.poll_lint();
         self.poll_link();
         self.poll_devices();
         self.poll_key_analysis();
@@ -5132,6 +5154,7 @@ impl App {
     /// Modelo de vista para los paneles.
     pub fn view(&self) -> ViewModel {
         let viz_views = self.frame_viz_views();
+        let diagnostics = self.diagnostics();
         let name = self.file_name();
         let status = self.status;
         let transport = status.map_or(TransportView::default(), |s| TransportView {
@@ -5347,7 +5370,8 @@ impl App {
                 line: error_line(&e.message, &name),
                 message: e.message.clone(),
             }),
-            diagnostics: self.diagnostics(),
+            problems: self.problems(&diagnostics),
+            diagnostics,
             highlights: self.highlights(),
             help: (self.mode == Mode::Edit
                 && self.palette.is_none()
