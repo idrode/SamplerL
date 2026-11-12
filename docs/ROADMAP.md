@@ -961,7 +961,7 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
        fija o la siguiente carga.
     3. ✅ **El ratón real**: comprobado en una PTY con secuencias SGR
        (modos, orden de Down, Drag y Up, soltar fuera, modificadores).
-27. **Editor: rueda, linter y mejoras ligeras** (pedida por el usuario;
+28. ✅ **Editor: rueda, linter y mejoras ligeras** (pedida por el usuario;
     una sola implementación para el editor integrado, el de su ventana y
     el flotante). Detalle en «Editor: rueda, linter y mejoras ligeras» de
     [docs/ESTADO.md](ESTADO.md).
@@ -976,7 +976,7 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
        guía, el tutorial y las recetas; tres gravedades; tras una pausa,
        en un hilo, con huella del texto; margen, subrayado, línea ⓘ,
        cabecera, Alt-J/Alt-K, `]d` `[d` y Ctrl-G.
-    3. **Mejoras ligeras** (comentar y el resaltado de la búsqueda ya
+    3. ✅ **Mejoras ligeras** (comentar y el resaltado de la búsqueda ya
        estaban):
        1. ✅ **La pareja del paréntesis** resaltada (`pareja`).
        2. ✅ **Cierre de pares** y comillas (`cerrar_pares`, apagado).

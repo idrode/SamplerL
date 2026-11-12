@@ -4479,6 +4479,35 @@ tocan. Lo nuevo, cada una en su commit y en `[editor]`:
   y `number` juntos en vim. Solo sin desplazamiento horizontal (con él, el
   widget desplaza también los números).
 
+### Consumo
+
+`scripts/medir-consumo.py` tiene un escenario nuevo, `editando` (sonando,
+con una letra y su borrado cada 150 ms). En x86_64, 120x40, dos
+repeticiones, el binario de antes de estos cambios contra el de después
+(% de un núcleo):
+
+| Escenario | ui antes | ui después | audio antes | audio después | cuadros/s |
+| --- | --- | --- | --- | --- | --- |
+| parado | 0,5 | 0,6 | 0,9 | 1,0 | 1,9 |
+| sonando | 5,8 | 5,6 | 7,8 | 8,0 | 27,5 |
+| editando | 7,2 | 6,9 | 8,0 | 7,9 | 33,3 |
+
+Iguales (ruido). Con `barras`, `guias`, `numeros_relativos` y
+`cerrar_pares` encendidos, `editando` da 7,2 % de ui. Al teclear más
+deprisa que la pausa, el linter no llega a lanzarse (`otros` 0,0): solo
+corre en las pausas. El motor no cambia: `no_alloc.rs` y `golden.rs`,
+iguales y en verde.
+
+### Para probar a mano
+
+En kitty y dentro de tmux (`set -g mouse on`): la rueda vertical y
+horizontal con el touchpad en el editor integrado y en la ventana aparte
+(`--split`); un script con un error de sintaxis y otro con un parámetro
+mal escrito; Alt-J/Alt-K, `]d` `[d` y Ctrl-G; y que las canciones de
+`~/songsproject` no den falsos avisos (`cargo run -p script --example lint
+-- ~/songsproject/*/*.lua`; esa carpeta no está en la máquina de
+desarrollo).
+
 ## Audio de prueba y problemas conocidos
 
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`
