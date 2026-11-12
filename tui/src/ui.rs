@@ -928,6 +928,23 @@ pub fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rec
             frame.buffer_mut().set_style(area, highlight_style(h));
         }
     }
+    // La pareja del paréntesis, corchete o llave junto al cursor.
+    if app.editor_config.match_pairs && !view.playing_mode {
+        let cursor = app.editor.cursor();
+        if let Some(pair) = crate::brackets::matching(app.editor.lines(), (cursor.0, cursor.1)) {
+            for (row, col) in pair {
+                if let Some(area) = cells(row, &(col..col + 1)) {
+                    frame.buffer_mut().set_style(
+                        area,
+                        Style::new()
+                            .fg(Color::Black)
+                            .bg(accent())
+                            .add_modifier(Modifier::BOLD),
+                    );
+                }
+            }
+        }
+    }
     // Subrayar lo que dicen el linter y la notación (en orden de
     // gravedad: el más grave, encima) y marcarlo en el margen.
     let mut marks: Vec<(usize, script::lint::Severity)> = Vec::new();

@@ -1821,6 +1821,7 @@ paleta de 256.
 | `barras` | barras de desplazamiento finas a la derecha y abajo del editor, que se arrastran con el ratón (`true`/`false`) | `false` |
 | `linter` | revisar el código mientras se escribe, sin ejecutarlo: sintaxis y uso de la API (`true`/`false`) | `true` |
 | `linter_ms` | la pausa al escribir, en ms, tras la que se revisa (de 50 a 5000) | `300` |
+| `pareja` | resaltar la pareja del paréntesis, corchete o llave junto al cursor (`true`/`false`) | `true` |
 
 | En `[resaltado]` | Para | Por defecto |
 | --- | --- | --- |
@@ -2226,6 +2227,15 @@ o al principio). El texto se busca tal cual, no es una expresión regular
 Ctrl-F era en el widget un sinónimo de → (al estilo de emacs); → sigue
 igual. Las tres teclas se cambian en `[teclas]` (`buscar`,
 `buscar_siguiente`, `buscar_anterior`).
+
+**Comodidades** (cada una se apaga o se enciende en `[editor]`):
+
+- Con el cursor sobre un paréntesis, corchete o llave (o justo detrás),
+  se resaltan él y su pareja (`pareja`, encendida). Los de dentro de
+  cadenas y comentarios no cuentan.
+- Comentar y descomentar: «Comentar o descomentar líneas» en la paleta,
+  con la línea del cursor o las seleccionadas.
+- Buscar resalta todas las veces que sale el texto (ver arriba).
 
 **Portapapeles del sistema.** Ctrl-C y Ctrl-X mandan la selección
 también al portapapeles del sistema: por OSC 52 (la terminal lo guarda;

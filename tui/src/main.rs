@@ -1,5 +1,6 @@
 mod add_samples;
 mod app;
+mod brackets;
 mod browser;
 mod clipboard;
 mod complete;

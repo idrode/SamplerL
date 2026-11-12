@@ -988,6 +988,9 @@ pub struct EditorConfig {
     pub linter: bool,
     /// La pausa al escribir tras la que se lanza, en ms (`linter_ms`).
     pub linter_ms: u16,
+    /// Resaltar la pareja del paréntesis, corchete o llave del cursor
+    /// (`pareja`).
+    pub match_pairs: bool,
 }
 
 impl Default for EditorConfig {
@@ -1002,6 +1005,7 @@ impl Default for EditorConfig {
             bars: false,
             linter: true,
             linter_ms: 300,
+            match_pairs: true,
         }
     }
 }
@@ -1025,6 +1029,7 @@ const EDITOR_KEY_NAMES: &[&str] = &[
     "barras",
     "linter",
     "linter_ms",
+    "pareja",
 ];
 
 /// Un entero de `value` dentro de `range`.
@@ -1081,6 +1086,11 @@ const EDITOR_KEYS: &[(&str, &str, &str)] = &[
         "linter_ms",
         "la pausa al escribir, en ms, tras la que se revisa (de 50 a 5000)",
         "`300`",
+    ),
+    (
+        "pareja",
+        "resaltar la pareja del paréntesis, corchete o llave junto al cursor (`true`/`false`)",
+        "`true`",
     ),
 ];
 
@@ -1330,6 +1340,12 @@ impl Config {
                                 None => config
                                     .warnings
                                     .push("[editor] linter: true o false".into()),
+                            },
+                            ("pareja", _) => match value.as_bool() {
+                                Some(on) => config.editor.match_pairs = on,
+                                None => config
+                                    .warnings
+                                    .push("[editor] pareja: true o false".into()),
                             },
                             ("linter_ms", _) => match ranged(value, LINTER_MS) {
                                 Some(n) => config.editor.linter_ms = n,

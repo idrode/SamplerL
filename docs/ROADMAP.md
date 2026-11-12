@@ -976,3 +976,6 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
        guía, el tutorial y las recetas; tres gravedades; tras una pausa,
        en un hilo, con huella del texto; margen, subrayado, línea ⓘ,
        cabecera, Alt-J/Alt-K, `]d` `[d` y Ctrl-G.
+    3. **Mejoras ligeras** (comentar y el resaltado de la búsqueda ya
+       estaban):
+       1. ✅ **La pareja del paréntesis** resaltada (`pareja`).

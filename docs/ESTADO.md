@@ -4446,6 +4446,20 @@ y ya pedía el ratón) y el flotante (se dibuja con el mismo `draw_editor`).
   ASCII, el bucle infinito, Alt-J/Alt-K, Ctrl-G, `]d` `[d` y los avisos
   de la notación).
 
+### Mejoras ligeras
+
+Comentar y descomentar (la línea o la selección) y el resaltado de todas
+las coincidencias de la búsqueda ya estaban (ver «Qué había ya»): no se
+tocan. Lo nuevo, cada una en su commit y en `[editor]`:
+
+- **La pareja del paréntesis** (`pareja`, encendida; `tui/src/brackets.rs`):
+  el que está bajo el cursor o, si no, el de justo antes, y su pareja, con
+  el fondo del acento. Busca hacia delante o hacia atrás hasta 500 líneas,
+  sin contar los de las cadenas y comentarios de cada línea (las cadenas
+  largas de varias líneas sí cuentan: haría falta leer el texto entero en
+  cada cuadro). Solo cuesta algo con el cursor junto a uno de los seis
+  caracteres.
+
 ## Audio de prueba y problemas conocidos
 
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`
