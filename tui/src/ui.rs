@@ -928,6 +928,31 @@ pub fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rec
             frame.buffer_mut().set_style(area, highlight_style(h));
         }
     }
+    // Las guías de sangría: una línea fina por nivel, en los espacios.
+    if app.editor_config.indent_guides {
+        let lines = app.editor.lines();
+        let unit = indent_unit(lines);
+        let symbol = if theme::ascii() { "|" } else { "│" };
+        let first = top as usize;
+        for (row, line) in lines
+            .iter()
+            .enumerate()
+            .skip(first)
+            .take(editor_area.height as usize)
+        {
+            let lead = line.chars().take_while(|c| *c == ' ').count();
+            if lead == line.chars().count() {
+                continue;
+            }
+            for col in (0..lead).step_by(unit) {
+                if let Some(area) = cells(row, &(col..col + 1)) {
+                    frame
+                        .buffer_mut()
+                        .set_string(area.x, area.y, symbol, Style::new().fg(dim()));
+                }
+            }
+        }
+    }
     // La pareja del paréntesis, corchete o llave junto al cursor.
     if app.editor_config.match_pairs && !view.playing_mode {
         let cursor = app.editor.cursor();
@@ -1023,6 +1048,19 @@ pub fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rec
         }
     }
     popup
+}
+
+/// Los espacios de un nivel de sangría del texto: la menor sangría que
+/// hay (entre 2 y 8; sin sangría, 2).
+fn indent_unit(lines: &[String]) -> usize {
+    lines
+        .iter()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| l.chars().take_while(|c| *c == ' ').count())
+        .filter(|n| *n > 0)
+        .min()
+        .unwrap_or(2)
+        .clamp(2, 8)
 }
 
 /// La marca del margen y el color de cada gravedad (en ASCII, una letra).

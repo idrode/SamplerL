@@ -980,3 +980,4 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
        estaban):
        1. ✅ **La pareja del paréntesis** resaltada (`pareja`).
        2. ✅ **Cierre de pares** y comillas (`cerrar_pares`, apagado).
+       3. ✅ **Guías de sangría** (`guias`, apagadas).

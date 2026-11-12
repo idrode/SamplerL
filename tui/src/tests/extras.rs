@@ -67,3 +67,28 @@ fn pairs_close_themselves_when_asked() {
     typed(&mut app, "(");
     assert_eq!(app.editor.lines()[2], "(bpm -- don't");
 }
+
+#[test]
+fn indent_guides_mark_each_level_when_asked() {
+    let song = "track(\"a\"):every(4, function(t)\n  if true then\n    t:reverse()\n  end\nend)\n";
+    let (_, mut app, _engine) = open("extras_guides", Some(song));
+    let buffer = draw(&mut app, 120, 40);
+    let (x, y) = find(&buffer, "t:reverse()").unwrap();
+    assert_eq!(buffer[(x - 4, y)].symbol(), " ", "apagadas por defecto");
+    app.set_config(&Config::parse("[editor]\nguias = true\n", true, "c.toml"));
+    let buffer = draw(&mut app, 120, 40);
+    // Dos niveles de dos espacios: en las columnas 0 y 2.
+    assert_eq!(buffer[(x - 4, y)].symbol(), "│");
+    assert_eq!(buffer[(x - 3, y)].symbol(), " ");
+    assert_eq!(buffer[(x - 2, y)].symbol(), "│");
+    assert_eq!(
+        buffer[(x - 4, y - 1)].symbol(),
+        "│",
+        "un nivel en la línea del if"
+    );
+    assert_eq!(buffer[(x - 2, y - 1)].symbol(), "i");
+    crate::theme::set_ascii(true);
+    let buffer = draw(&mut app, 120, 40);
+    crate::theme::set_ascii(false);
+    assert_eq!(buffer[(x - 2, y)].symbol(), "|");
+}

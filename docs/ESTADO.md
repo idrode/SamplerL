@@ -4469,6 +4469,10 @@ tocan. Lo nuevo, cada una en su commit y en `[editor]`:
   defecto: cambia lo que sale al teclear en directo, y quien escribe todo
   (como hacen los tests de siempre) no debe encontrarse caracteres que no
   escribió; quien lo quiera, lo enciende.
+- **Guías de sangría** (`guias`, apagadas; en `ui::draw_editor`): `│` (`|`
+  en ASCII) tenue en los espacios de la sangría de cada línea a la vista,
+  una por nivel; el nivel es la sangría más pequeña del texto (de 2 a 8).
+  Las líneas en blanco no llevan. Apagadas, no se mira nada.
 
 ## Audio de prueba y problemas conocidos
 

@@ -994,6 +994,8 @@ pub struct EditorConfig {
     /// Cerrar solos los paréntesis, corchetes, llaves y comillas
     /// (`cerrar_pares`).
     pub close_pairs: bool,
+    /// Guías de sangría (`guias`).
+    pub indent_guides: bool,
 }
 
 impl Default for EditorConfig {
@@ -1010,6 +1012,7 @@ impl Default for EditorConfig {
             linter_ms: 300,
             match_pairs: true,
             close_pairs: false,
+            indent_guides: false,
         }
     }
 }
@@ -1035,6 +1038,7 @@ const EDITOR_KEY_NAMES: &[&str] = &[
     "linter_ms",
     "pareja",
     "cerrar_pares",
+    "guias",
 ];
 
 /// Un entero de `value` dentro de `range`.
@@ -1100,6 +1104,11 @@ const EDITOR_KEYS: &[(&str, &str, &str)] = &[
     (
         "cerrar_pares",
         "al escribir `(`, `[`, `{` o una comilla, poner también la que cierra; escribir la que cierra delante de ella la salta, y Retroceso entre las dos las borra (`true`/`false`)",
+        "`false`",
+    ),
+    (
+        "guias",
+        "líneas finas en la sangría, una por nivel (`true`/`false`)",
         "`false`",
     ),
 ];
@@ -1350,6 +1359,12 @@ impl Config {
                                 None => config
                                     .warnings
                                     .push("[editor] linter: true o false".into()),
+                            },
+                            ("guias", _) => match value.as_bool() {
+                                Some(on) => config.editor.indent_guides = on,
+                                None => config
+                                    .warnings
+                                    .push("[editor] guias: true o false".into()),
                             },
                             ("cerrar_pares", _) => match value.as_bool() {
                                 Some(on) => config.editor.close_pairs = on,
