@@ -996,3 +996,13 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
     4. ✅ **Ventana y menú**: Ventanas › «Espectro», `tui --window-spectrum`,
        modos campo y espejo (`[interfaz] espectro_modo`), ASCII y tamaños.
     5. ✅ **Documentación**.
+30. ✅ **Línea del compás** (pedida por el usuario; continuación del
+    rediseño): la regla de 16 cuadros bajo la cabecera pasa a ser una
+    línea que crece a lo largo del compás que se oye (con el compás de la
+    canción), suave entre bloques del motor y con marcas opcionales.
+    Detalle en «Línea del compás» de [docs/ESTADO.md](ESTADO.md).
+    1. ✅ **Widget y geometría** (`tui/src/bar_line.rs`), colores
+       `regla`/`regla_vacia` y `[interfaz] regla_marcas`/`regla_subcelda`.
+    2. ✅ **En la pantalla**: la regla de la principal (el único sitio que
+       la dibujaba), con la línea de tiempo detrás.
+    3. ✅ **Documentación**.

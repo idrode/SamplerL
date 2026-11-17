@@ -49,7 +49,7 @@ implementa desde cero sobre la arquitectura de SamplerL.
 | Idea de la referencia | ¿Aplica? | En SamplerL |
 |---|---|---|
 | Barra de menús arriba (Archivo, Edición, Escena, Transporte, Vista, Opciones, Ayuda), en la que cada entrada muestra su atajo | **Sí** | La barra se genera desde la paleta: cada `palette::Action` recibe un menú, así que la acción y su tecla se definen en un solo sitio. Se abre con **F10** porque F1 es la paleta y lo sigue siendo. Los menús quedan en Archivo, Editar, Pista, Transporte, Ver, Ventanas y Ayuda. |
-| Cabecera con el estado del transporte, el número de avisos y si el sonido está listo, y bajo ella una línea fina que late con el tempo | **Sí** | La cabecera junta el transporte, el cue, la variante, la grabación, la ranura, los avisos del diagnóstico, el link y el master. La regla de 16 pasos va debajo, con la línea de tiempo de secciones. Sustituye a la cabecera del panel «motor». |
+| Cabecera con el estado del transporte, el número de avisos y si el sonido está listo, y bajo ella una línea fina que late con el tempo | **Sí** | La cabecera junta el transporte, el cue, la variante, la grabación, la ranura, los avisos del diagnóstico, el link y el master. La regla va debajo: una línea fina que crece a lo largo del compás, con la línea de tiempo de secciones. Sustituye a la cabecera del panel «motor». |
 | Visualizaciones bajo el código que las produce (scope, piano roll, espectro) | **Ya existe** | `inline = true` en `pista:scope{}` y las demás. Se mantiene tal cual en la API. |
 | Dos «docks» de visualización que se eligen desde el menú Ver | **Sí, adaptado** | Un panel de pestañas («dock») sustituye al apilado actual con `covers`: efectos, lanes, scope, espectro, sidechain, ocupación y choques. Se elige con el teclado, el ratón o el menú Ver, y ya no tapa a otros paneles. |
 | Pie con el mensaje, la posición y un medidor del master grande con pico y sonoridad | **Sí, en parte** | El mensaje va en su propia línea y la referencia de teclas del foco en otra. El medidor del master se muestra con dB y pico (ya se publican). La sonoridad sería **aproximada**: se calcularía en la interfaz con la cola mono del master tras el limitador, sin tocar el motor, y por eso se rotula «≈ LUFS (aprox.)». Si no convence, se quita. |
@@ -83,7 +83,7 @@ tiene el foco.
 
 ```text
 ▶ 170.0 BPM  3.2.05  ⏮1  A  song.lua•  ⚠1        master ▇▇▇▇▇▇▆░░░  -3.1 dB
-▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱  intro 4 │ ▶ drop 3/8 ⟳ │ break 4
+━━━━━━━━━━━━╾────────────────────────────────   intro 4 │ ▶ drop 3/8 ⟳ │ break 4
 ┌ 1 código ────────────────────────────┐┌ 2 onda · drums · 8 cortes · ▶3 ──────┐
 │  1 bpm(170)                          ││1▂▅█▅▂ 2▁▃▆▃ 3▂▇█▆▃▁ 4▂▅▃ 5▃█▅▂ 6▂▄ 7▅│
 │  2 local amen = sample("amen.wav")   ││▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀│
@@ -117,7 +117,7 @@ mezclador lado a lado, y el dock con pestañas abajo.
 ```text
  Archivo  Editar  Pista  Transporte  Ver  Ventanas  Ayuda                              F10 menú · Alt-1…8 foco
  ▶ en marcha  170.0 BPM  compás 3 paso 05  ⏮ cue 1  variante A  ● rec   ⚠ 1      master ▇▇▇▇▇▇▇▆░░░░  -3.1 dB  pk -1.2
- ▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱   intro 4 │ ▶ drop 3/8 ⟳ │ break 4 │ outro 8
+ ━━━━━━━━━━━━━━━━━━━━╾─────────────────────────────────────────────────────   intro 4 │ ▶ drop 3/8 ⟳ │ break 4 │ outro 8
 ┌ 1 código · song.lua• ──────────────────────────────┐┌ 2 onda · drums · amen.wav · 1.82 s · 8 cortes · ▶3 · zoom 1× ──┐
 │  1 bpm(170)                                        ││1       2      3         4      5        6      7     8         │
 │  2 local amen = sample("amen.wav"):slice(8)        ││▁▃▇█▆▄▂▁ ▂▅▆▃▂▁ ▃▆██▇▅▃▂▁ ▂▄▅▃▁ ▃▇█▆▄▂▁ ▂▄▆▄▂ ▁▃▅▃▁ ▂▃▂▁        │
@@ -167,7 +167,7 @@ se ve a la vez si cabe. Cuando no cabe, vuelve al dock.
 ```text
  Archivo  Editar  Pista  Transporte  Ver  Ventanas  Ayuda                                                                                               F10 menú · Alt-1…8 foco
  ▶ en marcha   170.0 BPM   compás 3 · paso 05   ⏮ cue 1   variante A   ● grabando drums   ranura 2   ⚠ 1   ⇄ link 3 pares        master ▇▇▇▇▇▇▇▆░░░░  -3.1 dB  pk -1.2
- ▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱   intro 4 │ ▶ drop 3/8 ⟳ │ break 4 │ outro 8
+ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╾────────────────────────────────────────────────────────────────────────────────────────────────   intro 4 │ ▶ drop 3/8 ⟳ │ break 4 │ outro 8
 ┌ 1 código · song.lua• · vim NORMAL ───────────────────────┐┌ 2 onda · drums · amen.wav · 1.82 s · 8 cortes · ▶3 ────────────────┐┌ 4 mezcla · grupos ─────────────────────────────┐
 │  1 bpm(170)                                              ││ 1        2        3          4        5         6       7      8   ││ drums kick  bass  hats   pad   bat  │ master   │
 │  2 key("c", "minor")                                     ││ ▁▃▇█▆▄▂▁  ▂▅▆▃▂▁   ▃▆██▇▅▃▂▁  ▂▄▅▃▁    ▃▇█▆▄▂▁   ▂▄▆▄▂   ▁▃▅▃▁  ▂▃▂││  ░░    ░░    ░░    ░░    ░░    ░░   │   ░░     │
@@ -296,7 +296,10 @@ vieja siga entendiéndose (como en las versiones anteriores).
   lote.
 - **Transporte**: cabecera (`▶`/`■`, BPM, `compás.paso` con el compás de
   la sección si la hay, cue, variante, grabación, ranura, avisos, link,
-  pánico) y regla de 16 pasos (`▰▱`, con el paso que suena encendido). Todo
+  pánico) y regla: una línea del compás que crece de izquierda a derecha
+  (`━` lo lleno, `─` lo vacío, la celda del frente a medias con `╾`;
+  antes eran 16 cuadros `▰▱`; ver «Línea del compás» en
+  `docs/ESTADO.md`). Todo
   sale de `TransportView` y lo que ya hay en `ViewModel`.
 - **Jerarquía visual** (temas): el panel con el foco tiene el borde y el
   número en el color de acento y en negrita. Los demás llevan el borde
@@ -520,7 +523,7 @@ A 80×24 (sin explorador: no cabe; el tracker y el espectro, en pestañas):
 
 ```text
 ▶ en marcha   120.0 BPM   compás 0   paso 05
-▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱
+━━━━━━━━━━━━━━━━━━━━━━━━━━━╾────────────────────────────────────────────────────
 ┌ sample · drums · break.wav · 0.12 s · 2 cortes · corte 1 0.0 ms ─────────────┐
 │1⣤⣤⣤⣤⣤⣤⣤⣤⣤⣄⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀2⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀│
 │⡇                                      ⡇                                      │
@@ -551,7 +554,7 @@ pestañas con el espectro del master fijo a su derecha):
 ```text
  Archivo   Editar   Pista   Transporte   Ver   Ventanas   Ayuda                                    F10 menú · F1 paleta
 ▶ en marcha   120.0 BPM   compás 0   paso 05                                     master    ████████  +0.0 dB  LIMITADOR
-▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━───────────────────────────────────────────────────────────────────────────────
 ┌ 0 archivos ────────────┐┌ sample · drums · break.wav · 0.12 s · 2 cortes · corte 1 0.0 ms ───────────────────────────┐
 │ ▾ tui_pantalla_tamanos ││1                                             2                                             │
 │   ♪ break.wav          ││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣇⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣧⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣄⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀│
@@ -597,7 +600,7 @@ espectro del master; los efectos, en la primera pestaña):
 ```text
  Archivo   Editar   Pista   Transporte   Ver   Ventanas   Ayuda                                                                                                F10 menú · F1 paleta
 ▶ en marcha   120.0 BPM   compás 0   paso 05                                                                                                 master    ████████  +0.0 dB  LIMITADOR
-▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╾──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 ┌ 0 archivos ────────────┐┌ sample · drums · break.wav · 0.12 s · 2 cortes · corte 1 0.0 ms ─────────────────────────────────────┐┌ mezclador ─────────────────────────────────────┐
 │ ▾ tui_pantalla_tamanos ││1                                                  2                                                  ││drums    kick     master                        │
 │   ♪ break.wav          ││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣧⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀││··       ··       ██                            │
@@ -653,7 +656,7 @@ dibujando alrededor.
 ```text
  Archivo   Editar   Pista   Transporte   Ver   Ventanas   Ayuda                                    F10 menú · F1 paleta
 ▶ en marcha   120.0 BPM   compás 0   paso 05                                     master    ████████  +0.0 dB  LIMITADOR
-▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━───────────────────────────────────────────────────────────────────────────────
 ┌ 0 archivos ────────────┐┌ sample · drums · break.wav · 0.12 s · 2 cortes · corte 1 0.0 ms ───────────────────────────┐
 │ ▾ tui_pantalla_flotante││1                                             2                                             │
 │   ♪ break.wav          ││⣧⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⡄                                 ⡇                                             │

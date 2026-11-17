@@ -325,9 +325,16 @@ La ventana se reparte según el tamaño de la terminal, y cambia en vivo al
 cambiarlo (el audio no se entera). Arriba van siempre la **cabecera**
 (marcha o paro, BPM, compás y paso, el cue, la variante, lo que se graba,
 el error y los avisos del código, y a la derecha el master con
-`LIMITADOR` o `SATURA`) y la **regla** de los 16 pasos con la línea de
-tiempo de las secciones. Abajo, el mensaje y las **teclas del panel con
-el foco** (`EDITOR`, `TOCAR`, `MEZCLA`, `ARCHIVOS`...). En medio:
+`LIMITADOR` o `SATURA`) y la **regla**: una línea que crece de izquierda
+a derecha a lo largo del compás que se oye (con el compás de la canción:
+en 3/4 o 7/8 también llega al final con el compás) y vuelve a empezar en
+el siguiente, con la línea de tiempo de las secciones detrás. Parada, la
+línea queda vacía; grabando, lo lleno va en el color de error. Sus
+colores, `regla` y `regla_vacia` en `[colores]`; con
+`[interfaz] regla_marcas = "tiempos"` (o `"pasos"`) lleva una muesca por
+tiempo, y `regla_subcelda` elige cómo crece la celda del frente (ver
+[la configuración](#configuración-teclas-y-colores)). Abajo, el mensaje
+y las **teclas del panel con el foco** (`EDITOR`, `TOCAR`, `MEZCLA`, `ARCHIVOS`...). En medio:
 
 - **A la izquierda, el explorador de archivos** (`0 archivos`), desde 120
   columnas. Con menos no se ve y Alt-E lo abre encima (ver [El explorador
@@ -361,7 +368,7 @@ A 80×24:
 
 ```text
 ▶ en marcha   120.0 BPM   compás 0   paso 05
-▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱
+━━━━━━━━━━━━━━━━━━━━━━━━━━━╾────────────────────────────────────────────────────
 ┌ sample · drums · break.wav · 0.12 s · 2 cortes · corte 1 0.0 ms ─────────────┐
 │1⣤⣤⣤⣤⣤⣤⣤⣤⣤⣄⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀2⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀│
 │⡇                                      ⡇                                      │
@@ -391,7 +398,7 @@ A 120×40:
 ```text
  Archivo   Editar   Pista   Transporte   Ver   Ventanas   Ayuda                                    F10 menú · F1 paleta
 ▶ en marcha   120.0 BPM   compás 0   paso 05                                     master    ████████  +0.0 dB  LIMITADOR
-▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━───────────────────────────────────────────────────────────────────────────────
 ┌ 0 archivos ────────────┐┌ sample · drums · break.wav · 0.12 s · 2 cortes · corte 1 0.0 ms ───────────────────────────┐
 │ ▾ tui_pantalla_tamanos ││1                                             2                                             │
 │   ♪ break.wav          ││⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣇⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣧⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣄⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀│

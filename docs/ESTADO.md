@@ -4725,6 +4725,151 @@ a mano).
 - La onda del sample en barras, con cortes editados (huecos, solapes,
   finales sueltos, zoom, etiquetas).
 
+## Línea del compás
+
+Continuación del rediseño (sin fase propia). Bajo la cabecera, la regla
+de 16 cuadros (`▰▱`, con el paso que sonaba encendido) pasa a ser una
+**línea horizontal que crece** de izquierda a derecha a lo largo del
+compás que se oye y vuelve a cero en el siguiente.
+
+### Dónde se dibujaba
+
+Un solo sitio: `screen::Ruler`, que dibuja la regla de la ventana
+principal con el editor dentro y con el editor en su ventana (las dos
+pasan por `screen::draw`; el `draw_main_window` de antes ya no existe).
+La ventana del editor aparte (`ui::draw_editor_window`, protocolo 8)
+solo dibuja la cabecera, sin regla; el tracker, el mezclador, el panel de
+dispositivos y el piano roll marcan el paso con su propio fondo o cursor,
+sin cuadros. `screen::to_ascii` ya no lista `▰▱` y sí los caracteres
+nuevos.
+
+### Dibujo (`tui/src/bar_line.rs`)
+
+- `BarLine` (en `ViewModel::bar`) es el widget, y `bar_line::cells` su
+  geometría pura: lo lleno con `━` en `regla` (sin ponerlo, el acento),
+  lo vacío con `─` en `regla_vacia` (sin ponerlo, el tenue) y la celda
+  del frente a medias. Grabando, lo lleno va en el color de error (el de
+  `● REC`).
+- **La celda del frente** (`[interfaz] regla_subcelda`): por defecto en
+  medias celdas con `╾` (grueso a la izquierda, fino a la derecha); con
+  `"octavos"`, los bloques `▏▎▍▌▋▊▉`. Elegí `╾` por defecto porque kitty
+  y foot dibujan ellos mismos los caracteres de cajas, con el mismo grosor
+  y centrados, así que `━╾─` se ve como una sola línea; los bloques de
+  octavo ocupan todo el alto de la fila y el frente se ve como un
+  bloque que encoge al pasar a la celda siguiente. A 30 cuadros por
+  segundo la línea avanza ya entre media y una celda por cuadro a los
+  tempos de un break (80 columnas, 170 BPM), así que los octavos apenas
+  se notan; quedan para probarlos a mano.
+- **ASCII**: `=====>-----` (el frente es `>`; sin subceldas).
+- **Marcas** (`[interfaz] regla_marcas`, apagadas): `"tiempos"`, una
+  muesca por tiempo (`┷` en lo lleno, `┴` en lo vacío, `|` en ASCII);
+  `"pasos"`, una por paso. Solo si caben con una celda de línea entre dos
+  (si no, las de los tiempos; si tampoco, ninguna) y nunca encima del
+  frente. Los pasos de cada tiempo salen de `meter()` si es el compás que
+  suena; si no, de dividir los pasos del compás por 4, 2 o 1.
+- **Ancho** (`screen::Ruler::line_width`): sin secciones, toda la fila.
+  Con ellas, lo que deja la línea de tiempo en su ancho más largo
+  (`TimelineBar::widest`: cada entrada como si sonara en su último
+  compás, con `⟳`), así la línea no cambia de largo con cada compás, y al
+  menos 16 columnas (donde empezaba la línea de tiempo antes). Por debajo
+  de 8 no se dibuja y la línea de tiempo se queda con la fila. La fila
+  entera sigue desapareciendo por debajo de 20 filas, como antes.
+
+### Qué representa y la suavidad
+
+- La fracción del compás sale de lo que se oye (`Status::heard`, pasos
+  con decimales menos el retardo de la salida, y menos el retardo a mano
+  del resaltado) con el último paso disparado: `step + heard − global`
+  módulo los pasos del compás (`bar_line::fraction`). Con `meter()` el
+  compás tiene sus pasos (12 en 3/4, 14 en 7/8) y la línea llega al
+  final con él. Al cambiar de compás vuelve a cero; si se oye todavía el
+  final del anterior cuando el motor ya disparó el siguiente, sale cerca
+  del 100 % del anterior, no un salto.
+- El motor ya publica esa posición fina, así que no hace falta
+  interpolar desde el paso; pero solo cambia una vez por bloque de audio
+  (y el retardo de la salida puede variar). `bar_line::Smoother`, una
+  vez por cuadro (`App::frame_bar`, al empezar `screen::draw`), sigue
+  avanzando con el reloj y el tempo desde el cuadro anterior, entre lo
+  que dice el motor (que va como mucho un bloque por detrás: nunca se
+  queda por detrás de él) y medio paso por delante (si el motor se para,
+  la línea se para ahí), y nunca vuelve atrás. Más de un paso de
+  diferencia (un cue, un arranque con `start_at`, un salto de sección) o
+  un tempo nuevo resincronizan de golpe, sin pasar por cero.
+- No lee nada nuevo del motor ni cambia el protocolo.
+
+### Estados
+
+- **Parado**: la línea vacía y quieta (lo que se oye es `None`; al
+  arrancar empieza desde donde arranque el transporte). No se redibuja:
+  la vista en reposo no cambia (`app/idle.rs` no mira el suavizado).
+- **Sin motor o sin información**: vacía, sin fallar.
+- **Grabando**: crece igual, con lo lleno en el color de error.
+- **Pausa del pánico** (Shift-F12): el secuenciador sigue y la línea
+  también (lo dice la cabecera con `PÁNICO: pausa`).
+- **Cue**: no mueve la línea; al arrancar desde el cue, se resincroniza.
+
+### Consumo
+
+Medido en x86_64 (release, `scripts/medir-consumo.py --escenarios
+parado,sonando --tamanos 80x24,200x50 --repeticiones 3`, el binario de
+antes y el de después en la misma tanda):
+
+| Escenario | Tamaño | ui % antes | ui % después | kB/s antes | kB/s después | cuadros/s |
+|---|---|---|---|---|---|---|
+| parado | 80×24 | 0,5 | 0,5 | 0,1 | 0,1 | 1,9 |
+| sonando | 80×24 | 3,5 | 3,6 | 6,4 | 6,7 | 28,2 |
+| parado | 200×50 | 0,8 | 0,8 | 0,3 | 0,3 | 1,9 |
+| sonando | 200×50 | 7,7 | 7,9 | 14,0 | 14,7 | 26,9 |
+
+Parado, igual: la línea no se mueve y el reposo sigue sin redibujar.
+Sonando, los mismos cuadros por segundo (la interfaz ya redibujaba en
+cada cuadro, porque lo que se oye cambia en cada bloque): no se dibuja
+más a menudo, el suavizado va dentro del cuadro y su ritmo es el de
+`frame_rate()`. Lo que sube un poco son los bytes a la terminal (la
+línea cambia en cada cuadro y no solo en cada paso: unas pocas celdas
+más) y la CPU de la interfaz, dentro del ruido de la medición (0,1-0,2
+puntos). El hilo de audio, igual.
+
+### Tests
+
+`bar_line::tests` (0, 50 y 100 %; el frente por medias celdas y por
+octavos, que crece sin volver atrás; ASCII; marcas en 4/4, 3/4 y 7/8 y
+que no tapan el frente; ningún `▰▱`; la fracción en el compás, al
+cambiarlo y en 3/4 y 7/8; el suavizado: avanza con el reloj, no
+retrocede, alcanza al motor y se resincroniza ante un salto o un tempo
+nuevo) y en `tests/screen.rs` con el motor renderizado sin tarjeta: la
+línea a la mitad y casi llena y a cero en el compás siguiente, con sus
+colores; 3/4 y 7/8; el ancho a 60, 80 y 200 columnas; con secciones, la
+línea de tiempo detrás y la línea del mismo largo de un compás a otro, y
+el mínimo a 40 columnas; ASCII; y ningún `▰▱` en ninguna pantalla, de
+40×12 a 300×90, con y sin ASCII. El test de la pantalla pequeña mira la
+línea vacía a todo el ancho.
+
+### Decisiones
+
+- `╾` por defecto en vez de los octavos (arriba); los octavos, en
+  `regla_subcelda = "octavos"`.
+- Marcas apagadas por defecto; muescas que salen hacia arriba en vez de
+  cruces, para que no parezcan cuadros.
+- La línea de tiempo reserva su ancho más largo para que la línea no
+  cambie de largo cada compás.
+- La ventana del editor aparte sigue sin regla: necesitaría los pasos del
+  compás y la posición fina en `RemoteState`, que hoy no los lleva; no
+  dibujaba cuadros.
+
+### Para probar a mano (en el Asahi)
+
+- Sonando a 80×24 y en grande (200×50): la línea crece fluida, sin
+  saltos hacia atrás, y vuelve a cero al cambiar de compás, en kitty y en
+  foot; `regla_subcelda = "octavos"` para comparar.
+- Con `meter(3, 4)`: llega al final con el compás de 12 pasos; con
+  `regla_marcas = "tiempos"`, tres tiempos.
+- Con secciones (`arrange`): un cambio de sección y un salto con `]`; la
+  línea de tiempo no se mueve de sitio y la línea no parpadea.
+- Con el transporte parado (Ctrl-Espacio): la línea vacía y quieta, y
+  `top -H` en reposo como antes.
+- Que no aparece ningún cuadro `▰▱` en ninguna pantalla.
+
 ## Audio de prueba y problemas conocidos
 
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`
