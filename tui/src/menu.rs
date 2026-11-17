@@ -85,7 +85,7 @@ pub fn menu_of(action: Action) -> Option<Menu> {
         SidechainView | LanesView | Occupancy | PianoRoll | Highlight | ResetMeters
         | AnalyzeMasking | Focus(_) | ToggleExplorer | RefreshFiles | EditorTaller
         | EditorShorter | Wider | Narrower | MaximizeEditor | FloatEditor | FloatUp | FloatDown
-        | FloatLeft | FloatRight | WaveStyle | SpectrumStyle | MasterViz => Menu::View,
+        | FloatLeft | FloatRight | SpectrumStyle | MasterViz => Menu::View,
         EditorWindow | EditorBack | RollWindow | RollBack | Devices | RefreshDevices
         | DevicesWindow | DevicesBack => Menu::Windows,
         TerminalInfo => Menu::Help,
@@ -120,7 +120,6 @@ pub fn submenu_of(action: Action) -> Option<&'static str> {
         Focus(_) => "Foco",
         EditorTaller | EditorShorter | Wider | Narrower | MaximizeEditor | FloatEditor
         | FloatUp | FloatDown | FloatLeft | FloatRight => "Editor",
-        WaveStyle | SpectrumStyle => "Dibujo",
         EditorWindow | EditorBack => "Ventana del editor",
         RollWindow | RollBack => "Ventana del piano roll",
         Devices | RefreshDevices | DevicesWindow | DevicesBack => "Dispositivos",

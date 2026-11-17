@@ -469,7 +469,7 @@ Konsole), cambia las teclas en `[teclas]` (`foco_archivos`, `foco_codigo`
 Ventanas y Ayuda, con todas las acciones de la paleta y su tecla. Lo que
 tiene muchas entradas va en **submenús** (con `▸`): Archivo › Bloques,
 Ranuras y Congelar; Editar › Buscar e ir; Pista › Cortes, Zoom de la onda
-y Mandos MIDI; Transporte › Secciones; Ver › Foco, Editor y Dibujo;
+y Mandos MIDI; Transporte › Secciones; Ver › Foco y Editor;
 Ventanas › la del editor, la del piano roll y Dispositivos. ←→ de menú en
 menú, ↑↓ y Enter; **→ o Enter abren el submenú** a su lado y **← o Esc lo
 cierran** (Esc otra vez, o F10, cierran el menú). Una letra va a la
@@ -479,14 +479,14 @@ abre su submenú y en una entrada la ejecuta; un clic fuera lo cierra.
 Ayuda › «Qué sabe hacer esta terminal» dice si hay truecolor, Unicode,
 teclas al soltar y ratón, y dónde está la configuración.
 
-**La onda con puntos.** La forma de onda de los samples se dibuja con
-puntos Braille: dos columnas de puntos por carácter, cada una con su
-trozo del sample, y cuatro filas, del mínimo al máximo de su trozo (el
-cuádruple de resolución que las barras). Cada corte es una columna de
-puntos en su color, el que suena va en el acento y el elegido en los
-números, como siempre. `[interfaz] onda = "barras"` vuelve a las barras
-de bloques, y Ver › Dibujo › «Onda: puntos o barras» lo cambia en la
-sesión.
+**La onda del sample, en barras.** La forma de onda de los samples (en
+su panel, en la ventana sin editor y en la vista previa del explorador)
+se dibuja con barras de bloques, una por columna, de lo más bajo a lo más
+alto de su trozo, con octavos de celda en los bordes. Cada corte es una
+raya en su color que cruza el panel, el que suena va en el acento y el
+elegido en los números. Durante un tiempo se dibujó con puntos Braille
+(`[interfaz] onda`); esa clave ya no existe: si sigue en tu
+`config.toml`, se ignora con un aviso al arrancar.
 
 **Scope y espectro del master.** Están **apagados** hasta que se piden, y
 apagados no cuestan nada: ni el motor copia el master, ni se calcula la
@@ -508,7 +508,7 @@ refresco general. Con **`[interfaz] bajo_consumo = true`** (para la batería,
 una terminal grande o por SSH) todo baja junto: el refresco general a 15
 como mucho, el del scope y el espectro del master a la mitad de ese (7,
 o menos si `visuales_hz` es menor), las del script uno de cada dos
-cuadros, la onda en barras y el scope y las ruedas sin Braille; la
+cuadros, y el scope y las ruedas sin Braille; la
 entrada y el audio no cambian. El título del scope lleva el nivel eficaz de lo último
 (`RMS -12.3 dB`, mono y sin ponderar: una idea del nivel, no sonoridad
 LUFS). El **espectro**, con puntos, en escala
@@ -518,7 +518,7 @@ parpadea. `[interfaz] espectro` elige `relleno` (por defecto), `linea`,
 `barras` (lo que menos gasta) o `espectrograma`: el historial, con lo más
 nuevo a la derecha, los graves abajo y la intensidad en la cantidad de
 puntos y en el color (parado y en silencio se queda quieto). Ver ›
-Dibujo › «Espectro: otro dibujo» los recorre en la sesión.
+«Espectro: otro dibujo» los recorre en la sesión.
 
 **Sin Unicode o sin color.** Con `[interfaz] ascii = true` (o un `LANG`
 sin UTF-8), los bordes, los bloques de la onda y de los medidores, las
@@ -1311,7 +1311,6 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Mover el flotante abajo | Una fila abajo | Alt-Shift-↓ |
 | Mover el flotante a la izquierda | Dos columnas a la izquierda | Alt-Shift-← |
 | Mover el flotante a la derecha | Dos columnas a la derecha | Alt-Shift-→ |
-| Onda: puntos o barras | Dibuja la onda de los samples con puntos Braille o con barras de bloques en esta sesión (la de siempre, `[interfaz] onda`) | — |
 | Espectro: otro dibujo | El espectro del master en relleno, en línea, en barras o como espectrograma, por turno, en esta sesión (el de siempre, `[interfaz] espectro`) | — |
 | Scope y espectro del master | Enseña o quita el scope y el espectro del master como pestañas; apagados no cuestan nada (ni el motor copia, ni se calcula la FFT) | Alt-M |
 | Menús | Abre la barra de menús: ←→ menú, ↑↓ entrada, Enter ejecuta, la letra subrayada abre su menú | F10 |
@@ -1889,9 +1888,8 @@ paleta de 256.
 | `explorador` | el explorador de archivos a la izquierda (en una terminal de menos de 120 columnas se esconde solo y Alt-E lo abre encima); se guarda al cambiarlo con Alt-E | `true` |
 | `ancho_explorador` | columnas del explorador (de 10 a 200; nunca más de dos quintos del ancho); `0`, las de siempre (26). Se guarda al arrastrar su borde o al cambiarlo con `<`/`>` o Ctrl-Alt-←→ | `0` |
 | `alto_editor` | filas del editor abajo (de 4 a 200; siempre deja al menos 6 al sonido); `0`, un tercio del alto. Se guarda al arrastrar su borde de arriba o al cambiarlo con Ctrl-Alt-↑↓ | `0` |
-| `onda` | cómo se dibuja la onda de los samples (en su panel, en la ventana sin editor y en la vista previa del explorador): `"puntos"` (Braille, 2×4 puntos por celda: cuatro veces más alto que las barras) o `"barras"` (bloques, el dibujo de antes). Con `ascii`, siempre barras en ASCII | `"puntos"` |
 | `espectro` | cómo se dibuja el espectro del master en su panel: `"relleno"` o `"linea"` (puntos Braille), `"barras"` (bloques: lo que menos gasta) o `"espectrograma"` (el historial, que se desplaza a la izquierda, con la intensidad en la densidad de los puntos y en el color). Siempre con escala logarítmica y su eje de frecuencias | `"relleno"` |
-| `bajo_consumo` | menos CPU y menos trabajo para la terminal (para la batería de un portátil): como mucho 15 cuadros por segundo, el scope y el espectro del master como mucho a la mitad (`visuales_hz` hasta 7), las visualizaciones del script recalculadas uno de cada dos cuadros, la onda en barras y el scope y las ruedas sin Braille. La entrada y el audio no cambian | `false` |
+| `bajo_consumo` | menos CPU y menos trabajo para la terminal (para la batería de un portátil): como mucho 15 cuadros por segundo, el scope y el espectro del master como mucho a la mitad (`visuales_hz` hasta 7), las visualizaciones del script recalculadas uno de cada dos cuadros y el scope y las ruedas sin Braille. La entrada y el audio no cambian | `false` |
 
 | En `[dispositivos]` | Para | Por defecto |
 | --- | --- | --- |

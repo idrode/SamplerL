@@ -789,7 +789,6 @@ impl App {
         self.files.shown = config.interface.explorer;
         self.files.width = config.interface.explorer_width;
         self.editor_rows = config.interface.editor_rows;
-        crate::theme::set_wave_bars(config.interface.wave_bars);
         if self.spectrum_look != config.interface.spectrum {
             self.spectrum_look = config.interface.spectrum;
             self.master_spectrogram.clear();
@@ -4215,17 +4214,6 @@ impl App {
             Action::FloatDown => self.move_float(0, 1),
             Action::FloatLeft => self.move_float(-1, 0),
             Action::FloatRight => self.move_float(1, 0),
-            Action::WaveStyle => {
-                let bars = !crate::theme::wave_bars();
-                crate::theme::set_wave_bars(bars);
-                self.message = if bars {
-                    "onda en barras".into()
-                } else if crate::theme::ascii() {
-                    "onda en puntos (en ASCII se ven barras)".into()
-                } else {
-                    "onda en puntos".into()
-                };
-            }
             Action::SpectrumStyle => {
                 use crate::viz::master::Look;
                 self.spectrum_look = match self.spectrum_look {

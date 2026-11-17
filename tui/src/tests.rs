@@ -366,8 +366,6 @@ fn wave_bars_fill_from_low_to_high_in_eighths() {
 
 #[test]
 fn sample_panel_draws_the_waveform_in_bars_with_slices() {
-    // Con `[interfaz] onda = "barras"` (el dibujo de antes).
-    crate::theme::set_wave_bars(true);
     let view = waveform_view(Some(1));
     // 60 celdas útiles de ancho (62 con el borde).
     let buffer = draw_widget(ui::SamplePanel(&view), 62, 12);
@@ -421,7 +419,6 @@ fn sample_panel_draws_the_waveform_in_bars_with_slices() {
 
     // Sin corte sonando, nada resaltado.
     let buffer = draw_widget(ui::SamplePanel(&waveform_view(None)), 62, 12);
-    crate::theme::set_wave_bars(false);
     let area = buffer.area;
     assert!(
         (0..area.width)
@@ -430,50 +427,16 @@ fn sample_panel_draws_the_waveform_in_bars_with_slices() {
     );
 }
 
-fn is_braille(symbol: &str) -> bool {
-    symbol
-        .chars()
-        .next()
-        .is_some_and(|c| ('\u{2801}'..='\u{28FF}').contains(&c))
-}
-
 #[test]
-fn sample_panel_draws_the_waveform_in_dots_by_default_with_slices() {
+fn the_waveform_has_no_dots_mode_and_degrades_to_ascii_bars() {
+    // La onda va siempre en barras: también con el bajo consumo, y con
+    // ASCII, en barras de ASCII.
     let view = waveform_view(Some(1));
-    let buffer = draw_widget(ui::SamplePanel(&view), 62, 12);
-    let screen = text(&buffer);
-    let dots = |x0: u16, x1: u16, y0: u16, y1: u16| {
-        (x0..x1)
-            .flat_map(|x| (y0..y1).map(move |y| (x, y)))
-            .filter(|&p| is_braille(buffer[p].symbol()))
-            .collect::<Vec<_>>()
-    };
-    // Ni un bloque: puntos, el positivo arriba en el corte 1 y el negativo
-    // abajo en el corte 2.
-    assert!(!screen.contains('█') && !screen.contains('▄'), "{screen}");
-    assert!(!dots(3, 8, 2, 5).is_empty(), "sin puntos arriba:\n{screen}");
-    assert!(
-        !dots(33, 38, 7, 11).is_empty(),
-        "sin puntos abajo:\n{screen}"
-    );
-    // La marca del corte 2 es una columna de puntos de arriba abajo, en
-    // su color.
-    for y in 2..11 {
-        assert!(is_braille(buffer[(31, y)].symbol()), "{screen}");
-        assert_eq!(buffer[(31, y)].fg, Color::Yellow, "{screen}");
-    }
-    // El corte que suena (el 2), resaltado; el resto, en gris.
-    assert!(
-        dots(33, 38, 7, 11)
-            .iter()
-            .all(|&p| buffer[p].fg == Color::Cyan)
-    );
-    assert!(
-        dots(3, 8, 2, 5)
-            .iter()
-            .all(|&p| buffer[p].fg == Color::Gray)
-    );
-    // Con ASCII, las barras en ASCII (sin Braille).
+    crate::theme::set_low_power(true);
+    let low = draw_widget(ui::SamplePanel(&view), 62, 12);
+    crate::theme::set_low_power(false);
+    let normal = draw_widget(ui::SamplePanel(&view), 62, 12);
+    assert_eq!(low, normal);
     crate::theme::set_ascii(true);
     let mut buffer = draw_widget(ui::SamplePanel(&view), 62, 12);
     crate::screen::to_ascii(&mut buffer);
@@ -484,33 +447,22 @@ fn sample_panel_draws_the_waveform_in_dots_by_default_with_slices() {
         "{screen}"
     );
     assert!(screen.contains('#'), "{screen}");
-}
-
-#[test]
-fn the_dots_have_four_times_the_height_of_a_row() {
-    use crate::model::Waveform;
-    // Silencio: un punto en el centro de cada columna de puntos.
-    let silence = Waveform {
-        buckets: vec![(0.0, 0.0); 64],
-    };
-    let cells = ui::wave_dots(&silence, 4, 2);
-    // 8 filas de puntos: el centro es la 3 (fila de celdas 0, punto 3).
-    assert!(cells[..4].iter().all(|&b| b == 0x40 | 0x80), "{cells:?}");
-    assert!(cells[4..].iter().all(|&b| b == 0), "{cells:?}");
-    // A todo volumen, todos los puntos.
-    let full = Waveform {
-        buckets: vec![(-1.0, 1.0); 64],
-    };
-    assert!(ui::wave_dots(&full, 4, 3).iter().all(|&b| b == 0xFF));
-    // Media amplitud, solo hacia arriba: la mitad de arriba (sin la de
-    // abajo), con resolución de un punto.
-    let up = Waveform {
-        buckets: vec![(0.0, 0.5); 64],
-    };
-    let cells = ui::wave_dots(&up, 1, 2);
-    // 8 puntos: del 2 al 3 (de 0,5 al centro), en la fila 0.
-    assert_eq!(cells, vec![0x04 | 0x40 | 0x20 | 0x80, 0]);
-    assert_eq!(ui::braille(0xFF), '⣿');
+    // La vista previa del explorador, igual: barras, sin Braille.
+    let mut buffer = Buffer::empty(ratatui::layout::Rect::new(0, 0, 40, 6));
+    ui::draw_waveform(
+        &view.tracks[0].waveform,
+        buffer.area,
+        &mut buffer,
+        Color::Gray,
+    );
+    let screen = text(&buffer);
+    assert!(screen.contains('█'), "{screen}");
+    assert!(
+        !screen
+            .chars()
+            .any(|c| ('\u{2800}'..='\u{28FF}').contains(&c)),
+        "{screen}"
+    );
 }
 
 #[test]

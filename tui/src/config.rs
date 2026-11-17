@@ -406,9 +406,6 @@ pub struct InterfaceConfig {
     pub explorer_width: u16,
     /// Filas del editor abajo (`alto_editor`; 0, un tercio).
     pub editor_rows: u16,
-    /// La onda de los samples en barras (`onda = "barras"`) en vez de en
-    /// puntos.
-    pub wave_bars: bool,
     /// Cómo se dibuja el espectro del master (`espectro`).
     pub spectrum: crate::viz::master::Look,
     /// Modo de bajo consumo (`bajo_consumo`): ver [`LOW_POWER_REFRESH`].
@@ -424,7 +421,6 @@ impl Default for InterfaceConfig {
             explorer: true,
             explorer_width: 0,
             editor_rows: 0,
-            wave_bars: false,
             spectrum: crate::viz::master::Look::Fill,
             low_power: false,
         }
@@ -449,8 +445,7 @@ pub const VIZ_HZ: std::ops::RangeInclusive<u32> = 1..=60;
 /// Con `bajo_consumo`, el refresco como mucho: la mitad de lo de siempre.
 /// Además, el scope y el espectro del master van como mucho a la mitad de
 /// ese refresco (ver [`InterfaceConfig::viz_rate`]), las visualizaciones
-/// del script se recalculan uno de cada dos cuadros, la onda va en barras
-/// y el scope y las ruedas sin Braille.
+/// del script se recalculan uno de cada dos cuadros y el scope y las ruedas sin Braille.
 pub const LOW_POWER_REFRESH: u32 = 15;
 
 /// Si el sistema dice que la terminal es UTF-8 (`LC_ALL`, `LC_CTYPE` o
@@ -502,7 +497,6 @@ const INTERFACE_NAMES: &[&str] = &[
     "explorador",
     "ancho_explorador",
     "alto_editor",
-    "onda",
     "espectro",
     "bajo_consumo",
 ];
@@ -541,18 +535,13 @@ const INTERFACE_KEYS: &[(&str, &str, &str)] = &[
         "`0`",
     ),
     (
-        "onda",
-        "cómo se dibuja la onda de los samples (en su panel, en la ventana sin editor y en la vista previa del explorador): `\"puntos\"` (Braille, 2×4 puntos por celda: cuatro veces más alto que las barras) o `\"barras\"` (bloques, el dibujo de antes). Con `ascii`, siempre barras en ASCII",
-        "`\"puntos\"`",
-    ),
-    (
         "espectro",
         "cómo se dibuja el espectro del master en su panel: `\"relleno\"` o `\"linea\"` (puntos Braille), `\"barras\"` (bloques: lo que menos gasta) o `\"espectrograma\"` (el historial, que se desplaza a la izquierda, con la intensidad en la densidad de los puntos y en el color). Siempre con escala logarítmica y su eje de frecuencias",
         "`\"relleno\"`",
     ),
     (
         "bajo_consumo",
-        "menos CPU y menos trabajo para la terminal (para la batería de un portátil): como mucho 15 cuadros por segundo, el scope y el espectro del master como mucho a la mitad (`visuales_hz` hasta 7), las visualizaciones del script recalculadas uno de cada dos cuadros, la onda en barras y el scope y las ruedas sin Braille. La entrada y el audio no cambian",
+        "menos CPU y menos trabajo para la terminal (para la batería de un portátil): como mucho 15 cuadros por segundo, el scope y el espectro del master como mucho a la mitad (`visuales_hz` hasta 7), las visualizaciones del script recalculadas uno de cada dos cuadros y el scope y las ruedas sin Braille. La entrada y el audio no cambian",
         "`false`",
     ),
 ];
@@ -1543,13 +1532,14 @@ impl Config {
                                     .warnings
                                     .push("[interfaz] bajo_consumo: true o false".into()),
                             },
-                            "onda" => match value.as_str() {
-                                Some("puntos") => config.interface.wave_bars = false,
-                                Some("barras") => config.interface.wave_bars = true,
-                                _ => config
-                                    .warnings
-                                    .push("[interfaz] onda: \"puntos\" o \"barras\"".into()),
-                            },
+                            // Ya no existe: la onda de los samples va siempre
+                            // en barras. Una configuración antigua no se
+                            // rompe: se avisa y se sigue.
+                            "onda" => config.warnings.push(
+                                "[interfaz] onda ya no existe (la onda de los samples va siempre \
+                                 en barras): se ignora; puedes quitarla"
+                                    .into(),
+                            ),
                             _ => config.warnings.push(format!(
                                 "[interfaz] «{key}» no existe (hay: {})",
                                 INTERFACE_NAMES.join(", ")
@@ -2154,6 +2144,18 @@ mod tests {
         assert_eq!(Config::default().interface.frame_rate(), DEFAULT_REFRESH);
         let c = Config::parse("[interfaz]\nbajo_consumo = 1\n", false, "c");
         assert!(!c.interface.low_power && c.warnings.len() == 1);
+        // `onda` ya no existe (la onda va siempre en barras): una
+        // configuración antigua se lee entera, con un aviso.
+        for value in ["\"puntos\"", "\"barras\"", "3"] {
+            let c = Config::parse(
+                &format!("[interfaz]\nonda = {value}\nrefresco = 20\n"),
+                false,
+                "c",
+            );
+            assert_eq!(c.interface.refresh, 20);
+            assert_eq!(c.warnings.len(), 1, "{:?}", c.warnings);
+            assert!(c.warnings[0].contains("onda ya no existe"));
+        }
     }
 
     #[test]
