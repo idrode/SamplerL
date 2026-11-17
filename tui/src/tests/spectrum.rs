@@ -424,6 +424,29 @@ fn a_slow_window_loses_frames_instead_of_piling_them_up() {
 }
 
 #[test]
+fn a_window_that_dies_while_frames_are_sent_switches_everything_off() {
+    let (path, mut app, mut engine) = open_panned("espectro_muere", 0.0);
+    app.run_action(Action::SpectrumWindow);
+    let conn = raw_window(&path);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while app.spectrum_cost().0 < 3 {
+        assert!(Instant::now() < deadline);
+        offline::render(&mut engine, 800, 2);
+        app.tick();
+    }
+    // Se va sin leer lo último: el envío falla o la lectura ve el final;
+    // en los dos casos, se suelta todo.
+    drop(conn);
+    while app.spectrum_listening() {
+        assert!(Instant::now() < deadline, "{}", app.view().message);
+        offline::render(&mut engine, 800, 2);
+        app.tick();
+    }
+    assert!(!app.spectrum_ready());
+    assert_eq!(app.spectrum_cost(), (0, 0, 0));
+}
+
+#[test]
 fn the_menu_and_the_palette_open_and_close_the_window() {
     use crate::menu::{Menu, menu_of};
     assert_eq!(menu_of(Action::SpectrumWindow), Some(Menu::Windows));

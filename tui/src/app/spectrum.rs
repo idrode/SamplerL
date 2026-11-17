@@ -209,10 +209,13 @@ impl App {
                 return;
             }
         }
+        // Sin cliente después de haber tenido uno listo (un envío falló al
+        // morir la ventana): se fue, como si hubiera cerrado.
+        let gone = link.ready && !link.server.connected();
         let messages = match link.server.client().map(Conn::receive::<FromSpectrum>) {
-            None => return,
+            None if !gone => return,
             Some(Ok(messages)) => messages,
-            Some(Err(_)) => {
+            None | Some(Err(_)) => {
                 if let Some(link) = self.spectrum.link.take() {
                     self.drop_spectrum(link);
                 }
