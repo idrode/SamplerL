@@ -11,6 +11,7 @@ pub mod grid;
 pub mod master;
 pub mod scope;
 pub mod spectrum;
+pub mod stereo;
 pub mod wheel;
 
 /// Qué se enseña.

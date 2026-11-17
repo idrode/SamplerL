@@ -210,6 +210,11 @@ pub const BINDABLE: &[(&str, Bound, &[&str])] = &[
     ("ocupacion", Bound::Action(Action::Occupancy), &[]),
     ("piano_roll", Bound::Action(Action::PianoRoll), &[]),
     ("editar_roll", Bound::Action(Action::EditRoll), &[]),
+    (
+        "ventana_espectro",
+        Bound::Action(Action::SpectrumWindow),
+        &[],
+    ),
     ("panico", Bound::Action(Action::Panic), &["f12"]),
     (
         "pausa_panico",
@@ -410,6 +415,8 @@ pub struct InterfaceConfig {
     pub spectrum: crate::viz::master::Look,
     /// Modo de bajo consumo (`bajo_consumo`): ver [`LOW_POWER_REFRESH`].
     pub low_power: bool,
+    /// Cómo se dibuja la ventana del espectro estéreo (`espectro_modo`).
+    pub stereo_mode: crate::viz::stereo::Mode,
 }
 
 impl Default for InterfaceConfig {
@@ -423,6 +430,7 @@ impl Default for InterfaceConfig {
             editor_rows: 0,
             spectrum: crate::viz::master::Look::Fill,
             low_power: false,
+            stereo_mode: crate::viz::stereo::Mode::Field,
         }
     }
 }
@@ -499,6 +507,7 @@ const INTERFACE_NAMES: &[&str] = &[
     "alto_editor",
     "espectro",
     "bajo_consumo",
+    "espectro_modo",
 ];
 
 /// Claves de `[interfaz]` (para la guía).
@@ -543,6 +552,11 @@ const INTERFACE_KEYS: &[(&str, &str, &str)] = &[
         "bajo_consumo",
         "menos CPU y menos trabajo para la terminal (para la batería de un portátil): como mucho 15 cuadros por segundo, el scope y el espectro del master como mucho a la mitad (`visuales_hz` hasta 7), las visualizaciones del script recalculadas uno de cada dos cuadros y el scope y las ruedas sin Braille. La entrada y el audio no cambian",
         "`false`",
+    ),
+    (
+        "espectro_modo",
+        "cómo se dibuja la ventana del espectro estéreo (Ventanas › «Espectro»): `\"campo\"` (la frecuencia en vertical, los graves abajo, y cada banda en horizontal según su paneo, con el centro en la mitad) o `\"espejo\"` (el canal izquierdo a la izquierda y el derecho a la derecha, los graves junto al centro). Se guarda al cambiarlo con `m` en la ventana; también va a su ritmo `visuales_hz`",
+        "`\"campo\"`",
     ),
 ];
 
@@ -1532,6 +1546,15 @@ impl Config {
                                     .warnings
                                     .push("[interfaz] bajo_consumo: true o false".into()),
                             },
+                            "espectro_modo" => {
+                                match value.as_str().and_then(crate::viz::stereo::Mode::from_name)
+                                {
+                                    Some(mode) => config.interface.stereo_mode = mode,
+                                    None => config.warnings.push(
+                                        "[interfaz] espectro_modo: \"campo\" o \"espejo\"".into(),
+                                    ),
+                                }
+                            }
                             // Ya no existe: la onda de los samples va siempre
                             // en barras. Una configuración antigua no se
                             // rompe: se avisa y se sigue.
@@ -2144,6 +2167,17 @@ mod tests {
         assert_eq!(Config::default().interface.frame_rate(), DEFAULT_REFRESH);
         let c = Config::parse("[interfaz]\nbajo_consumo = 1\n", false, "c");
         assert!(!c.interface.low_power && c.warnings.len() == 1);
+        // El modo de la ventana del espectro estéreo.
+        let c = Config::parse("[interfaz]\nespectro_modo = \"espejo\"\n", false, "c");
+        assert_eq!(c.interface.stereo_mode, crate::viz::stereo::Mode::Mirror);
+        assert!(c.warnings.is_empty(), "{:?}", c.warnings);
+        assert_eq!(
+            Config::default().interface.stereo_mode,
+            crate::viz::stereo::Mode::Field
+        );
+        let c = Config::parse("[interfaz]\nespectro_modo = \"x\"\n", false, "c");
+        assert_eq!(c.interface.stereo_mode, crate::viz::stereo::Mode::Field);
+        assert!(c.warnings[0].contains("espectro_modo"));
         // `onda` ya no existe (la onda va siempre en barras): una
         // configuración antigua se lee entera, con un aviso.
         for value in ["\"puntos\"", "\"barras\"", "3"] {

@@ -36,6 +36,7 @@ mod roll_window;
 mod safe_draw;
 mod screen;
 mod sidechain;
+mod spectrum_window;
 mod stereo;
 mod tap;
 mod target;
@@ -61,6 +62,7 @@ uso: tui --edit <canción.lua | proyecto.sampler> [--allow-audio] [--allow-midi]
      tui --list-devices                           (dispositivos de audio y puertos MIDI, y sale)
      tui --window-devices <canción.lua | proyecto.sampler>   (panel de dispositivos de una principal)
      tui --window-roll <canción.lua | proyecto.sampler>      (piano roll de una principal)
+     tui --window-spectrum <canción.lua | proyecto.sampler>  (espectro estéreo de una principal)
      tui <archivo.wav> --render <salida.wav>
      tui <archivo.wav> --detect-bpm               (propone bpm() y compases)
      tui --script <canción.lua> --render <salida.wav> [--bars M] [--from N] [--metronome] [--track pista]
@@ -101,6 +103,9 @@ uso: tui --edit <canción.lua | proyecto.sampler> [--allow-audio] [--allow-midi]
   --window-roll  abre solo el piano roll y conecta con la ventana principal de ese script
                (F1 «Abrir el piano roll en su ventana» lo lanza con [roll] terminal o
                [editor] terminal)
+  --window-spectrum  abre solo el espectro estéreo del master y conecta con la ventana
+               principal de ese script (Ventanas › «Espectro» lo lanza con [editor]
+               terminal); m cambia entre campo y espejo
   --list-devices  lista los dispositivos de salida de audio (abre la tarjeta para
                preguntarle qué admite) y los puertos MIDI, y sale
   --new      con --edit: si el script no existe, empieza uno con la plantilla (se
@@ -170,6 +175,7 @@ fn run() -> Result<(), BoxError> {
     let mut list_devices = false;
     let mut window_devices = None;
     let mut window_roll = None;
+    let mut window_spectrum = None;
     let mut wav = WavOptions::default();
     while let Some(arg) = args.next() {
         let mut value = || {
@@ -186,6 +192,7 @@ fn run() -> Result<(), BoxError> {
             "--list-devices" => list_devices = true,
             "--window-devices" => window_devices = Some(value()?),
             "--window-roll" => window_roll = Some(value()?),
+            "--window-spectrum" => window_spectrum = Some(value()?),
             "--metronome" => metronome = true,
             "--bits" => {
                 let text = value()?;
@@ -273,6 +280,16 @@ fn run() -> Result<(), BoxError> {
             .into());
         }
         return in_own_window(run_roll_window(std::path::Path::new(&target)));
+    }
+    if let Some(target) = window_spectrum {
+        if std::env::args().count() != 3 {
+            return Err(format!(
+                "--window-spectrum no se combina con otras opciones (el sonido es de la ventana \
+                 principal)\n{USAGE}"
+            )
+            .into());
+        }
+        return in_own_window(run_spectrum_window(std::path::Path::new(&target)));
     }
     if device_flags && edit.is_none() {
         return Err(
@@ -1003,6 +1020,62 @@ fn run_devices_window(path: &std::path::Path) -> Result<(), BoxError> {
                 && window.handle(key.into()) == app::Flow::Quit
             {
                 return Ok(());
+            }
+        }
+    })();
+    ratatui::restore();
+    result
+}
+
+/// `--window-spectrum`: solo el espectro estéreo, conectado con la ventana
+/// principal del mismo script por su socket. Dibuja solo cuando llega algo
+/// nuevo (un cuadro, una tecla, otro tamaño).
+fn run_spectrum_window(path: &std::path::Path) -> Result<(), BoxError> {
+    use ratatui::crossterm::event::{self, Event, KeyEventKind};
+    use spectrum_window::Leaving;
+    let (_, script) = target::window_target(path, false)?;
+    let socket = link::spectrum_socket_path(&link::runtime_dir()?, &script);
+    let config_path = config::dir().map(|d| d.join("config.toml"));
+    let config = match &config_path {
+        Some(path) => config::Config::load(path, theme::truecolor()),
+        None => config::Config::default(),
+    };
+    theme::set(config.theme);
+    theme::set_ascii(config.interface.ascii());
+    let mut window = spectrum_window::SpectrumWindow::new(
+        &socket,
+        &script,
+        config.interface.stereo_mode,
+        config_path,
+    );
+    let mut terminal = ratatui::init();
+    let result = (|| -> Result<(), BoxError> {
+        loop {
+            window.tick();
+            match window.leaving() {
+                Some(Leaving::Done) => return Ok(()),
+                Some(Leaving::Failed(why)) => return Err(why.clone().into()),
+                None => {}
+            }
+            if window.take_dirty() {
+                match safe_draw::draw(&mut terminal, |frame| window.draw(frame)) {
+                    safe_draw::Outcome::Drawn => {}
+                    safe_draw::Outcome::Panicked(e) | safe_draw::Outcome::Failed(e) => {
+                        window.draw_failed(&e)
+                    }
+                }
+            }
+            if !event::poll(Duration::from_millis(15))? {
+                continue;
+            }
+            match event::read()? {
+                Event::Key(key) if key.kind != KeyEventKind::Release => {
+                    if window.handle(key.into()) == app::Flow::Quit {
+                        return Ok(());
+                    }
+                }
+                Event::Resize(..) => window.touch(),
+                _ => {}
             }
         }
     })();

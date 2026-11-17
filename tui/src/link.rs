@@ -1012,7 +1012,6 @@ pub struct Conn {
     output: Vec<u8>,
     /// Con [`Conn::receive_lossy`]: se está tirando una línea demasiado
     /// larga hasta su final.
-    #[allow(dead_code)] // La lee la ventana del espectro (siguiente commit).
     skipping: bool,
 }
 
@@ -1124,7 +1123,6 @@ impl Conn {
     /// es UTF-8, un mensaje mal formado o una línea de más de `max_line`
     /// bytes) se tira en vez de cortar: devuelve los mensajes y cuántas
     /// líneas se tiraron. Error solo si el otro extremo se fue.
-    #[allow(dead_code)] // La usa la ventana del espectro (siguiente commit).
     pub fn receive_lossy<M: Message>(&mut self, max_line: usize) -> io::Result<(Vec<M>, usize)> {
         let mut buf = [0u8; 16 * 1024];
         let mut dropped = 0;

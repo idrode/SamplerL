@@ -41,7 +41,6 @@ impl StereoFrame {
     }
 
     /// El nivel de la banda `i`: el del canal más fuerte.
-    #[allow(dead_code)] // Lo dibuja la ventana del espectro (siguiente commit).
     pub fn energy(&self, i: usize) -> f32 {
         self.left
             .get(i)

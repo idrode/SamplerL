@@ -60,7 +60,7 @@ pub struct MasterSpectrumView {
 }
 
 /// Las marcas del eje de frecuencias.
-const AXIS: [(f32, &str); 10] = [
+pub(crate) const AXIS: [(f32, &str); 10] = [
     (50.0, "50"),
     (100.0, "100"),
     (200.0, "200"),
@@ -76,13 +76,13 @@ const AXIS: [(f32, &str); 10] = [
 /// Umbrales de los ocho puntos de una celda (columna, fila) para el
 /// espectrograma: un punto se enciende si el nivel pasa del suyo, así la
 /// densidad de puntos sigue al nivel.
-const DITHER: [[f32; 4]; 2] = [
+pub(crate) const DITHER: [[f32; 4]; 2] = [
     [0.0625, 0.5625, 0.3125, 0.8125],
     [0.6875, 0.1875, 0.9375, 0.4375],
 ];
 
 /// Bit Braille de cada punto: [columna][fila].
-const BIT: [[u8; 4]; 2] = [[0x01, 0x02, 0x04, 0x40], [0x08, 0x10, 0x20, 0x80]];
+pub(crate) const BIT: [[u8; 4]; 2] = [[0x01, 0x02, 0x04, 0x40], [0x08, 0x10, 0x20, 0x80]];
 
 /// El nivel en la fracción `t` (de 0 a 1, de grave a agudo) de `levels`,
 /// entre los centros de las bandas.

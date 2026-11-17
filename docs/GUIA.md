@@ -1783,6 +1783,7 @@ paleta de 256.
 | `ocupacion` | Vista de ocupación | — |
 | `piano_roll` | Piano roll | — |
 | `editar_roll` | Editar en el piano roll | — |
+| `ventana_espectro` | Espectro | — |
 | `panico` | Pánico: silenciar todo lo que suena | `f12` |
 | `pausa_panico` | Pánico en pausa (otra vez: reanudar) | `shift-f12` |
 
@@ -1892,6 +1893,7 @@ paleta de 256.
 | `alto_editor` | filas del editor abajo (de 4 a 200; siempre deja al menos 6 al sonido); `0`, un tercio del alto. Se guarda al arrastrar su borde de arriba o al cambiarlo con Ctrl-Alt-↑↓ | `0` |
 | `espectro` | cómo se dibuja el espectro del master en su panel: `"relleno"` o `"linea"` (puntos Braille), `"barras"` (bloques: lo que menos gasta) o `"espectrograma"` (el historial, que se desplaza a la izquierda, con la intensidad en la densidad de los puntos y en el color). Siempre con escala logarítmica y su eje de frecuencias | `"relleno"` |
 | `bajo_consumo` | menos CPU y menos trabajo para la terminal (para la batería de un portátil): como mucho 15 cuadros por segundo, el scope y el espectro del master como mucho a la mitad (`visuales_hz` hasta 7), las visualizaciones del script recalculadas uno de cada dos cuadros y el scope y las ruedas sin Braille. La entrada y el audio no cambian | `false` |
+| `espectro_modo` | cómo se dibuja la ventana del espectro estéreo (Ventanas › «Espectro»): `"campo"` (la frecuencia en vertical, los graves abajo, y cada banda en horizontal según su paneo, con el centro en la mitad) o `"espejo"` (el canal izquierdo a la izquierda y el derecho a la derecha, los graves junto al centro). Se guarda al cambiarlo con `m` en la ventana; también va a su ritmo `visuales_hz` | `"campo"` |
 
 | En `[dispositivos]` | Para | Por defecto |
 | --- | --- | --- |
