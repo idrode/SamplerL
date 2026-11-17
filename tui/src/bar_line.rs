@@ -18,9 +18,6 @@
 //! sin volver atrás, y se resincroniza ante un salto (cue, arranque) o un
 //! tempo nuevo. Todo es de la interfaz: no lee nada nuevo del motor.
 
-// Hasta que la regla de la cabecera la use (en el commit siguiente).
-#![allow(dead_code)]
-
 use std::time::Instant;
 
 use ratatui::buffer::Buffer;

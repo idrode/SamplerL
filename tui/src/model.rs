@@ -107,6 +107,8 @@ pub struct ViewModel {
     /// Ayuda de la función bajo el cursor (en el modo editor).
     pub help: Option<Help>,
     pub transport: TransportView,
+    /// La línea del compás bajo la cabecera.
+    pub bar: crate::bar_line::BarLine,
     /// El cue (donde empieza el siguiente arranque), como se ve: `compás
     /// 8` o `drop (entrada 3)`.
     pub cue: Option<String>,

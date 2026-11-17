@@ -17,7 +17,8 @@ fn small_has_the_wave_on_top_and_the_rest_in_tabs() {
     let screen = text(&buffer);
     // Cabecera y regla arriba; teclas abajo.
     assert!(line(&screen, 0).starts_with("■ parado"), "{screen}");
-    assert!(line(&screen, 1).starts_with("▱▱▱▱"), "{screen}");
+    // La línea del compás, parada: vacía y a todo el ancho.
+    assert_eq!(line(&screen, 1), "─".repeat(80), "{screen}");
     assert!(line(&screen, 23).starts_with("EDITOR"), "{screen}");
     // La onda arriba, debajo las pestañas con el tracker elegido (el
     // primero) y el editor abajo, a lo ancho (sin explorador: no cabe).
@@ -506,4 +507,134 @@ fn the_tab_strip_scrolls_to_show_the_chosen_tab() {
     let (x, y) = find(&buffer, " 8 esp").unwrap_or_else(|| panic!("{screen}"));
     assert_eq!(buffer[(x + 1, y)].bg, theme::get().accent, "{screen}");
     assert!(screen.contains('‹'), "hay más a la izquierda: {screen}");
+}
+
+/// La fila de la línea del compás de una pantalla de `width` columnas.
+fn bar_row(app: &mut App, width: u16, height: u16) -> String {
+    let screen = text(&draw(app, width, height));
+    let area = ratatui::layout::Rect::new(0, 0, width, height);
+    let y = crate::screen::grid_of(&app.view(), area).ruler.unwrap().y;
+    line(&screen, y as usize)
+}
+
+/// Celdas llenas de la línea (las gruesas, las del frente y las marcas en
+/// lo lleno).
+fn filled(row: &str) -> usize {
+    row.chars()
+        .filter(|c| matches!(c, '━' | '╾' | '┷' | '=' | '>'))
+        .count()
+}
+
+#[test]
+fn the_bar_line_grows_through_the_bar_and_starts_again() {
+    let (_, mut app, mut engine) = open("screen_bar_line", Some(SONG));
+    // Medio compás (8 pasos de 16): la mitad de la línea.
+    offline::render(&mut engine, 8 * STEP, 2);
+    app.tick();
+    let row = bar_row(&mut app, 80, 24);
+    assert!(row.chars().all(|c| matches!(c, '━' | '╾' | '─')), "{row}");
+    let half = filled(&row);
+    assert!((39..=41).contains(&half), "{half}: {row}");
+    // Lo lleno, en el acento; lo vacío, atenuado.
+    let buffer = draw(&mut app, 80, 24);
+    assert_eq!(buffer[(0, 1)].fg, theme::get().accent);
+    assert_eq!(buffer[(79, 1)].fg, theme::get().dim);
+    // Casi al final del compás: casi llena.
+    offline::render(&mut engine, 7 * STEP + STEP / 2, 2);
+    app.tick();
+    let full = filled(&bar_row(&mut app, 80, 24));
+    assert!(full >= 76, "{full}");
+    // El compás siguiente: vuelve a empezar.
+    offline::render(&mut engine, STEP, 2);
+    app.tick();
+    let row = bar_row(&mut app, 80, 24);
+    assert!(filled(&row) <= 4, "{row}");
+}
+
+#[test]
+fn the_bar_line_follows_three_four_and_seven_eight() {
+    for (meter, steps) in [("meter(3, 4)", 12), ("meter(7, 8)", 14)] {
+        let song = format!("{SONG}{meter}\n");
+        let (_, mut app, mut engine) = open("screen_bar_meter", Some(&song));
+        assert!(app.view().error.is_none(), "{:?}", app.view().error);
+        offline::render(&mut engine, steps / 2 * STEP, 2);
+        app.tick();
+        let half = filled(&bar_row(&mut app, 100, 30));
+        let view = app.view();
+        assert_eq!(view.bar.bar_steps, steps, "{meter}");
+        let f = view.bar.fraction.unwrap();
+        assert!((f - 0.5).abs() < 0.05, "{meter}: {f}");
+        assert!((48..=52).contains(&half), "{meter}: {half}");
+    }
+}
+
+#[test]
+fn the_bar_line_fills_the_width_and_leaves_room_for_the_timeline() {
+    let (_, mut app, mut engine) = open("screen_bar_width", Some(SONG));
+    offline::render(&mut engine, 4 * STEP, 2);
+    app.tick();
+    // Sin línea de tiempo, todo el ancho, al redimensionar también.
+    for width in [60, 80, 200] {
+        let row = bar_row(&mut app, width, 30);
+        assert_eq!(row.chars().count(), width as usize);
+        assert!(!row.contains(' '), "{width}: {row}");
+        let quarter = filled(&row) as f64 / width as f64;
+        assert!((quarter - 0.25).abs() < 0.03, "{width}: {row}");
+    }
+    // Con secciones, la línea de tiempo detrás, y la línea no cambia de
+    // largo de un compás a otro.
+    let (_, mut app, mut engine) = open(
+        "screen_bar_timeline",
+        Some(crate::tests::sections::SONG_SECTIONS),
+    );
+    offline::render(&mut engine, 4 * STEP, 2);
+    app.tick();
+    let is_line = |c: char| matches!(c, '━' | '╾' | '─');
+    let row = bar_row(&mut app, 120, 30);
+    let width = row.chars().take_while(|&c| is_line(c)).count();
+    assert!(width >= 16, "{row}");
+    let rest: String = row.chars().skip(width).collect();
+    assert!(rest.starts_with("   ▶ intro 1/2 │ drop 4"), "{row}");
+    offline::render(&mut engine, 16 * STEP, 2);
+    app.tick();
+    let row = bar_row(&mut app, 120, 30);
+    assert_eq!(
+        row.chars().take_while(|&c| is_line(c)).count(),
+        width,
+        "{row}"
+    );
+    assert!(row.contains("intro 2/2"), "{row}");
+    // Estrecha: la línea con lo mínimo y la línea de tiempo recortada.
+    let row = bar_row(&mut app, 40, 30);
+    assert_eq!(row.chars().take_while(|&c| is_line(c)).count(), 16, "{row}");
+    assert_eq!(row.chars().nth(16), Some(' '), "{row}");
+    assert!(row.contains("drop"), "{row}");
+}
+
+#[test]
+fn the_bar_line_in_ascii() {
+    let (_, mut app, mut engine) = open("screen_bar_ascii", Some(SONG));
+    offline::render(&mut engine, 8 * STEP + STEP / 3, 2);
+    app.tick();
+    theme::set_ascii(true);
+    let row = bar_row(&mut app, 60, 24);
+    theme::set_ascii(false);
+    assert!(row.starts_with("=============================="), "{row}");
+    assert!(row.contains('>') && row.ends_with('-'), "{row}");
+    assert!(row.is_ascii(), "{row}");
+}
+
+#[test]
+fn no_screen_draws_squares_on_the_ruler() {
+    let (_, mut app, mut engine) = open("screen_bar_squares", Some(SONG));
+    for ascii in [false, true] {
+        theme::set_ascii(ascii);
+        for (w, h) in [(40, 12), (80, 24), (120, 40), (200, 50), (300, 90)] {
+            offline::render(&mut engine, 3 * STEP, 2);
+            app.tick();
+            let screen = text(&draw(&mut app, w, h));
+            assert!(!screen.contains('▰') && !screen.contains('▱'), "{screen}");
+        }
+    }
+    theme::set_ascii(false);
 }

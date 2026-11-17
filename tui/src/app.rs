@@ -373,6 +373,12 @@ pub struct App {
     /// último que las recalculó (las del master van a su ritmo, `viz_hz`).
     low_power: bool,
     viz_turn: bool,
+    /// La línea del compás: la posición suave que se ve (de
+    /// [`App::frame_bar`], una vez por cuadro) y cómo se dibuja.
+    bar_smoother: crate::bar_line::Smoother,
+    bar_heard: Option<f64>,
+    bar_marks: crate::bar_line::Marks,
+    bar_subcell: crate::bar_line::Subcell,
     viz_cache: std::cell::RefCell<Option<Vec<crate::viz::Placed>>>,
     /// Mandos MIDI asignados (los del proyecto o, sin ellos, los de la
     /// configuración), la lista para asignar uno, el que espera su CC, la
@@ -625,6 +631,10 @@ impl App {
             refresh_hz: crate::config::DEFAULT_REFRESH,
             low_power: false,
             viz_turn: true,
+            bar_smoother: Default::default(),
+            bar_heard: None,
+            bar_marks: Default::default(),
+            bar_subcell: Default::default(),
             viz_cache: Default::default(),
             learned: Vec::new(),
             knob_picker: None,
@@ -791,6 +801,8 @@ impl App {
         self.viz_hz = config.interface.viz_rate();
         self.low_power = config.interface.low_power;
         crate::theme::set_low_power(self.low_power);
+        self.bar_marks = config.interface.ruler_marks;
+        self.bar_subcell = config.interface.ruler_subcell;
         self.viz_cache.replace(None);
         self.files.shown = config.interface.explorer;
         self.files.width = config.interface.explorer_width;
@@ -5152,6 +5164,58 @@ impl App {
         self.controller.collect_garbage();
     }
 
+    /// Una vez por cuadro (al empezar a dibujar): la posición de la línea
+    /// del compás, lo que se oye seguido con el reloj entre bloque y bloque
+    /// (ver [`crate::bar_line::Smoother`]), con el mismo retardo a mano
+    /// que el resaltado.
+    pub fn frame_bar(&mut self) {
+        let heard = self.status.filter(|s| s.running).and_then(|s| {
+            let extra = self.highlight_delay_ms * s.bpm * 4.0 / 60_000.0;
+            s.heard.map(|h| h - extra)
+        });
+        let bpm = self.status.map_or(0.0, |s| s.bpm);
+        self.bar_heard = self.bar_smoother.update(heard, bpm, Instant::now());
+    }
+
+    /// La línea del compás para la vista: por dónde va el compás que se
+    /// oye (vacía parada o sin motor), con el compás de la canción.
+    fn bar_line(&self) -> crate::bar_line::BarLine {
+        let bar_steps = self.status.map_or(engine::STEPS, |s| s.bar_steps.max(1));
+        // Los pasos de cada tiempo: los del compás de la canción si es el
+        // que suena; si no, los que mejor lo dividen (4, 2 o 1).
+        let beat = self
+            .host
+            .song()
+            .and_then(|song| song.meter)
+            .filter(|m| m.steps == bar_steps)
+            .map_or_else(
+                || {
+                    [4, 2, 1]
+                        .into_iter()
+                        .find(|b| bar_steps.is_multiple_of(*b))
+                        .unwrap_or(1)
+                },
+                |m| m.beat,
+            );
+        let fraction = match (self.status, self.bar_heard) {
+            (Some(s), Some(heard)) if s.running => Some(crate::bar_line::fraction(
+                heard,
+                s.step.unwrap_or(0),
+                s.global,
+                bar_steps,
+            )),
+            _ => None,
+        };
+        crate::bar_line::BarLine {
+            fraction,
+            bar_steps,
+            beat,
+            marks: self.bar_marks,
+            subcell: self.bar_subcell,
+            recording: self.recording.is_some(),
+        }
+    }
+
     /// Modelo de vista para los paneles.
     pub fn view(&self) -> ViewModel {
         let viz_views = self.frame_viz_views();
@@ -5615,6 +5679,7 @@ impl App {
             message: self.message.clone(),
             slice_warning: self.slice_warning.clone(),
             transport,
+            bar: self.bar_line(),
             metronome: self.metronome,
             recording: self.recording_text(),
             tracks,

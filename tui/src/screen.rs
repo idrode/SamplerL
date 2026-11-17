@@ -96,6 +96,7 @@ pub fn grid_of(view: &ViewModel, screen: Rect) -> layout::Grid {
 /// Dibuja la ventana principal.
 pub fn draw(frame: &mut Frame, app: &mut App) {
     app.frame_viz();
+    app.frame_bar();
     let view = app.view();
     let screen = frame.area();
     let grid = grid_of(&view, screen);
@@ -267,14 +268,16 @@ pub fn to_ascii(buf: &mut Buffer) {
 /// El equivalente en ASCII de un símbolo de la interfaz.
 fn ascii_of(c: char) -> Option<char> {
     Some(match c {
-        '┌' | '┐' | '└' | '┘' | '├' | '┤' | '┬' | '┴' | '┼' | '╭' | '╮' | '╯' | '╰' => {
+        '┌' | '┐' | '└' | '┘' | '├' | '┤' | '┬' | '┴' | '┷' | '┼' | '╭' | '╮' | '╯' | '╰' => {
             '+'
         }
-        '─' | '━' | '╌' | '┄' | '−' | '–' => '-',
-        '│' | '┃' | '┊' | '┆' | '╎' | '▏' => '|',
-        '█' | '▇' | '▆' | '▓' | '■' | '▰' | '▙' | '▛' | '▜' | '▟' => '#',
-        '▅' | '▄' | '▃' | '▒' | '▌' | '▐' | '▚' | '▞' => '=',
-        '▂' | '▁' | '░' | '▱' | '▖' | '▗' | '▘' | '▝' => '.',
+        '─' | '━' | '╾' | '╌' | '┄' | '−' | '–' => '-',
+        '│' | '┃' | '┊' | '┆' | '╎' | '▏' | '▎' | '▍' => '|',
+        '█' | '▇' | '▆' | '▓' | '■' | '▙' | '▛' | '▜' | '▟' => '#',
+        '▅' | '▄' | '▃' | '▒' | '▌' | '▋' | '▊' | '▉' | '▐' | '▚' | '▞' => {
+            '='
+        }
+        '▂' | '▁' | '░' | '▖' | '▗' | '▘' | '▝' => '.',
         '▀' | '▔' => '\'',
         '▶' | '▸' | '›' | '→' | '»' => '>',
         '◀' | '◂' | '‹' | '←' | '«' | '⏮' => '<',
@@ -539,33 +542,45 @@ impl Widget for Header<'_> {
     }
 }
 
-/// La regla: los 16 pasos con el que suena encendido y, detrás, la línea
-/// de tiempo de las secciones.
+/// La regla: la línea del compás ([`crate::bar_line`]) y, detrás, la
+/// línea de tiempo de las secciones. Sin línea de tiempo, la línea ocupa
+/// todo el ancho; con ella, lo que le deje el ancho más largo que puede
+/// tener la línea de tiempo (así no cambia de largo con cada compás), y al
+/// menos [`crate::bar_line::MIN_WITH_TIMELINE`]. Por debajo de
+/// [`crate::bar_line::MIN_WIDTH`], solo la línea de tiempo.
 pub struct Ruler<'a>(pub &'a ViewModel);
+
+impl Ruler<'_> {
+    /// Las columnas de la línea en una regla de `width`.
+    pub fn line_width(view: &ViewModel, width: u16) -> u16 {
+        use crate::bar_line::{GAP, MIN_WIDTH, MIN_WITH_TIMELINE};
+        let line = match &view.timeline {
+            None => width,
+            Some(timeline) => {
+                let reserved = ui::TimelineBar::widest(timeline).min(u16::MAX as usize) as u16;
+                width
+                    .saturating_sub(reserved.saturating_add(GAP))
+                    .max(MIN_WITH_TIMELINE)
+                    .min(width)
+            }
+        };
+        if line < MIN_WIDTH { 0 } else { line }
+    }
+}
 
 impl Widget for Ruler<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let view = self.0;
-        let t = view.transport;
-        let ascii = crate::theme::ascii();
-        let (on, off) = if ascii { ('#', '-') } else { ('▰', '▱') };
-        let lit = t.step.filter(|_| t.running);
-        let mut spans = Vec::new();
-        for step in 0..engine::STEPS {
-            let span = if lit == Some(step) {
-                Span::from(on.to_string()).fg(accent()).bold()
-            } else if lit.is_some_and(|l| step < l) {
-                Span::from(on.to_string()).fg(dim())
-            } else {
-                Span::from(off.to_string()).fg(dim())
-            };
-            spans.push(span);
+        let width = Self::line_width(view, area.width);
+        if width > 0 {
+            view.bar.render(Rect { width, ..area }, buf);
         }
-        let ruler = Line::from(spans);
-        let width = ruler.width() as u16;
-        ruler.render(area, buf);
         if let Some(timeline) = &view.timeline {
-            let x = area.x + width + 3;
+            let x = if width > 0 {
+                area.x + width + crate::bar_line::GAP
+            } else {
+                area.x
+            };
             if x < area.right() {
                 ui::TimelineBar(timeline).render(
                     Rect {

@@ -1304,6 +1304,17 @@ pub fn transport_line(view: &ViewModel) -> Line<'static> {
 pub struct TimelineBar<'a>(pub &'a TimelineView);
 
 impl TimelineBar<'_> {
+    /// Lo más ancho que puede llegar a ser (cada entrada como si sonara en
+    /// su último compás, con `⟳`, y los separadores): lo que se le reserva
+    /// junto a la línea del compás para que esta no cambie de largo.
+    pub fn widest(view: &TimelineView) -> usize {
+        let entries = view.entries.iter().enumerate().map(|(i, (name, bars))| {
+            let cue = if view.cue == Some(i) { 2 } else { 0 };
+            cue + format!("▶ {name} {bars}/{bars} ⟳").chars().count()
+        });
+        entries.sum::<usize>() + 3 * view.entries.len().saturating_sub(1)
+    }
+
     /// El texto de cada entrada.
     pub fn labels(view: &TimelineView) -> Vec<String> {
         view.entries
