@@ -125,3 +125,59 @@ fn coste_en_el_hilo_de_audio() {
         (on - off) / 20.0 * 100.0
     );
 }
+
+/// La cola estéreo del master (la ventana del espectro estéreo): apagada,
+/// nada; encendida, L y R exactos de la salida (tras el limitador), con
+/// una pista panoteada a un lado; y la salida es la misma, encendida o no.
+#[test]
+fn the_stereo_master_copies_left_and_right_without_changing_the_mix() {
+    let make = |pan: f32| {
+        let tone: Vec<f32> = (0..24_000).map(|i| (i as f32 * 0.03).sin() * 0.4).collect();
+        let sample = Arc::new(Sample::from_interleaved(&tone, 1, RATE, RATE).unwrap());
+        let slices = Slices::grid(&sample, 1);
+        let mut steps = vec![None; 16];
+        steps[0] = Some(Step::new(0));
+        let pattern = Pattern::from_steps(sample, &slices, steps)
+            .unwrap()
+            .with_pan(pan)
+            .unwrap();
+        let (mut controller, engine) = new_engine(RATE);
+        let mut batch = Batch::new();
+        batch.set_bpm(120.0).set_pattern(0, Some(pattern));
+        controller.apply(batch).unwrap();
+        controller.start().unwrap();
+        (controller, engine)
+    };
+    let (mut l, mut r) = (Vec::new(), Vec::new());
+    // Apagada: nada (y la salida de referencia).
+    let (mut controller, mut engine) = make(-1.0);
+    assert!(!controller.stereo_viz_on());
+    let quiet = offline::render(&mut engine, 8_000, 2);
+    controller.stereo_samples(&mut l, &mut r);
+    assert!(l.is_empty() && r.is_empty());
+    // Encendida: lo mismo que sale, canal a canal.
+    let (mut controller, mut engine) = make(-1.0);
+    controller.set_stereo_viz(true);
+    let out = offline::render(&mut engine, 8_000, 2);
+    assert_eq!(out, quiet, "la cola cambia la mezcla");
+    controller.stereo_samples(&mut l, &mut r);
+    let left: Vec<f32> = out.chunks(2).map(|f| f[0]).collect();
+    let right: Vec<f32> = out.chunks(2).map(|f| f[1]).collect();
+    assert_eq!(l, left);
+    assert_eq!(r, right);
+    // Panoteada a la izquierda: la derecha, en silencio.
+    let energy = |x: &[f32]| x.iter().map(|s| s * s).sum::<f32>();
+    assert!(energy(&l) > 1.0 && energy(&r) < 1e-6 * energy(&l));
+    // Llena (sin vaciar), descarta y se queda en su capacidad; apagada otra
+    // vez, deja de escribir.
+    offline::render(&mut engine, 3 * engine::STEREO_FRAMES, 2);
+    l.clear();
+    r.clear();
+    controller.stereo_samples(&mut l, &mut r);
+    assert_eq!(l.len(), engine::STEREO_FRAMES);
+    controller.set_stereo_viz(false);
+    offline::render(&mut engine, 4_000, 2);
+    l.clear();
+    controller.stereo_samples(&mut l, &mut r);
+    assert!(l.is_empty());
+}

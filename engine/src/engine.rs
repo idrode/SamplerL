@@ -1452,6 +1452,8 @@ enum Garbage {
 pub struct Controller {
     /// Las muestras de cada fuente para las visualizaciones.
     viz: [crate::viz::VizReader; crate::viz::VIZ_SOURCES],
+    /// El master en estéreo (la ventana del espectro estéreo).
+    stereo: crate::viz::StereoReader,
     commands: Producer<Command>,
     garbage: Consumer<Garbage>,
     midi: Consumer<MidiNote>,
@@ -1628,6 +1630,8 @@ impl Track {
 pub struct Engine {
     /// Las colas de las visualizaciones y qué fuentes copian.
     viz: crate::viz::VizTap,
+    /// El master en estéreo, si está encendida su cola.
+    stereo: crate::viz::StereoTap,
     commands: Consumer<Command>,
     garbage: Producer<Garbage>,
     playing: Arc<AtomicBool>,
@@ -1757,6 +1761,7 @@ pub fn new_engine(sample_rate: u32) -> (Controller, Engine) {
     let (garbage_tx, garbage_rx) = RingBuffer::new(GARBAGE_CAPACITY);
     let (midi_tx, midi_rx) = RingBuffer::new(MIDI_CAPACITY);
     let (viz_tap, viz_readers) = crate::viz::VizTap::new();
+    let (stereo_tap, stereo_reader) = crate::viz::stereo_ring(crate::viz::STEREO_FRAMES);
     let playing = Arc::new(AtomicBool::new(false));
     let status = Arc::new(SharedStatus::new(
         crate::sequencer::DEFAULT_BPM,
@@ -1765,6 +1770,7 @@ pub fn new_engine(sample_rate: u32) -> (Controller, Engine) {
     (
         Controller {
             viz: viz_readers,
+            stereo: stereo_reader,
             commands: cmd_tx,
             garbage: garbage_rx,
             midi: midi_rx,
@@ -1773,6 +1779,7 @@ pub fn new_engine(sample_rate: u32) -> (Controller, Engine) {
         },
         Engine {
             viz: viz_tap,
+            stereo: stereo_tap,
             commands: cmd_rx,
             garbage: garbage_tx,
             playing,
@@ -2433,6 +2440,24 @@ impl Controller {
         if let Some(reader) = self.viz.get_mut(source) {
             reader.drain_into(out);
         }
+    }
+
+    /// Enciende o apaga la cola estéreo del master (al momento, sin
+    /// esperar al compás; no cambia el audio). Apagada, el motor no
+    /// escribe nada en ella. Ver [`crate::viz::StereoReader`].
+    pub fn set_stereo_viz(&mut self, on: bool) {
+        self.stereo.set_on(on);
+    }
+
+    /// Si la cola estéreo del master está encendida.
+    pub fn stereo_viz_on(&self) -> bool {
+        self.stereo.is_on()
+    }
+
+    /// Los frames del master estéreo copiados desde la última vez, L y R
+    /// por separado (al final de cada uno).
+    pub fn stereo_samples(&mut self, left: &mut Vec<f32>, right: &mut Vec<f32>) {
+        self.stereo.drain_into(left, right);
     }
 
     pub fn is_playing(&self) -> bool {
@@ -4113,6 +4138,7 @@ impl Engine {
         }
         self.status.add_master(peak, limited);
         self.viz.feed(crate::viz::VIZ_MASTER, &self.master[..2 * n]);
+        self.stereo.feed(&self.master[..2 * n]);
         // Tomando una pista: su salida tras sus efectos, en vez del master.
         if let Some(t) = self.tap.filter(|&t| t < MAX_TRACKS) {
             let master = &mut self.master[..2 * n];

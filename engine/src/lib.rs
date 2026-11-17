@@ -80,4 +80,4 @@ pub use slice::{
 pub use slice_fx::SliceFx;
 pub use status::{Cursor, LaneLive, MAX_TAG, MasterStatus, SectionStatus, Status, TrackStatus};
 pub use stretch::{MAX_STRETCH, MIN_STRETCH};
-pub use viz::{VIZ_CAPACITY, VIZ_MASTER, VIZ_SOURCES};
+pub use viz::{STEREO_FRAMES, VIZ_CAPACITY, VIZ_MASTER, VIZ_SOURCES};
