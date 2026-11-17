@@ -55,6 +55,10 @@ pub struct Theme {
     pub border: Color,
     pub border_focus: Color,
     pub header: Color,
+    /// La línea del compás bajo la cabecera: lo lleno y lo vacío (`None`:
+    /// el acento y el tenue, también si se cambian).
+    pub ruler: Option<Color>,
+    pub ruler_empty: Option<Color>,
 }
 
 /// Cómo se marca en el código lo que suena.
@@ -122,6 +126,8 @@ impl Default for Theme {
             border: Color::Indexed(240),
             border_focus: Color::Cyan,
             header: Color::Indexed(236),
+            ruler: None,
+            ruler_empty: None,
         }
     }
 }
@@ -149,6 +155,8 @@ pub const NAMES: &[&str] = &[
     "borde",
     "borde_foco",
     "cabecera",
+    "regla",
+    "regla_vacia",
 ];
 
 /// Qué pinta cada color de [`NAMES`] (para la guía).
@@ -175,10 +183,23 @@ pub const DESCRIPTIONS: &[&str] = &[
     "bordes de los paneles sin el foco",
     "borde y título del panel con el foco",
     "fondo de la cabecera y de la barra de menús",
+    "lo lleno de la línea del compás bajo la cabecera (sin ponerlo, el de `acento`; grabando, el de `error`)",
+    "lo vacío de la línea del compás (sin ponerlo, el de `tenue`)",
 ];
 
 impl Theme {
     pub fn set(&mut self, name: &str, color: Color) -> bool {
+        match name {
+            "regla" => {
+                self.ruler = Some(color);
+                return true;
+            }
+            "regla_vacia" => {
+                self.ruler_empty = Some(color);
+                return true;
+            }
+            _ => {}
+        }
         let slot = match name {
             "acento" => &mut self.accent,
             "tenue" => &mut self.dim,

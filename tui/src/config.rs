@@ -417,6 +417,10 @@ pub struct InterfaceConfig {
     pub low_power: bool,
     /// Cómo se dibuja la ventana del espectro estéreo (`espectro_modo`).
     pub stereo_mode: crate::viz::stereo::Mode,
+    /// Marcas sobre la línea del compás (`regla_marcas`) y cómo se llena
+    /// su celda del frente (`regla_subcelda`).
+    pub ruler_marks: crate::bar_line::Marks,
+    pub ruler_subcell: crate::bar_line::Subcell,
 }
 
 impl Default for InterfaceConfig {
@@ -431,6 +435,8 @@ impl Default for InterfaceConfig {
             spectrum: crate::viz::master::Look::Fill,
             low_power: false,
             stereo_mode: crate::viz::stereo::Mode::Field,
+            ruler_marks: crate::bar_line::Marks::None,
+            ruler_subcell: crate::bar_line::Subcell::Half,
         }
     }
 }
@@ -508,6 +514,8 @@ const INTERFACE_NAMES: &[&str] = &[
     "espectro",
     "bajo_consumo",
     "espectro_modo",
+    "regla_marcas",
+    "regla_subcelda",
 ];
 
 /// Claves de `[interfaz]` (para la guía).
@@ -557,6 +565,16 @@ const INTERFACE_KEYS: &[(&str, &str, &str)] = &[
         "espectro_modo",
         "cómo se dibuja la ventana del espectro estéreo (Ventanas › «Espectro»): `\"campo\"` (la frecuencia en vertical, los graves abajo, y cada banda en horizontal según su paneo, con el centro en la mitad) o `\"espejo\"` (el canal izquierdo a la izquierda y el derecho a la derecha, los graves junto al centro). Se guarda al cambiarlo con `m` en la ventana; también va a su ritmo `visuales_hz`",
         "`\"campo\"`",
+    ),
+    (
+        "regla_marcas",
+        "marcas sobre la línea del compás bajo la cabecera: `\"no\"`, `\"tiempos\"` (una muesca por tiempo, según el compás de la canción) o `\"pasos\"` (una por paso; si no caben, las de los tiempos)",
+        "`\"no\"`",
+    ),
+    (
+        "regla_subcelda",
+        "cómo crece la celda del frente de la línea del compás: `\"media\"` (medias celdas con `╾`: la línea sigue siendo una línea) u `\"octavos\"` (bloques `▏▎▍▌▋▊▉`: más fino, pero el frente es un bloque de toda la fila)",
+        "`\"media\"`",
     ),
 ];
 
@@ -1555,6 +1573,18 @@ impl Config {
                                     ),
                                 }
                             }
+                            "regla_marcas" => match value.as_str().and_then(crate::bar_line::Marks::from_name) {
+                                Some(marks) => config.interface.ruler_marks = marks,
+                                None => config.warnings.push(
+                                    "[interfaz] regla_marcas: \"no\", \"tiempos\" o \"pasos\"".into(),
+                                ),
+                            },
+                            "regla_subcelda" => match value.as_str().and_then(crate::bar_line::Subcell::from_name) {
+                                Some(subcell) => config.interface.ruler_subcell = subcell,
+                                None => config.warnings.push(
+                                    "[interfaz] regla_subcelda: \"media\" u \"octavos\"".into(),
+                                ),
+                            },
                             // Ya no existe: la onda de los samples va siempre
                             // en barras. Una configuración antigua no se
                             // rompe: se avisa y se sigue.
@@ -2586,7 +2616,7 @@ brillo = "red"
                 "[teclas] salir: «q»: una letra sin ctrl- ni alt- escribiría texto",
                 "[teclas] Ctrl-G era de ir_al_error; ahora es de marcha",
                 "[colores] tenue: color no válido",
-                "[colores] «brillo» no existe (hay: acento, tenue, error, linea_error, aviso_pasos, aviso, onda, cortes, sonando, nivel, hueco, sugerencia, roll_tonica, roll_escala, roll_fuera, roll_variacion, roll_generado, roll_seleccion, borde, borde_foco, cabecera)",
+                "[colores] «brillo» no existe (hay: acento, tenue, error, linea_error, aviso_pasos, aviso, onda, cortes, sonando, nivel, hueco, sugerencia, roll_tonica, roll_escala, roll_fuera, roll_variacion, roll_generado, roll_seleccion, borde, borde_foco, cabecera, regla, regla_vacia)",
             ]
         );
         assert_eq!(config.theme.accent, Color::Rgb(0xff, 0x87, 0x00));

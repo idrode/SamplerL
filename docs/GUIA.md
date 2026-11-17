@@ -1885,6 +1885,8 @@ paleta de 256.
 | `borde` | bordes de los paneles sin el foco |
 | `borde_foco` | borde y título del panel con el foco |
 | `cabecera` | fondo de la cabecera y de la barra de menús |
+| `regla` | lo lleno de la línea del compás bajo la cabecera (sin ponerlo, el de `acento`; grabando, el de `error`) |
+| `regla_vacia` | lo vacío de la línea del compás (sin ponerlo, el de `tenue`) |
 
 | En `[editor]` | Para | Por defecto |
 | --- | --- | --- |
@@ -1969,6 +1971,8 @@ paleta de 256.
 | `espectro` | cómo se dibuja el espectro del master en su panel: `"relleno"` o `"linea"` (puntos Braille), `"barras"` (bloques: lo que menos gasta) o `"espectrograma"` (el historial, que se desplaza a la izquierda, con la intensidad en la densidad de los puntos y en el color). Siempre con escala logarítmica y su eje de frecuencias | `"relleno"` |
 | `bajo_consumo` | menos CPU y menos trabajo para la terminal (para la batería de un portátil): como mucho 15 cuadros por segundo, el scope y el espectro del master como mucho a la mitad (`visuales_hz` hasta 7), las visualizaciones del script recalculadas uno de cada dos cuadros y el scope y las ruedas sin Braille. La entrada y el audio no cambian | `false` |
 | `espectro_modo` | cómo se dibuja la ventana del espectro estéreo (Ventanas › «Espectro»): `"campo"` (la frecuencia en vertical, los graves abajo, y cada banda en horizontal según su paneo, con el centro en la mitad) o `"espejo"` (el canal izquierdo a la izquierda y el derecho a la derecha, los graves junto al centro). Se guarda al cambiarlo con `m` en la ventana; también va a su ritmo `visuales_hz` | `"campo"` |
+| `regla_marcas` | marcas sobre la línea del compás bajo la cabecera: `"no"`, `"tiempos"` (una muesca por tiempo, según el compás de la canción) o `"pasos"` (una por paso; si no caben, las de los tiempos) | `"no"` |
+| `regla_subcelda` | cómo crece la celda del frente de la línea del compás: `"media"` (medias celdas con `╾`: la línea sigue siendo una línea) u `"octavos"` (bloques `▏▎▍▌▋▊▉`: más fino, pero el frente es un bloque de toda la fila) | `"media"` |
 
 | En `[dispositivos]` | Para | Por defecto |
 | --- | --- | --- |
