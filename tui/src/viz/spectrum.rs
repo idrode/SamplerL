@@ -118,6 +118,7 @@ pub struct Analyzer {
     edges: Vec<f32>,
     edges_for: (usize, u32),
     levels: Vec<f32>,
+    peaks: Vec<f32>,
     /// FFT hechas (para comprobar que apagado no se calcula nada).
     runs: u64,
 }
@@ -140,6 +141,7 @@ impl Analyzer {
             edges: Vec::new(),
             edges_for: (0, 0),
             levels: Vec::new(),
+            peaks: Vec::new(),
             runs: 0,
         }
     }
@@ -153,6 +155,21 @@ impl Analyzer {
     /// El nivel de cada banda de `tail` (sus primeras [`SIZE`] muestras;
     /// si son menos, el resto es silencio).
     pub fn analyze(
+        &mut self,
+        tail: impl IntoIterator<Item = f32>,
+        rate: u32,
+        bands: usize,
+    ) -> &[f32] {
+        self.peaks(tail, rate, bands);
+        self.levels.clear();
+        self.levels.extend(self.peaks.iter().map(|&p| level(p)));
+        &self.levels
+    }
+
+    /// La amplitud (lineal: un seno de amplitud 1 da ~1) de lo más fuerte
+    /// de cada banda de `tail`, como [`Analyzer::analyze`] antes de pasarla
+    /// a dB (el espectro estéreo compara las de los dos canales).
+    pub fn peaks(
         &mut self,
         tail: impl IntoIterator<Item = f32>,
         rate: u32,
@@ -173,23 +190,27 @@ impl Analyzer {
         let (re, im) = (&self.re, &self.im);
         let bin_hz = rate as f32 / SIZE as f32;
         let magnitude = |k: usize| (re[k] * re[k] + im[k] * im[k]).sqrt() * 4.0 / SIZE as f32;
-        self.levels.clear();
-        self.levels.extend(self.edges.windows(2).map(|e| {
+        self.peaks.clear();
+        self.peaks.extend(self.edges.windows(2).map(|e| {
             // Los bins cuyo centro cae en la banda; una banda más estrecha
             // que un bin (las graves), el más cercano a su centro.
             let from = ((e[0] / bin_hz).ceil() as usize).max(1);
             let to = ((e[1] / bin_hz).ceil() as usize).min(SIZE / 2);
-            let peak = if to > from {
+            if to > from {
                 (from..to).map(magnitude).fold(0.0f32, f32::max)
             } else {
                 let center = (e[0] * e[1]).sqrt() / bin_hz;
                 magnitude((center.round() as usize).clamp(1, SIZE / 2 - 1))
-            };
-            let db = 20.0 * peak.max(1e-9).log10();
-            ((db - FLOOR_DB) / -FLOOR_DB).clamp(0.0, 1.0)
+            }
         }));
-        &self.levels
+        &self.peaks
     }
+}
+
+/// El nivel que se dibuja (de 0 a 1: de −90 dB a 0) de una amplitud.
+pub fn level(peak: f32) -> f32 {
+    let db = 20.0 * peak.max(1e-9).log10();
+    ((db - FLOOR_DB) / -FLOOR_DB).clamp(0.0, 1.0)
 }
 
 /// Lo que se ve con caída: sube de golpe y baja [`FALL`] por cuadro.

@@ -72,6 +72,8 @@ pub enum Action {
     EditRoll,
     RollWindow,
     RollBack,
+    SpectrumWindow,
+    SpectrumBack,
     Panic,
     PanicPause,
     FillGap,
@@ -519,6 +521,18 @@ pub const ACTIONS: &[ActionDef] = &[
         action: Action::RollBack,
         name: "Volver a meter el piano roll en la principal",
         description: "Cierra su ventana y lo enseña aquí",
+        keys: "",
+    },
+    ActionDef {
+        action: Action::SpectrumWindow,
+        name: "Espectro",
+        description: "Abre el espectro estéreo del master en una terminal nueva ([editor] terminal), unida a esta por un socket privado: la frecuencia en vertical y la posición estéreo de cada banda en horizontal (m cambia al modo espejo); cerrada no cuesta nada",
+        keys: "",
+    },
+    ActionDef {
+        action: Action::SpectrumBack,
+        name: "Cerrar la ventana del espectro",
+        description: "Cierra la ventana del espectro estéreo; el motor deja de copiar el master en estéreo y no se calcula nada",
         keys: "",
     },
     ActionDef {

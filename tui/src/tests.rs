@@ -2684,6 +2684,7 @@ mod sidechain;
 mod slice_edit;
 mod slice_fx;
 mod slice_save;
+mod spectrum;
 mod split;
 mod step_fx;
 mod stretch;

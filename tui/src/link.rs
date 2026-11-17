@@ -28,7 +28,10 @@ use ratatui_textarea::{Input, Key};
 /// [`FromDevices`]; la 5, la línea de los mandos MIDI en la vista del panel
 /// de dispositivos; la 6, el piano roll en su ventana, en su propio socket:
 /// [`ToRoll`] y [`FromRoll`]; la 8, en `estado`, la variante, la grabación
-/// y el nivel del master para la cabecera de la ventana del editor).
+/// y el nivel del master para la cabecera de la ventana del editor). El
+/// espectro estéreo en su ventana va en su propio socket con
+/// [`ToSpectrum`] y [`FromSpectrum`] sin cambiar la versión: un binario de
+/// antes no abre ese socket, y los demás mensajes son los mismos.
 pub const VERSION: u32 = 8;
 
 /// Lo que se deja pendiente de escribir antes de dar el otro extremo por
@@ -220,6 +223,31 @@ pub enum ToRoll {
     /// La principal cierra esta conexión (y por qué): no se reintenta.
     Bye(String),
     /// La principal vuelve a meter el piano roll: la ventana se cierra.
+    GiveBack,
+}
+
+/// De la ventana del espectro estéreo a la principal: solo el saludo (la
+/// ventana dibuja lo que le llega; el modo es suyo).
+#[derive(Debug, Clone, PartialEq)]
+pub enum FromSpectrum {
+    Hello { version: u32 },
+}
+
+/// De la principal a la ventana del espectro estéreo.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ToSpectrum {
+    /// Respuesta al saludo: la versión, el script (para el título) y su
+    /// ruta canónica (la ventana comprueba que es la de su proyecto).
+    Welcome {
+        version: u32,
+        title: String,
+        path: PathBuf,
+    },
+    /// Un cuadro ya reducido: unas bandas por canal, nunca audio.
+    Frame(crate::stereo::StereoFrame),
+    /// La principal cierra esta conexión (y por qué): no se reintenta.
+    Bye(String),
+    /// La principal cierra la ventana: se va sin error.
     GiveBack,
 }
 
@@ -897,12 +925,95 @@ impl Message for ToRoll {
     }
 }
 
+impl Message for FromSpectrum {
+    fn encode(&self) -> String {
+        match self {
+            FromSpectrum::Hello { version } => line("hola", &[&version.to_string()]),
+        }
+    }
+
+    fn decode(text: &str) -> Result<Self, String> {
+        let (verb, f) = split(text)?;
+        let v = verb.as_str();
+        Ok(match v {
+            "hola" => FromSpectrum::Hello {
+                version: number(field(&f, 0, v)?, v)?,
+            },
+            other => return Err(format!("mensaje desconocido «{other}»")),
+        })
+    }
+}
+
+impl Message for ToSpectrum {
+    fn encode(&self) -> String {
+        use crate::stereo::{encode_levels, encode_pan};
+        match self {
+            ToSpectrum::Welcome {
+                version,
+                title,
+                path,
+            } => line(
+                "hola",
+                &[&version.to_string(), title, &path.to_string_lossy()],
+            ),
+            // `cuadro`, la frecuencia, cuántas bandas y las tres listas en
+            // hexadecimal (un byte por banda). Lo que venga detrás en una
+            // versión futura se ignora.
+            ToSpectrum::Frame(frame) => line(
+                "cuadro",
+                &[
+                    &frame.rate.to_string(),
+                    &frame.bands().to_string(),
+                    &encode_levels(&frame.left),
+                    &encode_levels(&frame.right),
+                    &encode_pan(&frame.pan),
+                ],
+            ),
+            ToSpectrum::Bye(reason) => line("adios", &[reason]),
+            ToSpectrum::GiveBack => line("devuelve", &[]),
+        }
+    }
+
+    fn decode(text: &str) -> Result<Self, String> {
+        use crate::stereo::{MAX_BANDS, StereoFrame, decode_levels, decode_pan};
+        let (verb, f) = split(text)?;
+        let v = verb.as_str();
+        Ok(match v {
+            "hola" => ToSpectrum::Welcome {
+                version: number(field(&f, 0, v)?, v)?,
+                title: field(&f, 1, v)?.into(),
+                path: PathBuf::from(field(&f, 2, v)?),
+            },
+            "cuadro" => {
+                let bands: usize = number(field(&f, 1, v)?, v)?;
+                if bands == 0 || bands > MAX_BANDS {
+                    return Err(format!("«{v}»: {bands} bandas (de 1 a {MAX_BANDS})"));
+                }
+                let bad = |e: String| format!("«{v}»: {e}");
+                ToSpectrum::Frame(StereoFrame {
+                    rate: number::<u32>(field(&f, 0, v)?, v)?.clamp(1, 1_000_000),
+                    left: decode_levels(field(&f, 2, v)?, bands).map_err(bad)?,
+                    right: decode_levels(field(&f, 3, v)?, bands).map_err(bad)?,
+                    pan: decode_pan(field(&f, 4, v)?, bands).map_err(bad)?,
+                })
+            }
+            "adios" => ToSpectrum::Bye(field(&f, 0, v)?.into()),
+            "devuelve" => ToSpectrum::GiveBack,
+            other => return Err(format!("mensaje desconocido «{other}»")),
+        })
+    }
+}
+
 /// Una conexión sin bloqueos: lo leído se junta hasta tener líneas
 /// enteras y lo que no se pudo escribir espera a la siguiente vuelta.
 pub struct Conn {
     stream: UnixStream,
     input: Vec<u8>,
     output: Vec<u8>,
+    /// Con [`Conn::receive_lossy`]: se está tirando una línea demasiado
+    /// larga hasta su final.
+    #[allow(dead_code)] // La lee la ventana del espectro (siguiente commit).
+    skipping: bool,
 }
 
 impl Conn {
@@ -912,6 +1023,7 @@ impl Conn {
             stream,
             input: Vec::new(),
             output: Vec::new(),
+            skipping: false,
         })
     }
 
@@ -1000,6 +1112,70 @@ impl Conn {
             messages.push(message);
         }
         Ok(messages)
+    }
+
+    /// Bytes escritos en la cola que el otro extremo aún no ha leído (para
+    /// tirar un cuadro en vez de acumularlo).
+    pub fn pending(&self) -> usize {
+        self.output.len()
+    }
+
+    /// Como [`Conn::receive`], pero lo que no se entiende (una línea que no
+    /// es UTF-8, un mensaje mal formado o una línea de más de `max_line`
+    /// bytes) se tira en vez de cortar: devuelve los mensajes y cuántas
+    /// líneas se tiraron. Error solo si el otro extremo se fue.
+    #[allow(dead_code)] // La usa la ventana del espectro (siguiente commit).
+    pub fn receive_lossy<M: Message>(&mut self, max_line: usize) -> io::Result<(Vec<M>, usize)> {
+        let mut buf = [0u8; 16 * 1024];
+        let mut dropped = 0;
+        let mut closed = false;
+        loop {
+            match self.stream.read(&mut buf) {
+                Ok(0) => {
+                    closed = true;
+                    break;
+                }
+                Ok(n) => {
+                    let mut chunk = &buf[..n];
+                    if self.skipping {
+                        // El resto de una línea demasiado larga, hasta su
+                        // final.
+                        match chunk.iter().position(|&b| b == b'\n') {
+                            Some(end) => {
+                                self.skipping = false;
+                                chunk = &chunk[end + 1..];
+                            }
+                            None => continue,
+                        }
+                    }
+                    self.input.extend_from_slice(chunk);
+                    if self.input.len() > max_line && !self.input.contains(&b'\n') {
+                        self.input.clear();
+                        self.skipping = true;
+                        dropped += 1;
+                    }
+                }
+                Err(e) if e.kind() == ErrorKind::WouldBlock => break,
+                Err(e) if e.kind() == ErrorKind::Interrupted => {}
+                Err(e) => return Err(e),
+            }
+        }
+        let mut messages = Vec::new();
+        while let Some(end) = self.input.iter().position(|&b| b == b'\n') {
+            let raw: Vec<u8> = self.input.drain(..=end).collect();
+            if end > max_line {
+                dropped += 1;
+                continue;
+            }
+            match std::str::from_utf8(&raw[..end]).map(M::decode) {
+                Ok(Ok(message)) => messages.push(message),
+                _ => dropped += 1,
+            }
+        }
+        if closed && messages.is_empty() {
+            return Err(ErrorKind::UnexpectedEof.into());
+        }
+        Ok((messages, dropped))
     }
 
     /// Usuario del otro extremo.
@@ -1122,6 +1298,16 @@ pub fn roll_socket_path(dir: &Path, script: &Path) -> PathBuf {
         .file_stem()
         .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
     dir.join(format!("{stem}-roll.sock"))
+}
+
+/// Socket de la ventana del espectro estéreo de la instancia de un script
+/// (aparte de los demás).
+pub fn spectrum_socket_path(dir: &Path, script: &Path) -> PathBuf {
+    let editor = socket_path(dir, script);
+    let stem = editor
+        .file_stem()
+        .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
+    dir.join(format!("{stem}-espectro.sock"))
 }
 
 /// Hash FNV-1a de 64 bits (estable entre versiones de Rust, a diferencia
@@ -1574,5 +1760,124 @@ mod tests {
         let mut server = Server::bind(&path).unwrap();
         assert!(other.connect(true).is_some());
         assert!(server.accept().0);
+    }
+
+    fn stereo_frame() -> crate::stereo::StereoFrame {
+        crate::stereo::StereoFrame {
+            rate: 48_000,
+            left: vec![0.0, 1.0, 128.0 / 255.0],
+            right: vec![1.0, 0.0, 0.0],
+            pan: vec![-1.0, 1.0, 0.0],
+        }
+    }
+
+    #[test]
+    fn the_spectrum_messages_survive_the_wire_and_bad_ones_are_refused() {
+        roundtrip(FromSpectrum::Hello { version: VERSION });
+        roundtrip(ToSpectrum::Welcome {
+            version: VERSION,
+            title: "canción.lua".into(),
+            path: PathBuf::from("/tmp/canción.lua"),
+        });
+        roundtrip(ToSpectrum::Frame(stereo_frame()));
+        roundtrip(ToSpectrum::Bye("adiós".into()));
+        roundtrip(ToSpectrum::GiveBack);
+        // Unas 96 bandas por canal: un cuadro de menos de 1 KB.
+        let big = crate::stereo::StereoFrame {
+            rate: 48_000,
+            left: vec![0.5; crate::stereo::BANDS],
+            right: vec![0.5; crate::stereo::BANDS],
+            pan: vec![0.0; crate::stereo::BANDS],
+        };
+        assert!(ToSpectrum::Frame(big).encode().len() < 1024);
+        // NaN e infinitos salen saturados, nunca rompen el cuadro.
+        let wild = crate::stereo::StereoFrame {
+            rate: 48_000,
+            left: vec![f32::NAN, f32::INFINITY],
+            right: vec![-5.0, 2.0],
+            pan: vec![f32::NEG_INFINITY, 9.0],
+        };
+        let ToSpectrum::Frame(back) =
+            ToSpectrum::decode(ToSpectrum::Frame(wild).encode().trim_end()).unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(back.left, [0.0, 0.0]);
+        assert_eq!(back.right, [0.0, 1.0]);
+        assert_eq!(back.pan, [0.0, 1.0]);
+        // Mal formados: error, sin pánico.
+        for bad in [
+            "cuadro",
+            "cuadro\t48000\t2\t00ff\t00",
+            "cuadro\t48000\t2\tzzzz\t0000\t0000",
+            "cuadro\t48000\t0\t\t\t",
+            "cuadro\t48000\t100000\t00\t00\t00",
+            "cuadro\t-1\t1\t00\t00\t00",
+            "cuadro\tNaN\t1\t00\t00\t00",
+            "hola\tx",
+            "que",
+        ] {
+            assert!(ToSpectrum::decode(bad).is_err(), "{bad}");
+        }
+        // Lo que añada una versión futura detrás, se ignora.
+        assert!(ToSpectrum::decode("cuadro\t48000\t1\t00\t00\t80\tmás").is_ok());
+        assert!(FromSpectrum::decode("adios").is_err());
+    }
+
+    #[test]
+    fn a_lossy_reader_drops_bad_lines_and_huge_ones_but_keeps_reading() {
+        let (a, b) = UnixStream::pair().unwrap();
+        let mut writer = Conn::new(a).unwrap();
+        let mut reader = Conn::new(b).unwrap();
+        let good = ToSpectrum::Frame(stereo_frame()).encode();
+        // Uno bueno, uno que no se entiende, uno que no es UTF-8, uno
+        // enorme (más que el límite) y otro bueno.
+        let mut bytes = good.clone().into_bytes();
+        bytes.extend_from_slice(b"cuadro\tbasura\n");
+        bytes.extend_from_slice(b"\xff\xfe\n");
+        bytes.extend(std::iter::repeat_n(b'x', 70_000));
+        bytes.push(b'\n');
+        bytes.extend_from_slice(good.as_bytes());
+        writer.output.extend_from_slice(&bytes);
+        writer.drain(Duration::from_secs(5)).unwrap();
+        let mut got = Vec::new();
+        let mut dropped = 0;
+        let start = Instant::now();
+        while got.len() < 2 && start.elapsed() < Duration::from_secs(5) {
+            let (m, d) = reader.receive_lossy::<ToSpectrum>(64 * 1024).unwrap();
+            got.extend(m);
+            dropped += d;
+        }
+        assert_eq!(got.len(), 2);
+        assert_eq!(dropped, 3);
+        // El otro extremo se va: error.
+        drop(writer);
+        assert!(reader.receive_lossy::<ToSpectrum>(1024).is_err());
+    }
+
+    #[test]
+    fn what_the_other_end_has_not_read_is_counted() {
+        let (a, _b) = UnixStream::pair().unwrap();
+        let mut writer = Conn::new(a).unwrap();
+        assert_eq!(writer.pending(), 0);
+        // Sin leer al otro lado, la cola del núcleo se llena y lo demás
+        // espera aquí.
+        let line = "x".repeat(64 * 1024) + "\n";
+        let mut tries = 0;
+        while writer.pending() == 0 && tries < 1000 {
+            writer.send_line(&line).unwrap();
+            tries += 1;
+        }
+        assert!(writer.pending() > 0);
+    }
+
+    #[test]
+    fn the_spectrum_socket_is_its_own() {
+        let dir = Path::new("/run/x");
+        let script = Path::new("/home/a/canción.lua");
+        let s = spectrum_socket_path(dir, script);
+        assert_ne!(s, roll_socket_path(dir, script));
+        assert_ne!(s, socket_path(dir, script));
+        assert!(s.to_string_lossy().ends_with("-espectro.sock"));
     }
 }

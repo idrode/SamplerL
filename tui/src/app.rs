@@ -28,6 +28,8 @@ mod dock;
 pub use devices::devices_command;
 #[cfg(test)]
 pub use roll::roll_command;
+#[cfg(test)]
+pub use spectrum::spectrum_command;
 mod files;
 mod focus;
 mod freeze;
@@ -55,6 +57,7 @@ mod panels;
 pub use focus::panel_keys;
 pub use panels::PanelAreas;
 mod roll;
+mod spectrum;
 mod tracker_edit;
 mod viz;
 
@@ -540,6 +543,8 @@ pub struct App {
     occupancy: occupancy::Occupancy,
     /// El piano roll (ver `roll`).
     roll: roll::RollState,
+    /// La ventana del espectro estéreo (ver `spectrum`).
+    spectrum: spectrum::SpectrumState,
 }
 
 impl App {
@@ -700,6 +705,7 @@ impl App {
             hushed: false,
             occupancy: Default::default(),
             roll: Default::default(),
+            spectrum: Default::default(),
         };
         app.apply_roll_config(&crate::config::RollConfig::default());
         app.reload_blocks();
@@ -4198,6 +4204,8 @@ impl App {
             Action::EditRoll => self.open_roll_cursor(),
             Action::RollWindow => self.launch_roll_window(),
             Action::RollBack => self.reclaim_roll_window(),
+            Action::SpectrumWindow => self.launch_spectrum_window(),
+            Action::SpectrumBack => self.close_spectrum_window(),
             Action::Focus(panel) => self.set_focus(panel),
             Action::ToggleExplorer => self.toggle_explorer(),
             Action::RefreshFiles => self.refresh_files(),
@@ -5102,6 +5110,7 @@ impl App {
         self.flush_expression();
         self.release_expired_pads(Instant::now());
         self.tick_roll();
+        self.tick_spectrum();
         self.tick_touch();
         self.tick_viz();
         self.sync_ui_viz();

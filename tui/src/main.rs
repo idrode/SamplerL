@@ -36,6 +36,7 @@ mod roll_window;
 mod safe_draw;
 mod screen;
 mod sidechain;
+mod stereo;
 mod tap;
 mod target;
 #[cfg(test)]

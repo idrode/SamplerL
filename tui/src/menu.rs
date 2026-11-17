@@ -87,7 +87,7 @@ pub fn menu_of(action: Action) -> Option<Menu> {
         | EditorShorter | Wider | Narrower | MaximizeEditor | FloatEditor | FloatUp | FloatDown
         | FloatLeft | FloatRight | SpectrumStyle | MasterViz => Menu::View,
         EditorWindow | EditorBack | RollWindow | RollBack | Devices | RefreshDevices
-        | DevicesWindow | DevicesBack => Menu::Windows,
+        | DevicesWindow | DevicesBack | SpectrumWindow | SpectrumBack => Menu::Windows,
         TerminalInfo => Menu::Help,
         OpenMenu => return None,
     })
