@@ -4508,6 +4508,223 @@ mal escrito; Alt-J/Alt-K, `]d` `[d` y Ctrl-G; y que las canciones de
 -- ~/songsproject/*/*.lua`; esa carpeta no está en la máquina de
 desarrollo).
 
+## Onda en barras y espectro estéreo en su ventana
+
+Pedido por el usuario, como continuación (sin fase propia): la onda de
+los samples otra vez en barras, y una ventana aparte con el espectro del
+master en estéreo y el paneo de cada banda.
+
+### La onda del sample, otra vez en barras
+
+- **Dónde estaba**: el commit 9711b24 («Onda de los samples con puntos
+  Braille, configurable con [interfaz] onda») pasó la onda del panel, la
+  grande sin editor y la vista previa del explorador a puntos Braille
+  (`ui::wave_dots`, `draw_wave_dots`, `MARK_DOTS`,
+  `theme::wave_dots`/`set_wave_bars`) y dejó el dibujo de antes como
+  alternativa, `draw_wave_bars`, con `[interfaz] onda = "barras"` y la
+  acción «Onda: puntos o barras». Lo que se hizo después sobre la onda
+  (la cobertura de cortes con huecos, solapes y finales sueltos, zoom,
+  etiquetas, el corte que suena, ASCII, el aviso del borde) entró en las
+  dos ramas, así que la de barras ya estaba al día.
+- **Qué queda**: `draw_wave` es otra vez la de barras (la antigua
+  `draw_wave_bars`, tal cual) y `ui::draw_waveform` (la vista previa) solo
+  dibuja barras. Se van el modo de puntos, `[interfaz] onda`, la acción de
+  la paleta y su submenú Ver › Dibujo (con una sola entrada, «Espectro:
+  otro dibujo» pasa a Ver directamente). `ui::braille` se queda: lo usan
+  el espectro del master, el scope y la ventana nueva.
+- **Configuración antigua**: `onda = ...` en `[interfaz]` ya no es un
+  error de valor sino una clave retirada: se lee el resto y sale un aviso
+  («onda ya no existe ... se ignora») en la línea de mensajes al arrancar,
+  que es donde van todos los avisos de `config.toml` (no hay un log
+  aparte).
+- **Tests**: `sample_panel_draws_the_waveform_in_bars_with_slices` y
+  `the_big_waveform_numbers_the_slices_on_their_own_row` son los de antes
+  de 9711b24 (sin el `set_wave_bars` que les puso aquel commit) y pasan
+  igual; uno nuevo comprueba que con `bajo_consumo` se dibuja lo mismo,
+  que en ASCII son barras de ASCII y que la vista previa no tiene Braille;
+  y la configuración, que `onda` avisa sin romper nada.
+
+### Espectro estéreo: la fuente
+
+No había nada en estéreo: las colas de las visualizaciones
+(`engine::viz`, `Command::SetViz`) copian cada fuente **en mono** (la
+media de L y R), y la del master también. Una cola nueva,
+`viz::StereoTap`/`StereoReader` (`engine/src/viz.rs`):
+
+- `rtrb` de un productor y un consumidor, 16 384 frames (`STEREO_FRAMES`,
+  ~0,34 s a 48 kHz) reservados al crear el motor, con L y R entrelazados;
+  llena, descarta frames enteros.
+- Se escribe en `Engine::process` justo después de la del master mono:
+  tras el limitador (y antes de que tomar una pista sustituya el master),
+  así que es lo que sale.
+- **Un atómico**, no el lote: `Controller::set_stereo_viz` lo cambia al
+  momento (abrir la ventana no espera al compás, como sí esperan las
+  visualizaciones del script, que van con su carga). Apagado, el hilo de
+  audio solo lee el atómico. Al encender se tira lo que quedaba de la vez
+  anterior.
+- Solo copia: `tests/viz.rs` comprueba que la salida es idéntica con la
+  cola encendida o no y que L y R son los de la salida (con una pista
+  panoteada a un lado); `golden.rs`, idéntico.
+- `no_alloc.rs`: encendida y llena, vaciándose, y apagándose y
+  encendiéndose cada pocas vueltas en pleno sonido, sin reservas (y falla
+  si `feed` reserva: comprobado metiendo un `vec!` a propósito).
+
+### Cálculo y envío (en la principal)
+
+- `tui/src/app/spectrum.rs`: la ventana vista desde la principal (socket,
+  terminal, saludo, cuadros). Solo con una ventana **conectada y que ha
+  saludado** con la versión buena se enciende la cola; al irse la ventana
+  (o al cerrarla desde el menú) se suelta todo: la cola apagada, el
+  analizador y los historiales fuera y el socket borrado.
+- `tui/src/stereo.rs`: un `spectrum::Analyzer` por canal (el de siempre;
+  ahora da también `peaks`, la amplitud lineal de cada banda, y `level`,
+  la de siempre en dB de 0 a 1), 96 bandas logarítmicas por canal
+  (`BANDS`), la caída de siempre (`spectrum::fall`) en el nivel de cada
+  canal y, por banda, el **paneo** `(R − L) / (R + L)` con las amplitudes,
+  de −1 a 1. El paneo que se ve se acerca a la mitad del nuevo en cada
+  cuadro (no salta) y una banda por debajo de ~−80 dB no lo mueve (el
+  ruido de fondo no la lleva de un lado a otro).
+- **Ritmo**: como el espectro del master, por muestras llegadas: un
+  cuadro cada `rate / visuales_hz` frames (15 por segundo; `bajo_consumo`
+  lo baja a 7). Dos FFT por cuadro. En silencio, con el último cuadro ya
+  caído, ni se calcula ni se manda.
+- **Si la ventana se retrasa**: antes de calcular, si en la conexión
+  queda algo sin escribir (`Conn::pending`), el cuadro se tira (sin
+  calcularlo) y se cuenta; nunca se acumulan.
+
+### Protocolo y ventana
+
+- **Socket propio** (`link::spectrum_socket_path`, `…-espectro.sock`, en
+  la misma carpeta 0700 y 0600 que los demás) y mensajes propios
+  (`FromSpectrum::Hello`; `ToSpectrum::Welcome`, `Frame`, `Bye`,
+  `GiveBack`). **Sin cambiar la versión** (sigue la 8): el editor, los
+  dispositivos y el piano roll hablan lo mismo, y un binario de antes no
+  abre ese socket (una ventana nueva con una principal vieja se queda
+  «buscando la ventana principal…»).
+- **Cuadro**: `cuadro`, la frecuencia, cuántas bandas y tres listas (L, R
+  y paneo) en hexadecimal, un byte por valor: 96 bandas son ~600 bytes por
+  línea (a 15 por segundo, ~9 kB/s). Lo que venga detrás en una versión
+  futura se ignora. NaN e infinitos salen saturados al escribir (0, o el
+  extremo); al leer, más de 256 bandas, cero, listas de otro largo o cifras
+  que no son hexadecimales son un error de ese mensaje.
+- **La ventana lee tolerante** (`Conn::receive_lossy`, límite de 64 KiB
+  por línea): una línea que no se entiende, no es UTF-8 o es demasiado
+  larga se tira y se cuenta, sin cortar; de varios cuadros llegados
+  juntos, solo cuenta el último.
+- **La ventana** (`tui/src/spectrum_window.rs`, `tui --window-spectrum`):
+  la ruta canónica (`target::window_target`), el error que se queda hasta
+  Enter (`in_own_window`), y comprueba que contesta la principal de **su**
+  script (el saludo trae la ruta canónica) y de su versión. Si la
+  principal se va, lo dice y se cierra a los 1,5 s, sin error. Su bucle
+  mira la entrada cada 15 ms y **solo dibuja** cuando hay algo nuevo (un
+  cuadro, una tecla, otro tamaño); el dibujo va por `safe_draw` (un
+  pánico se queda en la línea de estado).
+- **La terminal**: la de `[editor] terminal`, con
+  `target::terminal_problem`. Si la terminal termina sin que la ventana
+  haya llegado: con error, se suelta todo y se dice; con éxito, se sigue
+  escuchando (kitty `--single-instance` o `wezterm start` le pasan la
+  ventana a una instancia ya abierta y salen con 0).
+- **Una sola**: Ventanas › «Espectro» con una abierta (o abriéndose) avisa
+  en vez de lanzar otra; una segunda conexión sustituye a la primera, que
+  recibe adiós.
+
+### Dibujo (`tui/src/viz/stereo.rs`)
+
+- **Interpretación del paneo** (la del usuario, y lo decidido donde era
+  ambigua): en **campo**, cada fila de puntos es una frecuencia
+  (logarítmica, graves abajo; si hay más bandas que filas, la más fuerte
+  de las suyas) y su mancha va centrada en su paneo, de `L` a `R`, con el
+  centro en la mitad. La mancha es más ancha con más energía (hasta una
+  décima del ancho a cada lado, con la energía al cuadrado: lo débil, casi
+  un punto) y sus puntos se encienden con el tramado ordenado del
+  espectrograma (`master::DITHER`), así que la densidad sigue a la energía;
+  el color, por tramos (tenue, el de la onda, el acento). Debajo, la línea
+  del centro. Eje de frecuencias a la izquierda (`axis_rows`, sin marcas
+  en filas vecinas) y `L C R` al pie.
+- En **espejo**, la lectura del usuario («graves cerca del centro
+  creciendo hacia fuera») deja la frecuencia en horizontal: el canal
+  izquierdo de la mitad hacia la izquierda y el derecho hacia la derecha,
+  cada uno de grave (junto al centro) a agudo, con el nivel en vertical,
+  relleno desde abajo (como el espectro del master), el eje al pie en
+  espejo y `L`/`R` arriba.
+- El modo se cambia con `m` en la ventana y se guarda en `[interfaz]
+  espectro_modo` con `config::save_keys` (sin tocar el resto del archivo);
+  la principal no lo necesita: le manda lo mismo a los dos.
+- Sin Unicode, una rampa `. : - = #`; colores del tema (sin truecolor, la
+  paleta de 256). Por debajo de 24×8, un aviso en vez del dibujo.
+
+### Decisiones
+
+- **Una ventana, no una pestaña**: lo pidió así el usuario, y además así
+  el coste es cero mientras no se abre (ni pestaña que dibujar ni nada que
+  comprobar en cada cuadro de la principal).
+- **El paneo se calcula en la principal** (como pide el usuario), aunque
+  con L y R la ventana podría sacarlo: así la ventana no calcula nada y el
+  cuadro lleva lo que dibujan los dos modos (L y R para el espejo, el
+  paneo para el campo).
+- **Un byte por valor**: el dibujo no distingue más de 256 niveles, y el
+  cuadro se queda en ~600 bytes de texto, que el protocolo de líneas ya
+  sabe llevar.
+- **96 bandas**: más que filas de puntos en una terminal normal (a 30
+  filas, 120 de puntos, se comparten pocas), y en los graves ya son más
+  estrechas que un bin de la FFT de 2048 (23 Hz a 48 kHz); más bandas no
+  darían más detalle.
+- **Atajo sin tecla por defecto** (`ventana_espectro`), como las demás
+  ventanas aparte.
+- **Sin subir la versión del protocolo**: el socket es nuevo, así que no
+  hay mezcla posible con mensajes de antes.
+
+### Consumo
+
+Medido en x86_64 (la laptop de desarrollo, release, salida nula) con
+`scripts/medir-consumo.py`, 10 s por caso, tres repeticiones y la
+mediana. **Ventana cerrada**: el binario de antes de todo esto (98fb9b5)
+contra el de ahora, alternados (% de un núcleo):
+
+| Escenario | Tamaño | ui antes | ui ahora | audio antes | audio ahora | kB/s | cuadros/s |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| parado | 80×24 | 0,4 | 0,5 | 1,0 | 1,0 | 0,1 | 1,9 |
+| sonando | 80×24 | 3,4 | 3,4 | 7,6 | 7,5 | 6,4 | 28,2 |
+| espectro (Alt-M) | 80×24 | 4,0 | 4,0 | 7,7 | 7,7 | 8,0 | 28,2 |
+| parado | 200×50 | 0,8 | 0,8 | 1,0 | 1,1 | 0,3 | 1,9 |
+| sonando | 200×50 | 7,6 | 7,5 | 7,7 | 7,8 | 13,9 | 27,0 |
+| espectro (Alt-M) | 200×50 | 8,4 | 8,3 | 7,7 | 7,7 | 21,9 | 27,0 |
+
+Iguales (ruido): cerrada no cuesta nada, ni en la interfaz ni en el hilo
+de audio. **Ventana abierta** (escenario nuevo `ventana-espectro`: la
+ventana de verdad, en otro pseudoterminal del mismo tamaño; `ventana` es
+la CPU de su proceso y su kB/s lo que escribe a su terminal):
+
+| Caso | Tamaño | ui principal | audio | ventana | kB/s de la ventana |
+| --- | --- | --- | --- | --- | --- |
+| sonando, sin ventana | 80×24 | 3,4 | 7,7 | — | — |
+| ventana abierta | 80×24 | 4,8 | 7,8 | 1,2 | 10,0 |
+| sonando, sin ventana | 200×50 | 7,4 | 7,6 | — | — |
+| ventana abierta | 200×50 | 9,1 | 7,8 | 3,2 | 51,4 |
+| abierta, `bajo_consumo` | 80×24 | 2,8 | 7,8 | 0,7 | 4,9 |
+| abierta, `bajo_consumo` | 200×50 | 5,0 | 7,8 | 1,6 | 23,8 |
+
+Abierta, la principal gasta ~1,5 puntos más (dos FFT y el envío, 15 por
+segundo) y la ventana entre 1 y 3 % según el tamaño (dibujar los
+puntos); el hilo de audio, lo mismo (una copia de unos KB por bloque).
+Con `bajo_consumo` (7 cuadros por segundo), cerca de la mitad. Se mide
+con `scripts/medir-consumo.py --escenarios ventana-espectro` (ata Alt-S a
+`ventana_espectro` en la configuración de la medición y abre la ventana
+a mano).
+
+### Para probar a mano (en el Asahi)
+
+- Ventanas › «Espectro» con `[editor] terminal` puesto: se abre la
+  terminal y empieza a moverse al sonar.
+- Una pista panoteada a la izquierda (`:pan(-1)`), a la derecha (`:pan(1)`)
+  y centrada: su mancha a un lado, al otro y pegada a la línea del centro.
+- `m`: el modo espejo, con el canal de la pista panoteada más alto en su
+  lado; cerrar y abrir la ventana: vuelve en el modo guardado.
+- Cerrar la ventana (`q`) y ver con `top -H` que la principal vuelve a lo
+  de antes.
+- La onda del sample en barras, con cortes editados (huecos, solapes,
+  finales sueltos, zoom, etiquetas).
+
 ## Audio de prueba y problemas conocidos
 
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`

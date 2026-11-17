@@ -839,6 +839,81 @@ compruébalos en la documentación de la tuya.)
 
 > **Usado en el tutorial:** [paso 2, Abrir un proyecto nuevo](PRIMERA-CANCION.md#paso-2-abrir-un-proyecto-nuevo).
 
+### El espectro estéreo en su ventana
+
+Ventanas › **«Espectro»** (también en la paleta, F1; `ventana_espectro`
+en `[teclas]` le da una tecla, que no tiene por defecto) abre en otra
+terminal el espectro del master **en estéreo**: dónde está cada
+frecuencia en el panorama. Se abre con el mismo comando que el editor,
+`[editor] terminal` de `config.toml`, y con la ruta completa del script.
+Sin esa línea, o por SSH, la principal se queda esperando y dice el
+comando para abrirla a mano:
+
+```sh
+cargo run -p tui -- --window-spectrum mi-cancion.lua
+```
+
+**Cómo se lee** (modo `campo`, el de siempre):
+
+```text
+┌ espectro estéreo · campo · mi-cancion.lua ───────────────┐
+│ 5k                          │                            │
+│ 2k                          │        ⣀⣤⣤⣀                │
+│ 1k                ⢀⣤⣶⣿⣿⣶⣤⡀  │                            │
+│500                          │                            │
+│100                       ⣠⣴⣿⣿⣦⣄                          │
+│ 50                          │                            │
+│    L                        C                            R│
+└──────────────────────────────────────────────────────────┘
+```
+
+- En vertical, la **frecuencia**, en escala logarítmica, con los graves
+  abajo y su eje a la izquierda (`50 100 … 10k`).
+- En horizontal, la **posición estéreo** de cada banda, con el centro (`C`)
+  en la línea del medio: lo que suena igual por los dos lados se pega a
+  esa línea; lo panoteado se va hacia `L` o hacia `R`, más cuanto más
+  descompensado está. En el dibujo de arriba, el bombo (graves) al centro,
+  algo en 1 kHz a la izquierda y algo en 2 kHz a la derecha.
+- La **energía**: cuanto más fuerte la banda, más ancha la mancha, más
+  puntos y otro color (tenue, el de la onda, el acento). Sube de golpe y
+  baja despacio, como el espectro del master, así que no parpadea.
+- El paneo de una banda sale de los dos canales: (R − L) / (R + L) con
+  sus amplitudes. Una reverb o un chorus muy anchos no se ven como «muy
+  abiertos» sino como lo que dan de media en cada banda; la fase entre
+  canales no se mira.
+
+**`m` cambia al modo `espejo`**: el canal izquierdo a la izquierda del
+centro y el derecho a la derecha, con los graves junto al centro y los
+agudos hacia fuera (el eje, al pie, en espejo) y el nivel de abajo
+arriba. Sirve para comparar los dos canales banda a banda. El modo se
+guarda en `[interfaz] espectro_modo` (`"campo"` o `"espejo"`). `q`, Esc o
+Ctrl-Q cierran la ventana (la principal sigue), y Ventanas › «Cerrar la
+ventana del espectro» la cierra desde la principal.
+
+**Lo que cuesta.** Cerrada, **nada**: el motor no copia el master en
+estéreo y no se calcula ni se manda nada. Abierta, el motor copia el
+master tras el limitador (no cambia el sonido) y la principal calcula dos
+FFT (una por canal) al ritmo de `[interfaz] visuales_hz` (15 por segundo;
+con `bajo_consumo`, 7) y le manda a la ventana solo las bandas ya
+calculadas (96 por canal, menos de 1 KB por cuadro), nunca audio; la
+ventana solo dibuja cuando llega algo. Parado y en silencio, nada se
+mueve. Si la ventana va lenta, se pierden cuadros en vez de acumularse.
+
+**Más:**
+
+- Es una ventana, no una pestaña: el scope y el espectro del master
+  (Alt-M) siguen en el dock, aparte.
+- Sin Unicode (`[interfaz] ascii`, o un `LANG` sin UTF-8) dibuja con
+  `. : - = #`; por debajo de 24×8 dice que es demasiado pequeña.
+- Solo hay una a la vez: Ventanas › «Espectro» con una abierta avisa.
+- Igual que las otras ventanas aparte: si contesta la principal de otro
+  script u otra versión, lo dice y espera a Enter; si la principal se
+  cierra, la ventana lo dice y se cierra; si `[editor] terminal` fija una
+  carpeta que no existe, no se lanza.
+- Se abre con el mismo comando que el editor, así que tiene su misma
+  clase de ventana (`--class`, `--app-id`) y le valen las mismas reglas
+  del gestor de ventanas (flotante, tamaño).
+
 ### Renderizar a WAV
 
 Sin abrir la interfaz, un script de Lua:

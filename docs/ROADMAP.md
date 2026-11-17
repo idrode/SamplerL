@@ -982,3 +982,17 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
        2. ✅ **Cierre de pares** y comillas (`cerrar_pares`, apagado).
        3. ✅ **Guías de sangría** (`guias`, apagadas).
        4. ✅ **Números de línea relativos** (`numeros_relativos`, apagados).
+29. ✅ **Onda en barras y espectro estéreo en su ventana** (pedida por el
+    usuario; continuación de las visualizaciones del master y de las
+    ventanas aparte). Detalle en «Onda en barras y espectro estéreo en su
+    ventana» de [docs/ESTADO.md](ESTADO.md).
+    1. ✅ **La onda del sample en barras**: sin el modo de puntos ni
+       `[interfaz] onda` (una configuración antigua avisa y sigue).
+    2. ✅ **Cola estéreo del master** en el motor: fija, tras el limitador,
+       encendida con un atómico solo con la ventana abierta.
+    3. ✅ **Cálculo y protocolo**: FFT por canal y paneo por banda en la
+       principal, a `visuales_hz`; cuadros reducidos por su propio socket,
+       que se tiran si la ventana se retrasa.
+    4. ✅ **Ventana y menú**: Ventanas › «Espectro», `tui --window-spectrum`,
+       modos campo y espejo (`[interfaz] espectro_modo`), ASCII y tamaños.
+    5. ✅ **Documentación**.

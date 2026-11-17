@@ -36,6 +36,11 @@ Escenarios:
   raton-parado  parado, con el ratón moviéndose
   editando sonando, escribiendo en el editor: una letra y su borrado, unas
            7 teclas por segundo (el diagnóstico en vivo y el linter)
+  ventana-espectro  sonando, con la ventana del espectro estéreo abierta
+           (Ventanas › «Espectro», atada a Alt-S en la configuración de la
+           medición) en otro pseudoterminal del mismo tamaño: la columna
+           `ventana` es la CPU de ese proceso y `kB/s v.` lo que escribe; la
+           de la principal incluye el cálculo y el envío de los cuadros
 
 --teclas manda esas teclas al abrir, antes de medir y en todos los
 escenarios, con los escapes de Python: '\\x1bm' es Alt-M (el scope y el
@@ -215,9 +220,16 @@ def measure(args, binary, scenario, cols, rows, env):
     keys = args.teclas.encode().decode("unicode_escape").encode("latin-1")
     if scenario == "espectro":
         keys += b"\x1bm"  # Alt-M
+    if scenario == "ventana-espectro":
+        keys += b"\x1bs"  # Alt-S: ventana_espectro (ver main)
     if keys:
         term.send(keys)
         time.sleep(0.5)
+    # La ventana del espectro, a mano (sin [editor] terminal, la principal
+    # escucha y espera): otro proceso en su pseudoterminal.
+    window = None
+    if scenario == "ventana-espectro":
+        window = Pty([binary, "--window-spectrum", script], cols, rows, env)
     # Al cargar, la canción ya suena: parado es Ctrl-Espacio (paro).
     if scenario in ("parado", "raton-parado"):
         term.send(b"\x00")
@@ -234,6 +246,9 @@ def measure(args, binary, scenario, cols, rows, env):
         time.sleep(0.5)
     t0 = thread_times(term.pid)
     b0, w0, f0 = term.counters()
+    if window:
+        wt0 = thread_times(window.pid)
+        wb0 = window.counters()[0]
     start = time.monotonic()
     # Dónde corre cada hilo, mirado a menudo (en un M1/M2, un núcleo de
     # eficiencia a poca frecuencia da más % por el mismo trabajo).
@@ -250,6 +265,16 @@ def measure(args, binary, scenario, cols, rows, env):
     elapsed = time.monotonic() - start
     t1 = thread_times(term.pid)
     b1, w1, f1 = term.counters()
+    window_cpu = window_kbps = None
+    if window:
+        wt1 = thread_times(window.pid)
+        wb1 = window.counters()[0]
+        window_cpu = sum(
+            100.0 * (ticks - wt0.get(tid, (name, ticks))[1]) / TICK / elapsed
+            for tid, (name, ticks) in wt1.items()
+        )
+        window_kbps = (wb1 - wb0) / elapsed / 1024
+        window.close()
     stop.set()
     term.close()
 
@@ -285,6 +310,8 @@ def measure(args, binary, scenario, cols, rows, env):
         "cuadros/s": (f1 - f0) / elapsed,
         "escrituras/s": (w1 - w0) / elapsed,
         "hilos": threads,
+        "ventana": window_cpu,
+        "ventana kB/s": window_kbps,
     }
 
 
@@ -344,9 +371,17 @@ def main():
     env.pop("TMUX", None)
     blocks = os.path.join(home, "config", "sampler", "blocks")
     os.makedirs(blocks, exist_ok=True)
-    if args.config:
+    config = args.config.replace("\\n", "\n")
+    if "ventana-espectro" in args.escenarios.split(","):
+        # La ventana del espectro no tiene tecla por defecto: Alt-S.
+        binding = 'ventana_espectro = "alt-s"'
+        if "[teclas]" in config:
+            config = config.replace("[teclas]", "[teclas]\n" + binding, 1)
+        else:
+            config += "\n[teclas]\n" + binding
+    if config:
         with open(os.path.join(home, "config", "sampler", "config.toml"), "w") as f:
-            f.write(args.config.replace("\\n", "\n") + "\n")
+            f.write(config + "\n")
     for i in range(args.bloques):
         with open(os.path.join(blocks, f"bloque{i:03}.lua"), "w") as f:
             f.write(
@@ -385,7 +420,13 @@ def main():
                     label = f"{os.path.relpath(b, ROOT):<28} " if len(bins) > 1 else ""
                     print(
                         f"{label}{r['escenario']:<13} {r['tamano']:>7} {r['ui']:6.1f} {r['audio']:7.1f} {r['otros']:7.1f} "
-                        f"{r['kB/s']:8.1f} {r['cuadros/s']:9.1f}  {share(r['lentos_ui'])} / {share(r['lentos_audio'])}",
+                        f"{r['kB/s']:8.1f} {r['cuadros/s']:9.1f}  {share(r['lentos_ui'])} / {share(r['lentos_audio'])}"
+                        + (
+                            f"  ventana {statistics.median(x['ventana'] for x in rs):.1f} % · "
+                            f"{statistics.median(x['ventana kB/s'] for x in rs):.1f} kB/s v."
+                            if r.get("ventana") is not None
+                            else ""
+                        ),
                         flush=True,
                     )
                     if args.hilos:
