@@ -128,6 +128,12 @@ impl App {
                         _ => None,
                     };
                 };
+                // Ctrl-A y Ctrl-X: el número del cursor, como en vim.
+                if input.ctrl && !input.alt && matches!(c, 'a' | 'x') {
+                    vim.pending = None;
+                    self.adjust_by_keys(if c == 'a' { 1.0 } else { -1.0 }, false);
+                    return Some(Flow::Continue);
+                }
                 if input.ctrl || input.alt || bound {
                     vim.pending = None;
                     return None;

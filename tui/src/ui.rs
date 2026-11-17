@@ -825,6 +825,18 @@ pub fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rec
         }
         None => inner,
     };
+    // Un número que se ajusta: su línea manda sobre el diagnóstico y la
+    // ayuda.
+    let adjusting = app.adjust_info();
+    let editor_area = match &adjusting {
+        Some(info) if editor_area.height > 3 => {
+            let [editor, line] =
+                Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(editor_area);
+            frame.render_widget(adjust_line(info, line.width), line);
+            editor
+        }
+        _ => editor_area,
+    };
     // El diagnóstico de la línea del cursor, entero, en la línea de la
     // ayuda (manda sobre la ayuda de la función).
     let cursor_row = app.editor.cursor().0;
@@ -833,6 +845,7 @@ pub fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rec
         .iter()
         .filter(|p| p.row == cursor_row)
         .min_by_key(|p| p.severity);
+    let line_problem = line_problem.filter(|_| adjusting.is_none());
     let editor_area = match line_problem {
         Some(problem) if editor_area.height > 3 => {
             let [editor, line] =
@@ -851,7 +864,7 @@ pub fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rec
     };
     // Ayuda de la función bajo el cursor, en la última línea del editor.
     let editor_area = match &view.help {
-        Some(help) if line_problem.is_none() && editor_area.height > 3 => {
+        Some(help) if line_problem.is_none() && adjusting.is_none() && editor_area.height > 3 => {
             let [editor, line] =
                 Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(editor_area);
             frame.render_widget(
@@ -927,6 +940,18 @@ pub fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rec
         if let Some(area) = cells(h.row, &h.cols) {
             frame.buffer_mut().set_style(area, highlight_style(h));
         }
+    }
+    // El número que se ajusta (o el que hay bajo el puntero con Ctrl).
+    if let Some((row, cols)) = app.adjust_mark()
+        && let Some(area) = cells(row, &cols)
+    {
+        frame.buffer_mut().set_style(
+            area,
+            Style::new()
+                .fg(Color::Black)
+                .bg(accent())
+                .add_modifier(Modifier::BOLD),
+        );
     }
     // Las guías de sangría: una línea fina por nivel, en los espacios.
     if app.editor_config.indent_guides {
@@ -1073,6 +1098,49 @@ pub fn draw_editor(frame: &mut Frame, app: &mut App, view: &ViewModel, area: Rec
         }
     }
     popup
+}
+
+/// Celdas del fader de la línea de un número que se ajusta.
+const ADJUST_FADER: u16 = 16;
+
+/// La línea de un número que se ajusta: qué es, el valor, el rango con un
+/// fader y cuándo se oye; lo que no cabe en `width`, fuera (primero el
+/// fader y después el rango).
+fn adjust_line(info: &crate::app::AdjustInfo, width: u16) -> Line<'static> {
+    let ascii = theme::ascii();
+    let mark = if ascii { "#" } else { "◆" };
+    let head = format!("{mark} {} = {}", info.label, info.value);
+    let when = format!("  {} · Esc cancela", info.when);
+    let range = if info.range.is_empty() {
+        String::new()
+    } else {
+        format!("  {}", info.range)
+    };
+    let used = head.chars().count() + when.chars().count();
+    let fits_range = used + range.chars().count() <= width as usize;
+    let fits_fader = info.fraction.is_some()
+        && fits_range
+        && used + range.chars().count() + ADJUST_FADER as usize + 2 <= width as usize;
+    let mut spans = vec![Span::from(head).fg(accent()).add_modifier(Modifier::BOLD)];
+    if fits_fader {
+        spans.push(Span::from("  "));
+        let bar = crate::bar_line::BarLine {
+            fraction: info.fraction,
+            ..Default::default()
+        };
+        for (c, part) in crate::bar_line::cells(&bar, ADJUST_FADER, ascii) {
+            let color = match part {
+                crate::bar_line::Part::Empty => dim(),
+                _ => accent(),
+            };
+            spans.push(Span::from(c.to_string()).fg(color));
+        }
+    }
+    if fits_range {
+        spans.push(Span::from(range).fg(dim()));
+    }
+    spans.push(Span::from(when).fg(dim()));
+    Line::from(spans)
 }
 
 /// Los espacios de un nivel de sangría del texto: la menor sangría que

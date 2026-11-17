@@ -18,6 +18,10 @@ impl App {
         if self.editor_window() {
             return None;
         }
+        // Un número que se ajusta: se dibuja a su ritmo hasta que acaba.
+        if self.adjusting() {
+            return None;
+        }
         let status = self.status?;
         if status.running
             || !self.held.is_empty()
@@ -52,6 +56,7 @@ impl App {
         self.message.hash(&mut h);
         self.error.as_ref().map(|e| &e.message).hash(&mut h);
         (self.loads, self.midi_events, self.lint.generation).hash(&mut h);
+        self.adjust_idle_key().hash(&mut h);
         Some(h.finish())
     }
 }

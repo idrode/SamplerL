@@ -4870,6 +4870,219 @@ línea vacía a todo el ancho.
   `top -H` en reposo como antes.
 - Que no aparece ningún cuadro `▰▱` en ninguna pantalla.
 
+## Ajustar números con el ratón
+
+Continuación del editor (sin fase propia). Con **Ctrl y la rueda** (en el
+touchpad del MacBook, Ctrl y deslizar con dos dedos) sobre un número del
+código, el número cambia; al dejar de deslizar se queda el último valor,
+todo el gesto es un paso de deshacer y se carga.
+
+### Lo que ya había (y se reutiliza)
+
+- **La rueda del editor** (`app/scroll.rs`): desplaza una vista libre sin
+  mover el cursor, con las ráfagas del touchpad más finas. Sin cambios: la
+  rueda **sin** el modificador sigue desplazando.
+- **Ctrl y la rueda** ya llegaban (`MouseAction::ZoomIn`/`ZoomOut`): eran
+  el zoom del piano roll y en el editor no hacían nada. Siguen siendo el
+  zoom sobre el piano roll; sobre el editor, ajustan el número.
+- **El linter** (`script::lint`) tiene un léxico de Lua tolerante
+  (comentarios, cadenas largas) y ya relacionaba los valores literales de
+  las tablas de parámetros con el registro (`api::call_table`, los rangos
+  de `valid`). Lo nuevo (`lint::number_at`) es una función más sobre ese
+  léxico: no hay otro analizador.
+- **Deshacer de una vez**: `EditGroup` (lo que usan comentar, mover
+  líneas, el tracker, el piano roll, las lanes y los cortes al reescribir
+  sus literales). El gesto deja uno al acabar.
+- **La ventana del editor aparte** es la misma `App` con el texto: el
+  gesto funciona allí sin nada más, y la carga va a la principal por el
+  enlace como siempre.
+- **El dibujo en reposo** (`app/idle.rs`) y la prueba por PTY de la rueda
+  (`tui/tests/pty_wheel.rs`, cuyo pseudoterminal pasa a
+  `tui/tests/common/`).
+- **Los mandos MIDI** (`engine::knob`, valor ya, suavizado de 30 ms y del
+  parámetro, ~5 ms) y las macros: el camino en vivo que existe; su uso
+  para que suene mientras se desliza es la segunda parte (abajo).
+- No había: saber qué literal hay bajo el puntero ni su rango, unidad y
+  escala sin ejecutar; los movimientos del ratón (se descartaban antes de
+  llegar a la aplicación); ni nada que pase un valor arbitrario al motor
+  sin esperar al compás (la tabla de mandos entra con el lote).
+
+### Qué números y cuánto cambian
+
+- **`script::lint::number_at(texto, fila, columna)`**: el número escrito
+  tal cual en un argumento de una llamada o en un campo de una tabla
+  (enteros, decimales y negativos: el `-` es signo si va pegado al número
+  y detrás de `(`, `,`, `=`, `{`, un operador o una palabra clave), con su
+  sitio (`Place`: la llamada, si es método, su primera cadena, la clave,
+  el argumento, si es el valor entero o parte de una expresión, y la fila
+  donde empieza la expresión de la llamada, que es la que da Lua) y su
+  parámetro del registro si se sabe seguro: el valor entero de una clave
+  de una tabla de `api::call_table` (efectos, sintetizadores, `sample`,
+  `slice`, `instrument`, `grains`, lanes, visualizaciones y las capas del
+  subharm) o el argumento de `:gain`, `:pan`, `:pitch`, `:formant`,
+  `:swing` y el segundo de `:send`. Una función del script con el nombre
+  de la API no cuenta (como en el linter). Dentro de una cadena dice
+  `InString`; hexadecimal, con exponente o fuera de una llamada o una
+  tabla, `Unsupported` con el motivo.
+- **`script::api::numeric(param)`**: el rango sale del texto de `valid`
+  (`a–b`, con paréntesis detrás, al final de `` `true`, `false` o a–b ``,
+  `entero de a a b`, `de a a b compases`); la unidad, de la descripción
+  (Hz, ms, semitonos, dB, octavas, porcentaje); la escala es logarítmica
+  en las frecuencias y en los rangos positivos que cruzan dos órdenes de
+  magnitud; entero si `valid` lo dice, si es un alto en filas o en una
+  lista corta (`bits`, `downsample`, `hpf`, `quality`, `voices`,
+  `sub_div`, `bands`, `lfo_sync`). **Decisión**: no añadir campos de
+  unidad, escala y entero a los ~200 parámetros del registro; sale de lo
+  que ya dice cada uno, y un test comprueba que todos los rangos que se
+  leen tienen sentido.
+- **`tui/src/numbers.rs`** (puro): con registro, 60 pasos recorren el
+  rango entero (`FULL_RANGE_TICKS`; en logarítmica cada paso multiplica
+  por lo mismo: unos dos semitonos en `cutoff`), los enteros de uno en uno
+  (o de lo que toque si el rango es enorme), y nunca sale del rango ni
+  produce NaN; en el borde, volver no cuesta pasos. Sin registro, 1 en los
+  enteros y la última cifra en los decimales. El valor sale siempre del
+  original y de la posición del gesto (no se acumula redondeo). Se
+  escribe con los decimales que tenía o los que hagan falta para que el
+  paso se vea, quitando los ceros que sobran de más (`gain(0.8)` sube a
+  `0.87`, y vuelve a `0.8`; arriba del todo, `4.0`), sin `-0`, con `.5`
+  si se escribió así y nunca en notación científica.
+
+### El gesto (`tui/src/app/adjust.rs`)
+
+- **Empieza** con un paso de la rueda con el modificador sobre un número
+  (sin clic), con Ctrl y pulsar sobre él, o con las teclas. Guarda el
+  texto entero de antes, el cursor y el original.
+- **Cada paso** deshace lo que escribió el anterior (con el historial del
+  propio editor: tiene 50 cambios y no se llena con el gesto) y escribe el
+  valor nuevo en el sitio del número; el cursor se queda donde estaba.
+  Nada se carga a mitad del gesto.
+- **Acaba** tras `ajuste_pausa_ms` (400) sin pasos, en el `tick` de cada
+  vuelta del bucle, o con cualquier otro evento: una tecla (que después
+  hace lo suyo), un clic, un pegado, el puntero en otro número o fuera del
+  editor. Deja un `EditGroup` (un Ctrl-Z lo deshace entero; Ctrl-R lo
+  rehace) y carga. **Esc** lo cancela: vuelve al original y no carga ni
+  deja nada que deshacer (no pasa al modo tocar).
+- **La inercia y la deriva**: un gesto cortado por otro evento deja una
+  cola en la que la rueda con el modificador no hace nada hasta una pausa
+  de 150 ms (`TAIL_GAP`), contada desde el último paso; así, si el puntero
+  se desliza a otro número a mitad de la ráfaga, o se pulsa Esc con los
+  dedos aún moviéndose, lo que sigue no toca nada. Cada paso cambia como
+  mucho un paso (con `ajuste_aceleracion`, dos o cuatro si llegan a menos
+  de 25 o 12 ms), y un cubo de 60 pasos por segundo con ráfaga de 8 limita
+  el ritmo (las teclas no pasan por él: ya las limita la repetición del
+  teclado).
+- **El ratón con botón**: Ctrl, pulsar y arrastrar; a la derecha una
+  celda es un paso y hacia arriba una fila son dos. Soltar acaba; si el
+  soltar se pierde, la pausa lo acaba igual (nunca queda un gesto
+  colgado). Sin Ctrl, pulsar y arrastrar selecciona como siempre.
+- **El teclado**: Alt-A/Alt-X (fino) y Alt-Shift-A/Alt-Shift-X (diez
+  pasos), acciones de la paleta y del menú Editar › Números, en
+  `[teclas]`; en vim, Ctrl-A y Ctrl-X en Normal. El número del cursor o el
+  primero a su derecha en la línea. **Decisión**: Alt-↑/↓ los usa el
+  editor (párrafos) y Ctrl-A en el modo clásico es ir al principio de la
+  línea; Alt-A y Alt-X estaban libres.
+- **Los modificadores** llegan aparte (`app::Mods`: Ctrl y Alt) en
+  `App::mouse_mods`; `mouse_at` mira antes que nadie si el evento es del
+  gesto. Con `ajuste_numeros = "alt"`, Alt y la rueda (que antes
+  desplazaba como la rueda sola) ajusta y Ctrl y la rueda vuelve a no
+  hacer nada en el editor. `ajuste_invertir` da la vuelta al sentido (por
+  si el desplazamiento natural del sistema lo pone al revés).
+- **El movimiento del ratón** (antes se tiraba en el bucle): ahora el
+  último movimiento de cada lote va a `App::pointer_moved`, que con el
+  modificador resalta el número de debajo y con un gesto lo acaba si el
+  puntero se va de su número. Sin modificador ni gesto vuelve en seguida
+  con `false` y no pide cuadro: el ratón que solo se mueve sigue sin
+  costar nada.
+- **El aviso**: la primera vez en la sesión que la rueda sin modificador
+  pasa sobre un número y nunca ha llegado con él, la línea de mensajes
+  recuerda el gesto y la alternativa (`ajuste_numeros = "alt"`, tmux en la
+  guía). Es la única forma de notar que la terminal se lo queda: no hay
+  evento de «Ctrl pulsado».
+
+### Lo que se ve
+
+- El número del gesto, o el que hay bajo el puntero con Ctrl, con el
+  fondo del acento y en negrita.
+- Mientras dura el gesto, la última línea del editor (la de la ayuda ⓘ y
+  los diagnósticos, a los que tapa) dice `◆ fx("filter") cutoff = 3366 Hz`,
+  un fader de 16 celdas con los caracteres de la línea del compás
+  (`bar_line::cells`), el rango con su escala y «se oirá en el compás
+  siguiente · Esc cancela»; lo que no cabe se quita (primero el fader y
+  después el rango). En ASCII, `#` y `====>----`.
+- **Reposo**: con un gesto en curso la huella de `idle_key` es `None` (se
+  dibuja a su ritmo hasta que acaba); el resaltado entra en la huella. Sin
+  gesto no hay coste.
+
+### Consumo
+
+`scripts/medir-consumo.py` con dos escenarios nuevos: `raton-ctrl` (el
+ratón moviéndose con Ctrl a 60 eventos por segundo: cada movimiento mira
+el número que hay debajo) y `ajuste` (Alt-A 30 veces por segundo sobre el
+`:gain` de la canción: un gesto que no acaba, escribiendo en cada paso). El
+binario de antes y el de después en la misma tanda (x86_64, release, 8 s;
+el de antes no hace nada con Alt-A, pero dibuja igual):
+
+| escenario | tamaño | ui % antes → después | kB/s antes → después | cuadros/s |
+| --- | --- | --- | --- | --- |
+| parado | 80×24 | 0,1 → 0,2 | 0,1 → 0,1 | 1,9 |
+| sonando | 80×24 | 3,4 → 3,4 | 6,7 → 6,7 | 28,2 |
+| raton | 80×24 | 3,9 → 3,9 | 6,7 → 6,7 | 28,5 |
+| raton-ctrl | 80×24 | 3,9 → 4,0 | 6,7 → 6,8 | 28,5 → 29,4 |
+| ajuste | 80×24 | 3,7 → 4,0 | 7,2 → 7,5 | 29,9 |
+| parado | 200×50 | 0,9 → 0,7 | 0,2 → 0,2 | 1,9 |
+| sonando | 200×50 | 7,7 → 7,5 | 14,9 → 14,8 | 26,9 → 27,0 |
+| raton | 200×50 | 8,3 → 8,0 | 14,8 → 14,8 | 27,2 |
+| raton-ctrl | 200×50 | 8,3 → 8,1 | 14,9 → 14,8 | 27,2 |
+| ajuste | 200×50 | 8,6 → 9,1 | 15,4 → 15,9 | 29,9 |
+
+Sin gesto, igual que antes (las diferencias son el ruido de la medición).
+Durante un gesto, entre 0,3 y 0,5 puntos más de un núcleo: el léxico del
+texto al empezar y escribir el número en cada paso; solo mientras se
+desliza.
+
+### Terminales (prueba por PTY)
+
+`tui/tests/pty_adjust.rs` arranca `tui --edit` en un pseudoterminal y le
+manda las secuencias SGR 1006 de verdad: la rueda sola (64) no cambia el
+número; Ctrl y la rueda (80 y 81) sí, y un Ctrl-Z lo deshace entero; Esc
+cancela; Ctrl, pulsar y arrastrar (16, 48 y soltar con `m`); con
+`ajuste_numeros = "alt"`, Ctrl ya no y Alt y la rueda (72) sí; y
+secuencias rotas o fuera de la pantalla no hacen nada. **En esta máquina no
+hay tmux ni pantalla para kitty** (se trabaja por SSH): lo que haga cada
+terminal con Ctrl y la rueda antes de mandarlo no se ha podido ver aquí.
+Por lo que dicen sus documentaciones: kitty no tiene nada atado a Ctrl y la
+rueda y lo pasa con el bit de Ctrl (16); tmux con `mouse on` pasa la rueda
+a la aplicación que la pide, y si una versión no pasa la de Ctrl, se arregla
+con `bind -n C-WheelUpPane send -M` (en la guía). Hyprland solo ata la rueda
+con Super en su configuración de ejemplo. Queda para la prueba a mano en el
+Asahi.
+
+### Tests
+
+- `script/src/lint.rs`: literales en llamadas y tablas con su sitio y su
+  parámetro (también en una cadena de métodos de varias líneas, varios por
+  línea, negativos desde el signo), en cadenas, comentarios, hexadecimal,
+  exponente, sueltos y en expresiones; tablas de sintetizador y capas del
+  subharm; una función del script con el nombre de la API; y
+  `api::numeric` (rango, unidad, logarítmica, entero, y que todos los
+  rangos del registro tienen sentido).
+- `tui/src/numbers.rs`: enteros y decimales sin registro, el rango del
+  registro sin salirse ni NaN (con NaN e infinitos de entrada), la escala
+  logarítmica y el rango entero en 60 pasos, enteros, sensibilidad y el
+  formato.
+- `tui/src/tests/adjust.rs`: Ctrl y la rueda arriba y abajo, sobre un
+  número y fuera (también en un comentario y en una cadena: lo dice); la
+  rueda sin Ctrl (y con Alt) no cambia nada y avisa una vez; Alt como
+  modificador e invertido; una ráfaga larga con pausa es un paso de
+  deshacer y carga al acabar (no antes); Esc cancela sin ir al modo
+  tocar; otra tecla o un clic acaban; la cola de la inercia y el puntero
+  en otro número; el límite de ritmo; los límites del registro;
+  Ctrl, pulsar y arrastrar (y el soltar perdido); Alt-A y Alt-X; Ctrl-A y
+  Ctrl-X en vim; el resaltado, la línea, el fader y ASCII; el dibujo en
+  reposo; coordenadas fuera de rango; y la ventana aparte del editor (el
+  gesto en su texto, la principal carga, Ctrl-Z en la ventana).
+- `tui/tests/pty_adjust.rs`: las secuencias de verdad (arriba).
+
 ## Audio de prueba y problemas conocidos
 
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`

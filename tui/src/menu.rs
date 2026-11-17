@@ -71,10 +71,10 @@ pub fn menu_of(action: Action) -> Option<Menu> {
         | Freeze | Unfreeze | ExportKnobs | AddSample | ReferenceSample | GatherSamples | Quit => {
             Menu::File
         }
-        Undo | Redo | ToggleComment | DuplicateLines | MoveLinesUp | MoveLinesDown | TextStart
-        | TextEnd | GotoLine | Find | FindNext | FindPrevious | Complete | GotoError
-        | NextProblem | PreviousProblem | ToggleVim | EditTracker | EditRoll | FillGap
-        | SuggestFills => Menu::Edit,
+        Undo | Redo | ToggleComment | DuplicateLines | MoveLinesUp | MoveLinesDown | NumberUp
+        | NumberDown | NumberUpCoarse | NumberDownCoarse | TextStart | TextEnd | GotoLine
+        | Find | FindNext | FindPrevious | Complete | GotoError | NextProblem | PreviousProblem
+        | ToggleVim | EditTracker | EditRoll | FillGap | SuggestFills => Menu::Edit,
         NextTrack | Mute | Solo | ClearMuteSolo | LabelSlice | SliceNotes | SampleKey | Preview
         | SliceEarlier | SliceLater | SliceEdge | ClearSliceAdjust | NextSlice | PreviousSlice
         | SplitSlice | JoinSlice | ZoomIn | ZoomOut | ZoomReset | DetectBpm | MidiLearn
@@ -112,6 +112,7 @@ pub fn submenu_of(action: Action) -> Option<&'static str> {
         YankSlot | PasteSlot => "Ranuras",
         Freeze | Unfreeze => "Congelar",
         GotoLine | Find | FindNext | FindPrevious | TextStart | TextEnd => "Buscar e ir",
+        NumberUp | NumberDown | NumberUpCoarse | NumberDownCoarse => "Números",
         LabelSlice | SliceNotes | SliceEarlier | SliceLater | SliceEdge | ClearSliceAdjust
         | NextSlice | PreviousSlice | SplitSlice | JoinSlice => "Cortes",
         ZoomIn | ZoomOut | ZoomReset => "Zoom de la onda",

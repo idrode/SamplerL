@@ -1006,3 +1006,17 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
     2. ✅ **En la pantalla**: la regla de la principal (el único sitio que
        la dibujaba), con la línea de tiempo detrás.
     3. ✅ **Documentación**.
+31. **Ajustar números con el ratón** (pedida por el usuario; continuación
+    del editor): Ctrl y la rueda (en el touchpad, Ctrl y dos dedos) sobre
+    un número del código lo cambia, con el rango del registro si es un
+    parámetro; al dejar de deslizar se queda y se carga. Detalle en
+    «Ajustar números con el ratón» de [docs/ESTADO.md](ESTADO.md).
+    1. ✅ **Ctrl y la rueda sobre un número**: el literal bajo el puntero
+       (`script::lint::number_at`), rango, unidad, escala y entero del
+       registro (`api::numeric`), un gesto que es un paso de deshacer y
+       acaba tras una pausa o con otro evento, Esc cancela, la cola de la
+       inercia, el límite de ritmo, Ctrl y arrastrar, Alt-A/Alt-X (Ctrl-A
+       y Ctrl-X en vim), el resaltado y la línea con el fader, y la
+       ventana aparte del editor.
+    2. **Que suene mientras se ajusta**.
+    3. **Fader en línea** (`slider()`), opcional.

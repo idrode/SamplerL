@@ -21,6 +21,7 @@ use crate::model::{
 };
 use crate::palette::{self, Action, Item};
 
+mod adjust;
 mod cue;
 mod devices;
 mod dock;
@@ -46,6 +47,9 @@ pub use lint::Problem;
 mod slices;
 mod vim;
 mod zoom;
+#[cfg(test)]
+pub use adjust::adjust_limits;
+pub use adjust::{AdjustInfo, Mods};
 pub use mouse::MouseAction;
 pub use vim::DEFAULT_EXIT as VIM_EXIT;
 mod split;
@@ -273,6 +277,8 @@ pub struct App {
     /// La vista del editor: libre (desplazada con la rueda) o siguiendo al
     /// cursor.
     pub(crate) view: scroll::EditorView,
+    /// Ajustar números con el ratón y el teclado (ver `adjust.rs`).
+    adjust: adjust::Adjust,
     /// El linter: el último resultado y el análisis en marcha.
     pub(crate) lint: lint::LintState,
     /// `[script]`: los límites de memoria y tiempo (también los del
@@ -578,6 +584,7 @@ impl App {
             diagnostics_cache: Default::default(),
             editor_config: Default::default(),
             view: Default::default(),
+            adjust: Default::default(),
             lint: Default::default(),
             script_config: Default::default(),
             mouse_enabled: true,
@@ -4109,6 +4116,10 @@ impl App {
                     self.message = "ya está abajo del todo".into();
                 }
             }
+            Action::NumberUp => self.adjust_by_keys(1.0, false),
+            Action::NumberDown => self.adjust_by_keys(-1.0, false),
+            Action::NumberUpCoarse => self.adjust_by_keys(1.0, true),
+            Action::NumberDownCoarse => self.adjust_by_keys(-1.0, true),
             Action::TextStart => editing::jump_to_edge(&mut self.editor, false, false),
             Action::TextEnd => editing::jump_to_edge(&mut self.editor, true, false),
             Action::GotoLine => {
@@ -4691,6 +4702,11 @@ impl App {
     }
 
     fn handle_input(&mut self, input: Input) -> Flow {
+        // Un número que se está ajustando: Esc lo cancela; otra tecla lo
+        // acaba y sigue.
+        if self.adjust_key(&input) {
+            return Flow::Continue;
+        }
         // El pánico antes que nada: con cualquier cosa abierta.
         if let Some(Bound::Action(a @ (Action::Panic | Action::PanicPause))) =
             self.keys.lookup(&input)
@@ -4990,6 +5006,9 @@ impl App {
     /// de línea en el editor (un pegado en un terminal sin bracketed
     /// paste), se pegan; si no, se atienden una a una.
     pub fn handle_keys(&mut self, inputs: Vec<Input>) -> Flow {
+        if inputs.len() > 1 {
+            self.adjust_end();
+        }
         if let Some(text) = editing::burst_text(&inputs).filter(|_| self.pastes_in_editor()) {
             self.paste(&text);
             return Flow::Continue;
@@ -5021,6 +5040,7 @@ impl App {
     /// sin autocompletado, plantillas ni atajos; se deshace de una vez.
     /// En la línea de órdenes entra solo la primera línea.
     pub fn paste(&mut self, text: &str) {
+        self.adjust_end();
         let text = editing::normalize_newlines(text);
         if let Some(prompt) = &mut self.prompt {
             prompt.push_str(text.lines().next().unwrap_or_default());
@@ -5105,6 +5125,7 @@ impl App {
     }
 
     pub fn tick(&mut self) {
+        self.adjust_tick(Instant::now());
         self.retry_note_offs();
         self.poll_lint();
         self.poll_link();

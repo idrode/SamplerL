@@ -14,6 +14,11 @@ pub enum Action {
     ToggleComment,
     DuplicateLines,
     MoveLinesUp,
+    /// El número del cursor: sube o baja un paso (o diez, `Coarse`).
+    NumberUp,
+    NumberDown,
+    NumberUpCoarse,
+    NumberDownCoarse,
     MoveLinesDown,
     TextStart,
     TextEnd,
@@ -174,6 +179,30 @@ pub const ACTIONS: &[ActionDef] = &[
         name: "Bajar líneas",
         description: "Mueve la línea del cursor (o las seleccionadas) una abajo",
         keys: "",
+    },
+    ActionDef {
+        action: Action::NumberUp,
+        name: "Subir el número del cursor",
+        description: "El número del cursor (o el primero a su derecha en la línea) sube un paso, con el rango del parámetro si lo es; las pulsaciones seguidas son un paso de deshacer, Esc lo deja como estaba y al parar se carga. Con el ratón: Ctrl y la rueda sobre el número",
+        keys: "Alt-A (vim: Ctrl-A)",
+    },
+    ActionDef {
+        action: Action::NumberDown,
+        name: "Bajar el número del cursor",
+        description: "Como «Subir el número del cursor», hacia abajo",
+        keys: "Alt-X (vim: Ctrl-X)",
+    },
+    ActionDef {
+        action: Action::NumberUpCoarse,
+        name: "Subir el número del cursor (diez pasos)",
+        description: "Como «Subir el número del cursor», de diez pasos en diez",
+        keys: "Alt-Shift-A",
+    },
+    ActionDef {
+        action: Action::NumberDownCoarse,
+        name: "Bajar el número del cursor (diez pasos)",
+        description: "Como «Bajar el número del cursor», de diez pasos en diez",
+        keys: "Alt-Shift-X",
     },
     ActionDef {
         action: Action::TextStart,

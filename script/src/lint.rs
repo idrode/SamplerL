@@ -1210,6 +1210,324 @@ fn find_word(line: &str, word: &str) -> Option<Range<usize>> {
     None
 }
 
+// ---------------------------------------------------------------------
+// Números que se ajustan con el ratón
+
+/// Lo que hay en una posición del texto, para ajustar un número.
+#[derive(Debug, Clone)]
+pub enum NumberAt {
+    /// Nada que ajustar (espacio, un nombre, un comentario...).
+    Nothing,
+    /// Un número dentro de una cadena (`"1 . 3 ."`): no se ajusta.
+    InString,
+    /// Un número escrito de una forma que no se ajusta (hexadecimal,
+    /// notación científica), o fuera de un argumento o una tabla.
+    Unsupported(&'static str),
+    Number(NumberLiteral),
+}
+
+/// Un número escrito tal cual en un argumento de una llamada o en un campo
+/// de una tabla.
+#[derive(Debug, Clone)]
+pub struct NumberLiteral {
+    pub row: usize,
+    /// Columnas en caracteres, con el `-` delante si es negativo.
+    pub cols: Range<usize>,
+    /// El texto escrito (con el `-`).
+    pub text: String,
+    /// Dónde está: la llamada, el argumento y la clave.
+    pub place: Place,
+    /// El parámetro del registro, si se sabe seguro (el número es el valor
+    /// entero de una clave de una tabla de parámetros o el argumento de
+    /// `:gain`, `:pan`, `:pitch`, `:formant`, `:swing` o `:send`).
+    pub param: Option<&'static api::FxParam>,
+}
+
+/// Dónde está un número.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Place {
+    /// La función o el método de la llamada que lo contiene (`fx`,
+    /// `gain`...), si la hay.
+    pub call: Option<String>,
+    /// Es un método (`:fx`).
+    pub method: bool,
+    /// La primera cadena de la llamada (`"filter"` en `fx("filter", …)`).
+    pub first: Option<String>,
+    /// La fila (desde 0) donde empieza la expresión de la llamada: la que
+    /// Lua da como su línea (en una cadena de métodos, la de la primera).
+    pub call_row: usize,
+    /// El argumento de la llamada (desde 0).
+    pub arg: usize,
+    /// La clave de la tabla, si está en un campo `clave = …`.
+    pub key: Option<String>,
+    /// El número es el valor entero del argumento o del campo (no parte de
+    /// una expresión).
+    pub bare: bool,
+}
+
+/// El número de `source` que hay en la fila `row` y la columna `col` (en
+/// caracteres).
+pub fn number_at(source: &str, row: usize, col: usize) -> NumberAt {
+    let tokens = lex(source);
+    let Some(i) = tokens
+        .iter()
+        .position(|t| t.row == row && t.cols.contains(&col))
+        .or_else(|| {
+            // El `-` de un negativo también vale.
+            tokens.iter().position(|t| {
+                t.row == row && t.sym("-") && t.cols.start == col && unary_minus(&tokens, t)
+            })
+        })
+    else {
+        return NumberAt::Nothing;
+    };
+    let i = if tokens[i].sym("-") { i + 1 } else { i };
+    let Some(token) = tokens.get(i) else {
+        return NumberAt::Nothing;
+    };
+    let text = match &token.kind {
+        Kind::Num(n) => n.clone(),
+        Kind::Str(s) if s.chars().any(|c| c.is_ascii_digit()) => return NumberAt::InString,
+        _ => return NumberAt::Nothing,
+    };
+    if !text.chars().all(|c| c.is_ascii_digit() || c == '.') || text.parse::<f64>().is_err() {
+        return NumberAt::Unsupported("solo números decimales (sin hexadecimal ni exponente)");
+    }
+    let negative = i > 0 && tokens[i - 1].row == token.row && unary_minus(&tokens, &tokens[i - 1]);
+    let first = if negative { i - 1 } else { i };
+    let Some(mut place) = place_of(&tokens, first) else {
+        return NumberAt::Unsupported(
+            "solo números en los argumentos de una llamada o en una tabla",
+        );
+    };
+    // El valor entero: entre separadores (`(`, `,`, `=`, `{` y `)`, `,`,
+    // `}`, `;`).
+    let before = first.checked_sub(1).map(|b| &tokens[b]);
+    let after = tokens.get(i + 1);
+    place.bare = before.is_some_and(|b| b.sym("(") || b.sym(",") || b.sym("=") || b.sym("{"))
+        && after.is_some_and(|a| a.sym(")") || a.sym(",") || a.sym("}") || a.sym(";"));
+    let param = if place.bare {
+        registry_param(&tokens, &place)
+    } else {
+        None
+    };
+    let start = tokens[first].cols.start;
+    NumberAt::Number(NumberLiteral {
+        row: token.row,
+        cols: start..token.cols.end,
+        text: if negative { format!("-{text}") } else { text },
+        place,
+        param,
+    })
+}
+
+/// Si el `-` es el signo de un número (no una resta): va tras `(`, `,`,
+/// `=`, `{`, un operador o `return`, y pegado al número.
+fn unary_minus(tokens: &[Token], minus: &Token) -> bool {
+    let Some(at) = tokens
+        .iter()
+        .position(|t| t.row == minus.row && t.cols == minus.cols)
+    else {
+        return false;
+    };
+    let next_is_number = tokens.get(at + 1).is_some_and(|n| {
+        matches!(n.kind, Kind::Num(_)) && n.row == minus.row && n.cols.start == minus.cols.end
+    });
+    if !next_is_number {
+        return false;
+    }
+    match at.checked_sub(1).map(|p| &tokens[p]) {
+        None => true,
+        Some(p) => match &p.kind {
+            Kind::Sym(s) => !matches!(s.as_str(), ")" | "]" | "}"),
+            Kind::Name(n) => {
+                KEYWORDS.contains(&n.as_str())
+                    && !matches!(n.as_str(), "end" | "nil" | "true" | "false")
+            }
+            _ => false,
+        },
+    }
+}
+
+/// La llamada y la tabla que contienen el token `at`: el `(` o `{` abierto
+/// más cercano por la izquierda.
+fn place_of(tokens: &[Token], at: usize) -> Option<Place> {
+    let open = enclosing(tokens, at)?;
+    let in_table = tokens[open].sym("{");
+    let mut place = Place::default();
+    let call_open = if tokens[open].sym("{") {
+        // Un campo de la tabla: la clave, si es `clave = …` justo antes.
+        let items = split(
+            tokens,
+            open + 1,
+            closing(tokens, open).unwrap_or(tokens.len()),
+        );
+        let item = items.iter().find(|r| r.contains(&at))?;
+        place.key = match &tokens[item.clone()] {
+            [k, eq, ..] if eq.sym("=") && k.name().is_some() && item.start + 2 <= at => {
+                k.name().map(str::to_string)
+            }
+            [o, k, c, eq, ..]
+                if o.sym("[") && c.sym("]") && eq.sym("=") && item.start + 4 <= at =>
+            {
+                match &k.kind {
+                    Kind::Str(s) => Some(s.clone()),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        // La tabla puede ser el argumento de una llamada (`fx("x", {…})`,
+        // `sh101{…}`) o el valor de un campo de otra (`o1 = {…}`).
+        if open > 0 && tokens[open - 1].name().is_some() {
+            Some((open, open, 0))
+        } else {
+            // Una tabla suelta (`local p = { … }`): sin llamada.
+            let Some(outer) = enclosing(tokens, open) else {
+                return Some(place);
+            };
+            if tokens[outer].sym("(") {
+                let args = split(tokens, outer + 1, closing(tokens, outer)?);
+                let arg = args.iter().position(|r| r.contains(&open))?;
+                Some((outer, open, arg))
+            } else {
+                // Una tabla dentro de otra: la clave de fuera (capas del
+                // subharm) se mira con la de dentro.
+                let mut outer_place = place_of(tokens, open)?;
+                outer_place.key = place.key.clone();
+                outer_place.bare = false;
+                // La capa: la clave de fuera va como `first`.
+                let items = split(tokens, outer + 1, closing(tokens, outer)?);
+                let item = items.iter().find(|r| r.contains(&open))?;
+                if let [k, eq, ..] = &tokens[item.clone()]
+                    && eq.sym("=")
+                {
+                    outer_place.first = k.name().map(|n| format!("capa:{n}"));
+                }
+                return Some(outer_place);
+            }
+        }
+    } else if tokens[open].sym("(") {
+        let args = split(
+            tokens,
+            open + 1,
+            closing(tokens, open).unwrap_or(tokens.len()),
+        );
+        let arg = args.iter().position(|r| r.contains(&at))?;
+        Some((open, open, arg))
+    } else {
+        None
+    }?;
+    let (paren, _, arg) = call_open;
+    place.arg = arg;
+    let callee = paren.checked_sub(1)?;
+    let name = match tokens[callee].name() {
+        Some(name) if !KEYWORDS.contains(&name) => name,
+        // Una tabla entre paréntesis que no son de una llamada: sin
+        // llamada; unos paréntesis sueltos (`if (x > 3)`), nada.
+        _ if in_table => return Some(place),
+        _ => return None,
+    };
+    place.call = Some(name.to_string());
+    place.method = callee > 0 && tokens[callee - 1].sym(":");
+    if tokens[paren].sym("(")
+        && let Some(Kind::Str(s)) = tokens.get(paren + 1).map(|t| &t.kind)
+    {
+        place.first = Some(s.clone());
+    }
+    place.call_row = chain_start(tokens, callee);
+    Some(place)
+}
+
+/// El `(`, `{` o `[` sin cerrar más cercano antes de `at`.
+fn enclosing(tokens: &[Token], at: usize) -> Option<usize> {
+    let mut depth = 0i32;
+    for j in (0..at).rev() {
+        let t = &tokens[j];
+        if t.sym(")") || t.sym("}") || t.sym("]") {
+            depth += 1;
+        } else if t.sym("(") || t.sym("{") || t.sym("[") {
+            if depth == 0 {
+                return (!t.sym("[")).then_some(j);
+            }
+            depth -= 1;
+        }
+    }
+    None
+}
+
+/// La fila del primer token de la expresión cuyo nombre de llamada está en
+/// `callee` (`track("x")` en `track("x"):fx(…)`, aunque esté en otra
+/// línea): la que da Lua como línea de la llamada.
+fn chain_start(tokens: &[Token], callee: usize) -> usize {
+    let mut j = callee;
+    loop {
+        // `a.b`, `a:b`: el de antes del punto.
+        if j >= 2 && (tokens[j - 1].sym(".") || tokens[j - 1].sym(":")) {
+            let prev = j - 2;
+            let t = &tokens[prev];
+            if t.sym(")") || t.sym("}") {
+                // Una llamada o un índice: hasta su nombre.
+                let Some(open) = opening(tokens, prev) else {
+                    break;
+                };
+                let Some(name) = open.checked_sub(1) else {
+                    break;
+                };
+                if tokens[name].name().is_none() {
+                    break;
+                }
+                j = name;
+                continue;
+            }
+            if matches!(t.kind, Kind::Str(_)) && prev >= 1 && tokens[prev - 1].name().is_some() {
+                j = prev - 1;
+                continue;
+            }
+            if t.name().is_some() {
+                j = prev;
+                continue;
+            }
+        }
+        break;
+    }
+    tokens[j].row
+}
+
+/// El parámetro del registro de un número que es el valor entero de su
+/// sitio.
+fn registry_param(tokens: &[Token], place: &Place) -> Option<&'static api::FxParam> {
+    let call = place.call.as_deref()?;
+    let scope = scope(tokens);
+    if scope.defined.contains(call) {
+        return None;
+    }
+    match &place.key {
+        // `:gain(0.8)`, `:send("reverb", 0.3)`...
+        None if place.method => match (call, place.arg) {
+            ("gain" | "pan" | "pitch" | "formant" | "swing", 0) | ("send", 1) => {
+                api::track_param(call)
+            }
+            _ => None,
+        },
+        None => None,
+        Some(key) => {
+            if !place.method && !global_names().contains(&call) {
+                return None;
+            }
+            let first = place.first.as_deref();
+            // Una capa del subharm: `o1 = { level = … }`.
+            if first.is_some_and(|f| f.starts_with("capa:")) {
+                return matches!(call, "subharm" | "synth")
+                    .then(|| api::LAYER_TABLE.param(key))
+                    .flatten();
+            }
+            let effect = api::call_table(call, place.arg, &[first])?;
+            effect.param(key)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1376,5 +1694,113 @@ mod tests {
     fn lexing_skips_comments_and_long_strings() {
         let src = "--[[ trak(1)\n]] bpm(1) -- trak(2)\nlocal s = [==[ trak(3) ]==]\n";
         assert!(lints(src).is_empty(), "{:#?}", lints(src));
+    }
+
+    fn number(source: &str, row: usize, col: usize) -> NumberLiteral {
+        match number_at(source, row, col) {
+            NumberAt::Number(n) => n,
+            other => panic!("{source:?} ({row}, {col}): {other:?}"),
+        }
+    }
+
+    #[test]
+    fn numbers_in_calls_and_tables_are_found_with_their_place() {
+        let src = "bpm(170)\ntrack(\"d\", amen):fx(\"filter\", { cutoff = 3000, q = 0.7 })\n  :gain(0.8):pan(-0.25)\n";
+        let n = number(src, 0, 5);
+        assert_eq!((n.text.as_str(), n.cols.clone()), ("170", 4..7));
+        assert_eq!(n.place.call.as_deref(), Some("bpm"));
+        assert!(n.param.is_none() && n.place.bare);
+        // En una tabla de efecto: con su parámetro del registro.
+        let n = number(src, 1, 42);
+        assert_eq!(n.text, "3000");
+        assert_eq!(n.place.key.as_deref(), Some("cutoff"));
+        assert_eq!(n.place.first.as_deref(), Some("filter"));
+        assert_eq!(n.param.map(|p| p.name), Some("cutoff"));
+        let q = number(src, 1, 52);
+        assert_eq!(
+            (q.text.as_str(), q.param.map(|p| p.name)),
+            ("0.7", Some("q"))
+        );
+        // Varios en una línea, el método y el negativo (también desde el
+        // signo), y la línea de la llamada es la de la cadena entera.
+        let g = number(src, 2, 8);
+        assert_eq!(
+            (g.text.as_str(), g.param.map(|p| p.name)),
+            ("0.8", Some("gain"))
+        );
+        assert_eq!(g.place.call_row, 1);
+        let p = number(src, 2, 17);
+        assert_eq!((p.text.as_str(), p.cols.clone()), ("-0.25", 17..22));
+        assert_eq!(number(src, 2, 19).cols, 17..22);
+        assert_eq!(p.param.map(|p| p.name), Some("pan"));
+    }
+
+    #[test]
+    fn numbers_in_strings_comments_and_other_places_are_not_adjusted() {
+        let src = "track(\"d\"):steps(\"1 . 3 .\") -- gain(2)\nlocal x = 3\nprint(0x10, 1e3)\n";
+        assert!(matches!(number_at(src, 0, 19), NumberAt::InString));
+        assert!(matches!(number_at(src, 0, 37), NumberAt::Nothing));
+        assert!(matches!(number_at(src, 1, 10), NumberAt::Unsupported(_)));
+        assert!(matches!(number_at(src, 2, 7), NumberAt::Unsupported(_)));
+        assert!(matches!(number_at(src, 2, 13), NumberAt::Unsupported(_)));
+        assert!(matches!(number_at(src, 1, 0), NumberAt::Nothing));
+        // Dentro de una expresión: se ajusta, pero sin parámetro.
+        let n = number("track(\"d\"):gain(0.5 * 2)\n", 0, 16);
+        assert!(!n.place.bare && n.param.is_none());
+        // Una resta no es un negativo.
+        let n = number("print(x -3)\n", 0, 9);
+        assert_eq!(n.text, "3");
+        // En una tabla suelta: sin llamada ni parámetro, con su clave.
+        let n = number("local p = { cutoff = 3000 }\n", 0, 21);
+        assert_eq!(
+            (n.place.call.as_deref(), n.place.key.as_deref()),
+            (None, Some("cutoff"))
+        );
+        assert!(n.param.is_none());
+        // Unos paréntesis que no son de una llamada: no.
+        assert!(matches!(
+            number_at("if (x > 3) then end\n", 0, 8),
+            NumberAt::Unsupported(_)
+        ));
+    }
+
+    #[test]
+    fn synth_tables_and_subharm_layers_have_their_parameters() {
+        let src = "local b = synth(\"acid\", {\n  cutoff = 400,\n})\nlocal s = subharm{ o1 = { level = 0.5 }, voices = 4 }\n";
+        assert_eq!(number(src, 1, 11).param.map(|p| p.name), Some("cutoff"));
+        let level = number(src, 3, 34);
+        assert_eq!(level.param.map(|p| p.name), Some("level"));
+        assert_eq!(number(src, 3, 50).param.map(|p| p.name), Some("voices"));
+        // Una función del script con el nombre de la API no es la de la API.
+        let src = "function fx(a, b) end\nfx(\"filter\", { cutoff = 3 })\n";
+        assert!(number(src, 1, 24).param.is_none());
+    }
+
+    #[test]
+    fn the_registry_gives_range_unit_scale_and_integers() {
+        let filter = api::effect("filter").unwrap();
+        let cutoff = api::numeric(filter.param("cutoff").unwrap()).unwrap();
+        assert_eq!((cutoff.min, cutoff.max, cutoff.unit), (20.0, 20000.0, "Hz"));
+        assert!(cutoff.log && !cutoff.integer);
+        let gain = api::numeric(api::track_param("gain").unwrap()).unwrap();
+        assert_eq!(
+            (gain.min, gain.max, gain.log, gain.integer),
+            (0.0, 4.0, false, false)
+        );
+        let pitch = api::numeric(api::track_param("pitch").unwrap()).unwrap();
+        assert_eq!(pitch.unit, "st");
+        let crush = api::effect("crush").unwrap();
+        assert!(api::numeric(crush.param("bits").unwrap()).unwrap().integer);
+        assert!(api::numeric(filter.param("type").unwrap()).is_none());
+        // Todos los rangos que se leen tienen sentido.
+        for (name, p) in api::sound_params() {
+            if let Some(n) = api::numeric(p) {
+                assert!(
+                    n.min < n.max && n.min.is_finite() && n.max.is_finite(),
+                    "{name}"
+                );
+                assert!(!n.log || n.min > 0.0, "{name}");
+            }
+        }
     }
 }

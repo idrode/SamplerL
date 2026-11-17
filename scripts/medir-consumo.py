@@ -34,6 +34,11 @@ Escenarios:
            (scripts/consumo/larga.lua)
   raton    sonando, con el ratón moviéndose sin botón a 60 eventos por segundo
   raton-parado  parado, con el ratón moviéndose
+  raton-ctrl  sonando, con el ratón moviéndose con Ctrl (resalta el número
+           que hay debajo: mira el texto en cada movimiento)
+  ajuste   sonando, ajustando un número sin parar: Alt-A 30 veces por
+           segundo sobre el `:gain(0.7)` de la línea 10 (un gesto que no
+           acaba: sube hasta 4 y sigue escribiéndose)
   editando sonando, escribiendo en el editor: una letra y su borrado, unas
            7 teclas por segundo (el diagnóstico en vivo y el linter)
   ventana-espectro  sonando, con la ventana del espectro estéreo abierta
@@ -199,6 +204,24 @@ def mouse_mover(term, cols, rows, stop):
         time.sleep(1 / 60)
 
 
+def ctrl_mouse_mover(term, cols, rows, stop):
+    """Como `mouse_mover`, con Ctrl (35 + 16)."""
+    i = 0
+    while not stop.is_set():
+        x = 1 + (i * 7) % cols
+        y = 1 + (i * 3) % rows
+        term.send(f"\x1b[<51;{x};{y}M".encode())
+        i += 1
+        time.sleep(1 / 60)
+
+
+def adjuster(term, stop):
+    """Alt-A 30 veces por segundo (el número del cursor sube)."""
+    while not stop.is_set():
+        term.send(b"\x1ba")
+        time.sleep(1 / 30)
+
+
 def typist(term, stop):
     """Escribe en el editor: una letra y la borra, ~7 teclas por segundo
     (como quien escribe despacio, con pausas que dejan correr el linter)."""
@@ -236,8 +259,18 @@ def measure(args, binary, scenario, cols, rows, env):
     time.sleep(1.0)
     stop = threading.Event()
     mover = None
-    if scenario.startswith("raton"):
+    if scenario == "raton-ctrl":
+        mover = threading.Thread(target=ctrl_mouse_mover, args=(term, cols, rows, stop), daemon=True)
+        mover.start()
+        time.sleep(0.5)
+    elif scenario.startswith("raton"):
         mover = threading.Thread(target=mouse_mover, args=(term, cols, rows, stop), daemon=True)
+        mover.start()
+        time.sleep(0.5)
+    if scenario == "ajuste":
+        term.send(b"\x1b[B" * 9)  # a la línea 10
+        time.sleep(0.3)
+        mover = threading.Thread(target=adjuster, args=(term, stop), daemon=True)
         mover.start()
         time.sleep(0.5)
     if scenario == "editando":

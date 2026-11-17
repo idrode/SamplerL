@@ -19,6 +19,7 @@
 
 use ratatui_textarea::{CursorMove, Scrolling};
 
+use super::adjust::Mods;
 use super::slices::{self, Edge};
 use super::{App, Mode};
 use crate::ui::{WaveHit, WaveLayout};
@@ -79,21 +80,35 @@ impl App {
     /// Como [`App::mouse`]; `held`: con Alt o Ctrl pulsado (en la onda,
     /// agarrar la marca de un corte la mueve con los vecinos que la
     /// comparten). Shift no vale: la terminal lo usa para seleccionar.
+    #[cfg(test)]
     pub fn mouse_with(&mut self, action: MouseAction, column: u16, row: u16, held: bool) {
         self.mouse_at(action, column, row, held, std::time::Instant::now());
     }
 
-    /// Como [`App::mouse_with`], en el instante `now` (las ráfagas de la
+    /// Como [`App::mouse_with`], con Ctrl y Alt por separado (la rueda con
+    /// uno de ellos cambia el número que hay debajo, ver `adjust.rs`).
+    pub fn mouse_mods(&mut self, action: MouseAction, column: u16, row: u16, mods: Mods) {
+        self.mouse_at(action, column, row, mods, std::time::Instant::now());
+    }
+
+    /// Como [`App::mouse_mods`], en el instante `now` (las ráfagas de la
     /// rueda dependen de lo seguidos que lleguen los pasos).
     pub(crate) fn mouse_at(
         &mut self,
         action: MouseAction,
         column: u16,
         row: u16,
-        held: bool,
+        mods: impl Into<Mods>,
         now: std::time::Instant,
     ) {
         if !self.mouse_enabled {
+            return;
+        }
+        let mods = mods.into();
+        let held = mods.ctrl || mods.alt;
+        // Un número que se ajusta (o que empieza a ajustarse) se queda el
+        // evento; cualquier otro acaba el gesto en curso.
+        if self.adjust_mouse(action, column, row, mods, now) {
             return;
         }
         if action == MouseAction::Down {
@@ -174,8 +189,14 @@ impl App {
             MouseAction::RightDown | MouseAction::ZoomIn | MouseAction::ZoomOut => {}
             // La rueda desplaza la vista, no el cursor (la siguiente tecla
             // que lo mueve vuelve a él).
-            MouseAction::ScrollUp if inside => self.wheel_editor(-1, 0, now),
-            MouseAction::ScrollDown if inside => self.wheel_editor(1, 0, now),
+            MouseAction::ScrollUp if inside => {
+                self.adjust_hint(column, row);
+                self.wheel_editor(-1, 0, now)
+            }
+            MouseAction::ScrollDown if inside => {
+                self.adjust_hint(column, row);
+                self.wheel_editor(1, 0, now)
+            }
             MouseAction::ScrollLeft if inside => self.wheel_editor(0, -1, now),
             MouseAction::ScrollRight if inside => self.wheel_editor(0, 1, now),
             MouseAction::ScrollUp
@@ -226,7 +247,7 @@ impl App {
     /// La fila y la columna del texto que se ven en esa celda de la
     /// terminal (fuera del texto, lo más cerca: la columna 0 sobre los
     /// números de línea, el final de la línea más allá).
-    fn text_at(&self, column: u16, row: u16) -> (usize, usize) {
+    pub(super) fn text_at(&self, column: u16, row: u16) -> (usize, usize) {
         let Some(area) = self.editor_area else {
             return (0, 0);
         };

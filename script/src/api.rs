@@ -140,6 +140,96 @@ impl Auto {
     }
 }
 
+/// Lo que se sabe de un parámetro numérico para moverlo con el ratón (ver
+/// [`numeric`]): su rango, su unidad, si va en escala logarítmica y si es
+/// entero. Todo sale del registro: del texto de `valid` y de su
+/// descripción.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Numeric {
+    pub min: f64,
+    pub max: f64,
+    /// `Hz`, `ms`, `st` (semitonos), `dB`, `oct`, `%` o nada.
+    pub unit: &'static str,
+    /// Frecuencias y rangos que cruzan dos órdenes de magnitud: la mitad
+    /// del camino es la media geométrica.
+    pub log: bool,
+    pub integer: bool,
+}
+
+/// Parámetros que solo admiten enteros (además de los que dicen «entero»
+/// en `valid`): divisores, bits, voces, bandas...
+const INTEGER_PARAMS: &[&str] = &[
+    "bits",
+    "downsample",
+    "hpf",
+    "quality",
+    "voices",
+    "sub_div",
+    "bands",
+    "lfo_sync",
+];
+
+/// El rango, la unidad y la escala de `param`, si su `valid` es un rango
+/// (`20–20000`, `-24–24 (necesita …)`, `entero de 1 a 16`, `` `true`,
+/// `false` o -60–0 ``, `de -64 a 64 compases`); `None` si no lo es (una
+/// lista de nombres, una tabla, un texto).
+pub fn numeric(param: &FxParam) -> Option<Numeric> {
+    if !param.values.is_empty() {
+        return None;
+    }
+    let (min, max) = valid_range(param.valid)?;
+    if !(min.is_finite() && max.is_finite() && min < max) {
+        return None;
+    }
+    let d = param.description;
+    let unit = if d.contains("Hz") && !d.contains("ms") {
+        "Hz"
+    } else if d.contains("en ms") || d.starts_with("ms ") || d.contains(", ms") {
+        "ms"
+    } else if d.contains("semitonos") {
+        "st"
+    } else if d.contains("dB") {
+        "dB"
+    } else if d.contains("octavas") {
+        "oct"
+    } else if d.contains("porcentaje") {
+        "%"
+    } else {
+        ""
+    };
+    let integer = param.valid.contains("entero")
+        || d.contains("en filas")
+        || INTEGER_PARAMS.contains(&param.name);
+    let log = min > 0.0 && (unit == "Hz" || max / min >= 100.0);
+    Some(Numeric {
+        min,
+        max,
+        unit,
+        log,
+        integer,
+    })
+}
+
+/// Los dos extremos de un `valid` con forma de rango.
+fn valid_range(valid: &str) -> Option<(f64, f64)> {
+    let number = |s: &str| s.trim().parse::<f64>().ok();
+    // `de A a B ...` y `entero de A a B`.
+    if let Some(rest) = valid
+        .strip_prefix("entero de ")
+        .or_else(|| valid.strip_prefix("de "))
+    {
+        let (a, rest) = rest.split_once(" a ")?;
+        let b = rest.split_whitespace().next()?;
+        return Some((number(a)?, number(b)?));
+    }
+    // `A–B`, con lo que vaya detrás entre paréntesis, o al final de una
+    // lista (`` `true`, `false` o A–B ``).
+    let range = valid.rsplit(" o ").next()?;
+    let range = range.split(" (").next()?;
+    let (a, b) = range.split_once('–')?;
+    Some((number(a)?, number(b)?))
+}
+
 /// Por qué un parámetro no admite curvas (ver [`Auto::No`]).
 const DISCRETE: &str =
     "elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer";

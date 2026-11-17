@@ -1282,6 +1282,10 @@ acciones nuevas van en la paleta en vez de en atajos de teclado.
 | Duplicar líneas | Copia la línea del cursor (o las seleccionadas) debajo | — |
 | Subir líneas | Mueve la línea del cursor (o las seleccionadas) una arriba | — |
 | Bajar líneas | Mueve la línea del cursor (o las seleccionadas) una abajo | — |
+| Subir el número del cursor | El número del cursor (o el primero a su derecha en la línea) sube un paso, con el rango del parámetro si lo es; las pulsaciones seguidas son un paso de deshacer, Esc lo deja como estaba y al parar se carga. Con el ratón: Ctrl y la rueda sobre el número | Alt-A (vim: Ctrl-A) |
+| Bajar el número del cursor | Como «Subir el número del cursor», hacia abajo | Alt-X (vim: Ctrl-X) |
+| Subir el número del cursor (diez pasos) | Como «Subir el número del cursor», de diez pasos en diez | Alt-Shift-A |
+| Bajar el número del cursor (diez pasos) | Como «Bajar el número del cursor», de diez pasos en diez | Alt-Shift-X |
 | Ir al principio del texto | Lleva el cursor a la primera línea del script (con Shift, selecciona hasta allí) | Ctrl-Inicio |
 | Ir al final del texto | Lleva el cursor al final de la última línea (con Shift, selecciona hasta allí) | Ctrl-Fin |
 | Ir a la línea | Abre «linea » para escribir el número de línea; Enter lleva el cursor a su principio | Alt-G |
@@ -1818,6 +1822,10 @@ paleta de 256.
 | `diagnostico_siguiente` | Diagnóstico siguiente | `alt-j` |
 | `diagnostico_anterior` | Diagnóstico anterior | `alt-k` |
 | `ir_a_linea` | Ir a la línea | `alt-g` |
+| `subir_numero` | Subir el número del cursor | `alt-a` |
+| `bajar_numero` | Bajar el número del cursor | `alt-x` |
+| `subir_numero_diez` | Subir el número del cursor (diez pasos) | `alt-shift-a` |
+| `bajar_numero_diez` | Bajar el número del cursor (diez pasos) | `alt-shift-x` |
 | `buscar` | Buscar | `ctrl-f` |
 | `buscar_siguiente` | Buscar el siguiente | `f6` |
 | `buscar_anterior` | Buscar el anterior | `f7` |
@@ -1911,6 +1919,11 @@ paleta de 256.
 | `cerrar_pares` | al escribir `(`, `[`, `{` o una comilla, poner también la que cierra; escribir la que cierra delante de ella la salta, y Retroceso entre las dos las borra (`true`/`false`) | `false` |
 | `guias` | líneas finas en la sangría, una por nivel (`true`/`false`) | `false` |
 | `numeros_relativos` | los números de línea cuentan desde el cursor (la del cursor, con su número de siempre), como en vim (`true`/`false`) | `false` |
+| `ajuste_numeros` | la tecla con la que la rueda cambia el número bajo el puntero: `"ctrl"`, `"alt"` o `"no"` (apagado); también vale para pulsar y arrastrar sobre el número | `"ctrl"` |
+| `ajuste_invertir` | al revés: deslizar hacia arriba baja el número (si el desplazamiento natural del sistema lo pone al contrario de lo que esperas) | `false` |
+| `ajuste_sensibilidad` | lo que mueve cada paso de la rueda (de 0.1 a 10): con 1, 60 pasos recorren el rango entero de un parámetro y un número sin rango cambia en su última cifra | `1` |
+| `ajuste_pausa_ms` | la pausa sin eventos, en ms, que termina un gesto (de 100 a 3000): todo el gesto es un paso de deshacer | `400` |
+| `ajuste_aceleracion` | más deprisa, más cambio: con los pasos de la rueda muy seguidos, cada uno cuenta por dos o por cuatro (`true`/`false`) | `false` |
 
 | En `[resaltado]` | Para | Por defecto |
 | --- | --- | --- |
@@ -2379,6 +2392,92 @@ terminal no selecciona sola: **Shift y arrastrar** selecciona como siempre
 para copiar con la terminal (en casi todas; en algunas, Alt). Dentro de
 tmux, si no llegan los clics, `set -g mouse on`. Con `raton = false` en
 `[editor]`, la interfaz no pide el ratón.
+
+**Ajustar números con el ratón.** Con **Ctrl y la rueda** (en el touchpad,
+Ctrl y deslizar con dos dedos) sobre un número del código, el número
+cambia: hacia arriba sube y hacia abajo baja (la rueda horizontal, a la
+derecha sube). No hace falta pulsarlo antes: vale el que está bajo el
+puntero. Con Ctrl pulsado, el número bajo el puntero se resalta, y
+mientras cambia, la línea de abajo del editor dice qué es, su valor con la
+unidad, su rango con una barra y cuándo se oye:
+
+```text
+◆ fx("filter") cutoff = 3366 Hz  ━━━━━━━━━╾──────  20–20000 Hz · log  se oirá en el compás siguiente · Esc cancela
+```
+
+- **Un gesto, un paso de deshacer.** Todo lo que cambia mientras deslizas
+  es un solo cambio: un Ctrl-Z lo deshace entero. La terminal no avisa de
+  cuándo sueltas Ctrl ni de cuándo levantas los dedos, así que el gesto
+  acaba cuando dejas de deslizar (400 ms sin pasos, `ajuste_pausa_ms`) o
+  con cualquier otra cosa: una tecla, un clic, o el puntero en otro número
+  o fuera del editor. Entonces se queda el último valor y **se carga**:
+  entra en el compás siguiente, como con Ctrl-L. **Esc** durante el gesto
+  lo cancela y deja el número como estaba.
+- **Cuánto cambia.** Si el número es el valor de un parámetro de la API
+  (la clave de una tabla de `fx`, de un sintetizador, de `instrument`, de
+  `grains`... o el argumento de `:gain`, `:pan`, `:pitch`, `:formant`,
+  `:swing` y el nivel de `:send`), sigue su rango y no sale de él: 60 pasos
+  lo recorren entero (un deslizamiento largo), y las frecuencias y los
+  rangos muy anchos van en escala logarítmica (cada paso de `cutoff` son
+  unos dos semitonos). Los enteros (`bits`, `voices`, `sub_div`...) van de
+  uno en uno. Un número que no es de un parámetro (`bpm(170)`, el `8` de
+  `slice(8)`, `print(1.25)`) cambia de 1 en 1 si es entero o en su última
+  cifra si tiene decimales (`0.25`, de 0,01 en 0,01). `ajuste_sensibilidad`
+  (de 0.1 a 10) multiplica lo que mueve cada paso; con `ajuste_aceleracion
+  = true`, los pasos muy seguidos cuentan doble o cuádruple.
+- **El formato se conserva:** mismos decimales (o los que hagan falta
+  para que el paso se vea: `gain(0.8)` sube a `0.87`), el signo, nunca
+  notación científica; la línea se alarga o se acorta lo justo.
+- **El touchpad.** Cada paso cambia como mucho lo de un paso, y caben 60
+  por segundo: deslizar muy deprisa no se dispara. Si el gesto acaba por
+  otra cosa (Esc, el puntero en otro número), lo que siga llegando de esa
+  ráfaga (la inercia) no cambia nada hasta una pausa de 150 ms.
+- **Con un botón:** Ctrl, pulsar sobre el número y arrastrar: a la
+  derecha o hacia arriba sube. Soltar acaba el gesto (si el «soltar» se
+  pierde, la pausa lo acaba igual).
+- **Con el teclado:** Alt-A sube y Alt-X baja el número del cursor (o el
+  primero a su derecha en la línea); con Shift, de diez pasos en diez. En
+  vim, en Normal, Ctrl-A y Ctrl-X. Se cambian en `[teclas]`
+  (`subir_numero`, `bajar_numero`, `subir_numero_diez`,
+  `bajar_numero_diez`).
+
+**Qué números valen:** los escritos tal cual (enteros, decimales y
+negativos) en los argumentos de una llamada y en los campos de una tabla,
+en cualquier línea y varios por línea. **No** valen, y la interfaz lo dice
+si lo intentas: los números dentro de una cadena (los patrones de
+`steps("1 . 3 .")` y las llaves `3{lp=800}` de la mini-notación: en esta
+versión, no), los de los comentarios, los hexadecimales y con exponente
+(`0x10`, `1e3`), y los que están sueltos fuera de una llamada o una tabla
+(`local x = 3`). Un número dentro de una expresión (`gain(0.5 * x)`) se
+ajusta sin rango.
+
+**Qué modificador usar en cada terminal.** El de `ajuste_numeros` en
+`[editor]`: `"ctrl"` (por defecto), `"alt"` o `"no"` (apagado). Shift no se
+puede: casi todas las terminales lo usan para seleccionar sin pasar el
+ratón al programa.
+
+- **kitty**, con su configuración de siempre, no usa Ctrl y la rueda para
+  nada y se los pasa al programa (el tamaño de la letra va con
+  Ctrl-Shift-+ y Ctrl-Shift--). Con un touchpad, cada «línea» de
+  desplazamiento es un paso; en Linux, kitty no suele añadir inercia.
+- **tmux** (con `set -g mouse on`) pasa la rueda al programa que la pide;
+  si Ctrl y la rueda no llegan (depende de la versión), añade a
+  `~/.tmux.conf`: `bind -n C-WheelUpPane send -M` y `bind -n
+  C-WheelDownPane send -M` (con Alt, `M-WheelUpPane` y `M-WheelDownPane`).
+- **foot, Alacritty, WezTerm, GNOME Terminal:** si la terminal o el
+  escritorio se quedan Ctrl y la rueda para el zoom, usa `ajuste_numeros =
+  "alt"`. En Hyprland, mira que ningún `bind` use `CTRL, mouse_up` o
+  `mouse_down` (los de por defecto usan la tecla Super).
+
+La primera vez en la sesión que la rueda pasa por encima de un número sin
+el modificador (y nunca ha llegado con él), la línea de mensajes recuerda
+el gesto y la alternativa: así se nota si la terminal se lo está quedando.
+
+**Cuándo se oye.** Mientras deslizas, cambia el texto; al acabar el gesto
+se carga y suena en el compás siguiente, como cualquier carga (si la carga
+falla, sigue sonando lo anterior y el error sale en el editor). En la
+ventana aparte del editor (`--split`) es igual: el gesto se hace en su
+texto y la principal carga.
 
 **Modo vim.** Con `modo = "vim"` en `[editor]` (o «Modo vim» en la paleta,
 para la sesión), el editor tiene dos modos, que se ven en su borde

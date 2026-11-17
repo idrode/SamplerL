@@ -63,6 +63,22 @@ pub const BINDABLE: &[(&str, Bound, &[&str])] = &[
         &["alt-k"],
     ),
     ("ir_a_linea", Bound::Action(Action::GotoLine), &["alt-g"]),
+    ("subir_numero", Bound::Action(Action::NumberUp), &["alt-a"]),
+    (
+        "bajar_numero",
+        Bound::Action(Action::NumberDown),
+        &["alt-x"],
+    ),
+    (
+        "subir_numero_diez",
+        Bound::Action(Action::NumberUpCoarse),
+        &["alt-shift-a"],
+    ),
+    (
+        "bajar_numero_diez",
+        Bound::Action(Action::NumberDownCoarse),
+        &["alt-shift-x"],
+    ),
     ("buscar", Bound::Action(Action::Find), &["ctrl-f"]),
     ("buscar_siguiente", Bound::Action(Action::FindNext), &["f6"]),
     (
@@ -1019,7 +1035,50 @@ pub struct EditorConfig {
     pub indent_guides: bool,
     /// Números de línea relativos al cursor (`numeros_relativos`).
     pub relative_numbers: bool,
+    /// Ajustar números con el ratón (`ajuste_numeros`, `ajuste_*`).
+    pub adjust: AdjustConfig,
 }
+
+/// Con qué tecla la rueda cambia el número que hay bajo el puntero
+/// (`[editor] ajuste_numeros`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdjustModifier {
+    Ctrl,
+    Alt,
+    /// Apagado: la rueda nunca cambia números.
+    Off,
+}
+
+/// Cómo se ajustan los números con el ratón (ver `app/adjust.rs`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AdjustConfig {
+    pub modifier: AdjustModifier,
+    /// Al revés: deslizar hacia arriba baja (`ajuste_invertir`).
+    pub invert: bool,
+    /// Lo que mueve cada paso de la rueda: 1, un sesentavo del rango de un
+    /// parámetro (`ajuste_sensibilidad`).
+    pub sensitivity: f64,
+    /// La pausa sin eventos que termina un gesto, en ms (`ajuste_pausa_ms`).
+    pub pause_ms: u16,
+    /// Más deprisa, más cambio por paso (`ajuste_aceleracion`).
+    pub acceleration: bool,
+}
+
+impl Default for AdjustConfig {
+    fn default() -> Self {
+        AdjustConfig {
+            modifier: AdjustModifier::Ctrl,
+            invert: false,
+            sensitivity: 1.0,
+            pause_ms: 400,
+            acceleration: false,
+        }
+    }
+}
+
+/// Lo que se acepta en `[editor] ajuste_sensibilidad` y `ajuste_pausa_ms`.
+pub const ADJUST_SENSITIVITY: std::ops::RangeInclusive<f64> = 0.1..=10.0;
+pub const ADJUST_PAUSE_MS: std::ops::RangeInclusive<u16> = 100..=3000;
 
 impl Default for EditorConfig {
     fn default() -> Self {
@@ -1037,6 +1096,7 @@ impl Default for EditorConfig {
             close_pairs: false,
             indent_guides: false,
             relative_numbers: false,
+            adjust: AdjustConfig::default(),
         }
     }
 }
@@ -1064,6 +1124,11 @@ const EDITOR_KEY_NAMES: &[&str] = &[
     "cerrar_pares",
     "guias",
     "numeros_relativos",
+    "ajuste_numeros",
+    "ajuste_invertir",
+    "ajuste_sensibilidad",
+    "ajuste_pausa_ms",
+    "ajuste_aceleracion",
 ];
 
 /// Un entero de `value` dentro de `range`.
@@ -1139,6 +1204,31 @@ const EDITOR_KEYS: &[(&str, &str, &str)] = &[
     (
         "numeros_relativos",
         "los números de línea cuentan desde el cursor (la del cursor, con su número de siempre), como en vim (`true`/`false`)",
+        "`false`",
+    ),
+    (
+        "ajuste_numeros",
+        "la tecla con la que la rueda cambia el número bajo el puntero: `\"ctrl\"`, `\"alt\"` o `\"no\"` (apagado); también vale para pulsar y arrastrar sobre el número",
+        "`\"ctrl\"`",
+    ),
+    (
+        "ajuste_invertir",
+        "al revés: deslizar hacia arriba baja el número (si el desplazamiento natural del sistema lo pone al contrario de lo que esperas)",
+        "`false`",
+    ),
+    (
+        "ajuste_sensibilidad",
+        "lo que mueve cada paso de la rueda (de 0.1 a 10): con 1, 60 pasos recorren el rango entero de un parámetro y un número sin rango cambia en su última cifra",
+        "`1`",
+    ),
+    (
+        "ajuste_pausa_ms",
+        "la pausa sin eventos, en ms, que termina un gesto (de 100 a 3000): todo el gesto es un paso de deshacer",
+        "`400`",
+    ),
+    (
+        "ajuste_aceleracion",
+        "más deprisa, más cambio: con los pasos de la rueda muy seguidos, cada uno cuenta por dos o por cuatro (`true`/`false`)",
         "`false`",
     ),
 ];
@@ -1413,6 +1503,42 @@ impl Config {
                                 None => config
                                     .warnings
                                     .push("[editor] pareja: true o false".into()),
+                            },
+                            ("ajuste_numeros", _) => match value.as_str() {
+                                Some("ctrl") => config.editor.adjust.modifier = AdjustModifier::Ctrl,
+                                Some("alt") => config.editor.adjust.modifier = AdjustModifier::Alt,
+                                Some("no") => config.editor.adjust.modifier = AdjustModifier::Off,
+                                _ => config.warnings.push(
+                                    "[editor] ajuste_numeros: \"ctrl\", \"alt\" o \"no\" (Shift no: la terminal lo usa para seleccionar)".into(),
+                                ),
+                            },
+                            ("ajuste_invertir", _) => match value.as_bool() {
+                                Some(on) => config.editor.adjust.invert = on,
+                                None => config
+                                    .warnings
+                                    .push("[editor] ajuste_invertir: true o false".into()),
+                            },
+                            ("ajuste_aceleracion", _) => match value.as_bool() {
+                                Some(on) => config.editor.adjust.acceleration = on,
+                                None => config
+                                    .warnings
+                                    .push("[editor] ajuste_aceleracion: true o false".into()),
+                            },
+                            ("ajuste_sensibilidad", _) => match value
+                                .as_float()
+                                .or_else(|| value.as_integer().map(|n| n as f64))
+                                .filter(|s| ADJUST_SENSITIVITY.contains(s))
+                            {
+                                Some(s) => config.editor.adjust.sensitivity = s,
+                                None => config.warnings.push(
+                                    "[editor] ajuste_sensibilidad: un número de 0.1 a 10".into(),
+                                ),
+                            },
+                            ("ajuste_pausa_ms", _) => match ranged(value, ADJUST_PAUSE_MS) {
+                                Some(n) => config.editor.adjust.pause_ms = n,
+                                None => config.warnings.push(
+                                    "[editor] ajuste_pausa_ms: un número de 100 a 3000".into(),
+                                ),
                             },
                             ("linter_ms", _) => match ranged(value, LINTER_MS) {
                                 Some(n) => config.editor.linter_ms = n,

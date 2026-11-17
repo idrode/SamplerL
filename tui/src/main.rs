@@ -27,6 +27,7 @@ mod midi;
 #[cfg(feature = "midi")]
 mod midi_io;
 mod model;
+mod numbers;
 mod occupancy;
 mod palette;
 mod record;
@@ -1084,11 +1085,15 @@ fn run_spectrum_window(path: &std::path::Path) -> Result<(), BoxError> {
     result
 }
 
-/// Si el ratón va con Alt o Ctrl (en la onda: la marca compartida).
-fn mouse_held(m: &ratatui::crossterm::event::MouseEvent) -> bool {
+/// Con qué va el ratón: Ctrl y Alt (en la onda, cualquiera de los dos
+/// agarra la marca compartida; con la rueda sobre un número, el de
+/// `[editor] ajuste_numeros` lo cambia).
+fn mouse_mods(m: &ratatui::crossterm::event::MouseEvent) -> app::Mods {
     use ratatui::crossterm::event::KeyModifiers;
-    m.modifiers
-        .intersects(KeyModifiers::ALT | KeyModifiers::CONTROL)
+    app::Mods {
+        ctrl: m.modifiers.contains(KeyModifiers::CONTROL),
+        alt: m.modifiers.contains(KeyModifiers::ALT),
+    }
 }
 
 /// Lo que hace el ratón, sin crossterm (así se prueba la aplicación).
@@ -1280,7 +1285,14 @@ fn run_terminal(
             }
             // El ratón que solo se mueve (la terminal manda cada movimiento)
             // no cambia nada: ni se dibuja antes de tiempo ni es entrada.
+            // Salvo con el modificador de ajustar números (resalta el que
+            // hay debajo) o con un gesto en curso: solo el último cuenta.
             if only_motion(&events) {
+                if let Some(Event::Mouse(m)) = events.last()
+                    && app.pointer_moved(m.column, m.row, mouse_mods(m), std::time::Instant::now())
+                {
+                    fresh_input = true;
+                }
                 continue;
             }
             fresh_input = true;
@@ -1308,12 +1320,17 @@ fn run_terminal(
                         }
                     }
                     Event::Paste(text) => app.paste(&text),
-                    Event::Mouse(m) => {
-                        let action = mouse_action(&m);
-                        if let Some(action) = action {
-                            app.mouse_with(action, m.column, m.row, mouse_held(&m));
+                    Event::Mouse(m) => match mouse_action(&m) {
+                        Some(action) => app.mouse_mods(action, m.column, m.row, mouse_mods(&m)),
+                        None => {
+                            app.pointer_moved(
+                                m.column,
+                                m.row,
+                                mouse_mods(&m),
+                                std::time::Instant::now(),
+                            );
                         }
-                    }
+                    },
                     _ => {}
                 }
             }
