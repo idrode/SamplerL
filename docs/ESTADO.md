@@ -5006,12 +5006,117 @@ todo el gesto es un paso de deshacer y se carga.
 - Mientras dura el gesto, la última línea del editor (la de la ayuda ⓘ y
   los diagnósticos, a los que tapa) dice `◆ fx("filter") cutoff = 3366 Hz`,
   un fader de 16 celdas con los caracteres de la línea del compás
-  (`bar_line::cells`), el rango con su escala y «se oirá en el compás
-  siguiente · Esc cancela»; lo que no cabe se quita (primero el fader y
+  (`bar_line::cells`), el rango con su escala y «suena ya» o «se oirá en
+  el compás siguiente (motivo)», y «Esc cancela»; lo que no cabe se quita (primero el fader y
   después el rango). En ASCII, `#` y `====>----`.
 - **Reposo**: con un gesto en curso la huella de `idle_key` es `None` (se
   dibuja a su ritmo hasta que acaba); el resaltado entra en la huella. Sin
   gesto no hay coste.
+
+### Que suene mientras se ajusta
+
+**Investigación.** Las cargas entran por lotes al compás. El único camino
+en vivo hacia un parámetro concreto son los mandos MIDI (`engine::knob`:
+`MoveKnob` mueve el valor ya, con un polo de 30 ms y después el suavizado
+del parámetro, ~5 ms), pero su **tabla** (qué mando mueve qué) entra con
+el lote, al compás: no sirve para un literal cualquiera sin esperar. Las
+macros solo mueven lo escrito con `macro()`. Y el script no guardaba
+dónde se escribió cada efecto. Decisión: (a) donde se sabe seguro, (b) el
+resto, y saberlo con lo que el script anota al evaluarse, no adivinando
+desde el texto.
+
+**El motor (`engine::knob`).** Una ranura más tras los 16 mandos, la del
+**gesto** (`knob::GESTURE`), fuera de la tabla:
+`Controller::gesture(Some(mapa), valor)` pone su destino y su valor **ya**
+(`Command::Gesture`, por la misma cola sin bloqueos, sin reservar), manda
+sobre un mando MIDI del mismo parámetro y se queda donde se deja (como un
+valor fijo). `Batch::release_gesture()` lo retira **en el compás en que
+entra el lote** (`Command::ReleaseGesture`, preparado y pendiente como la
+tabla de mandos, y retirado en el paso 0 con ella): el lote que trae el
+texto con el número nuevo hace que el parámetro pase de su valor en vivo
+al mismo valor escrito, sin salto. `gesture(None, _)` lo quita ya (Esc, o
+una carga que no llega). Un gesto nuevo sobre el mismo destino anula la
+retirada pendiente del anterior. Como llega a unos 30 valores por
+segundo, se suaviza menos que un mando (polo de 15 ms y entrada en 10 ms,
+`GESTURE_SMOOTHING_SECONDS`/`GESTURE_TAKEOVER_SECONDS`). Parado el
+transporte, la retirada espera, como la carga, al arrancar. Sin usar el
+gesto nada cambia: golden.rs igual, y `scripts/comparar-audio.sh` contra
+el binario de antes, igual bit a bit. `engine/tests/no_alloc.rs` lo cubre
+(efecto, volumen y sintetizador moviéndose, quitado ya y retirado con el
+lote).
+
+**Qué número es de qué parámetro (`script::live`).** Al evaluar, cada
+`:fx(nombre, { … })`, `:gain`, `:pan`, `:send` de una pista y cada tabla
+de `synth`, `sh101` y `subharm` anota un sitio: la fila que da Lua para la
+llamada (en una cadena de métodos, la de cada método: lo comprobé con los
+sitios anotados), la función, su primera cadena, la ranura del efecto o
+el volumen, pan o envío, la pista (un sintetizador, las de los `track()`
+que lo reciben) y los números que recibió. Solo en el trozo principal
+(`Builder::recording`: ni en `every`, ni en las secciones, ni después), y
+una canción con secciones o variantes no guarda ninguno (sus pistas son
+copias). `live::resolve` (con `ScriptHost::live_target`) busca el sitio de
+un literal por la fila del nombre de su llamada, la función y la primera
+cadena que da el linter (`lint::Place`), y exige: **un solo sitio** (un
+bucle, una función llamada dos veces o dos llamadas iguales en la misma
+línea dan varios: Lua da la misma línea), **una sola pista**, que el valor
+que llegó sea **el del literal** (en f32), que sea **el último** que
+escribe ese volumen, pan o envío, que el parámetro sea **continuo**
+(`learn::learnable`, la lista del MIDI learn, que sale del registro) y
+**sin curva** (`learn::target`). El rango del mando es el del registro
+(el del MIDI learn para `gain` es de 0 a 1 y el parámetro llega a 4).
+Cada «no» lleva su motivo, que la línea del gesto enseña.
+
+**En la interfaz (`app/adjust.rs`).** Al empezar el gesto se busca el
+destino, solo si el texto es el cargado (las filas son las de la carga) y
+no es la ventana aparte del editor (no tiene el motor: **decisión**, su
+gesto es siempre (b); llevarlo a la principal pediría otro mensaje del
+protocolo y resolver con su texto, y se deja). Cada paso manda la
+posición en el rango del mando como mucho cada 33 ms (`LIVE_EVERY`; el
+que llega antes espera y sale en el `tick`). Al acabar: el último valor
+ya, `ScriptHost::release_gesture()` y la carga normal; si la carga falla
+o no llega al motor, el gesto se quita ya y suena lo de antes, con el
+error en el editor. Sin cambio neto, o con Esc, se quita ya. **Decisión**:
+el motor tiene una sola ranura de gesto; si empieza otro gesto sobre
+**otro** parámetro antes de que entre el compás de la carga del anterior,
+ese no suena en vivo («la carga del anterior aún no ha entrado»): si no,
+el anterior volvería a su valor viejo hasta el compás.
+
+**Latencia** (de mover los dedos a oírlo): la terminal manda el evento y
+el bucle lo lee en seguida (la espera se corta con la entrada); el primer
+valor sale ya y los siguientes cada 33 ms como mucho; el motor lo coge en
+el siguiente bloque. Medido en el motor (test
+`the_gesture_reaches_a_new_value_in_tens_of_milliseconds`, en trozos de
+128 frames a 48 kHz): **10,7 ms** en entrar y **34,7 ms** en llegar al
+90 % de un cambio. Con un bloque de 256 frames (5 ms) y la salida de
+PipeWire (un quantum de 1024, 21 ms), queda en **unos 40 ms** el primer
+cambio y **de 60 a 95 ms** al 90 % de los siguientes (con la espera de
+hasta 33 ms del ritmo). La parte del motor está medida; la de la tarjeta,
+no (Claude Code no abre el audio): queda para el Asahi con auriculares.
+
+### Fader en línea (`slider()`): descrito, sin hacer
+
+La tercera parte, opcional, no está hecha. **Decisión**: las dos primeras
+han quedado completas, pero cómo se siente el gesto (la sensibilidad de
+60 pasos por rango, la pausa de 400 ms, la cola de la inercia) solo se
+puede afinar con el touchpad de verdad en el Asahi, y el fader usaría el
+mismo gesto; mejor afinarlo antes de darle otra superficie. Cómo sería:
+
+- `slider(valor, min, max [, paso])` en el registro (`api::FUNCTIONS`, de
+  donde salen el autocompletado, la ayuda y la guía; `registry.rs` lo
+  comprueba): devuelve `valor` limitado a `[min, max]` (redondeado al
+  paso), sin efecto en el motor. Al evaluar anota su fila y sus tres
+  números (como los sitios de `script::live`).
+- En el editor, una barra bajo su línea como las visualizaciones `inline
+  = true` (el hueco y el dibujo de `draw_inline_viz`), con los caracteres
+  de la línea del compás y el valor.
+- Ctrl y la rueda sobre la barra o sobre el valor: el gesto de
+  `app/adjust.rs` sobre el **primer argumento literal**, con `min`, `max` y
+  `paso` de los otros dos argumentos literales como su rango (un
+  `api::Numeric` hecho del texto, en vez del registro); si no son
+  literales, sin rango. Deshacer, Esc, la pausa y la cola, iguales. Suena
+  en el compás siguiente (lo que haga el script con el valor no se sabe
+  seguro), salvo que el valor vaya tal cual a un parámetro, que tampoco se
+  puede saber sin ejecutarlo: (b) siempre.
 
 ### Consumo
 
@@ -5039,6 +5144,23 @@ Sin gesto, igual que antes (las diferencias son el ruido de la medición).
 Durante un gesto, entre 0,3 y 0,5 puntos más de un núcleo: el léxico del
 texto al empezar y escribir el número en cada paso; solo mientras se
 desliza.
+
+Con la segunda parte (el `:gain` del escenario `ajuste` suena en vivo:
+valores al motor 30 veces por segundo), otra tanda contra el mismo binario
+de antes:
+
+| escenario | tamaño | ui % antes → después | audio % antes → después | kB/s antes → después |
+| --- | --- | --- | --- | --- |
+| parado | 80×24 | 0,5 → 0,6 | 0,9 → 1,0 | 0,1 → 0,1 |
+| sonando | 80×24 | 3,5 → 3,5 | 7,7 → 7,8 | 6,7 → 6,7 |
+| ajuste | 80×24 | 3,6 → 4,2 | 7,8 → 7,8 | 7,1 → 7,6 |
+| parado | 200×50 | 0,7 → 0,7 | 1,1 → 1,0 | 0,2 → 0,2 |
+| sonando | 200×50 | 7,7 → 8,2 | 7,6 → 8,0 | 14,7 → 14,8 |
+| ajuste | 200×50 | 8,7 → 9,5 | 7,8 → 7,8 | 15,3 → 15,8 |
+
+El hilo del audio no cambia con el gesto en vivo; la interfaz, de 0,6 a
+0,8 puntos más mientras se desliza. Sin gesto, el ruido de siempre (el
+`sonando` de 200×50 de la primera tanda salió 7,7 → 7,5).
 
 ### Terminales (prueba por PTY)
 
@@ -5082,6 +5204,16 @@ Asahi.
   reposo; coordenadas fuera de rango; y la ventana aparte del editor (el
   gesto en su texto, la principal carga, Ctrl-Z en la ventana).
 - `tui/tests/pty_adjust.rs`: las secuencias de verdad (arriba).
+- Que suene: `engine/src/knob.rs` (el gesto entra ya, manda sobre un
+  mando, se queda y se retira con el lote; la latencia), `no_alloc.rs`,
+  `script/tests/live.rs` (lo seguro: un efecto tras otro en su línea, el
+  volumen con el rango del registro, el pan, el envío, el sintetizador; lo
+  que no y su motivo: dos llamadas iguales en una línea, un bucle, otra
+  línea que lo cambia después, `bpm` y `slice`, el texto cambiado,
+  secciones, un sintetizador en dos pistas; y con el motor, que la carga
+  que lo pide retira el gesto al compás), y en `tui/src/tests/adjust.rs`
+  el «suena ya» y el porqué de lo que no, el ritmo de 30 por segundo, el
+  texto sin cargar y Esc.
 
 ## Audio de prueba y problemas conocidos
 

@@ -2402,7 +2402,7 @@ mientras cambia, la línea de abajo del editor dice qué es, su valor con la
 unidad, su rango con una barra y cuándo se oye:
 
 ```text
-◆ fx("filter") cutoff = 3366 Hz  ━━━━━━━━━╾──────  20–20000 Hz · log  se oirá en el compás siguiente · Esc cancela
+◆ fx("filter") cutoff = 3366 Hz  ━━━━━━━━━━━╾────  20–20000 Hz · log  suena ya · Esc cancela
 ```
 
 - **Un gesto, un paso de deshacer.** Todo lo que cambia mientras deslizas
@@ -2473,11 +2473,34 @@ La primera vez en la sesión que la rueda pasa por encima de un número sin
 el modificador (y nunca ha llegado con él), la línea de mensajes recuerda
 el gesto y la alternativa: así se nota si la terminal se lo está quedando.
 
-**Cuándo se oye.** Mientras deslizas, cambia el texto; al acabar el gesto
-se carga y suena en el compás siguiente, como cualquier carga (si la carga
-falla, sigue sonando lo anterior y el error sale en el editor). En la
-ventana aparte del editor (`--split`) es igual: el gesto se hace en su
-texto y la principal carga.
+**Cuándo se oye.** Depende del número, y la línea del gesto lo dice:
+
+- **«suena ya»**: el número es, seguro, el valor de un parámetro que se
+  mueve de forma continua en una sola pista: una clave de la tabla de
+  `:fx(…)` (`cutoff`, `q`, `mix`, `level`...), `:gain`, `:pan`, el nivel
+  de `:send`, o una clave de la tabla de `synth`, `sh101` o `subharm` que
+  va a una sola pista. Mientras deslizas, el sonido lo sigue (unas 30
+  veces por segundo, suavizado: sin escalones ni clics). Al acabar, el
+  texto se carga y entra en el compás siguiente; justo entonces el valor
+  en vivo se retira, así que lo que suena y lo que dice el texto son
+  siempre lo mismo. Esc vuelve también el sonido a como estaba.
+- **«se oirá en el compás siguiente (…)»**: todo lo demás, con el motivo
+  entre paréntesis. El texto cambia mientras deslizas y suena al acabar,
+  con la carga. Pasa con lo que no es un parámetro continuo (`bpm`,
+  `slice(8)`, `bits`, los pasos), con lo que tiene una curva (`ramp`,
+  `lfo`, una lane), con una llamada que se hace más de una vez (en un
+  bucle, en una función llamada dos veces, o dos llamadas iguales en la
+  misma línea: `:fx("lowpass", …):fx("lowpass", …)`; ponlas en líneas
+  distintas), con un `:gain` que otra línea cambia después, con un
+  sintetizador que va a varias pistas, en una canción con secciones o
+  variantes, si el texto tiene cambios sin cargar, y en la ventana aparte
+  del editor (`--split`, que no tiene el motor: el gesto cambia su texto y
+  la principal carga al acabar).
+
+Si la carga falla, sigue sonando lo anterior (también en ese parámetro) y
+el error sale en el editor. El sonido tarda en seguir a los dedos unas
+decenas de milisegundos: el motor llega al 90 % de un cambio en unos 35 ms,
+más lo que tarda la salida de audio (el bloque y el búfer de PipeWire).
 
 **Modo vim.** Con `modo = "vim"` en `[editor]` (o «Modo vim» en la paleta,
 para la sesión), el editor tiene dos modos, que se ven en su borde

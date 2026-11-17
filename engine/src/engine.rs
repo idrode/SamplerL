@@ -144,6 +144,14 @@ enum Command {
     SetViz([bool; crate::viz::VIZ_SOURCES]),
     /// Un mando se ha movido a `value` (de 0 a 1; inmediato).
     MoveKnob { index: usize, value: f32 },
+    /// El gesto (ajustar un número con el ratón): su destino y su valor,
+    /// ya; `None` lo quita ya (ver [`crate::knob`]).
+    Gesture {
+        map: Option<crate::knob::KnobMap>,
+        value: f32,
+    },
+    /// Retira el gesto al empezar el compás en que entra el lote.
+    ReleaseGesture,
     /// Rampa de tempo que entra en el siguiente compás.
     SetTempoRamp(TempoRamp),
     /// Compás (pasos y pulso) desde el siguiente compás.
@@ -1350,6 +1358,7 @@ pub struct Batch {
     groups: Option<Groups>,
     macros: Option<Macros>,
     knobs: Option<crate::knob::Knobs>,
+    release_gesture: bool,
     lanes: Option<Box<crate::lane::Lanes>>,
     viz: Option<[bool; crate::viz::VIZ_SOURCES]>,
     patterns: Vec<(usize, Option<Pattern>)>,
@@ -1394,6 +1403,13 @@ impl Batch {
     /// lote; después se mueven en vivo con [`Controller::set_macro`].
     pub fn set_macros(&mut self, macros: Macros) -> &mut Self {
         self.macros = Some(macros);
+        self
+    }
+
+    /// Retira el gesto (ver [`crate::knob`]) en el compás en que entra el
+    /// lote: el que trae el texto con el número ya escrito.
+    pub fn release_gesture(&mut self) -> &mut Self {
+        self.release_gesture = true;
         self
     }
 
@@ -2230,6 +2246,7 @@ impl Controller {
             + usize::from(batch.groups.is_some())
             + usize::from(batch.macros.is_some())
             + usize::from(batch.knobs.is_some())
+            + usize::from(batch.release_gesture)
             + usize::from(batch.lanes.is_some())
             + usize::from(batch.viz.is_some())
             + usize::from(batch.arrangement.is_some());
@@ -2261,6 +2278,9 @@ impl Controller {
         }
         if let Some(knobs) = batch.knobs {
             push(Command::SetKnobs(knobs));
+        }
+        if batch.release_gesture {
+            push(Command::ReleaseGesture);
         }
         if let Some(lanes) = batch.lanes {
             push(Command::SetLanes(lanes));
@@ -2308,6 +2328,26 @@ impl Controller {
             return Err(SendError::InvalidMacro("el valor va de 0 a 1"));
         }
         self.send(Command::MoveKnob { index, value }, None)
+    }
+
+    /// El gesto de ajustar un número con el ratón (ver [`crate::knob`]):
+    /// `map` es su destino, ya (no al compás), y `value` (de 0 a 1) dónde
+    /// está en su rango; el parámetro lo sigue suavizado. `None` lo quita
+    /// ya (cancelado, o la carga falló).
+    pub fn gesture(
+        &mut self,
+        map: Option<crate::knob::KnobMap>,
+        value: f32,
+    ) -> Result<(), SendError> {
+        if let Some(map) = map {
+            let mut table = [None; crate::knob::MAX_KNOBS];
+            table[0] = Some(map);
+            check_knobs(&table)?;
+        }
+        if !(0.0..=1.0).contains(&value) {
+            return Err(SendError::InvalidMacro("el valor va de 0 a 1"));
+        }
+        self.send(Command::Gesture { map, value }, None)
     }
 
     /// Con un arreglo: salta a la entrada `entry` de la línea de tiempo al
@@ -2753,6 +2793,14 @@ impl Engine {
                 }
             }
             Command::MoveKnob { index, value } => self.knobs.moved(index, value),
+            Command::Gesture { map, value } => self.knobs.set_gesture(map, value),
+            Command::ReleaseGesture => {
+                if self.batch_open {
+                    self.knobs.release_staged = true;
+                } else {
+                    self.knobs.release_pending = true;
+                }
+            }
             Command::SetMacro { index, value } => {
                 // También en los que esperan: un lote no deshace lo que se
                 // ha movido después de mandarlo.
@@ -2808,6 +2856,9 @@ impl Engine {
                 }
                 if let Some(knobs) = self.knobs.staged.take() {
                     self.knobs.pending = Some(knobs);
+                }
+                if std::mem::take(&mut self.knobs.release_staged) {
+                    self.knobs.release_pending = true;
                 }
                 if let Some(on) = self.viz.staged.take() {
                     self.viz.pending = Some(on);
@@ -3036,6 +3087,9 @@ impl Engine {
             && let Some(knobs) = self.knobs.pending.take()
         {
             self.knobs.set_map(knobs);
+        }
+        if step == 0 {
+            self.knobs.release_due();
         }
         if step == 0
             && let Some(on) = self.viz.pending.take()

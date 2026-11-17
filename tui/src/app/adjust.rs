@@ -48,6 +48,9 @@ const COARSE: f64 = 10.0;
 /// Celdas de arrastre por paso, en horizontal; en vertical, una fila son
 /// dos pasos.
 const DRAG_ROW: f64 = 2.0;
+/// Lo menos que pasa entre dos valores en vivo al motor (unos 30 por
+/// segundo): el mando los suaviza en 30 ms.
+pub const LIVE_EVERY: Duration = Duration::from_millis(33);
 
 /// Las teclas que acompañan al ratón.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -81,6 +84,11 @@ pub(crate) struct Adjust {
     /// manda), y ya se avisó de que quizá no llega.
     seen: bool,
     hinted: bool,
+    /// El destino del último gesto en vivo cuya carga aún puede no haber
+    /// entrado, y el compás en que acabó.
+    released: Option<(engine::KnobTarget, u64)>,
+    /// Valores en vivo mandados al motor (para los tests y la medición).
+    live_sent: u64,
 }
 
 /// Cómo se está cambiando.
@@ -120,6 +128,18 @@ struct Gesture {
     dragged: f64,
     /// Qué es: `fx("filter") cutoff`, `:gain` o `número`.
     label: String,
+    /// Suena mientras se ajusta (el parámetro del motor se sabe seguro), o
+    /// por qué no.
+    live: Result<Live, String>,
+}
+
+/// El valor en vivo de un gesto: su mando en el motor, cuándo se mandó el
+/// último y el que espera turno.
+#[derive(Debug)]
+struct Live {
+    target: script::live::LiveTarget,
+    sent: Option<Instant>,
+    pending: Option<f32>,
 }
 
 /// Lo que se enseña de un gesto en curso (la línea bajo el editor).
@@ -381,6 +401,7 @@ impl App {
             self.message = format!("«{}» no se ajusta", literal.text);
             return false;
         };
+        let live = self.live_target(&literal, spec);
         let cursor = self.editor.cursor();
         self.editor.cancel_selection();
         self.completion = None;
@@ -399,6 +420,7 @@ impl App {
             via,
             dragged: 0.0,
             label: label(&literal),
+            live,
         });
         self.adjust.hover = Some((literal.row, literal.cols));
         true
@@ -439,6 +461,80 @@ impl App {
         g.last = now;
         let text = g.stepper.nudge(ticks);
         self.adjust_write(&text);
+        self.adjust_live(now, false);
+    }
+
+    /// El destino en el motor del número, si se sabe seguro: con el texto
+    /// cargado (las posiciones son las suyas), en esta ventana (la del
+    /// editor aparte no tiene el motor) y lo que diga el script
+    /// ([`script::live::resolve`]).
+    fn live_target(
+        &self,
+        literal: &NumberLiteral,
+        spec: Option<script::api::Numeric>,
+    ) -> Result<Live, String> {
+        if self.editor_window() {
+            return Err("en la ventana del editor, al acabar".into());
+        }
+        if self.loaded_text.as_deref() != Some(self.text().as_str()) {
+            return Err("el texto no es el cargado".into());
+        }
+        let value: f64 = literal.text.parse().map_err(|_| "no es un número")?;
+        let range = spec.map(|s| (s.min, s.max, s.log));
+        let target = self
+            .host
+            .live_target(&literal.place, value, range)
+            .map_err(str::to_string)?;
+        // El motor tiene un solo gesto: otro parámetro espera a que entre
+        // la carga del anterior (si no, el anterior volvería a lo de antes
+        // hasta el compás).
+        if let Some((before, bar)) = self.adjust.released
+            && before != target.map.target
+            && self.status.is_none_or(|s| !s.running || s.bar <= bar)
+        {
+            return Err("la carga del anterior aún no ha entrado".into());
+        }
+        Ok(Live {
+            target,
+            sent: None,
+            pending: None,
+        })
+    }
+
+    /// Manda al motor el valor del gesto (como mucho cada [`LIVE_EVERY`];
+    /// el que llega antes espera y sale en el `tick`). `force`: ya.
+    fn adjust_live(&mut self, now: Instant, force: bool) {
+        let Some(g) = self.adjust.gesture.as_mut() else {
+            return;
+        };
+        let value = g.stepper.value();
+        let Ok(live) = g.live.as_mut() else {
+            return;
+        };
+        let t = live.target.position(value);
+        let due = force
+            || live
+                .sent
+                .is_none_or(|s| now.saturating_duration_since(s) >= LIVE_EVERY);
+        if !due {
+            live.pending = Some(t);
+            return;
+        }
+        live.pending = None;
+        live.sent = Some(now);
+        self.adjust.live_sent += 1;
+        let map = live.target.map;
+        if self.controller.gesture(Some(map), t).is_err()
+            && let Some(g) = self.adjust.gesture.as_mut()
+        {
+            g.live = Err("el motor no lo recibe".into());
+        }
+    }
+
+    /// Quita el valor en vivo del motor ya (cancelado, sin cambios o la
+    /// carga falló): vuelve a mandar lo cargado.
+    fn live_off(&mut self) {
+        let _ = self.controller.gesture(None, 0.0);
     }
 
     /// Escribe `text` en el sitio del número (deshaciendo lo que escribió
@@ -494,11 +590,12 @@ impl App {
             return;
         };
         self.adjust.hover = None;
-        if !g.applied {
-            return;
-        }
+        let live = g.live.is_ok();
         let after = self.editor.lines().to_vec();
-        if after == g.before {
+        if !g.applied || after == g.before {
+            if live {
+                self.live_off();
+            }
             return;
         }
         self.undo_groups.push(EditGroup {
@@ -507,12 +604,29 @@ impl App {
         });
         self.redo_groups.clear();
         let value = numbers::shown(&g.stepper.text(), g.stepper.spec());
+        if let Ok(live) = &g.live {
+            // El último valor, ya; y la carga lo retira al compás, con el
+            // texto que lo dice.
+            let t = live.target.position(g.stepper.value());
+            let _ = self.controller.gesture(Some(live.target.map), t);
+            self.host.release_gesture();
+            let bar = self.status.map_or(0, |s| s.bar);
+            self.adjust.released = Some((live.target.map.target, bar));
+        }
+        let loads = self.loads;
         self.load();
+        if live && (self.error.is_some() || self.loads == loads) {
+            // La carga no llegó al motor: sigue sonando lo de antes, también
+            // en este parámetro.
+            self.live_off();
+        }
         if self.error.is_none() {
-            self.message = format!(
-                "{} = {value}: entra en el compás siguiente (Ctrl-Z lo deshace)",
-                g.label
-            );
+            let when = if live {
+                "suena ya; el texto entra en el compás siguiente"
+            } else {
+                "entra en el compás siguiente"
+            };
+            self.message = format!("{} = {value}: {when} (Ctrl-Z lo deshace)", g.label);
         }
     }
 
@@ -522,6 +636,9 @@ impl App {
             return;
         };
         self.adjust.hover = None;
+        if g.live.is_ok() {
+            self.live_off();
+        }
         if g.applied {
             let mut tries = 0;
             while self.editor.lines() != g.before.as_slice() && tries < 8 && self.editor.undo() {
@@ -614,6 +731,16 @@ impl App {
 
     /// Acaba el gesto tras la pausa (en cada vuelta del bucle).
     pub(super) fn adjust_tick(&mut self, now: Instant) {
+        // El valor en vivo que esperaba turno.
+        if self.adjust.gesture.as_ref().is_some_and(|g| {
+            g.live.as_ref().is_ok_and(|l| {
+                l.pending.is_some()
+                    && l.sent
+                        .is_none_or(|s| now.saturating_duration_since(s) >= LIVE_EVERY)
+            })
+        }) {
+            self.adjust_live(now, true);
+        }
         let pause = Duration::from_millis(self.editor_config.adjust.pause_ms as u64);
         if self
             .adjust
@@ -679,7 +806,10 @@ impl App {
             value: numbers::shown(&g.stepper.text(), spec),
             range,
             fraction: g.stepper.fraction(),
-            when: "se oirá en el compás siguiente".into(),
+            when: match &g.live {
+                Ok(_) => "suena ya".into(),
+                Err(why) => format!("se oirá en el compás siguiente ({why})"),
+            },
         })
     }
 
@@ -714,6 +844,11 @@ impl App {
     /// Como en cada vuelta del bucle, en el instante `now`.
     pub fn adjust_tick_for_test(&mut self, now: Instant) {
         self.adjust_tick(now);
+    }
+
+    /// Los valores en vivo mandados al motor.
+    pub fn live_sent_for_test(&self) -> u64 {
+        self.adjust.live_sent
     }
 
     /// Las cargas hechas.

@@ -15,16 +15,32 @@
 //!   [`RETURN_SECONDS`]; sobre un valor fijo se queda donde se dejó
 //!   ([`KnobMap::latch`]).
 //!
+//! - **El gesto** ([`GESTURE`]): una ranura más, fuera de la tabla, para
+//!   ajustar un número del código con el ratón mientras suena. Su destino
+//!   entra ya ([`crate::Controller::gesture`]), no al compás; manda sobre
+//!   los mandos MIDI del mismo parámetro y se queda donde se deja. Se
+//!   retira con el lote de la carga que trae el texto con el valor nuevo
+//!   ([`crate::Batch::release_gesture`]), al empezar el compás: el
+//!   parámetro pasa de su valor al mismo valor escrito, sin salto.
+//!
 //! Todo es de tamaño fijo y `Copy`: el hilo de audio no reserva nada.
 
 use crate::automation::mix;
 
 /// Mandos asignados como mucho.
 pub const MAX_KNOBS: usize = 16;
+/// La ranura del gesto (ajustar un número con el ratón), tras los mandos.
+pub const GESTURE: usize = MAX_KNOBS;
+/// Mandos y gesto.
+const SLOTS: usize = MAX_KNOBS + 1;
 /// Lo que tarda el valor del mando en seguir al CC.
 pub const KNOB_SMOOTHING_SECONDS: f32 = 0.03;
 /// Lo que tarda el mando en mandar desde que se mueve.
 pub const TAKEOVER_SECONDS: f32 = 0.03;
+/// El gesto llega a unos 30 valores por segundo (no los 128 escalones de
+/// un CC): se suaviza menos, para que se oiga antes.
+pub const GESTURE_SMOOTHING_SECONDS: f32 = 0.015;
+pub const GESTURE_TAKEOVER_SECONDS: f32 = 0.01;
 /// Quieto este tiempo, un mando sobre una curva la suelta...
 pub const HOLD_SECONDS: f32 = 1.5;
 /// ... y la curva vuelve a mandar en esto.
@@ -89,14 +105,15 @@ pub type Knobs = [Option<KnobMap>; MAX_KNOBS];
 /// valor del parámetro y cuánto manda (0: nada, 1: todo).
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct KnobLive {
-    entries: [Option<(KnobTarget, f32, f32)>; MAX_KNOBS],
+    entries: [Option<(KnobTarget, f32, f32)>; SLOTS],
 }
 
 impl KnobLive {
-    /// El valor y el peso del mando que mueve `target`, si alguno manda.
+    /// El valor y el peso del mando que mueve `target`, si alguno manda
+    /// (el gesto, antes que los mandos).
     pub fn find(&self, target: KnobTarget) -> Option<(f32, f32)> {
-        self.entries
-            .iter()
+        std::iter::once(&self.entries[GESTURE])
+            .chain(&self.entries[..MAX_KNOBS])
             .flatten()
             .find(|(t, _, _)| *t == target)
             .map(|&(_, v, w)| (v, w))
@@ -140,13 +157,17 @@ pub(crate) struct KnobState {
     pub map: Knobs,
     pub pending: Option<Knobs>,
     pub staged: Option<Knobs>,
+    /// El gesto (ver la cabecera) y si un lote lo retira al compás.
+    gesture: Option<KnobMap>,
+    pub release_pending: bool,
+    pub release_staged: bool,
     /// Lo último que llegó del CC (0 a 1) y lo que suena (suavizado).
-    value: [f32; MAX_KNOBS],
-    smoothed: [f32; MAX_KNOBS],
+    value: [f32; SLOTS],
+    smoothed: [f32; SLOTS],
     /// Cuánto manda cada uno, y frames desde que se movió por última vez
     /// (`None`: no se ha movido nunca).
-    weight: [f32; MAX_KNOBS],
-    idle: [Option<u64>; MAX_KNOBS],
+    weight: [f32; SLOTS],
+    idle: [Option<u64>; SLOTS],
 }
 
 impl Default for KnobState {
@@ -155,10 +176,13 @@ impl Default for KnobState {
             map: [None; MAX_KNOBS],
             pending: None,
             staged: None,
-            value: [0.0; MAX_KNOBS],
-            smoothed: [0.0; MAX_KNOBS],
-            weight: [0.0; MAX_KNOBS],
-            idle: [None; MAX_KNOBS],
+            gesture: None,
+            release_pending: false,
+            release_staged: false,
+            value: [0.0; SLOTS],
+            smoothed: [0.0; SLOTS],
+            weight: [0.0; SLOTS],
+            idle: [None; SLOTS],
         }
     }
 }
@@ -166,7 +190,7 @@ impl Default for KnobState {
 impl KnobState {
     /// El mando `index` se ha movido a `value` (de 0 a 1).
     pub fn moved(&mut self, index: usize, value: f32) {
-        if index >= MAX_KNOBS {
+        if index >= SLOTS {
             return;
         }
         // La primera vez, sin glide desde 0: desde donde está.
@@ -188,23 +212,64 @@ impl KnobState {
         self.map = map;
     }
 
+    /// El gesto: su destino (`None` lo quita ya) y su valor (de 0 a 1).
+    /// Un destino nuevo empieza desde el valor, sin glide.
+    pub fn set_gesture(&mut self, map: Option<KnobMap>, value: f32) {
+        if self.gesture.map(|m| m.target) != map.map(|m| m.target) {
+            self.weight[GESTURE] = 0.0;
+            self.idle[GESTURE] = None;
+        } else if map.is_some() {
+            // Otro gesto sobre lo mismo antes de que entre la carga del
+            // anterior: manda él, y su carga lo retirará.
+            self.release_pending = false;
+        }
+        self.gesture = map;
+        if map.is_some() {
+            self.moved(GESTURE, value);
+        } else {
+            self.release_pending = false;
+            self.release_staged = false;
+        }
+    }
+
+    /// Al empezar el compás: si un lote lo pidió, el gesto se retira.
+    pub fn release_due(&mut self) {
+        if std::mem::take(&mut self.release_pending) {
+            self.set_gesture(None, 0.0);
+        }
+    }
+
+    fn map_of(&self, i: usize) -> Option<KnobMap> {
+        if i == GESTURE {
+            self.gesture
+        } else {
+            self.map[i]
+        }
+    }
+
     /// Avanza `frames` frames y da lo que mandan en ese trozo. Sin mandos
-    /// asignados, nada (y nada que calcular).
+    /// asignados ni gesto, nada (y nada que calcular).
     pub fn advance(&mut self, frames: usize, sample_rate: u32) -> KnobLive {
         let mut live = KnobLive::default();
-        if self.map.iter().all(Option::is_none) {
+        if self.gesture.is_none() && self.map.iter().all(Option::is_none) {
             return live;
         }
         let rate = sample_rate as f32;
         let n = frames as f32;
         let follow = 1.0 - (-n / (KNOB_SMOOTHING_SECONDS * rate)).exp();
+        let gesture_follow = 1.0 - (-n / (GESTURE_SMOOTHING_SECONDS * rate)).exp();
         let hold = (HOLD_SECONDS * rate) as u64;
-        for i in 0..MAX_KNOBS {
-            let Some(map) = self.map[i] else { continue };
+        for i in 0..SLOTS {
+            let Some(map) = self.map_of(i) else { continue };
             let Some(idle) = self.idle[i] else { continue };
+            let (follow, takeover) = if i == GESTURE {
+                (gesture_follow, GESTURE_TAKEOVER_SECONDS)
+            } else {
+                (follow, TAKEOVER_SECONDS)
+            };
             self.smoothed[i] += (self.value[i] - self.smoothed[i]) * follow;
             if idle < hold || map.latch {
-                self.weight[i] = (self.weight[i] + n / (TAKEOVER_SECONDS * rate)).min(1.0);
+                self.weight[i] = (self.weight[i] + n / (takeover * rate)).min(1.0);
             } else {
                 self.weight[i] = (self.weight[i] - n / (RETURN_SECONDS * rate)).max(0.0);
             }
@@ -220,8 +285,8 @@ impl KnobState {
     #[cfg(test)]
     pub fn live(&self) -> KnobLive {
         let mut live = KnobLive::default();
-        for i in 0..MAX_KNOBS {
-            if let Some(map) = self.map[i]
+        for i in 0..SLOTS {
+            if let Some(map) = self.map_of(i)
                 && self.weight[i] > 0.0
             {
                 live.entries[i] = Some((map.target, map.value(self.smoothed[i]), self.weight[i]));
@@ -326,5 +391,78 @@ mod tests {
             state.advance(256, RATE);
         }
         assert!((state.live().find(target).unwrap().0 - 8000.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn the_gesture_enters_now_wins_over_a_knob_and_leaves_with_the_batch() {
+        let mut state = KnobState::default();
+        state.set_map(cutoff(true));
+        let target = cutoff(true)[0].unwrap().target;
+        state.moved(0, 0.0);
+        let gesture = KnobMap {
+            min: 20.0,
+            max: 20000.0,
+            ..cutoff(true)[0].unwrap()
+        };
+        state.set_gesture(Some(gesture), 1.0);
+        for _ in 0..20 {
+            state.advance(256, RATE);
+        }
+        assert_eq!(state.live().find(target), Some((20000.0, 1.0)));
+        // Quieto mucho tiempo, se queda (como un valor fijo).
+        for _ in 0..(48_000 * 3 / 256) {
+            state.advance(256, RATE);
+        }
+        assert_eq!(state.live().find(target), Some((20000.0, 1.0)));
+        // El lote lo pide; hasta el compás, sigue.
+        state.release_pending = true;
+        state.advance(256, RATE);
+        assert_eq!(state.live().find(target).map(|f| f.0), Some(20000.0));
+        state.release_due();
+        state.advance(256, RATE);
+        // Vuelve a mandar el mando MIDI.
+        assert_eq!(state.live().find(target), Some((200.0, 1.0)));
+        // Quitarlo ya también vale.
+        state.set_gesture(Some(gesture), 0.0);
+        state.set_gesture(None, 0.0);
+        assert_eq!(state.live().find(target), Some((200.0, 1.0)));
+        assert!(!state.release_pending);
+    }
+
+    /// Lo que tarda el gesto en llegar al 90 % de un valor nuevo, en trozos
+    /// de 128 frames (el bloque de la salida suele ser de 128 a 1024).
+    #[test]
+    fn the_gesture_reaches_a_new_value_in_tens_of_milliseconds() {
+        let mut state = KnobState::default();
+        let map = KnobMap {
+            min: 0.0,
+            max: 1.0,
+            curve: KnobCurve::Linear,
+            ..cutoff(true)[0].unwrap()
+        };
+        let target = map.target;
+        let reach = |state: &mut KnobState, to: f32, from: f32| {
+            let mut frames = 0;
+            loop {
+                let live = state.advance(128, RATE);
+                frames += 128;
+                let (v, w) = live.find(target).unwrap_or((0.0, 0.0));
+                let heard = from + (v - from) * w;
+                if (heard - from).abs() >= 0.9 * (to - from).abs() {
+                    return frames as f32 * 1000.0 / RATE as f32;
+                }
+                assert!(frames < RATE as usize, "no llega");
+            }
+        };
+        // Al empezar (el mando entra), y un cambio a mitad del gesto.
+        state.set_gesture(Some(map), 1.0);
+        let start = reach(&mut state, 1.0, 0.0);
+        state.set_gesture(Some(map), 0.0);
+        let change = reach(&mut state, 0.0, 1.0);
+        eprintln!(
+            "latencia del gesto en el motor: al entrar {start:.1} ms, un cambio {change:.1} ms"
+        );
+        assert!(start <= 12.0, "{start}");
+        assert!(change <= 40.0, "{change}");
     }
 }

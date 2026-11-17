@@ -1018,5 +1018,10 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
        inercia, el límite de ritmo, Ctrl y arrastrar, Alt-A/Alt-X (Ctrl-A
        y Ctrl-X en vim), el resaltado y la línea con el fader, y la
        ventana aparte del editor.
-    2. **Que suene mientras se ajusta**.
-    3. **Fader en línea** (`slider()`), opcional.
+    2. ✅ **Que suene mientras se ajusta**: una ranura de gesto en el motor
+       (entra ya, se retira con el lote de la carga al compás), los sitios
+       de lo que se mueve en vivo al evaluar (`script::live`) y solo lo
+       seguro suena ya; el resto, en el compás siguiente, diciendo por qué.
+    3. **Fader en línea** (`slider()`), opcional: sin hacer, descrito en
+       «Fader en línea» de [docs/ESTADO.md](ESTADO.md) (primero, afinar el
+       gesto con el touchpad en el Asahi).

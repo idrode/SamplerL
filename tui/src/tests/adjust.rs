@@ -457,7 +457,7 @@ fn the_number_is_highlighted_and_the_line_says_value_range_and_when() {
         "{screen}"
     );
     assert!(screen.contains("20–20000 Hz · log"), "{screen}");
-    assert!(screen.contains("se oirá en el compás siguiente · Esc cancela"));
+    assert!(screen.contains("suena ya · Esc cancela"), "{screen}");
     assert!(screen.contains('━') && screen.contains('─'), "el fader");
     let (x, y) = find(&buffer, "3366").unwrap();
     let style = buffer[(x, y)].style();
@@ -472,8 +472,11 @@ fn the_number_is_highlighted_and_the_line_says_value_range_and_when() {
     );
     assert!(screen.contains("===>---"), "{screen}");
     // Estrecho: primero sobra el fader y después el rango.
-    let narrow = text(&draw(&mut app, 120, 40));
-    assert!(narrow.contains("cutoff = 3366 Hz  se oirá"), "{narrow}");
+    let narrow = text(&draw(&mut app, 80, 40));
+    assert!(
+        narrow.contains("cutoff = 3366 Hz  20–20000 Hz · log  suena ya"),
+        "sin el fader: {narrow}"
+    );
 }
 
 #[test]
@@ -535,4 +538,58 @@ fn in_the_editor_window_the_gesture_edits_its_text_and_the_main_window_loads_it(
     // Un Ctrl-Z en la ventana del editor lo deshace entero.
     editor.handle(ctrl('z'));
     assert_eq!(line(&editor, 0), "bpm(120)");
+}
+
+#[test]
+fn a_certain_parameter_sounds_while_it_moves_and_the_rest_at_the_next_bar() {
+    let (mut app, mut engine) = open_numbers("adjust_live");
+    let mut t = Instant::now();
+    // El corte del filtro: se sabe seguro, suena ya.
+    let at = on(&app, 3, "3000");
+    ctrl_wheel(&mut app, true, at, &mut t, 0);
+    assert_eq!(app.adjust_info().unwrap().when, "suena ya");
+    assert_eq!(app.live_sent_for_test(), 1, "el primero sale en seguida");
+    // Una ráfaga de 30 pasos en 150 ms: como mucho uno cada 33 ms.
+    for _ in 0..30 {
+        ctrl_wheel(&mut app, true, at, &mut t, 5);
+        app.adjust_tick_for_test(t);
+    }
+    let sent = app.live_sent_for_test();
+    assert!((4..=7).contains(&sent), "{sent}");
+    // Al acabar, el último valor y la carga (que lo retira al compás).
+    pause(&mut app, &mut t);
+    assert!(
+        app.view().message.contains("suena ya"),
+        "{}",
+        app.view().message
+    );
+    engine::offline::render(&mut engine, 4096, 2);
+    // `bpm` no es de un parámetro que se mueva en vivo: lo dice.
+    let at = on(&app, 0, "120");
+    ctrl_wheel(&mut app, true, at, &mut t, 0);
+    let when = app.adjust_info().unwrap().when;
+    assert!(
+        when.starts_with("se oirá en el compás siguiente ("),
+        "{when}"
+    );
+    pause(&mut app, &mut t);
+    // Con el texto sin cargar, tampoco (las posiciones no serían las
+    // suyas).
+    app.handle(Input {
+        key: Key::End,
+        ..Default::default()
+    });
+    type_text(&mut app, " ");
+    let at = on(&app, 4, "0.8");
+    ctrl_wheel(&mut app, true, at, &mut t, 0);
+    assert_eq!(
+        app.adjust_info().unwrap().when,
+        "se oirá en el compás siguiente (el texto no es el cargado)"
+    );
+    // Esc lo cancela (y quita lo que sonaba en vivo).
+    app.handle(Input {
+        key: Key::Esc,
+        ..Default::default()
+    });
+    assert!(!app.adjusting());
 }

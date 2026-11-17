@@ -1555,6 +1555,49 @@ fn the_audio_thread_never_allocates() {
     });
     assert_eq!(n, 0, "reservas con mandos MIDI");
 
+    // El gesto de ajustar un número con el ratón: entra ya sobre un efecto,
+    // un volumen y un sintetizador (manda sobre un mando), se mueve a
+    // 30 por segundo, se retira con un lote al compás y se quita ya.
+    let n = counted(|| {
+        for (k, target) in [
+            engine::KnobTarget::Fx {
+                track: 0,
+                slot: 0,
+                param: 0,
+            },
+            engine::KnobTarget::Mix {
+                track: 3,
+                index: engine::MIX_PAN as u8,
+            },
+            engine::KnobTarget::Synth { track: 7, param: 1 },
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            for step in 0..60 {
+                if step % 2 == 0 {
+                    controller
+                        .gesture(knob(target, true), (step % 50) as f32 / 50.0)
+                        .unwrap();
+                }
+                engine.process(&mut out, 2);
+            }
+            if k == 1 {
+                controller.gesture(None, 0.0).unwrap();
+            }
+        }
+    });
+    assert_eq!(n, 0, "reservas con el gesto");
+    let mut batch = engine::Batch::new();
+    batch.release_gesture();
+    controller.apply(batch).unwrap();
+    let n = counted(|| {
+        for _ in 0..400 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas al retirar el gesto con el lote");
+
     // Arrancar en un compás cualquiera (con la rampa de tempo: cuenta sus
     // compases de antes).
     controller.stop().unwrap();

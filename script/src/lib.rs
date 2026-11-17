@@ -42,6 +42,7 @@ use engine::{
 pub mod api;
 pub mod atomic;
 pub mod lint;
+pub mod live;
 pub mod panics;
 pub mod sandbox;
 
@@ -204,6 +205,9 @@ pub struct Song {
     pub lanes: Vec<Option<LaneDef>>,
     /// Visualizaciones pedidas (`pista:scope()`, `master():spectrum()`...).
     pub viz: Vec<VizDef>,
+    /// Las llamadas que dejaron valores que se mueven en vivo (ver
+    /// [`live`]); vacía con secciones o variantes.
+    pub live: Vec<live::LiveSite>,
 }
 
 /// La tonalidad de la canción (`key("A", "minor")`): la usan `scale()`
@@ -705,6 +709,9 @@ struct Stretched {
 }
 
 pub struct ScriptHost {
+    /// La próxima carga retira el gesto del motor al compás (ver
+    /// [`ScriptHost::release_gesture`]).
+    release_gesture: bool,
     sample_rate: u32,
     time_limit: Duration,
     /// Memoria máxima del intérprete en una carga, en bytes.
@@ -764,6 +771,7 @@ impl ScriptHost {
     /// `sample_rate` es la del motor: los samples se cargan a esa frecuencia.
     pub fn new(sample_rate: u32) -> Self {
         ScriptHost {
+            release_gesture: false,
             sample_rate,
             time_limit: DEFAULT_TIME_LIMIT,
             memory_limit: DEFAULT_MEMORY_LIMIT,
@@ -1039,6 +1047,24 @@ impl ScriptHost {
         self.song.as_ref()
     }
 
+    /// El destino en el motor del número `value` escrito en `place`, en lo
+    /// que suena (ver [`live::resolve`]).
+    pub fn live_target(
+        &self,
+        place: &lint::Place,
+        value: f64,
+        range: Option<(f64, f64, bool)>,
+    ) -> Result<live::LiveTarget, &'static str> {
+        let song = self.song.as_ref().ok_or("no hay nada cargado")?;
+        live::resolve(song, &self.slots, place, value, range)
+    }
+
+    /// La próxima carga que llegue al motor retira el gesto en el compás en
+    /// que entra (lleva el texto con el número ya escrito); si falla, no.
+    pub fn release_gesture(&mut self) {
+        self.release_gesture = true;
+    }
+
     /// Pista del motor asignada a cada nombre.
     pub fn track_slot(&self, name: &str) -> Option<usize> {
         self.slots.iter().position(|s| s.as_deref() == Some(name))
@@ -1084,6 +1110,7 @@ impl ScriptHost {
         name: &str,
         base_dir: &Path,
     ) -> Result<(), ScriptError> {
+        let release = std::mem::take(&mut self.release_gesture);
         let mut song = self.eval(source, name, base_dir)?;
         // Con variantes, sigue sonando la que sonaba (la A al principio).
         let mut other = song.alternate.take().map(|b| *b);
@@ -1139,6 +1166,9 @@ impl ScriptHost {
                     song.warnings.push(warning);
                 }
             }
+        }
+        if release {
+            batch.release_gesture();
         }
         controller
             .apply(batch)
@@ -1319,6 +1349,7 @@ impl ScriptHost {
     /// de la evaluación (lo demás, vacío).
     fn eval_worker(&self) -> ScriptHost {
         ScriptHost {
+            release_gesture: false,
             sample_rate: self.sample_rate,
             time_limit: self.time_limit,
             memory_limit: self.memory_limit,
@@ -1442,6 +1473,8 @@ impl ScriptHost {
             lanes: Vec::new(),
             warnings: warnings.clone(),
             viz: Vec::new(),
+            live: Vec::new(),
+            main_done: false,
         }));
         // La caché pasa al estado de Lua durante la evaluación y vuelve después.
         let cache = Rc::new(RefCell::new(std::mem::take(&mut self.samples)));
@@ -1470,7 +1503,10 @@ impl ScriptHost {
                     lua.set_app_data(written::ScriptText::new(source, format!("={name}")));
                     lua.load(source).set_name(format!("={name}")).exec()
                 })
-                .and_then(|()| run_bodies(&state))
+                .and_then(|()| {
+                    state.borrow_mut().main_done = true;
+                    run_bodies(&state)
+                })
             },
         );
         // Montar la canción: Rust otra vez.
@@ -1688,6 +1724,7 @@ impl ScriptHost {
                 viz: viz.clone(),
                 key,
                 transpose,
+                live: Vec::new(),
             });
         }
         self.stretched = used;
@@ -1717,6 +1754,12 @@ impl ScriptHost {
             song.alternate = Some(Box::new(b));
         }
         check_groups(&song)?;
+        // Los sitios de lo que se mueve en vivo, sin secciones ni variantes
+        // (con ellas las pistas son copias: no se sabe seguro).
+        let live = std::mem::take(&mut state.borrow_mut().live);
+        if song.alternate.is_none() && song.sections.is_empty() {
+            song.live = live;
+        }
         Ok(song)
     }
 
@@ -2449,38 +2492,47 @@ impl ScriptHost {
         )?;
 
         let g = guard.clone();
+        let st = state.clone();
         globals.set(
             "sh101",
             lua.create_function(move |lua, options: Option<Table>| {
                 g(lua, "sh101")?;
                 let def = synth_options(lua, "sh101", options.as_ref())?;
+                let site = note_synth(lua, &st, "sh101", None, options.as_ref());
                 Ok(SynthHandle {
                     def,
                     sample_rate: rate,
+                    site,
                 })
             })?,
         )?;
         let g = guard.clone();
+        let st = state.clone();
         globals.set(
             "subharm",
             lua.create_function(move |lua, options: Option<Table>| {
                 g(lua, "subharm")?;
                 let def = synth_options(lua, "subharm", options.as_ref())?;
+                let site = note_synth(lua, &st, "subharm", None, options.as_ref());
                 Ok(SynthHandle {
                     def,
                     sample_rate: rate,
+                    site,
                 })
             })?,
         )?;
         let g = guard.clone();
+        let st = state.clone();
         globals.set(
             "synth",
             lua.create_function(move |lua, (kind, options): (String, Option<Table>)| {
                 g(lua, "synth")?;
                 let def = synth_options(lua, &kind, options.as_ref())?;
+                let site = note_synth(lua, &st, "synth", Some(kind), options.as_ref());
                 Ok(SynthHandle {
                     def,
                     sample_rate: rate,
+                    site,
                 })
             })?,
         )?;
@@ -2785,10 +2837,19 @@ impl ScriptHost {
             "track",
             lua.create_function(move |lua, (name, source): (String, Option<AnyUserData>)| {
                 guard(lua, "track")?;
+                let site = source
+                    .as_ref()
+                    .and_then(|s| s.borrow::<SynthHandle>().ok().and_then(|h| h.site));
                 let def = source
                     .map(|source| track_source(lua, &name, &source))
                     .transpose()?;
                 let mut builder = st.borrow_mut();
+                if let Some(site) = site
+                    && builder.recording()
+                    && let Some(s) = builder.live.get_mut(site)
+                {
+                    s.tracks.push(name.clone());
+                }
                 match def {
                     Some(def) => {
                         // Una pista nueva en una sección: entre todas las
@@ -3748,6 +3809,18 @@ struct Builder {
     warnings: Rc<RefCell<Vec<String>>>,
     /// Visualizaciones (`pista:scope()`, `master():spectrum()`...).
     viz: Vec<VizDef>,
+    /// Lo que se mueve en vivo, con dónde se escribió (ver [`live`]), y
+    /// si ya acabó el trozo principal (después no se anota).
+    live: Vec<live::LiveSite>,
+    main_done: bool,
+}
+
+impl Builder {
+    /// Se anotan sitios ahora: en el trozo principal, fuera de `every` y
+    /// de las secciones.
+    fn recording(&self) -> bool {
+        !self.main_done && !self.expanding.get() && !self.in_section.get()
+    }
 }
 
 /// `frozen(pista, wav [, huella])`, por aplicar al acabar el script.
@@ -4557,6 +4630,31 @@ impl UserData for InstrumentHandle {
 struct SynthHandle {
     def: InstrumentDef,
     sample_rate: u32,
+    /// Su sitio de lo que se mueve en vivo (ver [`live`]), si se anotó.
+    site: Option<usize>,
+}
+
+/// Anota el sitio de la tabla de un sintetizador (sin pista: se la pone
+/// `track()` al recibirlo).
+fn note_synth(
+    lua: &Lua,
+    state: &Rc<RefCell<Builder>>,
+    call: &'static str,
+    first: Option<String>,
+    options: Option<&Table>,
+) -> Option<usize> {
+    let recording = state.borrow().recording();
+    let row = live::row(lua, recording)?;
+    let mut builder = state.borrow_mut();
+    builder.live.push(live::LiveSite {
+        row,
+        call,
+        first,
+        tracks: Vec::new(),
+        kind: live::LiveKind::Synth,
+        values: live::numbers(options),
+    });
+    Some(builder.live.len() - 1)
 }
 
 impl UserData for SynthHandle {
@@ -6512,6 +6610,28 @@ struct TrackHandle {
 }
 
 impl TrackHandle {
+    /// Anota un sitio de lo que se mueve en vivo (ver [`live`]).
+    fn note_live(
+        &self,
+        lua: &Lua,
+        call: &'static str,
+        first: Option<String>,
+        kind: live::LiveKind,
+        values: Vec<(String, f64)>,
+    ) {
+        let recording = self.state.borrow().recording();
+        if let Some(row) = live::row(lua, recording) {
+            self.state.borrow_mut().live.push(live::LiveSite {
+                row,
+                call,
+                first,
+                tracks: vec![self.name.clone()],
+                kind,
+                values,
+            });
+        }
+    }
+
     /// `:steps(texto)` (y `:melody()`, que lo traduce a pasos: `written` es
     /// el texto tal como se escribió, para saber dónde está cada paso).
     fn set_steps(&self, lua: &Lua, text: &str, written: &str) -> mlua::Result<()> {
@@ -7303,21 +7423,31 @@ impl UserData for TrackHandle {
 
         // `:gain(g)`: volumen de la pista (lineal, de 0 a 4).
         methods.add_method("gain", |lua, this, gain: Value| {
+            let values = live::number(&gain);
             let (gain, curve) = gain_arg(lua, gain)?;
             this.with_track(|t| {
                 t.def.gain = gain;
                 t.def.mix_curves[engine::MIX_GAIN] = curve;
             });
+            this.note_live(
+                lua,
+                "gain",
+                None,
+                live::LiveKind::Mix("gain".into()),
+                values,
+            );
             Ok(this.clone())
         });
 
         // `:pan(p)`: pan de la pista (de -1 a 1), después de su volumen.
         methods.add_method("pan", |lua, this, pan: Value| {
+            let values = live::number(&pan);
             let (pan, curve) = pan_arg(lua, pan)?;
             this.with_track(|t| {
                 t.def.pan = pan;
                 t.def.mix_curves[engine::MIX_PAN] = curve;
             });
+            this.note_live(lua, "pan", None, live::LiveKind::Mix("pan".into()), values);
             Ok(this.clone())
         });
 
@@ -7521,11 +7651,14 @@ impl UserData for TrackHandle {
 
         // `:send(bus, nivel)`: parte de la pista al delay o a la reverb.
         methods.add_method("send", |lua, this, (bus, level): (String, Value)| {
+            let values = live::number(&level);
             let (index, level, curve) = send_arg(lua, &bus, level)?;
             this.with_track(|t| {
                 t.def.sends[index] = level;
                 t.def.mix_curves[engine::MIX_SEND + index] = curve;
             });
+            let kind = live::LiveKind::Mix(format!("send.{}", api::BUSES[index].name));
+            this.note_live(lua, "send", Some(bus), kind, values);
             Ok(this.clone())
         });
 
@@ -7544,15 +7677,19 @@ impl UserData for TrackHandle {
             "fx",
             |lua, this, (name, params): (String, Option<Table>)| {
                 let count = this.with_track(|t| t.def.fx.len());
+                let values = live::numbers(params.as_ref());
                 let (fx, automations, sidechain) =
                     fx_arg(lua, &name, params, count, Some(&this.name))?;
-                this.with_track(|t| {
+                let slot = this.with_track(|t| {
                     if let Some(key) = sidechain {
                         t.def.sidechains.push((t.def.fx.len(), key));
                     }
                     t.def.fx.push(fx);
                     t.def.automation.extend(automations);
+                    t.def.fx.len() - 1
                 });
+                let kind = live::LiveKind::Fx { slot };
+                this.note_live(lua, "fx", Some(name), kind, values);
                 Ok(this.clone())
             },
         );

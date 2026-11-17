@@ -251,7 +251,7 @@ const BUS_PARAMS: &[(&str, usize)] = &[
 
 /// Nombre del efecto de la ranura `slot` en una asignación: el del
 /// registro y, si hay otro igual antes, `#2`, `#3`...
-fn fx_name(chain: &[Fx], slot: usize) -> String {
+pub(crate) fn fx_name(chain: &[Fx], slot: usize) -> String {
     let name = api::effect_name(&chain[slot]);
     let before = chain[..slot]
         .iter()
@@ -321,7 +321,7 @@ pub fn resolve(
 
 /// El destino en el motor de una asignación y si es un valor fijo (el
 /// mando se queda) o con curva (la devuelve).
-fn target(
+pub(crate) fn target(
     l: &Learned,
     song: &Song,
     slots: &[Option<String>; MAX_TRACKS],

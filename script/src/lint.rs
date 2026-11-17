@@ -1253,8 +1253,8 @@ pub struct Place {
     pub method: bool,
     /// La primera cadena de la llamada (`"filter"` en `fx("filter", …)`).
     pub first: Option<String>,
-    /// La fila (desde 0) donde empieza la expresión de la llamada: la que
-    /// Lua da como su línea (en una cadena de métodos, la de la primera).
+    /// La fila (desde 0) del nombre de la llamada: la que Lua da como su
+    /// línea (en una cadena de métodos, la de cada método).
     pub call_row: usize,
     /// El argumento de la llamada (desde 0).
     pub arg: usize,
@@ -1435,7 +1435,7 @@ fn place_of(tokens: &[Token], at: usize) -> Option<Place> {
     {
         place.first = Some(s.clone());
     }
-    place.call_row = chain_start(tokens, callee);
+    place.call_row = tokens[callee].row;
     Some(place)
 }
 
@@ -1454,44 +1454,6 @@ fn enclosing(tokens: &[Token], at: usize) -> Option<usize> {
         }
     }
     None
-}
-
-/// La fila del primer token de la expresión cuyo nombre de llamada está en
-/// `callee` (`track("x")` en `track("x"):fx(…)`, aunque esté en otra
-/// línea): la que da Lua como línea de la llamada.
-fn chain_start(tokens: &[Token], callee: usize) -> usize {
-    let mut j = callee;
-    loop {
-        // `a.b`, `a:b`: el de antes del punto.
-        if j >= 2 && (tokens[j - 1].sym(".") || tokens[j - 1].sym(":")) {
-            let prev = j - 2;
-            let t = &tokens[prev];
-            if t.sym(")") || t.sym("}") {
-                // Una llamada o un índice: hasta su nombre.
-                let Some(open) = opening(tokens, prev) else {
-                    break;
-                };
-                let Some(name) = open.checked_sub(1) else {
-                    break;
-                };
-                if tokens[name].name().is_none() {
-                    break;
-                }
-                j = name;
-                continue;
-            }
-            if matches!(t.kind, Kind::Str(_)) && prev >= 1 && tokens[prev - 1].name().is_some() {
-                j = prev - 1;
-                continue;
-            }
-            if t.name().is_some() {
-                j = prev;
-                continue;
-            }
-        }
-        break;
-    }
-    tokens[j].row
 }
 
 /// El parámetro del registro de un número que es el valor entero de su
@@ -1722,13 +1684,13 @@ mod tests {
             ("0.7", Some("q"))
         );
         // Varios en una línea, el método y el negativo (también desde el
-        // signo), y la línea de la llamada es la de la cadena entera.
+        // signo), y la línea de la llamada es la de su método.
         let g = number(src, 2, 8);
         assert_eq!(
             (g.text.as_str(), g.param.map(|p| p.name)),
             ("0.8", Some("gain"))
         );
-        assert_eq!(g.place.call_row, 1);
+        assert_eq!(g.place.call_row, 2);
         let p = number(src, 2, 17);
         assert_eq!((p.text.as_str(), p.cols.clone()), ("-0.25", 17..22));
         assert_eq!(number(src, 2, 19).cols, 17..22);
