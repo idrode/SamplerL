@@ -17,8 +17,10 @@ pub(crate) struct ClashState {
     pub live: Option<Live>,
     /// El cursor está en el panel (se queda las flechas).
     pub cursor: bool,
-    /// El choque elegido (de la lista, por gravedad).
+    /// El choque elegido (de la lista, por gravedad) y su sugerencia
+    /// elegida (←→).
     pub selected: usize,
+    pub fix: usize,
     /// Muestras llegadas desde el último cuadro del análisis, y si toca.
     pub pending: usize,
     pub fresh: bool,
@@ -122,6 +124,9 @@ impl App {
                     .map(|(name, slot)| (name.as_str(), &history[*slot])),
                 &priority,
             );
+            if let (Some(report), Some(song)) = (live.report_mut(), self.host.song()) {
+                report.set_song(song);
+            }
         }
     }
 
@@ -144,7 +149,19 @@ impl App {
             return Some(MatrixView::default());
         };
         let selected = self.clash.cursor.then_some(self.clash.selected);
-        Some(MatrixView::of(report, selected, Vec::new()))
+        let fixes = selected
+            .map(|_| self.clash_fixes(report))
+            .unwrap_or_default()
+            .iter()
+            .enumerate()
+            .map(|(i, f)| {
+                let lead = if i == self.clash.fix { "▸ " } else { "  " };
+                format!("{lead}{}", f.line)
+            })
+            .collect();
+        let mut view = MatrixView::of(report, selected, fixes);
+        view.chosen_fix = self.clash.fix;
+        Some(view)
     }
 
     /// Lo que dibuja la pestaña «choques»: la tabla pareja × banda y la
@@ -204,24 +221,77 @@ impl App {
         })
     }
 
+    /// Las sugerencias del choque elegido de `report` (ver
+    /// [`script::masking::MaskingReport::fixes_for`]).
+    pub(super) fn clash_fixes(
+        &self,
+        report: &script::masking::MaskingReport,
+    ) -> Vec<script::masking::Fix> {
+        report
+            .groups()
+            .get(self.clash.selected)
+            .map_or_else(Vec::new, |g| report.fixes_for(g))
+    }
+
+    /// Inserta en el script la sugerencia elegida del choque elegido, tras
+    /// la definición de la pista que cede, en un paso de deshacer; ni
+    /// guarda ni carga.
+    pub(super) fn insert_clash_fix(&mut self) {
+        let Some(report) = self.clash_report().cloned() else {
+            return;
+        };
+        let fixes = self.clash_fixes(&report);
+        let Some(fix) = fixes.get(self.clash.fix.min(fixes.len().saturating_sub(1))) else {
+            return;
+        };
+        let name = report.tracks[fix.track].clone();
+        let full = self
+            .host
+            .song()
+            .and_then(|s| s.tracks.iter().find(|t| t.name == name))
+            .is_some_and(|t| t.fx.len() >= engine::MAX_FX);
+        let row = self.insert_after_track(&name, &fix.line);
+        let what = match fix.kind {
+            script::masking::FixKind::Sidechain => "sidechain",
+            script::masking::FixKind::Eq => "EQ",
+        };
+        let warning = if full {
+            format!(" · ojo: «{name}» ya tiene {} efectos", engine::MAX_FX)
+        } else {
+            String::new()
+        };
+        self.message = format!(
+            "{what} de «{name}» insertado en la línea {}, sin guardar (Ctrl-Z lo deshace; Ctrl-S lo guarda y lo carga){warning}",
+            row + 1
+        );
+    }
+
     /// Cuántos choques hay en lo que enseña el panel.
     fn clash_groups(&self) -> usize {
         self.clash_report().map_or(0, |r| r.groups().len())
     }
 
-    /// Tecla con el cursor en el panel de choques: ↑↓ eligen, Esc suelta.
+    /// Tecla con el cursor en el panel de choques: ↑↓ eligen un choque, ←→
+    /// una de sus sugerencias, Enter la inserta y Esc suelta.
     pub(super) fn handle_clash_cursor(&mut self, input: Input) -> Flow {
         let count = self.clash_groups();
+        let fixes = self.clash_report().map_or(0, |r| self.clash_fixes(r).len());
         match input.key {
+            Key::Left | Key::Right if fixes > 0 => {
+                self.clash.fix = (self.clash.fix.min(fixes - 1) + 1) % fixes;
+            }
+            Key::Enter => self.insert_clash_fix(),
             Key::Esc => {
                 self.clash.cursor = false;
                 self.message = "fuera del panel de choques".into();
             }
             Key::Up if count > 0 => {
+                self.clash.fix = 0;
                 self.clash.selected = (self.clash.selected.min(count - 1) + count - 1) % count;
                 self.say_clash();
             }
             Key::Down if count > 0 => {
+                self.clash.fix = 0;
                 self.clash.selected = (self.clash.selected.min(count - 1) + 1) % count;
                 self.say_clash();
             }
@@ -257,10 +327,18 @@ impl App {
             MatrixHit::Cell(t, band) => groups
                 .iter()
                 .position(|g| (g.a == t || g.b == t) && (g.bands.0..=g.bands.1).contains(&band)),
-            MatrixHit::Fix(_) => None,
+            MatrixHit::Fix(i) => {
+                // Un clic en una sugerencia la inserta.
+                self.clash.fix = i;
+                self.insert_clash_fix();
+                return;
+            }
         };
         if let Some(i) = chosen {
             self.clash.cursor = true;
+            if i != self.clash.selected {
+                self.clash.fix = 0;
+            }
             self.clash.selected = i;
             self.say_clash();
         }

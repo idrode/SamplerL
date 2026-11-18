@@ -31,6 +31,11 @@ pub struct MaskingReport {
     /// Nivel medio de cada pista en cada banda, en dBFS (0: un seno de
     /// amplitud 1 dentro todo el tiempo), en el orden de `tracks`.
     pub levels: Vec<[f32; BANDS]>,
+    /// Quién escucha a quién por sidechain en la canción (pista, la que
+    /// escucha) y las pistas congeladas: para no sugerir un sidechain en
+    /// círculo ni uno por patrón de una pista sin golpes.
+    pub sidechains: Vec<(String, String)>,
+    pub frozen: Vec<String>,
 }
 
 /// Recortes como mucho por pista: las bandas de un EQ.
@@ -111,13 +116,10 @@ impl Song {
                 ))
             })
             .collect::<Result<Vec<_>, ScriptError>>()?;
-        Ok(MaskingReport::from_spectra(
-            bars,
-            tracks,
-            &spectra,
-            options,
-            self.priority.clone(),
-        ))
+        let mut report =
+            MaskingReport::from_spectra(bars, tracks, &spectra, options, self.priority.clone());
+        report.set_song(self);
+        Ok(report)
     }
 }
 
@@ -156,6 +158,8 @@ impl MaskingReport {
             priority,
             suggestions: Vec::new(),
             levels,
+            sidechains: Vec::new(),
+            frozen: Vec::new(),
         };
         report.suggestions = report.suggest();
         report
@@ -647,6 +651,56 @@ impl MaskingReport {
         )
     }
 
+    /// Apunta de `song` quién escucha a quién y qué está congelado (ver
+    /// [`MaskingReport::sidechains`]).
+    pub fn set_song(&mut self, song: &Song) {
+        self.sidechains = song
+            .tracks
+            .iter()
+            .flat_map(|t| {
+                t.sidechains
+                    .iter()
+                    .map(|(_, k)| (t.name.clone(), k.clone()))
+            })
+            .collect();
+        self.frozen = song
+            .tracks
+            .iter()
+            .filter(|t| t.frozen.is_some())
+            .map(|t| t.name.clone())
+            .collect();
+    }
+
+    /// Si `from` escucha por sidechain (directa o indirectamente) a `to`.
+    fn listens(&self, from: &str, to: &str) -> bool {
+        let mut seen = vec![from];
+        let mut i = 0;
+        while i < seen.len() {
+            for (t, k) in &self.sidechains {
+                if t == seen[i] {
+                    if k == to {
+                        return true;
+                    }
+                    if !seen.contains(&k.as_str()) {
+                        seen.push(k);
+                    }
+                }
+            }
+            i += 1;
+        }
+        false
+    }
+
+    /// Las sugerencias de un grupo para esta canción: el sidechain si no
+    /// cierra un círculo (la que manda ya escucha a la que cede), por
+    /// patrón si la que manda no está congelada; y el recorte de EQ.
+    pub fn fixes_for(&self, group: &ClashGroup) -> Vec<Fix> {
+        let (winner, loser) = (&self.tracks[group.winner], &self.tracks[group.loser]);
+        let sidechain = !self.listens(winner, loser);
+        let pattern = !self.frozen.contains(winner);
+        self.fixes(group, sidechain, pattern)
+    }
+
     /// Las sugerencias para un grupo, en la pista que cede: un sidechain
     /// disparado por la otra (si `sidechain` lo permite: no si ya escucha
     /// a la que cede, que sería un círculo) y un recorte de EQ en el rango.
@@ -661,7 +715,8 @@ impl MaskingReport {
             let depth = -(MIN_DUCK_DB + t * (MAX_DUCK_DB - MIN_DUCK_DB)).round();
             let top = band_edges(group.bands.1).1;
             let band = if top <= SIDECHAIN_BAND_MAX_HZ {
-                format!(", band = {}", number(round_freq(top * 1.25)))
+                // Algo por encima del choque, en decenas de Hz.
+                format!(", band = {}", number((top * 1.25 / 10.0).round() * 10.0))
             } else {
                 String::new()
             };
@@ -698,11 +753,15 @@ impl MaskingReport {
         out
     }
 
-    /// Los grupos en texto, por gravedad.
+    /// Los grupos en texto, por gravedad, con sus sugerencias numeradas
+    /// (las de [`MaskingReport::fixes_for`]).
     pub fn groups_text(&self) -> String {
         let mut out = String::from("por gravedad:\n");
         for group in self.groups() {
             out.push_str(&format!("  {}\n", self.group_text(&group)));
+            for (i, fix) in self.fixes_for(&group).iter().enumerate() {
+                out.push_str(&format!("    {}  {}\n", i + 1, fix.line));
+            }
         }
         out
     }

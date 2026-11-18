@@ -105,6 +105,10 @@ impl Live {
         self.report.as_ref()
     }
 
+    pub fn report_mut(&mut self) -> Option<&mut MaskingReport> {
+        self.report.as_mut()
+    }
+
     /// Olvida lo guardado (al dejar de verse: al volver, no sale lo de
     /// antes).
     pub fn clear(&mut self) {
@@ -139,8 +143,9 @@ pub struct MatrixView {
     /// El elegido con el cursor del panel, y sus celdas (pistas y bandas).
     pub selected: Option<usize>,
     pub selected_cells: Vec<(usize, (usize, usize))>,
-    /// Las sugerencias del elegido (líneas de Lua), numeradas desde 1.
+    /// Las sugerencias del elegido (líneas de Lua) y cuál se ha elegido.
     pub fixes: Vec<String>,
+    pub chosen_fix: usize,
 }
 
 impl MatrixView {
@@ -179,6 +184,7 @@ impl MatrixView {
             selected,
             selected_cells,
             fixes,
+            chosen_fix: 0,
         }
     }
 
@@ -390,13 +396,17 @@ pub fn draw_matrix(
     layout.group_offset = first;
     layout.first_fix = y;
     for (i, fix) in view.fixes.iter().enumerate().take(fixes) {
-        buf.set_stringn(
-            inner.x + 2,
-            y,
-            format!("{}  {fix}", i + 1),
-            inner.width as usize - 2,
-            Style::new().fg(accent()),
-        );
+        let style = if i == view.chosen_fix {
+            Style::new().fg(accent()).add_modifier(Modifier::BOLD)
+        } else {
+            Style::new().fg(dim())
+        };
+        let fix = if ascii {
+            fix.replace('▸', ">")
+        } else {
+            fix.clone()
+        };
+        buf.set_stringn(inner.x + 2, y, fix, inner.width as usize - 2, style);
         y += 1;
     }
     layout.fixes = fixes as u16;

@@ -224,6 +224,8 @@ fn live_and_offline_give_the_same_clashes() {
         .skip_while(|l| *l != "por gravedad:")
         .skip(1)
         .take_while(|l| l.starts_with("  "))
+        // Sin las sugerencias (las de debajo de cada uno, más sangradas).
+        .filter(|l| !l.starts_with("    "))
         .map(str::trim)
         .collect();
     assert_eq!(offline.len(), live.len(), "{printed}\n{live:?}");
@@ -236,6 +238,65 @@ fn live_and_offline_give_the_same_clashes() {
         assert_eq!(head(o), head(l), "{printed}");
         assert!((score(o) - s).abs() < 0.1, "{o} contra {l}");
     }
+}
+
+#[test]
+fn a_key_inserts_a_suggestion_in_one_undo_step_and_it_loads() {
+    let (path, mut app, mut engine) = song("clashes_fix", &three());
+    palette(&mut app, "solapes de frecuencia en vivo");
+    run(&mut app, &mut engine, 6.0);
+    let matrix = app.view().clash_table.unwrap().matrix.unwrap();
+    // Dos sugerencias para la que cede (b, más floja): el sidechain por
+    // patrón de a, solo en los graves, y el recorte de EQ.
+    assert_eq!(matrix.fixes.len(), 2, "{:?}", matrix.fixes);
+    assert!(
+        matrix.fixes[0]
+            .starts_with("▸ track(\"b\"):sidechain(\"a\", { mode = \"pattern\", depth = -"),
+        "{:?}",
+        matrix.fixes
+    );
+    assert!(matrix.fixes[0].contains(", band = "), "{:?}", matrix.fixes);
+    assert!(
+        matrix.fixes[1].starts_with("  track(\"b\"):fx(\"eq\", { freq1 = "),
+        "{:?}",
+        matrix.fixes
+    );
+    let screen = text(&draw(&mut app, W, H));
+    assert!(
+        screen.contains("▸ track(\"b\"):sidechain(\"a\""),
+        "{screen}"
+    );
+    // Nada se aplica solo: el texto, igual. Enter inserta la elegida tras
+    // la definición de b, sin guardar.
+    let before = app.editor.lines().join("\n");
+    app.handle(special(Key::Enter));
+    let after = app.editor.lines().join("\n");
+    let line = matrix.fixes[0].trim_start_matches("▸ ").to_string();
+    let lines: Vec<&str> = after.lines().collect();
+    assert_eq!(lines[3], line, "{after}");
+    let mut expected: Vec<&str> = before.lines().collect();
+    expected.insert(3, &line);
+    assert_eq!(lines, expected);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), three());
+    // Un paso de deshacer.
+    app.handle(ctrl('z'));
+    assert_eq!(app.editor.lines().join("\n"), before);
+    // → elige el EQ; Enter lo inserta; y los dos cargan.
+    app.handle(special(Key::Right));
+    app.handle(special(Key::Enter));
+    let eq = app.editor.lines().join("\n");
+    assert!(
+        eq.lines()
+            .nth(3)
+            .unwrap()
+            .starts_with("track(\"b\"):fx(\"eq\""),
+        "{eq}"
+    );
+    app.handle(ctrl('z'));
+    app.handle(special(Key::Left));
+    app.handle(special(Key::Enter));
+    app.load();
+    assert!(app.view().error.is_none(), "{:?}", app.view().error);
 }
 
 #[test]

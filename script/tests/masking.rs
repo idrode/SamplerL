@@ -314,3 +314,56 @@ fn a_kick_and_a_bass_clash_in_the_lows_and_group_into_one_range() {
         assert!(report.levels[2][band("80")] < report.levels[t][band("80")] - 30.0);
     }
 }
+
+#[test]
+fn the_suggested_sidechain_loads_and_the_bass_gives_way() {
+    let base = "bpm(120)\n\
+         priority({ \"kick\" })\n\
+         track(\"kick\", sample(\"kick.wav\"):slice_grid(1)):steps(\"1 . . . 1 . . . 1 . . . 1 . . .\")\n\
+         track(\"bass\", sample(\"bass.wav\"):slice_grid(1)):steps(\"1 . 1 . 1 . 1 . 1 . 1 . 1 . 1 .\")\n";
+    let options = MaskingOptions::default();
+    let report = song(base).analyze_masking(RATE, &options).unwrap();
+    let g = report.groups()[0];
+    assert_eq!(report.tracks[g.loser], "bass");
+    let fixes = report.fixes_for(&g);
+    assert_eq!(fixes.len(), 2);
+    let line = &fixes[0].line;
+    assert!(
+        line.starts_with("track(\"bass\"):sidechain(\"kick\", { mode = \"pattern\""),
+        "{line}"
+    );
+    // El texto del informe las numera bajo su choque.
+    assert!(
+        report.text().contains(&format!("    1  {line}")),
+        "{}",
+        report.text()
+    );
+    // Con la línea, carga y el choque baja.
+    let after = song(&format!("{base}{line}\n"))
+        .analyze_masking(RATE, &options)
+        .unwrap();
+    let score = |r: &script::masking::MaskingReport| {
+        r.groups()
+            .iter()
+            .filter(|h| (h.a, h.b) == (g.a, g.b))
+            .map(|h| h.score)
+            .fold(0.0f32, f32::max)
+    };
+    assert!(
+        score(&after) < score(&report) - 0.05,
+        "{} → {}",
+        score(&report),
+        score(&after)
+    );
+    // Con el sidechain al revés ya puesto, no sugiere otro (sería un
+    // círculo): solo el EQ.
+    let reverse = song(&format!(
+        "{base}track(\"kick\"):sidechain(\"bass\", {{ depth = -1 }})\n"
+    ))
+    .analyze_masking(RATE, &options)
+    .unwrap();
+    let g = reverse.groups()[0];
+    let fixes = reverse.fixes_for(&g);
+    assert_eq!(fixes.len(), 1);
+    assert_eq!(fixes[0].kind, script::masking::FixKind::Eq);
+}
