@@ -260,6 +260,11 @@ pub fn effects(written: &[WrittenFx]) -> Result<SliceFx, String> {
             )
         })?;
         let who = format!("{{{}}}", w.name);
+        if effect.name == "duck" {
+            return Err(format!(
+                "{who}: el sidechain no va en un paso: va en la pista (pista:sidechain)"
+            ));
+        }
         let mut values: Vec<(&str, &FxValue)> = Vec::new();
         if let Some(main) = &w.main {
             let param = effect

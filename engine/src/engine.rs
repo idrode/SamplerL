@@ -1688,6 +1688,12 @@ pub struct Engine {
     /// otra escucha por sidechain, en el trozo que se está mezclando. En el
     /// heap, como las pistas.
     side_buf: Box<[[f32; 2 * CHUNK]; MAX_TRACKS]>,
+    /// Lo que se oye de cada pista (tras volumen, pan, mute y solo) que un
+    /// sidechain por audio escucha «después» (`tap = "post"`), en el trozo.
+    side_post: Box<[[f32; 2 * CHUNK]; MAX_TRACKS]>,
+    /// Las pistas que han dado un golpe del secuenciador al principio del
+    /// trozo que se mezcla (para el sidechain por patrón).
+    hits: [bool; MAX_TRACKS],
     /// Pista cuya salida (tras sus efectos y antes de su volumen) sustituye
     /// a la del master (ver [`Engine::set_tap`]).
     tap: Option<usize>,
@@ -1745,26 +1751,77 @@ fn mix_order(listens: &[[bool; MAX_TRACKS]; MAX_TRACKS]) -> [usize; MAX_TRACKS] 
     order
 }
 
+/// Lo que los efectos de una pista o un grupo pueden escuchar de las
+/// demás en el trozo que se mezcla: la salida de cada una antes de su
+/// volumen (`side`, si ha sonado: `live`) y después (`post`, `live_post`),
+/// quién ha dado un golpe al principio del trozo (`hits`) y quién se oye
+/// (sin mute ni fuera del solo: `audible`).
+#[derive(Clone, Copy)]
+struct Keys<'a> {
+    side: &'a [[f32; 2 * CHUNK]; MAX_TRACKS],
+    live: &'a [bool; MAX_TRACKS],
+    post: &'a [[f32; 2 * CHUNK]; MAX_TRACKS],
+    live_post: &'a [bool; MAX_TRACKS],
+    hits: &'a [bool; MAX_TRACKS],
+    audible: &'a [bool; MAX_TRACKS],
+}
+
+/// Ninguna pista (para los grupos, que no llevan sidechain por patrón).
+static NO_TRACKS: [bool; MAX_TRACKS] = [false; MAX_TRACKS];
+
+impl Keys<'_> {
+    /// Lo que escucha el efecto `state` en los frames `range` del trozo
+    /// (silencio si la otra calló) y si le llega un golpe (solo en el
+    /// primer bloque, que es donde cae).
+    fn of(
+        &self,
+        state: &FxState,
+        own: usize,
+        range: std::ops::Range<usize>,
+    ) -> (Option<&[f32]>, bool) {
+        let Some(k) = state.sidechain().filter(|&k| k != own && k < MAX_TRACKS) else {
+            return (None, false);
+        };
+        let post = state
+            .duck()
+            .is_some_and(|d| d.params.tap == crate::duck::DuckTap::Post);
+        let (buf, live) = if post {
+            (self.post, self.live_post)
+        } else {
+            (self.side, self.live)
+        };
+        let key = if live[k] {
+            &buf[k][range.clone()]
+        } else {
+            &SILENCE[range.clone()]
+        };
+        let hit = range.start == 0 && self.hits[k] && (!post || self.audible[k]);
+        (Some(key), hit)
+    }
+}
+
 /// Los efectos de una pista sobre `buf` (los frames `range` del trozo),
-/// cada EQ dinámico con sidechain con su trozo de la pista que escucha
-/// (silencio si no ha sonado en este trozo).
+/// cada efecto con sidechain con su trozo de la pista que escucha
+/// (silencio si no ha sonado en este trozo) y sus golpes.
 fn run_fx(
     fx: &mut [FxState; MAX_FX],
     buf: &mut [f32],
     own: usize,
-    side: &[[f32; 2 * CHUNK]; MAX_TRACKS],
-    live: &[bool; MAX_TRACKS],
+    keys: &Keys,
     range: std::ops::Range<usize>,
 ) {
     for state in fx.iter_mut() {
-        let key = state.sidechain().filter(|&k| k != own).map(|k| {
-            if live[k] {
-                &side[k][range.clone()]
-            } else {
-                &SILENCE[range.clone()]
-            }
-        });
-        state.process_keyed(buf, key);
+        let (key, hit) = keys.of(state, own, range.clone());
+        state.process_side(buf, key, hit);
+    }
+}
+
+/// Los efectos de una pista que no suena en este trozo (`frames`): el
+/// sidechain sigue su envolvente; los demás se vacían.
+fn rest_fx(fx: &mut [FxState; MAX_FX], frames: usize, own: usize, keys: &Keys) {
+    for state in fx.iter_mut() {
+        let (key, hit) = keys.of(state, own, 0..2 * frames);
+        state.rest(frames, key, hit);
     }
 }
 
@@ -1831,6 +1888,11 @@ pub fn new_engine(sample_rate: u32) -> (Controller, Engine) {
                 .into_boxed_slice()
                 .try_into()
                 .unwrap_or_else(|_| unreachable!("son MAX_TRACKS pistas")),
+            side_post: vec![[0.0; 2 * CHUNK]; MAX_TRACKS]
+                .into_boxed_slice()
+                .try_into()
+                .unwrap_or_else(|_| unreachable!("son MAX_TRACKS pistas")),
+            hits: [false; MAX_TRACKS],
             groups: Groups::default(),
             pending_groups: None,
             staged_groups: None,
@@ -2613,6 +2675,7 @@ impl Engine {
                 n = n.min((next.min(next_retrig) - now) as usize);
             }
             self.mix(n);
+            self.hits = [false; MAX_TRACKS];
             self.midi_due(self.transport.frame + n as u64);
             write_out(
                 &self.master[..2 * n],
@@ -3189,6 +3252,11 @@ impl Engine {
         // En la pausa del pánico, el secuenciador sigue sin sonar.
         if self.hushed {
             return;
+        }
+        // Para los sidechain por patrón que escuchan esta pista: el golpe
+        // cae al principio del trozo que se mezcla ahora.
+        if self.tracks[t].pattern.is_some() {
+            self.hits[t] = true;
         }
         let hit = self.per_hit(t, hit);
         let Some(pattern) = &self.tracks[t].pattern else {
@@ -3841,15 +3909,32 @@ impl Engine {
         // antes y guardan su salida en `side_buf`.
         let mut listens = [[false; MAX_TRACKS]; MAX_TRACKS];
         let mut heard = [false; MAX_TRACKS];
+        // Las que un sidechain por audio escucha después de su volumen.
+        let mut heard_post = [false; MAX_TRACKS];
         for (t, track) in self.tracks.iter().enumerate() {
             let chain = track.pattern.as_ref().map_or(&[None; MAX_FX], |p| &p.fx);
-            for k in chain.iter().flatten().filter_map(Fx::sidechain) {
-                if k != t && k < MAX_TRACKS {
-                    listens[t][k] = true;
-                    heard[k] = true;
+            for fx in chain.iter().flatten() {
+                let Some(k) = fx.sidechain().filter(|&k| k != t && k < MAX_TRACKS) else {
+                    continue;
+                };
+                listens[t][k] = true;
+                match fx {
+                    // Por patrón solo cuentan sus golpes (y, después del
+                    // volumen, si se oye): nada que copiar.
+                    Fx::Duck(d) if d.mode == crate::duck::DuckMode::Pattern => {}
+                    Fx::Duck(d) if d.tap == crate::duck::DuckTap::Post => heard_post[k] = true,
+                    _ => heard[k] = true,
                 }
             }
         }
+        // Quién se oye (sin mute ni fuera del solo), para lo que escucha
+        // «después» del volumen.
+        let soloing = self.tracks.iter().any(Track::soloed);
+        let audible_now: [bool; MAX_TRACKS] = std::array::from_fn(|t| {
+            let track = &self.tracks[t];
+            !(track.muted() || (soloing && !track.soloed()))
+        });
+        let mut live_post = [false; MAX_TRACKS];
         // La pista que se toma (para congelarla) guarda su salida como las
         // que se escuchan.
         if let Some(t) = self.tap.filter(|&t| t < MAX_TRACKS) {
@@ -3899,9 +3984,17 @@ impl Engine {
                 track.gain = target;
                 track.pan = target_pan;
                 track.sends = target_sends;
-                for state in &mut track.fx {
-                    state.reset();
-                }
+                // El sidechain sigue su envolvente (un golpe del origen
+                // cuenta para cuando vuelva a sonar); lo demás, sin memoria.
+                let keys = Keys {
+                    side: &self.side_buf,
+                    live: &live,
+                    post: &self.side_post,
+                    live_post: &live_post,
+                    hits: &self.hits,
+                    audible: &audible_now,
+                };
+                rest_fx(&mut track.fx, n, t, &keys);
                 // Los parámetros que se movían vuelven a su valor fijo.
                 if track.mods.iter().flatten().any(Option::is_some)
                     && let Some(pattern) = &track.pattern
@@ -4013,10 +4106,18 @@ impl Engine {
                     .pattern
                     .as_ref()
                     .is_some_and(|p| p.automation.iter().any(Option::is_some));
+            let keys = Keys {
+                side: &self.side_buf,
+                live: &live,
+                post: &self.side_post,
+                live_post: &live_post,
+                hits: &self.hits,
+                audible: &audible_now,
+            };
             if moving {
-                modulate(track, buf, &clock, fresh, t, &self.side_buf, &live);
+                modulate(track, buf, &clock, fresh, t, &keys);
             } else {
-                run_fx(&mut track.fx, buf, t, &self.side_buf, &live, 0..2 * n);
+                run_fx(&mut track.fx, buf, t, &keys, 0..2 * n);
             }
             // Un NaN o un infinito (un sample roto, un efecto que diverge)
             // no pasa de aquí: a cero, los efectos sin memoria (el NaN se
@@ -4085,6 +4186,10 @@ impl Engine {
                 }
                 dst[0] += l;
                 dst[1] += r;
+                if heard_post[t] {
+                    self.side_post[t][2 * k] = l;
+                    self.side_post[t][2 * k + 1] = r;
+                }
                 peak = peak.max(l.abs()).max(r.abs());
                 // Para su visualización, si está encendida (si no, nada).
                 if self.viz.on[t] {
@@ -4101,6 +4206,9 @@ impl Engine {
                     self.send_buf[b][2 * k + 1] += send * r;
                     fed[b] |= send > 0.0 && (l != 0.0 || r != 0.0);
                 }
+            }
+            if heard_post[t] {
+                live_post[t] = true;
             }
             if let Some(g) = group {
                 group_fed[g] |= peak > 0.0;
@@ -4237,6 +4345,14 @@ impl Engine {
                 continue;
             }
             let buf = &mut self.group_buf[g][..2 * n];
+            let keys = Keys {
+                side: &self.side_buf,
+                live,
+                post: &self.side_post,
+                live_post: &NO_TRACKS,
+                hits: &NO_TRACKS,
+                audible: &NO_TRACKS,
+            };
             let moving = state.mods.iter().flatten().any(Option::is_some)
                 || group.automation.iter().any(Option::is_some);
             if moving {
@@ -4250,11 +4366,10 @@ impl Engine {
                     clock,
                     false,
                     NO_TRACK,
-                    &self.side_buf,
-                    live,
+                    &keys,
                 );
             } else {
-                run_fx(&mut state.fx, buf, NO_TRACK, &self.side_buf, live, 0..2 * n);
+                run_fx(&mut state.fx, buf, NO_TRACK, &keys, 0..2 * n);
             }
             // Como en las pistas: lo no finito, a cero y sin memoria.
             let bad = scrub(buf);
@@ -4625,11 +4740,10 @@ fn modulate(
     clock: &Clock,
     snap: bool,
     own: usize,
-    side: &[[f32; 2 * CHUNK]; MAX_TRACKS],
-    live: &[bool; MAX_TRACKS],
+    keys: &Keys,
 ) {
     let Some(pattern) = &track.pattern else {
-        run_fx(&mut track.fx, buf, own, side, live, 0..buf.len());
+        run_fx(&mut track.fx, buf, own, keys, 0..buf.len());
         return;
     };
     let first_filter = pattern
@@ -4647,8 +4761,7 @@ fn modulate(
         clock,
         snap,
         own,
-        side,
-        live,
+        keys,
     );
 }
 
@@ -4705,8 +4818,7 @@ fn modulate_chain(
     clock: &Clock,
     snap: bool,
     own: usize,
-    side: &[[f32; 2 * CHUNK]; MAX_TRACKS],
-    live: &[bool; MAX_TRACKS],
+    keys: &Keys,
 ) {
     let rate = clock.sample_rate;
     let keep = (-(MOD_BLOCK as f32) / (GAIN_SMOOTHING_SECONDS * rate as f32)).exp();
@@ -4730,7 +4842,7 @@ fn modulate_chain(
         );
         let from = block * 2 * MOD_BLOCK;
         let range = from..from + sub.len();
-        run_fx(states, sub, own, side, live, range);
+        run_fx(states, sub, own, keys, range);
     }
 }
 

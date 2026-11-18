@@ -234,6 +234,7 @@ fn valid_range(valid: &str) -> Option<(f64, f64)> {
 const DISCRETE: &str =
     "elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer";
 const TRACK_REF: &str = "es una pista, no un número";
+const FIXED_AT_LOAD: &str = "es un filtro que se calcula al cargar y entra con el patrón al compás";
 const AT_LOAD: &str = "se aplica al cargar, en el hilo de control (el sample o el bucle se preparan una vez): no suena en el tiempo";
 const STRUCTURE: &str =
     "cambia cuántas cosas suenan, no cómo suenan: entra con el patrón al compás";
@@ -524,6 +525,7 @@ pub fn effect_name(fx: &engine::Fx) -> &'static str {
         Fx::Gain { .. } => "gain",
         Fx::Eq { .. } => "eq",
         Fx::DynEq(_) => "dyneq",
+        Fx::Duck(_) => "duck",
     }
 }
 
@@ -2374,6 +2376,49 @@ pub const FUNCTIONS: &[Function] = &[
         ),
     },
     Function {
+        name: "sidechain",
+        receiver: Receiver::Track,
+        signature: "pista:sidechain(origen [, parámetros])",
+        returns: Some(Receiver::Track),
+        summary: "Sidechain: la pista baja con cada golpe (o con el audio) de otra, entera o solo sus graves.",
+        doc: "Añade a la cadena (es uno de sus 4 efectos, en el orden en que se \
+              escribe) el efecto `duck` con `source = origen`: lo mismo que \
+              `:fx(\"duck\", { source = \"kick\", ... })`. Con `mode = \"pattern\"` \
+              (por defecto), cada golpe del secuenciador de `origen` baja la pista \
+              `depth` dB en `attack` ms (en línea recta) y la devuelve en `release` \
+              ms con su `curve`: sin detectar audio, latencia cero. Con \
+              `mode = \"audio\"`, un detector RMS de 10 ms escucha la salida de \
+              `origen` (con `filter`, solo lo que pasa un paso bajo en esos Hz) y, por \
+              encima de `threshold`, baja `1 − 1/ratio` dB por dB de más (rodilla \
+              suave de `knee` dB), como mucho `depth`, con `attack` y `release`. \
+              Con `band`, solo baja lo que queda por debajo de esos Hz (un cruce de \
+              24 dB/octava): el bajo cede los graves y conserva el resto. \
+              `tap = \"pre\"` (por defecto) escucha a `origen` tras sus efectos y \
+              antes de su volumen: sigue disparando en mute o fuera del solo; con \
+              `tap = \"post\"`, lo que se oye de él: en mute no baja. Un origen \
+              puede disparar a varias pistas; en círculo (a escucha a b y b a a) es \
+              un error al cargar, y también si `origen` no existe o, por patrón, \
+              está congelado. `depth`, `attack`, `release`, `threshold`, `ratio` y \
+              `knee` admiten `ramp()`, `lfo()`, `macro()` y lanes (`pista:auto`).",
+        params: &[
+            Param {
+                name: "origen",
+                description: "la pista que dispara (su nombre, entre comillas)",
+            },
+            Param {
+                name: "parámetros",
+                description: "tabla con los del efecto `duck` (menos `source`)",
+            },
+        ],
+        template: "sidechain(\"${kick}\", { depth = ${-9}, release = ${180} })",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             track(\"kick\", amen):steps(\"1 . . .  1 . . .  1 . . .  1 . . .\")\n\
+             track(\"bajo\", amen):steps(\"3 _ _ _  3 _ _ _  3 _ _ _  3 _ _ _\")\n  \
+             :sidechain(\"kick\", { depth = -9, attack = 5, release = 180, band = 150 })\n",
+        ),
+    },
+    Function {
         name: "mode",
         receiver: Receiver::Track,
         signature: "pista:mode(modo)",
@@ -3356,6 +3401,122 @@ pub const EFFECTS: &[Effect] = &[
             },
         ],
         template: "{ freq = ${80}, range = ${6}, sidechain = \"${kick}\" }",
+    },
+    Effect {
+        name: "duck",
+        aliases: &[],
+        summary: "Sidechain entre pistas: baja la pista (o sus graves) con los golpes o el audio de otra; también con `pista:sidechain`.",
+        params: &[
+            FxParam {
+                name: "source",
+                description: "pista que dispara",
+                default: None,
+                valid: "nombre de otra pista",
+                values: &[],
+                template: "source = \"${kick}\"",
+                automate: Auto::No(TRACK_REF),
+            },
+            FxParam {
+                name: "mode",
+                description: "qué dispara: los golpes de su secuenciador o su audio",
+                default: Some("\"pattern\""),
+                valid: "`\"pattern\"` o `\"audio\"`",
+                values: &["pattern", "audio"],
+                template: "mode = \"${pattern}\"",
+                automate: Auto::No(DISCRETE),
+            },
+            FxParam {
+                name: "depth",
+                description: "dB que baja con cada golpe (por audio, lo más que baja)",
+                default: Some("-9"),
+                valid: "-60–0",
+                values: &[],
+                template: "depth = ${-9}",
+                automate: Auto::Smooth,
+            },
+            FxParam {
+                name: "attack",
+                description: "ms que tarda en bajar",
+                default: Some("5"),
+                valid: "0–500",
+                values: &[],
+                template: "attack = ${5}",
+                automate: Auto::Smooth,
+            },
+            FxParam {
+                name: "release",
+                description: "ms que tarda en volver (por patrón, exactos)",
+                default: Some("180"),
+                valid: "1–5000",
+                values: &[],
+                template: "release = ${180}",
+                automate: Auto::Smooth,
+            },
+            FxParam {
+                name: "curve",
+                description: "forma de la vuelta, por patrón",
+                default: Some("\"linear\""),
+                valid: "`\"linear\"`, `\"exp\"` o `\"smooth\"`",
+                values: &["linear", "exp", "smooth"],
+                template: "curve = \"${linear}\"",
+                automate: Auto::No(DISCRETE),
+            },
+            FxParam {
+                name: "threshold",
+                description: "por audio, nivel en dB (RMS, un seno de amplitud 1 da 0) desde el que baja",
+                default: Some("-30"),
+                valid: "-60–0",
+                values: &[],
+                template: "threshold = ${-30}",
+                automate: Auto::Smooth,
+            },
+            FxParam {
+                name: "ratio",
+                description: "por audio, por cada dB de más baja 1 − 1/ratio dB",
+                default: Some("4"),
+                valid: "1–20",
+                values: &[],
+                template: "ratio = ${4}",
+                automate: Auto::Smooth,
+            },
+            FxParam {
+                name: "knee",
+                description: "por audio, ancho en dB de la rodilla suave alrededor del umbral",
+                default: Some("6"),
+                valid: "0–24",
+                values: &[],
+                template: "knee = ${6}",
+                automate: Auto::Smooth,
+            },
+            FxParam {
+                name: "filter",
+                description: "por audio, paso bajo del detector en Hz (que solo le importen los graves)",
+                default: Some("sin filtro"),
+                valid: "20–20000",
+                values: &[],
+                template: "filter = ${150}",
+                automate: Auto::No(FIXED_AT_LOAD),
+            },
+            FxParam {
+                name: "tap",
+                description: "de dónde escucha a la pista que dispara: antes de su volumen (sigue en mute) o lo que se oye",
+                default: Some("\"pre\""),
+                valid: "`\"pre\"` o `\"post\"`",
+                values: &["pre", "post"],
+                template: "tap = \"${pre}\"",
+                automate: Auto::No(DISCRETE),
+            },
+            FxParam {
+                name: "band",
+                description: "solo baja lo que queda por debajo de estos Hz (cruce de 24 dB/octava)",
+                default: Some("la pista entera"),
+                valid: "20–2000",
+                values: &[],
+                template: "band = ${150}",
+                automate: Auto::No(FIXED_AT_LOAD),
+            },
+        ],
+        template: "{ source = \"${kick}\", depth = ${-9}, release = ${180} }",
     },
 ];
 

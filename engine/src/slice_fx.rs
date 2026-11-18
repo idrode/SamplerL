@@ -47,6 +47,9 @@ impl SliceFx {
         let mut fx = [None; MAX_FX];
         for (slot, f) in fx.iter_mut().zip(chain) {
             f.validate()?;
+            if matches!(f, Fx::Duck(_)) {
+                return Err("el sidechain no va en un corte: va en la pista (pista:sidechain)");
+            }
             if f.sidechain().is_some() {
                 return Err("el EQ dinámico de un corte no puede escuchar otra pista (sidechain)");
             }

@@ -3867,8 +3867,20 @@ impl App {
         let Some(suggestion) = report.suggestions.iter().find(|s| s.track == track) else {
             return;
         };
-        let name = &report.tracks[track];
+        let name = report.tracks[track].clone();
         let line = report.lua_line(suggestion);
+        let row = self.insert_after_track(&name, &line);
+        self.message = format!(
+            "EQ de «{name}» insertado en la línea {}, sin guardar (Ctrl-Z lo deshace; Ctrl-S lo guarda y lo carga)",
+            row + 1
+        );
+    }
+
+    /// Inserta `line` (una sentencia de Lua) tras la definición de la pista
+    /// `name` y las líneas de su cadena (las que empiezan por `:`), con su
+    /// sangría; sin definición, al final. Un solo cambio (Ctrl-Z lo
+    /// deshace de una vez); ni guarda ni carga. Da la fila donde quedó.
+    pub(super) fn insert_after_track(&mut self, name: &str, line: &str) -> usize {
         let lines = self.editor.lines().to_vec();
         let code = |l: &str| l.split("--").next().unwrap_or("").to_string();
         let head = format!("track(\"{name}\"");
@@ -3878,7 +3890,7 @@ impl App {
             .or_else(|| lines.iter().position(|l| code(l).contains(&head)));
         self.completion = None;
         self.marks.clear();
-        let row = match defined {
+        match defined {
             Some(start) => {
                 let mut end = start;
                 while lines
@@ -3908,15 +3920,11 @@ impl App {
                     if !blank {
                         editor.insert_newline();
                     }
-                    editor.insert_str(&line);
+                    editor.insert_str(line);
                 });
                 if blank { last } else { last + 1 }
             }
-        };
-        self.message = format!(
-            "EQ de «{name}» insertado en la línea {}, sin guardar (Ctrl-Z lo deshace; Ctrl-S lo guarda y lo carga)",
-            row + 1
-        );
+        }
     }
 
     /// Pone una versión en el editor como un cambio más (Ctrl-Z lo deshace
@@ -5336,7 +5344,20 @@ impl App {
                             gain: t.gain,
                             pan: t.pan,
                             mix_moving: t.mix_curves.map(|c| c.is_some()),
-                            fx: t.fx.clone(),
+                            // Con la ranura de la pista que escucha cada
+                            // sidechain (para su nombre en el panel).
+                            fx: {
+                                let mut fx = t.fx.clone();
+                                for (i, name) in &t.sidechains {
+                                    let slot = self.host.track_slot(name);
+                                    match fx.get_mut(*i) {
+                                        Some(engine::Fx::DynEq(p)) => p.sidechain = slot,
+                                        Some(engine::Fx::Duck(p)) => p.source = slot,
+                                        _ => {}
+                                    }
+                                }
+                                fx
+                            },
                             automated: t
                                 .automation
                                 .iter()

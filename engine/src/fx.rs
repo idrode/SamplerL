@@ -133,6 +133,9 @@ pub enum Fx {
     /// (`cortes:fx(i, "gain", { level = ... })`) o para mover el volumen
     /// con `ramp`/`lfo`.
     Gain { level: f32 },
+    /// Sidechain entre pistas (ducking): baja la pista, entera o sus
+    /// graves, con los golpes o el audio de otra (ver [`crate::duck`]).
+    Duck(DuckParams),
 }
 
 /// Volumen máximo del efecto `gain` (el de `:gain()` y `@`).
@@ -180,6 +183,8 @@ impl DynEqParams {
 }
 
 pub const DEFAULT_Q: f32 = std::f32::consts::FRAC_1_SQRT_2;
+
+pub use crate::duck::{DuckCurve, DuckMode, DuckParams, DuckTap};
 
 impl Fx {
     pub fn lowpass(cutoff_hz: f32) -> Self {
@@ -251,6 +256,7 @@ impl Fx {
                 "release",
             ],
             Fx::Gain { .. } => &["level"],
+            Fx::Duck(_) => &["depth", "attack", "release", "threshold", "ratio", "knee"],
         }
     }
 
@@ -259,6 +265,7 @@ impl Fx {
     pub fn sidechain(&self) -> Option<usize> {
         match self {
             Fx::DynEq(p) => p.sidechain,
+            Fx::Duck(p) => p.source,
             _ => None,
         }
     }
@@ -296,6 +303,24 @@ impl Fx {
             (Fx::DynEq(_), 5) => (0.1, 200.0, true),
             (Fx::DynEq(_), 6) => (1.0, 2000.0, true),
             (Fx::Gain { .. }, 0) => (0.0, MAX_LEVEL, false),
+            (Fx::Duck(_), 0) => (
+                crate::duck::DEPTH_RANGE.0,
+                crate::duck::DEPTH_RANGE.1,
+                false,
+            ),
+            (Fx::Duck(_), 1) => (
+                crate::duck::ATTACK_RANGE.0,
+                crate::duck::ATTACK_RANGE.1,
+                false,
+            ),
+            (Fx::Duck(_), 2) => (
+                crate::duck::RELEASE_RANGE.0,
+                crate::duck::RELEASE_RANGE.1,
+                true,
+            ),
+            (Fx::Duck(_), 3) => (-60.0, 0.0, false),
+            (Fx::Duck(_), 4) => (1.0, 20.0, true),
+            (Fx::Duck(_), 5) => (0.0, 24.0, false),
             _ => return None,
         })
     }
@@ -328,6 +353,14 @@ impl Fx {
                 p.release_ms,
             ][i],
             (Fx::Gain { level }, 0) => level,
+            (Fx::Duck(p), i) if i < 6 => [
+                p.depth_db,
+                p.attack_ms,
+                p.release_ms,
+                p.threshold_db,
+                p.ratio,
+                p.knee_db,
+            ][i],
             _ => return None,
         })
     }
@@ -429,6 +462,7 @@ impl Fx {
                     return Err("level fuera de rango (0 a 4)");
                 }
             }
+            Fx::Duck(p) => p.validate()?,
         }
         Ok(())
     }
@@ -479,6 +513,7 @@ pub(crate) enum FxState {
     Gain {
         level: f32,
     },
+    Duck(crate::duck::DuckState),
 }
 
 /// Estado del EQ dinámico: el detector (paso de banda y envolvente), la
@@ -670,16 +705,16 @@ const EQ_SMOOTHING_SECONDS: f32 = 0.005;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct Biquad {
-    b0: f32,
-    b1: f32,
-    b2: f32,
-    a1: f32,
-    a2: f32,
+    pub(crate) b0: f32,
+    pub(crate) b1: f32,
+    pub(crate) b2: f32,
+    pub(crate) a1: f32,
+    pub(crate) a2: f32,
 }
 
 impl Biquad {
     /// Coeficientes RBJ (Audio EQ Cookbook), normalizados por a0.
-    fn new(kind: FilterKind, cutoff_hz: f32, q: f32, sample_rate: u32) -> Self {
+    pub(crate) fn new(kind: FilterKind, cutoff_hz: f32, q: f32, sample_rate: u32) -> Self {
         let cutoff = cutoff_hz.min(0.45 * sample_rate as f32);
         let w0 = TAU * cutoff / sample_rate as f32;
         let (sin, cos) = w0.sin_cos();
@@ -797,6 +832,7 @@ impl FxState {
         match self {
             FxState::Comp { reduction, .. } => Some(*reduction),
             FxState::Dyn(d) => Some(d.applied),
+            FxState::Duck(d) => Some(d.reduction()),
             _ => None,
         }
     }
@@ -884,6 +920,14 @@ impl FxState {
                 }
                 FxState::Dyn(state)
             }
+            (Some(Fx::Duck(params)), previous) => {
+                let mut state = crate::duck::DuckState::new(params, sample_rate);
+                // Otro sidechain en la ranura: sigue su envolvente.
+                if let FxState::Duck(old) = previous {
+                    state.take_over(&old);
+                }
+                FxState::Duck(state)
+            }
             (Some(Fx::Bitcrush { bits, downsample }), previous) => {
                 let (counter, held) = match previous {
                     FxState::Crush { counter, held, .. } => (counter % downsample, held),
@@ -953,6 +997,7 @@ impl FxState {
                     band.coefs = Biquad::eq(band.kind, band.current, sample_rate);
                 }
             }
+            (FxState::Duck(state), i) => state.set_param(i, value),
             (FxState::Dyn(state), 4) => state.params.ratio = value,
             (FxState::Dyn(state), 5) => {
                 state.params.attack_ms = value;
@@ -1001,6 +1046,7 @@ impl FxState {
                     }
                 }
             }
+            FxState::Duck(state) => state.reset(),
             FxState::Dyn(state) => {
                 state.z = [[0.0; 2]; 2];
                 state.detect_z = [0.0; 2];
@@ -1019,7 +1065,35 @@ impl FxState {
     pub fn sidechain(&self) -> Option<usize> {
         match self {
             FxState::Dyn(state) => state.params.sidechain,
+            FxState::Duck(state) => state.params.source,
             _ => None,
+        }
+    }
+
+    /// El ducking de esta ranura, si lo es.
+    pub(crate) fn duck(&self) -> Option<&crate::duck::DuckState> {
+        match self {
+            FxState::Duck(state) => Some(state),
+            _ => None,
+        }
+    }
+
+    /// En silencio (la pista no suena): el ducking sigue su envolvente
+    /// (`key` y `hit`, como en [`FxState::process_side`]); los demás se
+    /// vacían ([`FxState::reset`]).
+    pub(crate) fn rest(&mut self, frames: usize, key: Option<&[f32]>, hit: bool) {
+        match self {
+            FxState::Duck(state) => state.rest(frames, key, hit),
+            other => other.reset(),
+        }
+    }
+
+    /// Como [`FxState::process_keyed`], con `hit`: si la pista que dispara
+    /// el ducking por patrón ha dado un golpe al principio de este trozo.
+    pub(crate) fn process_side(&mut self, buf: &mut [f32], key: Option<&[f32]>, hit: bool) {
+        match self {
+            FxState::Duck(state) => state.process(buf, key, hit),
+            other => other.process_keyed(buf, key),
         }
     }
 
@@ -1040,6 +1114,8 @@ impl FxState {
         match self {
             FxState::Off => {}
             FxState::Dyn(state) => state.process(buf, None),
+            // Sin la pista que lo dispara: ni golpes ni audio.
+            FxState::Duck(state) => state.process(buf, None, false),
             FxState::Biquad { coefs, z, .. } => {
                 let c = *coefs;
                 for frame in buf.as_chunks_mut::<2>().0 {

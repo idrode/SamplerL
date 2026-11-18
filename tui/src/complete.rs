@@ -1260,7 +1260,8 @@ mod tests {
                 "distortion",
                 "gain",
                 "eq",
-                "dyneq"
+                "dyneq",
+                "duck"
             ]
         );
         let c = at(&format!("{SONG}track(\"d\", amen):fx(\"bit|")).unwrap();

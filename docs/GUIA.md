@@ -3583,6 +3583,7 @@ track("drums", amen)
 | `fx("gain")` | `level` (continuo) |
 | `fx("eq")` | `freq1` (continuo), `gain1` (continuo), `q1` (continuo), `freq2` (continuo), `gain2` (continuo), `q2` (continuo), `freq3` (continuo), `gain3` (continuo), `q3` (continuo), `freq4` (continuo), `gain4` (continuo), `q4` (continuo) |
 | `fx("dyneq")` | `freq` (continuo), `q` (continuo), `threshold` (continuo), `ratio` (continuo), `range` (continuo), `attack` (continuo), `release` (continuo) |
+| `fx("duck")` | `depth` (continuo), `attack` (continuo), `release` (continuo), `threshold` (continuo), `ratio` (continuo), `knee` (continuo) |
 | `bus("delay")` | `feedback` (continuo), `level` (continuo) |
 | `bus("reverb")` | `size` (continuo), `damp` (continuo), `level` (continuo) |
 | `cortes:set` | `attack` (por golpe), `release` (por golpe), `pan` (por golpe), `length` (por golpe), `crossfade` (por golpe), `bend` (por golpe), `bend_time` (por golpe), `formant` (por golpe) |
@@ -3599,6 +3600,9 @@ track("drums", amen)
 | `fx("eq")` | `type1`, `type2`, `type3`, `type4` | elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer |
 | `fx("dyneq")` | `type` | elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer |
 | `fx("dyneq")` | `sidechain` | es una pista, no un número |
+| `fx("duck")` | `source` | es una pista, no un número |
+| `fx("duck")` | `mode`, `curve`, `tap` | elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer |
+| `fx("duck")` | `filter`, `band` | es un filtro que se calcula al cargar y entra con el patrón al compás |
 | `bus("delay")` | `time` | es una figura ("1/8"), no un número; además, mover el retardo de una línea con repeticiones dentro suena a cambio de pitch |
 | `slice` | `zero_cross` | se aplica al cargar, en el hilo de control (el sample o el bucle se preparan una vez): no suena en el tiempo |
 | `cortes:set` | `play`, `fit`, `rev` | elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer |
@@ -4385,6 +4389,18 @@ El filtro es un biquad de 12 dB/octava; `q = 0.707` es la respuesta más plana y
 |  | `attack` | ms que tarda en bajar | `5` | 0.1–200 |
 |  | `release` | ms que tarda en volver | `120` | 1–2000 |
 |  | `sidechain` | pista que se escucha en vez de la propia (aunque esté en mute) | `la propia` | nombre de otra pista |
+| `"duck"` | `source` | pista que dispara | obligatorio | nombre de otra pista |
+|  | `mode` | qué dispara: los golpes de su secuenciador o su audio | `"pattern"` | `"pattern"` o `"audio"` |
+|  | `depth` | dB que baja con cada golpe (por audio, lo más que baja) | `-9` | -60–0 |
+|  | `attack` | ms que tarda en bajar | `5` | 0–500 |
+|  | `release` | ms que tarda en volver (por patrón, exactos) | `180` | 1–5000 |
+|  | `curve` | forma de la vuelta, por patrón | `"linear"` | `"linear"`, `"exp"` o `"smooth"` |
+|  | `threshold` | por audio, nivel en dB (RMS, un seno de amplitud 1 da 0) desde el que baja | `-30` | -60–0 |
+|  | `ratio` | por audio, por cada dB de más baja 1 − 1/ratio dB | `4` | 1–20 |
+|  | `knee` | por audio, ancho en dB de la rodilla suave alrededor del umbral | `6` | 0–24 |
+|  | `filter` | por audio, paso bajo del detector en Hz (que solo le importen los graves) | `sin filtro` | 20–20000 |
+|  | `tap` | de dónde escucha a la pista que dispara: antes de su volumen (sigue en mute) o lo que se oye | `"pre"` | `"pre"` o `"post"` |
+|  | `band` | solo baja lo que queda por debajo de estos Hz (cruce de 24 dB/octava) | `la pista entera` | 20–2000 |
 
 ```lua
 local amen = sample("amen.wav"):slice(8)
@@ -4395,6 +4411,22 @@ track("drums", amen)
   :fx("bitcrush", { bits = 6, downsample = 2 })
 track("drums")
   :fx("eq", { freq1 = 300, gain1 = -3, q1 = 2, type2 = "highshelf", freq2 = 8000, gain2 = 2 })
+```
+
+### `pista:sidechain(origen [, parámetros])`
+
+Devuelve: pista.
+
+Sidechain: la pista baja con cada golpe (o con el audio) de otra, entera o solo sus graves. Añade a la cadena (es uno de sus 4 efectos, en el orden en que se escribe) el efecto `duck` con `source = origen`: lo mismo que `:fx("duck", { source = "kick", ... })`. Con `mode = "pattern"` (por defecto), cada golpe del secuenciador de `origen` baja la pista `depth` dB en `attack` ms (en línea recta) y la devuelve en `release` ms con su `curve`: sin detectar audio, latencia cero. Con `mode = "audio"`, un detector RMS de 10 ms escucha la salida de `origen` (con `filter`, solo lo que pasa un paso bajo en esos Hz) y, por encima de `threshold`, baja `1 − 1/ratio` dB por dB de más (rodilla suave de `knee` dB), como mucho `depth`, con `attack` y `release`. Con `band`, solo baja lo que queda por debajo de esos Hz (un cruce de 24 dB/octava): el bajo cede los graves y conserva el resto. `tap = "pre"` (por defecto) escucha a `origen` tras sus efectos y antes de su volumen: sigue disparando en mute o fuera del solo; con `tap = "post"`, lo que se oye de él: en mute no baja. Un origen puede disparar a varias pistas; en círculo (a escucha a b y b a a) es un error al cargar, y también si `origen` no existe o, por patrón, está congelado. `depth`, `attack`, `release`, `threshold`, `ratio` y `knee` admiten `ramp()`, `lfo()`, `macro()` y lanes (`pista:auto`).
+
+- `origen`: la pista que dispara (su nombre, entre comillas)
+- `parámetros`: tabla con los del efecto `duck` (menos `source`)
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+track("kick", amen):steps("1 . . .  1 . . .  1 . . .  1 . . .")
+track("bajo", amen):steps("3 _ _ _  3 _ _ _  3 _ _ _  3 _ _ _")
+  :sidechain("kick", { depth = -9, attack = 5, release = 180, band = 150 })
 ```
 
 ### `pista:mode(modo)`

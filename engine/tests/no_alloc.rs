@@ -2150,6 +2150,80 @@ fn the_audio_thread_never_allocates() {
         }
     }
     controller.set_stereo_viz(false);
+
+    // Sidechain entre pistas: por patrón (la 3 con los golpes de la 6),
+    // por audio antes del volumen con filtro del detector (la 4) y después
+    // con banda (la 5), con el origen en mute y sin mute, y cambiando de
+    // parámetros al compás; y las colas de las pistas (el panel de
+    // choques) encendiéndose y apagándose en pleno sonido.
+    let ducking = |fx: engine::DuckParams| {
+        Pattern::from_bars(sample.clone(), &slices, &bars[..1])
+            .unwrap()
+            .with_fx(&[Fx::Duck(fx)])
+            .unwrap()
+    };
+    let by_pattern = engine::DuckParams {
+        depth_db: -12.0,
+        curve: engine::DuckCurve::Smooth,
+        ..engine::DuckParams::new(6)
+    };
+    let by_audio = engine::DuckParams {
+        threshold_db: -50.0,
+        filter_hz: 150.0,
+        ..engine::DuckParams::new(6).audio()
+    };
+    let banded = engine::DuckParams {
+        tap: engine::DuckTap::Post,
+        band_hz: 200.0,
+        ..by_audio
+    };
+    // La 6 dispara: el break de siempre, sin efectos.
+    controller
+        .set_track_pattern(
+            6,
+            Some(Pattern::from_bars(sample.clone(), &slices, &bars[..1]).unwrap()),
+        )
+        .unwrap();
+    controller
+        .set_track_pattern(3, Some(ducking(by_pattern)))
+        .unwrap();
+    controller
+        .set_track_pattern(4, Some(ducking(by_audio)))
+        .unwrap();
+    controller
+        .set_track_pattern(5, Some(ducking(banded)))
+        .unwrap();
+    let mut reduced = false;
+    for round in 0..6 {
+        let n = counted(|| {
+            for _ in 0..200 {
+                engine.process(&mut out, 2);
+            }
+        });
+        assert_eq!(n, 0, "reservas con el sidechain (vuelta {round})");
+        controller.set_mute(6, round % 2 == 0).unwrap();
+        let mut batch = engine::Batch::new();
+        let mut on = [false; engine::VIZ_SOURCES];
+        if round % 3 != 2 {
+            on[..engine::MAX_TRACKS].fill(true);
+        }
+        batch.set_viz(on).set_pattern(
+            3,
+            Some(ducking(engine::DuckParams {
+                depth_db: -6.0 - round as f32,
+                ..by_pattern
+            })),
+        );
+        controller.apply(batch).unwrap();
+        for source in 0..engine::MAX_TRACKS {
+            drained.clear();
+            controller.viz_samples(source, &mut drained);
+        }
+        let status = controller.status();
+        assert!(status.running);
+        reduced |= status.tracks[3..6].iter().any(|t| t.reduction[0] > 0.0);
+    }
+    assert!(reduced, "el sidechain baja y lo publica");
     controller.collect_garbage();
 }
 

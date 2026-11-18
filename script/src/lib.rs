@@ -3071,8 +3071,10 @@ fn resolve_sidechains(
         let slot = slots
             .iter()
             .position(|s| s.as_deref() == Some(name.as_str()));
-        if let (Some(Fx::DynEq(params)), Some(slot)) = (fx.get_mut(*index), slot) {
-            params.sidechain = Some(slot);
+        match (fx.get_mut(*index), slot) {
+            (Some(Fx::DynEq(params)), Some(slot)) => params.sidechain = Some(slot),
+            (Some(Fx::Duck(params)), Some(slot)) => params.source = Some(slot),
+            _ => {}
         }
     }
 }
@@ -3118,18 +3120,35 @@ fn check_sidechains<'a>(
             names.push(&t.name);
         }
     }
-    let mut edges: Vec<(&str, &str)> = Vec::new();
-    for t in tracks {
-        for (_, key) in &t.sidechains {
+    // Cómo se llama en el script lo que escucha (para el error).
+    let what = |t: &TrackDef, index: usize| match t.fx.get(index) {
+        Some(Fx::Duck(_)) => "sidechain",
+        _ => "fx(\"dyneq\"): sidechain",
+    };
+    let mut edges: Vec<(&str, &str, &str)> = Vec::new();
+    for t in tracks.clone() {
+        for (index, key) in &t.sidechains {
+            let what = what(t, *index);
             if !names.contains(&key.as_str()) {
                 return Err(ScriptError::new(format!(
-                    "pista \"{}\": fx(\"dyneq\"): sidechain \"{key}\" no es ninguna pista (hay: {})",
+                    "pista \"{}\": {what} \"{key}\" no es ninguna pista (hay: {})",
                     t.name,
                     names.join(", ")
                 )));
             }
-            if !edges.contains(&(t.name.as_str(), key.as_str())) {
-                edges.push((&t.name, key));
+            // Por patrón, una pista congelada ya no tiene golpes: toca su
+            // WAV una vez por vuelta.
+            if let Some(Fx::Duck(d)) = t.fx.get(*index)
+                && d.mode == engine::DuckMode::Pattern
+                && tracks.clone().any(|o| o.name == *key && o.frozen.is_some())
+            {
+                return Err(ScriptError::new(format!(
+                    "pista \"{}\": sidechain \"{key}\" por patrón: \"{key}\" está congelada (ya no tiene golpes; usa mode = \"audio\" o descongélala)",
+                    t.name
+                )));
+            }
+            if !edges.iter().any(|&(f, k, _)| f == t.name && k == key) {
+                edges.push((&t.name, key, what));
             }
         }
     }
@@ -3139,13 +3158,13 @@ fn check_sidechains<'a>(
         let mut seen = vec![start];
         let mut frontier = vec![start];
         while let Some(at) = frontier.pop() {
-            for &(from, to) in &edges {
+            for &(from, to, what) in &edges {
                 if from != at {
                     continue;
                 }
                 if to == start {
                     return Err(ScriptError::new(format!(
-                        "pista \"{start}\": fx(\"dyneq\"): sidechain en círculo (\"{start}\" acaba escuchándose a sí misma a través de \"{}\")",
+                        "pista \"{start}\": {what} en círculo (\"{start}\" acaba escuchándose a sí misma a través de \"{}\")",
                         if at == start { to } else { at }
                     )));
                 }
@@ -7122,7 +7141,8 @@ fn fx_arg(
     if let (Some(effect), Some(p)) = (api::effect(name), &params) {
         table_curves(lua, &format!("fx(\"{name}\")"), p, effect.params)?;
     }
-    let sidechain = match (&params, name) {
+    let canonical = api::effect(name).map_or(name, |e| e.name);
+    let sidechain = match (&params, canonical) {
         (Some(p), "dyneq") => match p.get::<Value>("sidechain")? {
             Value::Nil => None,
             Value::String(s) => Some(s.to_str()?.to_string()),
@@ -7133,8 +7153,42 @@ fn fx_arg(
                 ));
             }
         },
+        (_, "duck") => match params
+            .as_ref()
+            .map(|p| p.get::<Value>("source"))
+            .transpose()?
+        {
+            Some(Value::String(s)) => Some(s.to_str()?.to_string()),
+            None | Some(Value::Nil) => {
+                return Err(fail(
+                    lua,
+                    "fx(\"duck\"): falta source (la pista que lo dispara; o pista:sidechain(\"kick\", {...}))",
+                ));
+            }
+            _ => {
+                return Err(fail(
+                    lua,
+                    "fx(\"duck\"): source es el nombre de una pista, entre comillas",
+                ));
+            }
+        },
         _ => None,
     };
+    if canonical == "duck" && own.is_none() {
+        return Err(fail(
+            lua,
+            "fx(\"duck\"): el sidechain va en las pistas, no en los grupos (pista:sidechain)",
+        ));
+    }
+    if canonical == "duck"
+        && let Some(own) = own
+        && sidechain.as_deref() == Some(own)
+    {
+        return Err(fail(
+            lua,
+            format!("sidechain: \"{own}\" no puede dispararse a sí misma"),
+        ));
+    }
     if let Some(own) = own
         && sidechain.as_deref() == Some(own)
     {
@@ -7322,6 +7376,46 @@ pub(crate) fn build_fx(
                 attack_ms: get("attack")?.unwrap_or(d.attack_ms),
                 release_ms: get("release")?.unwrap_or(d.release_ms),
                 sidechain: None,
+            })
+        }
+        "duck" => {
+            let choice = |key: &str, options: &[&str]| -> Result<Option<String>, String> {
+                let value = text(key, format!("fx(\"duck\"): {key} tiene que ser un texto"))?;
+                match value {
+                    Some(v) if !options.contains(&v.as_str()) => Err(format!(
+                        "fx(\"duck\"): {key} \"{v}\" no existe ({})",
+                        options.join(" o ")
+                    )),
+                    other => Ok(other),
+                }
+            };
+            let mode = match choice("mode", &["pattern", "audio"])?.as_deref() {
+                Some("audio") => engine::DuckMode::Audio,
+                _ => engine::DuckMode::Pattern,
+            };
+            let curve = choice("curve", &["linear", "exp", "smooth"])?
+                .as_deref()
+                .and_then(engine::DuckCurve::from_name)
+                .unwrap_or_default();
+            let tap = match choice("tap", &["pre", "post"])?.as_deref() {
+                Some("post") => engine::DuckTap::Post,
+                _ => engine::DuckTap::Pre,
+            };
+            let d = engine::DuckParams::new(0);
+            Fx::Duck(engine::DuckParams {
+                mode,
+                // La pista que dispara se busca al acabar el script.
+                source: None,
+                depth_db: get("depth")?.unwrap_or(d.depth_db),
+                attack_ms: get("attack")?.unwrap_or(d.attack_ms),
+                release_ms: get("release")?.unwrap_or(d.release_ms),
+                curve,
+                threshold_db: get("threshold")?.unwrap_or(d.threshold_db),
+                ratio: get("ratio")?.unwrap_or(d.ratio),
+                knee_db: get("knee")?.unwrap_or(d.knee_db),
+                filter_hz: get("filter")?.unwrap_or(0.0),
+                tap,
+                band_hz: get("band")?.unwrap_or(0.0),
             })
         }
         "eq" => {
@@ -7690,6 +7784,56 @@ impl UserData for TrackHandle {
                 });
                 let kind = live::LiveKind::Fx { slot };
                 this.note_live(lua, "fx", Some(name), kind, values);
+                Ok(this.clone())
+            },
+        );
+
+        // `:sidechain(origen [, { parámetros }])`: el efecto `duck` con
+        // `source = origen`, al final de la cadena.
+        methods.add_method(
+            "sidechain",
+            |lua, this, (source, params): (Value, Option<Table>)| {
+                let source = match source {
+                    Value::String(s) => s.to_str()?.to_string(),
+                    other => {
+                        return Err(fail(
+                            lua,
+                            format!(
+                                "sidechain({}): el origen es el nombre de una pista, entre comillas",
+                                value_text(&other)
+                            ),
+                        ));
+                    }
+                };
+                let table = match params {
+                    Some(t) => {
+                        if !matches!(t.get::<Value>("source")?, Value::Nil) {
+                            return Err(fail(
+                                lua,
+                                format!(
+                                    "sidechain(\"{source}\", {{...}}): source ya es el primer argumento"
+                                ),
+                            ));
+                        }
+                        t
+                    }
+                    None => lua.create_table()?,
+                };
+                let values = live::numbers(Some(&table));
+                table.set("source", source.as_str())?;
+                let count = this.with_track(|t| t.def.fx.len());
+                let (fx, automations, sidechain) =
+                    fx_arg(lua, "duck", Some(table), count, Some(&this.name))?;
+                let slot = this.with_track(|t| {
+                    if let Some(key) = sidechain {
+                        t.def.sidechains.push((t.def.fx.len(), key));
+                    }
+                    t.def.fx.push(fx);
+                    t.def.automation.extend(automations);
+                    t.def.fx.len() - 1
+                });
+                let kind = live::LiveKind::Fx { slot };
+                this.note_live(lua, "sidechain", Some("duck".to_string()), kind, values);
                 Ok(this.clone())
             },
         );

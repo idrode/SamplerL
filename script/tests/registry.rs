@@ -260,7 +260,7 @@ fn unknown_effect_errors_list_the_registry() {
     };
     assert!(
         err.message.contains(
-            "no existe (filter, lowpass, highpass, bitcrush, compressor, distortion, gain, eq, dyneq)"
+            "no existe (filter, lowpass, highpass, bitcrush, compressor, distortion, gain, eq, dyneq, duck)"
         ),
         "{err}"
     );
@@ -425,6 +425,7 @@ fn engine_fx(name: &str) -> engine::Fx {
         Some("bitcrush") => engine::Fx::bitcrush(8, 1),
         Some("eq") => engine::Fx::eq(&[]),
         Some("dyneq") => engine::Fx::DynEq(engine::DynEqParams::new(100.0)),
+        Some("duck") => engine::Fx::Duck(engine::DuckParams::new(0)),
         other => panic!("efecto sin motor: {other:?}"),
     }
 }

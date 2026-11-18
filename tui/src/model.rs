@@ -759,6 +759,7 @@ pub fn fx_text_named(fx: &Fx, key: Option<&str>) -> String {
         (Fx::DynEq(p), Some(name)) => {
             format!("dyneq {} -{:.0} ⟵{name}", hz_label(p.freq_hz), p.range_db)
         }
+        (Fx::Duck(p), Some(name)) => format!("{} ⟵{name}", duck_text(p)),
         _ => fx_text(fx),
     }
 }
@@ -794,6 +795,12 @@ pub fn fx_text(fx: &Fx) -> String {
                 .map_or(String::new(), |k| format!(" ⟵pista {}", k + 1));
             format!("dyneq {} -{:.0}{key}", hz_label(p.freq_hz), p.range_db)
         }
+        Fx::Duck(p) => {
+            let key = p
+                .source
+                .map_or(String::new(), |k| format!(" ⟵pista {}", k + 1));
+            format!("{}{key}", duck_text(p))
+        }
         Fx::Eq { bands } => {
             let active: Vec<String> = bands
                 .iter()
@@ -814,6 +821,20 @@ pub fn fx_text(fx: &Fx) -> String {
             }
         }
     }
+}
+
+/// El sidechain en corto: `duck -9 180ms`, `duck audio -9 <150`.
+fn duck_text(p: &engine::DuckParams) -> String {
+    let mode = match p.mode {
+        engine::DuckMode::Pattern => "",
+        engine::DuckMode::Audio => " audio",
+    };
+    let band = if p.band_hz > 0.0 {
+        format!(" <{}", hz_label(p.band_hz))
+    } else {
+        String::new()
+    };
+    format!("duck{mode} {:.0} {:.0}ms{band}", p.depth_db, p.release_ms)
 }
 
 /// Frecuencia corta: `300`, `2.5k`, `12k`.

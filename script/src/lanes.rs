@@ -142,6 +142,7 @@ fn effect_names(fx: &engine::Fx) -> Vec<&'static str> {
         engine::Fx::Gain { .. } => "gain",
         engine::Fx::Eq { .. } => "eq",
         engine::Fx::DynEq(_) => "dyneq",
+        engine::Fx::Duck(_) => "duck",
     };
     let mut names = vec![name];
     if let Some(effect) = api::effect(name) {

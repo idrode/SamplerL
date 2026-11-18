@@ -1257,7 +1257,8 @@ fn completion_follows_the_context() {
             "distortion",
             "gain",
             "eq",
-            "dyneq"
+            "dyneq",
+            "duck"
         ]
     );
     type_text(&mut app, "filter\", { ");
@@ -1456,7 +1457,8 @@ fn choosing_another_effect_with_the_arrows_replaces_the_rest_of_the_name() {
             "distortion",
             "gain",
             "eq",
-            "dyneq"
+            "dyneq",
+            "duck"
         ]
     );
     app.handle(special(Key::Down));

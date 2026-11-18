@@ -152,3 +152,32 @@ fn pantalla_sidechain() {
     play(&mut app, &mut engine, 10);
     println!("{}", text(&draw(&mut app, 140, 45)));
 }
+
+#[test]
+fn the_view_shows_a_track_sidechain_and_its_ducking() {
+    let song = "bpm(120)\n\
+        track(\"kick\", sample(\"bombo.wav\"):slice_grid(1))\n\
+          :steps(\"1 . . .  . . . .  1 . . .  . . . .\")\n\
+        track(\"pad\", sample(\"pad.wav\"):slice_grid(1))\n\
+          :steps(\"1 . . .  . . . .  . . . .  . . . .\")\n\
+          :sidechain(\"kick\", { depth = -12, release = 200 })\n";
+    let path = fixture("sidechain_duck_view", Some(song));
+    write_sounds(&path);
+    let (controller, mut engine) = new_engine(RATE);
+    let mut app = App::open(&path, controller, RATE).unwrap();
+    assert!(app.view().error.is_none(), "{:?}", app.view().error);
+    palette(&mut app, "vista del sidechain");
+    play(&mut app, &mut engine, 3);
+    let view = app.view().sidechain.unwrap();
+    let row = view.rows.iter().find(|r| r.track == "pad").expect("el pad");
+    assert_eq!(row.effect, "sidechain por patrón");
+    assert_eq!(row.source.as_deref(), Some("kick"));
+    assert_eq!(row.scale_db, 12.0);
+    // Ha bajado hasta 12 dB con el golpe y ha vuelto.
+    let most = row.reduction.iter().copied().fold(0.0f32, f32::max);
+    assert!(most > 11.0 && most <= 12.0, "{:?}", row.reduction);
+    // En el panel de efectos, en corto y con quién lo dispara.
+    app.show_tab(crate::layout::Tab::Panel(crate::focus::Panel::Fx));
+    let screen = text(&draw(&mut app, 140, 44));
+    assert!(screen.contains("duck -12 200ms ⟵kick"), "{screen}");
+}

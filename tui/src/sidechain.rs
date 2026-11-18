@@ -53,7 +53,7 @@ impl Sidechain {
         for track in song.map_or(&[][..], |s| &s.tracks[..]) {
             let Some(t) = slot(&track.name) else { continue };
             for (i, fx) in track.fx.iter().enumerate() {
-                if !matches!(fx, Fx::DynEq(_) | Fx::Compressor { .. }) {
+                if !matches!(fx, Fx::DynEq(_) | Fx::Compressor { .. } | Fx::Duck(_)) {
                     continue;
                 }
                 let source = trigger(track, i);
@@ -100,6 +100,13 @@ impl Sidechain {
                         p.range_db.max(1.0),
                     ),
                     Fx::Compressor { .. } => ("compresor".to_string(), COMPRESSOR_SCALE_DB),
+                    Fx::Duck(p) => (
+                        match p.mode {
+                            engine::DuckMode::Pattern => "sidechain por patrón".to_string(),
+                            engine::DuckMode::Audio => "sidechain por audio".to_string(),
+                        },
+                        (-p.depth_db).max(1.0),
+                    ),
                     _ => continue,
                 };
                 let history = self
