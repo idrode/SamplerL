@@ -159,12 +159,48 @@ fn clash_style(score: f32) -> Style {
     }
 }
 
+impl ClashPanel<'_> {
+    /// Lo dibuja y, con la matriz, dice dónde quedó cada cosa (para el
+    /// ratón).
+    pub fn render_with_layout(
+        self,
+        area: Rect,
+        buf: &mut Buffer,
+    ) -> Option<crate::clash::MatrixLayout> {
+        let view = self.0;
+        let table = view.clash_table.as_ref()?;
+        let matrix = table.matrix.as_ref()?;
+        let title = if table.live {
+            format!(" choques · en vivo · {:.0} s ", table.seconds)
+        } else {
+            format!(" choques · {} ", script::bars_text(table.bars))
+        };
+        let selected = view
+            .selected
+            .and_then(|i| view.tracks.get(i))
+            .map(|t| t.name.as_str());
+        Some(
+            crate::clash::MatrixPanel {
+                view: matrix,
+                title,
+                stale: table.stale,
+                selected_track: selected,
+            }
+            .render_with_layout(area, buf),
+        )
+    }
+}
+
 impl Widget for ClashPanel<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let view = self.0;
         let Some(table) = &view.clash_table else {
             return;
         };
+        if table.matrix.is_some() {
+            self.render_with_layout(area, buf);
+            return;
+        }
         let border = if table.stale {
             Style::new().fg(warning_color())
         } else {

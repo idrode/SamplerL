@@ -3,6 +3,7 @@ mod app;
 mod bar_line;
 mod brackets;
 mod browser;
+mod clash;
 mod clipboard;
 mod complete;
 mod config;

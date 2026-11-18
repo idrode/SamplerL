@@ -161,6 +161,13 @@ pub struct ClashTableView {
     /// Los choques, del más fuerte al más débil: las dos pistas, la banda
     /// y la puntuación.
     pub clashes: Vec<(String, String, String, f32)>,
+    /// Del análisis en vivo (y cuántos segundos lleva guardados), no de uno
+    /// offline.
+    pub live: bool,
+    pub seconds: f32,
+    /// La matriz pista × banda y los choques agrupados (`None`: solo la
+    /// tabla, como antes).
+    pub matrix: Option<crate::clash::MatrixView>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

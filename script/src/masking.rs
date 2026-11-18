@@ -5,7 +5,8 @@
 //! lo pide; el motor que suena no se toca.
 
 use engine::masking::{
-    BAND_NAMES, BANDS, BandClash, BandSpectrum, MaskingOptions, band_center, band_edges, clashes,
+    BAND_NAMES, BANDS, BandClash, BandSpectrum, MaskingOptions, band_center, band_edges,
+    clashes_prepared, prepare,
 };
 
 use crate::{MAX_SONG_BARS, ScriptError, Song};
@@ -27,6 +28,9 @@ pub struct MaskingReport {
     /// Recortes sugeridos: un EQ por pista que cede, en el orden de las
     /// pistas.
     pub suggestions: Vec<Suggestion>,
+    /// Nivel medio de cada pista en cada banda, en dBFS (0: un seno de
+    /// amplitud 1 dentro todo el tiempo), en el orden de `tracks`.
+    pub levels: Vec<[f32; BANDS]>,
 }
 
 /// Recortes como mucho por pista: las bandas de un EQ.
@@ -107,26 +111,54 @@ impl Song {
                 ))
             })
             .collect::<Result<Vec<_>, ScriptError>>()?;
+        Ok(MaskingReport::from_spectra(
+            bars,
+            tracks,
+            &spectra,
+            options,
+            self.priority.clone(),
+        ))
+    }
+}
+
+impl MaskingReport {
+    /// El informe de los espectros `spectra` de las pistas `tracks` (en su
+    /// orden): lo usan el análisis offline y el de la interfaz en vivo, así
+    /// que los dos puntúan, agrupan y sugieren igual. `bars`: compases
+    /// analizados (0, en vivo).
+    pub fn from_spectra(
+        bars: u64,
+        tracks: Vec<String>,
+        spectra: &[BandSpectrum],
+        options: &MaskingOptions,
+        priority: Vec<String>,
+    ) -> MaskingReport {
+        let prepared: Vec<_> = spectra.iter().map(|s| prepare(s, options)).collect();
         let mut pairs = Vec::new();
         for a in 0..tracks.len() {
             for b in a + 1..tracks.len() {
                 pairs.push(PairClashes {
                     a,
                     b,
-                    bands: clashes(&spectra[a], &spectra[b], options),
+                    bands: clashes_prepared(&prepared[a], &prepared[b], options),
                 });
             }
         }
+        let levels = spectra
+            .iter()
+            .map(|s| std::array::from_fn(|band| s.level_db(band)))
+            .collect();
         let mut report = MaskingReport {
             bars,
             tracks,
             options: *options,
             pairs,
-            priority: self.priority.clone(),
+            priority,
             suggestions: Vec::new(),
+            levels,
         };
         report.suggestions = report.suggest();
-        Ok(report)
+        report
     }
 }
 
@@ -385,6 +417,8 @@ impl MaskingReport {
             out.push_str("sin choques\n");
             return out;
         }
+        out.push_str(&self.groups_text());
+        out.push('\n');
         let rows: Vec<(String, String, String)> =
             clashes.iter().map(|c| self.clash_line(c)).collect();
         let pair_width = rows.iter().map(|r| r.0.chars().count()).max().unwrap_or(0);
@@ -474,6 +508,210 @@ impl MaskingReport {
         out
     }
 }
+
+/// Choques de una pareja en bandas seguidas: «kick × bass: 63-125 Hz».
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ClashGroup {
+    pub a: usize,
+    pub b: usize,
+    /// Primera y última banda (seguidas, todas por encima del umbral de
+    /// informe).
+    pub bands: (usize, usize),
+    /// La puntuación más alta de sus bandas.
+    pub score: f32,
+    /// La fracción del tiempo en que suenan las dos (la de esa banda).
+    pub overlap: f32,
+    /// Cuánto suena más `a` que `b` en el rango (dB; negativo, `b` más).
+    pub gap_db: f32,
+    /// La que se queda el rango y la que cede (ver
+    /// [`MaskingReport::winner`]).
+    pub winner: usize,
+    pub loser: usize,
+}
+
+/// Qué arregla una sugerencia de un choque.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FixKind {
+    /// La que cede baja con cada golpe de la otra (`:sidechain`).
+    Sidechain,
+    /// Un recorte de EQ en el rango.
+    Eq,
+}
+
+/// Una sugerencia para un choque: una línea de Lua lista para pegar.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Fix {
+    pub kind: FixKind,
+    /// La pista en la que se escribe (la que cede).
+    pub track: usize,
+    pub line: String,
+}
+
+/// Por debajo de esta frecuencia (el borde alto del choque), el sidechain
+/// sugerido baja solo los graves (`band`); por encima, la pista entera.
+pub const SIDECHAIN_BAND_MAX_HZ: f32 = 300.0;
+
+impl MaskingReport {
+    /// Los choques agrupados: por pareja, cada tramo de bandas seguidas
+    /// por encima del umbral de informe, del más grave al más fuerte;
+    /// ordenados por gravedad (la puntuación más alta; a igualdad, el más
+    /// ancho y luego el más grave).
+    pub fn groups(&self) -> Vec<ClashGroup> {
+        let report = self.options.report_score;
+        let mut out = Vec::new();
+        for pair in &self.pairs {
+            let mut band = 0;
+            while band < BANDS {
+                let hot = |b: usize| pair.bands[b].is_some_and(|c| c.score >= report);
+                if !hot(band) {
+                    band += 1;
+                    continue;
+                }
+                let first = band;
+                let mut best = (pair.bands[band].unwrap(), band);
+                while band < BANDS && hot(band) {
+                    let c = pair.bands[band].unwrap();
+                    if c.score > best.0.score {
+                        best = (c, band);
+                    }
+                    band += 1;
+                }
+                let last = band - 1;
+                let (clash, at) = best;
+                let range = |t: usize| -> f32 {
+                    let e: f32 = (first..=last)
+                        .map(|b| 10f32.powf(self.levels[t][b] / 10.0))
+                        .sum();
+                    10.0 * e.max(1e-30).log10()
+                };
+                let gap_db = if self.levels.len() == self.tracks.len() {
+                    range(pair.a) - range(pair.b)
+                } else {
+                    clash.level_db[0] - clash.level_db[1]
+                };
+                let strongest = Clash {
+                    a: pair.a,
+                    b: pair.b,
+                    band: at,
+                    clash,
+                };
+                let winner = self.winner(&strongest);
+                out.push(ClashGroup {
+                    a: pair.a,
+                    b: pair.b,
+                    bands: (first, last),
+                    score: clash.score,
+                    overlap: clash.overlap,
+                    gap_db,
+                    winner,
+                    loser: if winner == pair.a { pair.b } else { pair.a },
+                });
+            }
+        }
+        out.sort_by(|x, y| {
+            y.score
+                .total_cmp(&x.score)
+                .then((y.bands.1 - y.bands.0).cmp(&(x.bands.1 - x.bands.0)))
+                .then(x.bands.0.cmp(&y.bands.0))
+        });
+        out
+    }
+
+    /// El rango de un grupo: `63-125 Hz`, o `315 Hz` si es una banda.
+    pub fn range_text(bands: (usize, usize)) -> String {
+        if bands.0 == bands.1 {
+            format!("{} Hz", BAND_NAMES[bands.0])
+        } else {
+            format!("{}-{} Hz", BAND_NAMES[bands.0], BAND_NAMES[bands.1])
+        }
+    }
+
+    /// Resumen de un grupo en una línea: «kick × bass: 63-125 Hz · fuerte
+    /// 0.82 · kick 3 dB más fuerte · cede bass».
+    pub fn group_text(&self, group: &ClashGroup) -> String {
+        let gap = group.gap_db.abs();
+        let louder = if gap < 1.0 {
+            "igual de fuertes".to_string()
+        } else {
+            let t = if group.gap_db > 0.0 { group.a } else { group.b };
+            format!("{} {gap:.0} dB más fuerte", self.tracks[t])
+        };
+        format!(
+            "{} × {}: {} · {} {} · {louder} · cede {}",
+            self.tracks[group.a],
+            self.tracks[group.b],
+            Self::range_text(group.bands),
+            strength(group.score),
+            score_text(group.score),
+            self.tracks[group.loser]
+        )
+    }
+
+    /// Las sugerencias para un grupo, en la pista que cede: un sidechain
+    /// disparado por la otra (si `sidechain` lo permite: no si ya escucha
+    /// a la que cede, que sería un círculo) y un recorte de EQ en el rango.
+    /// `pattern`: si la que manda tiene golpes del secuenciador (si no, el
+    /// sidechain escucha su audio).
+    pub fn fixes(&self, group: &ClashGroup, sidechain: bool, pattern: bool) -> Vec<Fix> {
+        let mut out = Vec::new();
+        let (loser, winner) = (&self.tracks[group.loser], &self.tracks[group.winner]);
+        let report = self.options.report_score;
+        let t = ((group.score - report) / (FULL_CUT_SCORE - report)).clamp(0.0, 1.0);
+        if sidechain {
+            let depth = -(MIN_DUCK_DB + t * (MAX_DUCK_DB - MIN_DUCK_DB)).round();
+            let top = band_edges(group.bands.1).1;
+            let band = if top <= SIDECHAIN_BAND_MAX_HZ {
+                format!(", band = {}", number(round_freq(top * 1.25)))
+            } else {
+                String::new()
+            };
+            let mode = if pattern {
+                "mode = \"pattern\"".to_string()
+            } else {
+                "mode = \"audio\", threshold = -30, ratio = 4".to_string()
+            };
+            out.push(Fix {
+                kind: FixKind::Sidechain,
+                track: group.loser,
+                line: format!(
+                    "track(\"{loser}\"):sidechain(\"{winner}\", {{ {mode}, depth = {}, attack = 5, release = 120{band} }})",
+                    number(depth)
+                ),
+            });
+        }
+        let cut = self.cut(
+            group.bands.0,
+            group.bands.1,
+            group.score,
+            vec![group.winner],
+        );
+        out.push(Fix {
+            kind: FixKind::Eq,
+            track: group.loser,
+            line: format!(
+                "track(\"{loser}\"):fx(\"eq\", {{ freq1 = {}, gain1 = {}, q1 = {} }})",
+                number(cut.freq_hz),
+                number(cut.gain_db),
+                number(cut.q)
+            ),
+        });
+        out
+    }
+
+    /// Los grupos en texto, por gravedad.
+    pub fn groups_text(&self) -> String {
+        let mut out = String::from("por gravedad:\n");
+        for group in self.groups() {
+            out.push_str(&format!("  {}\n", self.group_text(&group)));
+        }
+        out
+    }
+}
+
+/// Profundidad del sidechain sugerido: de 3 dB (en el umbral de informe) a
+/// 9 dB (desde [`FULL_CUT_SCORE`]), en dB enteros.
+pub const MIN_DUCK_DB: f32 = 3.0;
+pub const MAX_DUCK_DB: f32 = 9.0;
 
 /// Fila de [`MaskingReport::grid`]: la pareja (índices de pistas) y sus
 /// celdas.

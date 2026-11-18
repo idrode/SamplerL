@@ -200,11 +200,17 @@ impl App {
     }
 
     /// Las fuentes que pide la interfaz por su cuenta: el master, mientras
-    /// se ve el scope o el espectro de sus paneles (en el último cuadro;
-    /// nunca en la ventana del editor, que no tiene motor).
+    /// se ve el scope o el espectro de sus paneles, y las pistas de la
+    /// canción mientras se ve el análisis en vivo de los choques (en el
+    /// último cuadro; nunca en la ventana del editor, que no tiene motor).
     fn ui_viz(&self) -> [bool; engine::VIZ_SOURCES] {
         let mut on = [false; engine::VIZ_SOURCES];
         on[engine::VIZ_MASTER] = self.master_shown();
+        if self.clash_shown() {
+            for (_, slot) in self.clash_slots() {
+                on[slot] = true;
+            }
+        }
         on
     }
 
@@ -365,12 +371,14 @@ impl App {
     /// espectros se calculan al dibujar ([`App::frame_viz`]).
     pub(super) fn tick_viz(&mut self) {
         let mut fresh = std::mem::take(&mut self.viz_scratch);
-        for source in 0..engine::VIZ_SOURCES {
+        let mut arrived = [0usize; engine::VIZ_SOURCES];
+        for (source, count) in arrived.iter_mut().enumerate() {
             if !self.viz_sent[source] {
                 continue;
             }
             fresh.clear();
             self.controller.viz_samples(source, &mut fresh);
+            *count = fresh.len();
             if source == engine::VIZ_MASTER {
                 self.viz_pending += fresh.len();
             }
@@ -380,6 +388,7 @@ impl App {
             history.drain(..extra);
         }
         self.viz_scratch = fresh;
+        self.tick_clash(&arrived);
         // El scope y el espectro del master, a su ritmo: cuando han llegado
         // las muestras de un cuadro de ellas (en vivo, el tiempo real; en
         // los tests, lo que se renderiza).
@@ -406,6 +415,7 @@ impl App {
     /// por espectro y cuadro, aunque el bucle dé más vueltas (con MIDI
     /// mira la entrada cada 2 ms).
     pub fn frame_viz(&mut self) {
+        self.frame_clash();
         let rate = self.sample_rate;
         // El del master, cuando le toca a su ritmo (`[interfaz]
         // visuales_hz`, que `bajo_consumo` baja; ver `tick_viz`).

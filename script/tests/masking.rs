@@ -35,6 +35,25 @@ fn dir() -> PathBuf {
             })
             .collect();
         offline::write_wav(dir.join("multi.wav"), &mono, 1, RATE).unwrap();
+        // Un bombo: un golpe de 150 ms que baja de 120 a 50 Hz y se apaga.
+        let kick: Vec<f32> = (0..RATE as usize / 4)
+            .map(|i| {
+                let t = i as f32 / RATE as f32;
+                let phase =
+                    std::f32::consts::TAU * (50.0 * t + 70.0 * 0.03 * (1.0 - (-t / 0.03).exp()));
+                0.8 * (-t / 0.15).exp() * phase.sin()
+            })
+            .collect();
+        offline::write_wav(dir.join("kick.wav"), &kick, 1, RATE).unwrap();
+        // Un bajo: 80 Hz sostenido, con un poco de su segundo armónico.
+        let bass: Vec<f32> = (0..RATE as usize / 2)
+            .map(|i| {
+                let t = i as f32 / RATE as f32;
+                0.4 * (std::f32::consts::TAU * 80.0 * t).sin()
+                    + 0.1 * (std::f32::consts::TAU * 160.0 * t).sin()
+            })
+            .collect();
+        offline::write_wav(dir.join("bass.wav"), &bass, 1, RATE).unwrap();
         dir
     })
     .clone()
@@ -239,4 +258,59 @@ fn applying_the_suggestion_lowers_the_score() {
     let worst =
         |r: &script::masking::MaskingReport| r.clashes().first().map_or(0.0, |c| c.clash.score);
     assert!(worst(&after) < worst(&before), "{}", after.text());
+}
+
+#[test]
+fn a_kick_and_a_bass_clash_in_the_lows_and_group_into_one_range() {
+    // El bombo en cada negra y el bajo en cada corchea: los dos entre 50 y
+    // 125 Hz.
+    let report = song(
+        "bpm(120)\n\
+         track(\"kick\", sample(\"kick.wav\"):slice_grid(1)):steps(\"1 . . . 1 . . . 1 . . . 1 . . .\")\n\
+         track(\"bass\", sample(\"bass.wav\"):slice_grid(1)):steps(\"1 . 1 . 1 . 1 . 1 . 1 . 1 . 1 .\")\n\
+         track(\"hat\", sample(\"sine5000.wav\"):slice_grid(1)):steps(\"1 . . .  . . . .  . . . .  . . . .\")\n",
+    )
+    .analyze_masking(RATE, &MaskingOptions::default())
+    .unwrap();
+    let groups = report.groups();
+    assert!(!groups.is_empty(), "{}", report.text());
+    let g = groups[0];
+    assert_eq!(
+        (report.tracks[g.a].as_str(), report.tracks[g.b].as_str()),
+        ("kick", "bass")
+    );
+    // En los graves de los dos: un rango con 63 Hz, entre 50 y 125 Hz (el
+    // bombo baja de 120 a 50 Hz; el bajo, 80 y 160).
+    let (lo, hi) = g.bands;
+    assert!(
+        lo >= band("50") && lo <= band("63") && hi <= band("125"),
+        "{}",
+        report.text()
+    );
+    let line = report.group_text(&g);
+    assert!(line.starts_with("kick × bass: "), "{line}");
+    // Nada con el charles.
+    assert!(
+        groups.iter().all(|g| g.a != 2 && g.b != 2),
+        "{}",
+        report.text()
+    );
+    // El informe lo pone el primero de «por gravedad».
+    let text = report.text();
+    let first = text
+        .lines()
+        .skip_while(|l| *l != "por gravedad:")
+        .nth(1)
+        .unwrap();
+    assert_eq!(first.trim(), line);
+    // La matriz: los niveles de las dos en sus graves, muy por encima de
+    // los del charles.
+    for t in 0..2 {
+        assert!(
+            report.levels[t][band("80")] > -30.0,
+            "{:?}",
+            report.levels[t]
+        );
+        assert!(report.levels[2][band("80")] < report.levels[t][band("80")] - 30.0);
+    }
 }

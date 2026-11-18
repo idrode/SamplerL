@@ -70,10 +70,10 @@ fn tab_height(view: &ViewModel, tab: Tab) -> u16 {
         // espectro, el eje (con menos de tres, el espectrograma no cabe).
         Tab::Panel(Panel::Scope) => 7,
         Tab::Panel(Panel::Spectrum) => 9,
-        Tab::Clash => view
-            .clash_table
-            .as_ref()
-            .map_or(0, |t| t.rows.len().max(t.clashes.len()) as u16 + 5),
+        Tab::Clash => view.clash_table.as_ref().map_or(0, |t| match &t.matrix {
+            Some(m) => m.height() + 2 + u16::from(t.stale),
+            None => t.rows.len().max(t.clashes.len()) as u16 + 5,
+        }),
         _ => 0,
     }
 }
@@ -103,6 +103,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let mut panels = PanelAreas::default();
     app.editor_area = None;
     app.wave_layout = None;
+    app.clash.layout = None;
     let mut roll_area = None;
     let mut lanes_area = None;
 
@@ -202,7 +203,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                     frame.render_widget(crate::sidechain::SidechainPanel(sidechain), body);
                 }
             }
-            Tab::Clash => frame.render_widget(ui::ClashPanel(&view), body),
+            Tab::Clash => {
+                app.clash.layout =
+                    ui::ClashPanel(&view).render_with_layout(body, frame.buffer_mut());
+            }
             Tab::None => {}
         }
     }

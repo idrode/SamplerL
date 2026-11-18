@@ -15,13 +15,14 @@ use crate::config::{Bound, Config, Keymap};
 use crate::diagnose;
 use crate::editing;
 use crate::model::{
-    BlockPickerView, BrowserView, ClashRow, ClashTableView, CompletionView, ErrorView, GroupView,
-    InstrumentView, MasterView, PaletteView, SlotsView, SynthView, TimelineView, TrackView,
-    TransportView, ViewModel, Waveform, error_line,
+    BlockPickerView, BrowserView, CompletionView, ErrorView, GroupView, InstrumentView, MasterView,
+    PaletteView, SlotsView, SynthView, TimelineView, TrackView, TransportView, ViewModel, Waveform,
+    error_line,
 };
 use crate::palette::{self, Action, Item};
 
 mod adjust;
+mod clash;
 mod cue;
 mod devices;
 mod dock;
@@ -553,6 +554,8 @@ pub struct App {
     hushed: bool,
     /// Vista de ocupación por paso (ver `occupancy`).
     occupancy: occupancy::Occupancy,
+    /// El panel de choques: el análisis en vivo y su cursor.
+    pub(crate) clash: clash::ClashState,
     /// El piano roll (ver `roll`).
     roll: roll::RollState,
     /// La ventana del espectro estéreo (ver `spectrum`).
@@ -721,6 +724,7 @@ impl App {
             highlight_delay_ms: 0.0,
             hushed: false,
             occupancy: Default::default(),
+            clash: Default::default(),
             roll: Default::default(),
             spectrum: Default::default(),
         };
@@ -4215,6 +4219,7 @@ impl App {
             Action::FollowTimeline => self.set_section_loop(false),
             Action::Versions => self.open_versions(),
             Action::AnalyzeMasking => self.open_masking(),
+            Action::LiveClashes => self.toggle_live_clashes(),
             Action::ToggleVariant => self.toggle_variant(),
             Action::PreviousSlice => self.select_slice(false),
             Action::EditorWindow => self.launch_editor(),
@@ -4819,6 +4824,30 @@ impl App {
             )
         {
             return self.handle_occupancy_cursor(input);
+        }
+        // Y con el del panel de choques.
+        if self.clash.cursor
+            && self.dock_tab == crate::layout::Tab::Clash
+            && !matches!(
+                bound,
+                Some(Bound::Action(
+                    Action::Undo
+                        | Action::Redo
+                        | Action::Load
+                        | Action::SaveAndLoad
+                        | Action::Transport
+                        | Action::Cue
+                        | Action::Quit
+                ))
+            )
+            && matches!(
+                input.key,
+                Key::Up | Key::Down | Key::Left | Key::Right | Key::Esc | Key::Enter
+            )
+            && !input.ctrl
+            && !input.alt
+        {
+            return self.handle_clash_cursor(input);
         }
         // Con un punto de una lane elegido, sus teclas.
         if let Some(flow) = self.lanes_key(&input) {
@@ -5642,39 +5671,7 @@ impl App {
                     preview,
                 }
             }),
-            clash_table: self.last_masking.as_ref().map(|(report, loads)| {
-                let (bands, rows) = report.grid();
-                let name = |t: usize| report.tracks[t].clone();
-                ClashTableView {
-                    bars: report.bars,
-                    tracks: report.tracks.len(),
-                    stale: *loads != self.loads,
-                    bands: bands
-                        .iter()
-                        .map(|&b| engine::masking::BAND_NAMES[b].to_string())
-                        .collect(),
-                    rows: rows
-                        .into_iter()
-                        .map(|((a, b), cells)| ClashRow {
-                            a: name(a),
-                            b: name(b),
-                            cells,
-                        })
-                        .collect(),
-                    clashes: report
-                        .clashes()
-                        .iter()
-                        .map(|c| {
-                            (
-                                name(c.a),
-                                name(c.b),
-                                engine::masking::BAND_NAMES[c.band].to_string(),
-                                c.clash.score,
-                            )
-                        })
-                        .collect(),
-                }
-            }),
+            clash_table: self.clash_table_view(),
             completion: self.completion.as_ref().map(|c| {
                 let selected = &c.matches[c.selected];
                 CompletionView {

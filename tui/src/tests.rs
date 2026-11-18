@@ -2635,6 +2635,7 @@ mod adjust;
 mod automation;
 mod blocks;
 mod browser;
+mod clashes;
 mod clipboard;
 mod config;
 mod consumo;

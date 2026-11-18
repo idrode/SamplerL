@@ -50,6 +50,10 @@ impl App {
             return false;
         }
         let at = Position::new(x, y);
+        if let Some(hit) = self.clash.layout.and_then(|l| l.hit(x, y)) {
+            self.clash_mouse(action, hit);
+            return true;
+        }
         if let Some(hit) = self.panels.occupancy.and_then(|l| l.hit(x, y)) {
             self.occupancy_mouse(action, hit);
             return true;

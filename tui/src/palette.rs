@@ -99,6 +99,7 @@ pub enum Action {
     FollowTimeline,
     Versions,
     AnalyzeMasking,
+    LiveClashes,
     ToggleVariant,
     Highlight,
     EditorWindow,
@@ -688,6 +689,12 @@ pub const ACTIONS: &[ActionDef] = &[
         action: Action::AnalyzeMasking,
         name: "Choques de frecuencia",
         description: "Renderiza offline cada pista en solo (un ciclo entero de la canción) y muestra en qué bandas se pisan: tabla pareja × banda con su puntuación (0 a 1), un resumen y el EQ sugerido para la que cede; Enter lo propone y Enter otra vez lo inserta en el script sin guardar; no toca lo que suena",
+        keys: "",
+    },
+    ActionDef {
+        action: Action::LiveClashes,
+        name: "Solapes de frecuencia en vivo",
+        description: "Enseña o quita, en la pestaña «choques», la matriz pista × banda (30 tercios de octava) de lo que suena en los últimos segundos, con los choques resaltados y la lista por gravedad (↑↓ o un clic eligen uno); solo cuesta mientras se ve",
         keys: "",
     },
     ActionDef {

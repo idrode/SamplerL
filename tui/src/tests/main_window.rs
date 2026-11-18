@@ -338,6 +338,7 @@ fn clash_view() -> crate::model::ViewModel {
             ("drums".into(), "bajo".into(), "315".into(), 0.45),
             ("drums".into(), "bajo".into(), "1.25k".into(), 0.31),
         ],
+        ..Default::default()
     });
     view
 }

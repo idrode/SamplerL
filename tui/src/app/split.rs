@@ -177,6 +177,7 @@ fn opens_in_main(action: Action) -> bool {
             | Action::MidiKnobs
             | Action::Devices
             | Action::AnalyzeMasking
+            | Action::LiveClashes
             | Action::FillGap
             | Action::SuggestFills
             | Action::PianoRoll

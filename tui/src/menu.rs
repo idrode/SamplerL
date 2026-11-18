@@ -83,9 +83,9 @@ pub fn menu_of(action: Action) -> Option<Menu> {
         | JumpSection | LoopSection | FollowTimeline | ToggleVariant | Panic | PanicPause
         | PlayMode => Menu::Transport,
         SidechainView | LanesView | Occupancy | PianoRoll | Highlight | ResetMeters
-        | AnalyzeMasking | Focus(_) | ToggleExplorer | RefreshFiles | EditorTaller
-        | EditorShorter | Wider | Narrower | MaximizeEditor | FloatEditor | FloatUp | FloatDown
-        | FloatLeft | FloatRight | SpectrumStyle | MasterViz => Menu::View,
+        | AnalyzeMasking | LiveClashes | Focus(_) | ToggleExplorer | RefreshFiles
+        | EditorTaller | EditorShorter | Wider | Narrower | MaximizeEditor | FloatEditor
+        | FloatUp | FloatDown | FloatLeft | FloatRight | SpectrumStyle | MasterViz => Menu::View,
         EditorWindow | EditorBack | RollWindow | RollBack | Devices | RefreshDevices
         | DevicesWindow | DevicesBack | SpectrumWindow | SpectrumBack => Menu::Windows,
         TerminalInfo => Menu::Help,

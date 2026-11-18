@@ -87,6 +87,9 @@ pub struct BandSpectrum {
     /// las mismas para todas las pistas analizadas con las mismas opciones
     /// y frecuencia).
     pub power: Vec<[f32; BANDS]>,
+    /// Lo que vale `power` en una banda con un seno de amplitud 1 dentro
+    /// (para pasar a dBFS, ver [`BandSpectrum::level_db`]).
+    pub full_scale: f32,
 }
 
 impl BandSpectrum {
@@ -113,33 +116,29 @@ impl BandSpectrum {
             .iter()
             .map(|[l, r]| 0.5 * (l + r))
             .collect();
-        let rate = sample_rate as f32;
-        let window_len = ((options.window_ms / 1000.0 * rate).round() as usize).max(16);
-        let hop = ((options.hop_ms / 1000.0 * rate).round() as usize).max(1);
-        let size = window_len.next_power_of_two().max(MIN_FFT);
-        let window: Vec<f32> = (0..window_len)
-            .map(|i| 0.5 - 0.5 * (std::f32::consts::TAU * i as f32 / (window_len - 1) as f32).cos())
-            .collect();
-        let bins = band_bins(size, rate);
-        let fft = FftPlanner::<f32>::new().plan_fft_forward(size);
-        let mut buffer = vec![Complex::new(0.0f32, 0.0); size];
-        let mut scratch = vec![Complex::new(0.0f32, 0.0); fft.get_inplace_scratch_len()];
+        let mut analyzer = WindowAnalyzer::new(sample_rate, options);
+        let hop = analyzer.hop();
+        let window_len = analyzer.window_len();
         let mut power = Vec::new();
         let mut start = 0;
         while start < cycle {
-            buffer.fill(Complex::new(0.0, 0.0));
-            for (i, (slot, w)) in buffer.iter_mut().zip(&window).enumerate() {
-                *slot = Complex::new(mono.get(start + i).copied().unwrap_or(0.0) * w, 0.0);
-            }
-            fft.process_with_scratch(&mut buffer, &mut scratch);
-            let mut row = [0.0f32; BANDS];
-            for (band, range) in bins.iter().enumerate() {
-                row[band] = buffer[range.clone()].iter().map(|c| c.norm_sqr()).sum();
-            }
-            power.push(row);
+            let window = (0..window_len).map(|i| mono.get(start + i).copied().unwrap_or(0.0));
+            power.push(analyzer.analyze(window));
             start += hop;
         }
-        BandSpectrum { power }
+        BandSpectrum {
+            power,
+            full_scale: analyzer.full_scale(),
+        }
+    }
+
+    /// Un espectro vacío (sin ventanas) con la escala de `analyzer`: el de
+    /// una pista que se analiza en vivo, ventana a ventana.
+    pub fn empty(analyzer: &WindowAnalyzer) -> Self {
+        BandSpectrum {
+            power: Vec::new(),
+            full_scale: analyzer.full_scale(),
+        }
     }
 
     /// Ventanas analizadas.
@@ -158,6 +157,91 @@ impl BandSpectrum {
     /// Energía total de la banda `band`.
     pub fn band_energy(&self, band: usize) -> f32 {
         self.power.iter().map(|row| row[band]).sum()
+    }
+
+    /// Nivel medio de la banda `band` en dBFS: 0 con un seno de amplitud 1
+    /// dentro todo el tiempo; [`SILENT_DB`] sin nada.
+    pub fn level_db(&self, band: usize) -> f32 {
+        let windows = self.windows();
+        if windows == 0 || self.full_scale <= 0.0 {
+            return SILENT_DB;
+        }
+        let mean = self.band_energy(band) / windows as f32 / self.full_scale;
+        (10.0 * mean.max(1e-30).log10()).max(SILENT_DB)
+    }
+}
+
+/// Nivel de una banda sin nada (dBFS).
+pub const SILENT_DB: f32 = -120.0;
+
+/// Una ventana de análisis: la FFT ya planificada, la ventana de Hann, los
+/// bins de cada banda y sus búferes, reservados una vez. Lo usan el
+/// análisis offline ([`BandSpectrum::analyze`]) y el de la interfaz en
+/// vivo (una ventana por cuadro): las mismas cuentas en los dos.
+pub struct WindowAnalyzer {
+    window: Vec<f32>,
+    hop: usize,
+    bins: Vec<std::ops::Range<usize>>,
+    fft: std::sync::Arc<dyn rustfft::Fft<f32>>,
+    buffer: Vec<Complex<f32>>,
+    scratch: Vec<Complex<f32>>,
+}
+
+impl WindowAnalyzer {
+    pub fn new(sample_rate: u32, options: &MaskingOptions) -> Self {
+        let rate = sample_rate as f32;
+        let window_len = ((options.window_ms / 1000.0 * rate).round() as usize).max(16);
+        let hop = ((options.hop_ms / 1000.0 * rate).round() as usize).max(1);
+        let size = window_len.next_power_of_two().max(MIN_FFT);
+        let window: Vec<f32> = (0..window_len)
+            .map(|i| 0.5 - 0.5 * (std::f32::consts::TAU * i as f32 / (window_len - 1) as f32).cos())
+            .collect();
+        let fft = FftPlanner::<f32>::new().plan_fft_forward(size);
+        let scratch = vec![Complex::new(0.0f32, 0.0); fft.get_inplace_scratch_len()];
+        WindowAnalyzer {
+            window,
+            hop,
+            bins: band_bins(size, rate),
+            fft,
+            buffer: vec![Complex::new(0.0f32, 0.0); size],
+            scratch,
+        }
+    }
+
+    /// Muestras (mono) de una ventana.
+    pub fn window_len(&self) -> usize {
+        self.window.len()
+    }
+
+    /// Salto entre ventanas del análisis offline, en muestras.
+    pub fn hop(&self) -> usize {
+        self.hop
+    }
+
+    /// La potencia de una banda con un seno de amplitud 1 dentro: la mitad
+    /// positiva de Parseval con la ventana de Hann (`N · L · 3/32`).
+    pub fn full_scale(&self) -> f32 {
+        self.buffer.len() as f32 * self.window.len() as f32 * 3.0 / 32.0
+    }
+
+    /// Potencia por banda de una ventana: las primeras
+    /// [`WindowAnalyzer::window_len`] muestras de `samples` (si son menos,
+    /// el resto es silencio).
+    pub fn analyze(&mut self, samples: impl IntoIterator<Item = f32>) -> [f32; BANDS] {
+        self.buffer.fill(Complex::new(0.0, 0.0));
+        for ((slot, w), x) in self.buffer.iter_mut().zip(&self.window).zip(samples) {
+            *slot = Complex::new(x * w, 0.0);
+        }
+        self.fft
+            .process_with_scratch(&mut self.buffer, &mut self.scratch);
+        let mut row = [0.0f32; BANDS];
+        for (band, range) in self.bins.iter().enumerate() {
+            row[band] = self.buffer[range.clone()]
+                .iter()
+                .map(|c| c.norm_sqr())
+                .sum();
+        }
+        row
     }
 }
 
@@ -196,6 +280,33 @@ pub struct BandClash {
     pub level_db: [f32; 2],
 }
 
+/// Lo que [`clashes`] mira de un espectro, calculado una vez: el nivel en
+/// dB de cada ventana y banda, el suelo de actividad y la energía de cada
+/// banda. Con varias parejas, cada pista se prepara una sola vez
+/// ([`clashes_prepared`]).
+pub struct Prepared<'a> {
+    spectrum: &'a BandSpectrum,
+    db: Vec<[f32; BANDS]>,
+    floor: Option<f32>,
+    energy: [f32; BANDS],
+}
+
+fn db(p: f32) -> f32 {
+    10.0 * p.max(1e-30).log10()
+}
+
+/// Prepara `spectrum` para [`clashes_prepared`].
+pub fn prepare<'a>(spectrum: &'a BandSpectrum, options: &MaskingOptions) -> Prepared<'a> {
+    let peak = spectrum.peak();
+    Prepared {
+        spectrum,
+        db: spectrum.power.iter().map(|row| row.map(db)).collect(),
+        // Una pista muda nunca está activa.
+        floor: (peak > 0.0).then(|| db(peak) - options.active_range_db),
+        energy: std::array::from_fn(|band| spectrum.band_energy(band)),
+    }
+}
+
 /// Choques de las pistas `a` y `b`, banda a banda: `None` en las bandas
 /// en las que una de las dos casi no suena. Si una es más corta, lo que le
 /// falta cuenta como silencio.
@@ -204,17 +315,21 @@ pub fn clashes(
     b: &BandSpectrum,
     options: &MaskingOptions,
 ) -> [Option<BandClash>; BANDS] {
-    let windows = a.windows().max(b.windows());
+    clashes_prepared(&prepare(a, options), &prepare(b, options), options)
+}
+
+/// [`clashes`] con los dos espectros ya preparados.
+pub fn clashes_prepared(
+    a: &Prepared,
+    b: &Prepared,
+    options: &MaskingOptions,
+) -> [Option<BandClash>; BANDS] {
+    let windows = a.spectrum.windows().max(b.spectrum.windows());
     let row = |s: &BandSpectrum, t: usize| s.power.get(t).copied().unwrap_or([0.0; BANDS]);
-    let db = |p: f32| 10.0 * p.max(1e-30).log10();
-    // Una pista muda nunca está activa.
-    let floor = |s: &BandSpectrum| {
-        let peak = s.peak();
-        (peak > 0.0).then(|| db(peak) - options.active_range_db)
-    };
-    let (floor_a, floor_b) = (floor(a), floor(b));
+    let row_db = |p: &Prepared, t: usize| p.db.get(t).copied().unwrap_or([db(0.0); BANDS]);
+    let (floor_a, floor_b) = (a.floor, b.floor);
     let energy: Vec<[f32; 2]> = (0..BANDS)
-        .map(|band| [a.band_energy(band), b.band_energy(band)])
+        .map(|band| [a.energy[band], b.energy[band]])
         .collect();
     let loudest = energy.iter().map(|e| e[0] + e[1]).fold(0.0, f32::max);
     // La banda más fuerte de cada pista.
@@ -229,13 +344,14 @@ pub fn clashes(
         }
         let (mut weighted, mut total, mut both) = (0.0f64, 0.0f64, 0usize);
         for t in 0..windows {
-            let (pa, pb) = (row(a, t)[band], row(b, t)[band]);
+            let (pa, pb) = (row(a.spectrum, t)[band], row(b.spectrum, t)[band]);
+            let (da, dbb) = (row_db(a, t)[band], row_db(b, t)[band]);
             let weight = (pa + pb) as f64;
             total += weight;
-            let active = |p: f32, floor: Option<f32>| floor.is_some_and(|f| db(p) >= f);
-            if active(pa, floor_a) && active(pb, floor_b) {
+            let active = |d: f32, floor: Option<f32>| floor.is_some_and(|f| d >= f);
+            if active(da, floor_a) && active(dbb, floor_b) {
                 both += 1;
-                let closeness = (1.0 - (db(pa) - db(pb)).abs() / options.level_gap_db).max(0.0);
+                let closeness = (1.0 - (da - dbb).abs() / options.level_gap_db).max(0.0);
                 weighted += weight * closeness as f64;
             }
         }
