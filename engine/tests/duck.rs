@@ -443,3 +443,67 @@ fn a_new_depth_at_the_bar_comes_in_without_a_click() {
         .fold((0, 0.0f32), |a, (i, d)| if d > a.1 { (i, d) } else { a });
     assert!(worst < 0.01, "{worst} en {at}");
 }
+
+/// Coste del sidechain: el tiempo de `Engine::process` de 60 s de audio
+/// con un destino que suena todo el rato y un origen con un golpe por
+/// negra, sin sidechain, por patrón, por audio y por audio con banda.
+/// `cargo test --release -p engine --test duck coste -- --ignored --nocapture`
+#[test]
+#[ignore = "banco: cargo test --release -p engine --test duck coste -- --ignored --nocapture"]
+fn coste() {
+    let kick = || {
+        let (sample, slices) = sample_of(STEP, sine(60.0, 0.8));
+        Pattern::from_steps(sample, &slices, steps(&[0, 4, 8, 12])).unwrap()
+    };
+    let cases: [(&str, Vec<Fx>); 5] = [
+        ("sin sidechain", vec![]),
+        ("por patrón", vec![pattern_duck(DuckCurve::Linear)]),
+        (
+            "por patrón, banda",
+            vec![Fx::Duck(DuckParams {
+                band_hz: 150.0,
+                ..DuckParams::new(1)
+            })],
+        ),
+        (
+            "por audio",
+            vec![Fx::Duck(DuckParams {
+                filter_hz: 150.0,
+                ..DuckParams::new(1).audio()
+            })],
+        ),
+        (
+            "por audio, banda",
+            vec![Fx::Duck(DuckParams {
+                filter_hz: 150.0,
+                band_hz: 150.0,
+                ..DuckParams::new(1).audio()
+            })],
+        ),
+    ];
+    let seconds = 60;
+    let mut base = 0.0;
+    for (name, chain) in cases {
+        let (mut controller, mut engine) = new_engine(RATE);
+        controller.set_bpm(BPM).unwrap();
+        controller.set_track_pattern(0, Some(dest(&chain))).unwrap();
+        controller.set_track_pattern(1, Some(kick())).unwrap();
+        controller.start().unwrap();
+        let mut out = vec![0.0f32; 2 * 256];
+        let blocks = seconds * RATE as usize / 256;
+        let start = std::time::Instant::now();
+        for _ in 0..blocks {
+            engine.process(&mut out, 2);
+        }
+        let took = start.elapsed().as_secs_f64();
+        let ms_per_s = 1000.0 * took / seconds as f64;
+        if base == 0.0 {
+            base = ms_per_s;
+        }
+        println!(
+            "{name:<20} {ms_per_s:6.3} ms por segundo de audio ({:+.3} ms, {:.3} % de un núcleo)",
+            ms_per_s - base,
+            (ms_per_s - base) / 10.0
+        );
+    }
+}

@@ -1025,3 +1025,17 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
     3. **Fader en línea** (`slider()`), opcional: sin hacer, descrito en
        «Fader en línea» de [docs/ESTADO.md](ESTADO.md) (primero, afinar el
        gesto con el touchpad en el Asahi).
+32. ✅ **Solapes de frecuencia y sidechain** (pedida por el usuario;
+    continuación del análisis de choques y del EQ dinámico): ver en vivo
+    dónde se pisan dos pistas y atenuarlo con sidechain entre pistas.
+    Inventario en [docs/SIDECHAIN-ESTADO.md](SIDECHAIN-ESTADO.md); detalle
+    en «Solapes de frecuencia y sidechain» de [docs/ESTADO.md](ESTADO.md).
+    1. ✅ **Ver los solapes**: matriz pista × banda en vivo en la pestaña
+       «choques», choques agrupados por rangos y por gravedad, lo mismo en
+       `--analyze-masking`; coste cero con el panel cerrado.
+    2. ✅ **Sidechain entre pistas**: `pista:sidechain(origen, {...})`, por
+       patrón y por audio, la pista entera o sus graves (`band`), `tap`
+       antes o después del volumen.
+    3. ✅ **Sugerencias**: sidechain o recorte de EQ por choque, insertados
+       con una tecla.
+    4. ✅ **Documentación**.

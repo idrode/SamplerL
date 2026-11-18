@@ -5215,6 +5215,257 @@ Asahi.
   el «suena ya» y el porqué de lo que no, el ritmo de 30 por segundo, el
   texto sin cargar y Esc.
 
+## Solapes de frecuencia y sidechain
+
+Pedida por el usuario, sin fase propia: ver de un vistazo dónde se pisan dos
+pistas y poder atenuarlo con sidechain entre pistas. El inventario de antes
+de empezar (qué había y qué faltaba) está en
+[docs/SIDECHAIN-ESTADO.md](SIDECHAIN-ESTADO.md); de ahí: el análisis
+offline de choques, sus sugerencias de EQ y el EQ dinámico con sidechain
+(por audio, en una banda) ya existían y se amplían, no se rehacen.
+
+### Parte 1: ver los solapes
+
+- **La señal, compartida** (`engine/src/masking.rs`): `WindowAnalyzer`
+  (FFT de `rustfft` ya planificada, Hann de 50 ms rellenada a 8192 puntos,
+  bins de cada banda y búferes, una vez) analiza una ventana; el análisis
+  offline (`BandSpectrum::analyze_cycle`) lo usa ventana a ventana cada
+  25 ms (bit a bit lo de antes) y la interfaz, una ventana por cuadro.
+  `BandSpectrum::full_scale` y `level_db`: el nivel medio de una banda en
+  dBFS (un seno de amplitud 1 da 0: la mitad positiva de Parseval con la
+  Hann, `N·L·3/32`). `prepare`/`clashes_prepared`: el nivel en dB de cada
+  ventana se calcula una vez por pista y no una por pareja (con 8 pistas,
+  28 parejas: lo que hace barato rehacer el informe en cada cuadro);
+  `clashes` da lo mismo que antes.
+- **El informe, compartido** (`script/src/masking.rs`):
+  `MaskingReport::from_spectra` hace el informe de unos espectros (lo usan
+  `Song::analyze_masking` y el análisis en vivo), con `levels` (el nivel
+  de cada pista y banda). `groups()`: por pareja, cada tramo de bandas
+  seguidas por encima del umbral de informe es un `ClashGroup` (rango,
+  puntuación más alta, diferencia de nivel en el rango, quién manda y quién
+  cede, con `winner` de siempre), ordenados por gravedad; `group_text` lo
+  escribe («kick × bass: 63-125 Hz · fuerte 0.78 · kick 2 dB más fuerte ·
+  cede bass»). `text()` (lo de `--analyze-masking`) empieza ahora por
+  «por gravedad:» con esas líneas.
+- **En vivo** (`tui/src/clash.rs`, `tui/src/app/clash.rs`): «Solapes de
+  frecuencia en vivo» (`Action::LiveClashes`, atable en `[teclas] solapes`)
+  crea un `Live` y enseña la pestaña «choques». Las colas de las
+  visualizaciones por pista (las del motor, `SetViz`) se encienden con
+  `sync_ui_viz` solo si la pestaña se vio en el último cuadro
+  (`App::clash_shown`: `ClashState::layout` lo apunta el dibujo); con otra
+  pestaña delante o cerrada, apagadas, y lo guardado se olvida. En cada
+  `tick`, una pista de las del análisis que no ha mandado nada (el motor
+  no copia una pista que no suena) recibe ceros, para que su última
+  ventana no se quede para siempre (`tick_clash`); a `visuales_hz`, una
+  ventana más de cada pista en `frame_clash` (una vez por cuadro dibujado)
+  y el informe de las de los últimos `LIVE_SECONDS` = 4 s.
+- **El panel** (`clash::MatrixPanel`, desde `ui::ClashPanel` cuando la
+  vista trae `ClashTableView::matrix`; el del último análisis offline
+  también va así, la tabla pareja × banda de antes queda en el texto y el
+  popup): una fila por pista, una columna (dos si caben) por banda con el
+  sombreado de su nivel (`█` desde −15 dBFS, `▓` −30, `▒` −45, `░` −60; en
+  ASCII `#+:.`), las celdas que chocan con el color de su fuerza, la
+  cabecera con una banda de cada cuatro, y la lista de grupos. Cursor
+  (`ClashState::cursor`, puesto al abrir; Esc lo suelta): ↑↓ un choque (sus
+  celdas, invertidas; la línea de estado, su texto), ←→ una sugerencia,
+  Enter la inserta; el ratón (`MatrixLayout::hit`): clic en un choque o en
+  una celda lo elige, en una sugerencia la inserta.
+- **Tests**: `tui/src/clash.rs` (dos senos graves chocan en vivo y uno
+  agudo no; el nivel en dBFS; la celda, invertida y en rojo; el ratón),
+  `tui/src/tests/clashes.rs` (con el motor offline: cerrado, ni colas ni
+  análisis; abierto, el choque de dos graves en 63-125 Hz y nada con el
+  agudo, en pantalla; con otra pestaña delante, nada; teclado y ratón;
+  ASCII; y en vivo da los mismos grupos que `--analyze-masking`, con la
+  puntuación a menos de 0,1), `script/tests/masking.rs` (un bombo que cae
+  de 120 a 50 Hz y un bajo de 80 Hz: un solo grupo entre 50 y 125 Hz, el
+  primero del informe, y sus niveles muy por encima del charles).
+  `cargo test -p tui pantalla_solapes -- --ignored --nocapture` lo enseña.
+
+### Parte 2: sidechain entre pistas
+
+- **El efecto** (`engine/src/duck.rs`, `Fx::Duck(DuckParams)`): `mode`
+  (`Pattern`/`Audio`), `source` (ranura), `depth_db`, `attack_ms`,
+  `release_ms`, `curve` (`Linear`, `Exp`, `Smooth`), `threshold_db`,
+  `ratio`, `knee_db`, `filter_hz` (0: sin filtro), `tap` (`Pre`/`Post`) y
+  `band_hz` (0: la pista entera). Automatizables (`Fx::params`): depth,
+  attack, release, threshold, ratio y knee; el resto entra con el patrón
+  al compás. `DuckState`, de tamaño fijo dentro de `FxState::Duck`.
+- **Por patrón**: el bucle de `Engine::process` ya parte los trozos en
+  cada paso y subdisparo, así que cada golpe (`play_hit`) cae al principio
+  de un trozo; `Engine::hits` lo apunta y se vacía tras mezclar el trozo.
+  El efecto de la pista que escucha recibe `hit` en su primer bloque
+  (`Keys::of`) y lanza la envolvente: sube en línea recta desde donde esté
+  hasta `depth` en `attack` (0: de golpe) y vuelve a 0 dB en `release` con
+  su curva (`exp`: `(e^−5u − e^−5)/(1 − e^−5)`, llega a 0 justo al final;
+  `smooth`: coseno). La ganancia, `exp(ln10/20 · depth · r)` por muestra;
+  sin reducción, la pista tal cual (bit a bit).
+- **Por audio**: detector RMS de 10 ms (`RMS_MS`) sobre la media de L y R
+  de lo que escucha, con un paso bajo Butterworth opcional (`filter`);
+  calibrado con un seno (`10·log10(2·ms)`: amplitud A mide 20·log10 A). La
+  reducción estática con rodilla suave (`knee`, la cuadrática de siempre),
+  como mucho `−depth`, sigue con polos de `attack`/`release` cada 8 frames
+  (`BLOCK`) y la ganancia se interpola dentro del bloque; por debajo de
+  0,005 dB, a cero exacto.
+- **Banda**: con `band`, un Linkwitz-Riley de 24 dB/octava (paso bajo y
+  paso alto, cada uno dos Butterworth en serie) parte la pista y sale
+  `g·graves + agudos`. Las dos mitades suman plano, así que sin reducción
+  solo queda el giro de fase del cruce (por eso el cruce filtra siempre,
+  también sin reducción: arrancarlo en frío al primer golpe sería un
+  escalón). Primera versión restaba un paso bajo a la señal entera: con el
+  desfase del paso bajo, a 60 Hz con cruce en 200 bajaba 2 dB en vez de 12;
+  descartada en el mismo día, antes del commit.
+- **Enrutado** (`engine/src/engine.rs`): `Fx::sidechain` da el origen, así
+  que `mix_order` lo mezcla antes y el círculo ya estaba prohibido. Por
+  audio antes del volumen usa `side_buf` (como el EQ dinámico); después
+  (`tap = "post"`), `side_post` (8 trozos más en el heap, creados en
+  `new_engine`), escrito en el bucle de la mezcla tras volumen, pan, mute y
+  solo. Por patrón no se copia nada. `Keys` reúne lo que escucha una
+  cadena (trozos, quién ha sonado, golpes, quién se oye) y `run_fx`,
+  `modulate` y los grupos lo reciben. Una pista que calla no procesa sus
+  efectos: `rest_fx` sigue la envolvente del sidechain (un golpe del
+  bombo mientras el bajo calla cuenta para cuando entre) y vacía los
+  demás como antes.
+- **Mute del origen** (decidido, documentado en la guía): con `tap =
+  "pre"` (por defecto) el sidechain sigue en mute y fuera del solo, por
+  patrón y por audio (el «bombo fantasma», como el EQ dinámico); con `tap
+  = "post"`, una pista en mute (o fuera del solo) no dispara: por patrón
+  sus golpes no cuentan, por audio oye silencio.
+- **Cambios en vivo**: un sidechain nuevo en la misma ranura conserva la
+  envolvente, el detector y las memorias (`take_over`; al cambiar de modo,
+  pasa la reducción de uno a otro); la profundidad que suena sigue a la
+  nueva con un polo de 5 ms. Quitar el efecto en pleno ducking, o cambiar
+  `band` de 0 a algo, sí puede dar un escalón al compás (no se hace un
+  fundido de salida del efecto).
+- **Lua** (`script/src/lib.rs`, registro en `api.rs`):
+  `pista:sidechain(origen [, {...}])` añade a la cadena el efecto `duck`
+  con `source = origen` (también vale `:fx("duck", { source = ... })`);
+  sus parámetros, en inglés como los de los demás efectos (`depth`,
+  `attack`, `release`, `threshold`, `ratio`...) y no los del ejemplo del
+  encargo (`profundidad`, `relajacion`): la API ya usa los ingleses en
+  `compressor` y `dyneq` y los mismos nombres sirven para `auto()`,
+  `ramp`, macros y el autocompletado. `check_sidechains` (generalizada):
+  origen que no existe, círculo (también mezclado con un `dyneq`), y por
+  patrón un origen congelado (`frozen()`: ya no tiene golpes, toca su WAV
+  una vez por vuelta), error al cargar; dispararse a sí misma, error con
+  línea. No va en un grupo (`group():fx("duck")`), un corte (`SliceFx`) ni
+  un paso (`3{duck=...}`). Por audio un origen congelado sí vale (escucha
+  su WAV, que es lo mismo), y un destino congelado lleva el sidechain
+  dentro del WAV, como el EQ dinámico.
+- **Interfaz**: `model::fx_text` (`duck -9 180ms ⟵kick`, `duck audio …`,
+  `<150` con banda; el panel de efectos ahora resuelve la pista que
+  escucha para mostrar su nombre, también la del EQ dinámico), y la vista
+  del sidechain lo sigue («sidechain por patrón» / «por audio», escala
+  hasta `depth`; la reducción la publica `FxState::reduction`).
+- **Tests**: `engine/tests/duck.rs` (por patrón, −12 dB tras el golpe, −6
+  a media relajación lineal, de vuelta bit a bit al acabar; el ataque y las
+  tres curvas; mute con `pre` baja, con `post` bit a bit sin sidechain,
+  por patrón y por audio; un seno de 60 Hz a −12 dB con umbral −24 y 4:1
+  baja 9 dB, en el umbral 0, con rodilla de 6 dB 0,56, el tope de
+  `depth`, y el filtro del detector ignora 2 kHz; con banda a 200 Hz, 60 Hz
+  baja 12 dB y 2 kHz se queda; un origen de 1e6 sin NaN y de vuelta bit a
+  bit, y la reducción publicada a cero exacto; una profundidad nueva al
+  compás sin saltos mayores que los del seno), `no_alloc.rs` (los tres
+  sidechain sonando, el origen entrando y saliendo de mute, cambios al
+  compás y las colas de las pistas encendiéndose y apagándose en pleno
+  sonido), `script/tests/duck.rs` (Lua igual que el motor, varios
+  destinos de un origen definido después y en mute, `ramp`, `lfo`, lane y
+  macro, errores, origen congelado), `registry.rs` y
+  `tui/src/tests/sidechain.rs`. `golden.rs`, idéntico.
+
+### Parte 3: sugerencias
+
+- `MaskingReport::fixes(grupo, sidechain, patrón)`: en la pista que cede,
+  `track("bass"):sidechain("kick", { mode = "pattern", depth = -N, attack
+  = 5, release = 120[, band = F] })` (de −3 a −9 dB con la puntuación, como
+  los recortes; `band` algo por encima del choque si acaba por debajo de
+  300 Hz) y el recorte de EQ del rango. `fixes_for` decide con la canción
+  (`set_song`: quién escucha a quién y qué está congelado): sin sidechain
+  si cerraría un círculo, por audio si la que manda está congelada.
+  `--analyze-masking` las numera bajo cada grupo; el panel las enseña bajo
+  el elegido. Insertar (`App::insert_clash_fix`) usa
+  `App::insert_after_track` (sacada de la inserción del EQ del informe):
+  tras la definición de la pista y su cadena, en un paso de deshacer, sin
+  guardar ni cargar; avisa si la pista ya tiene 4 efectos.
+- **Tests**: `tui/src/tests/clashes.rs` (las dos sugerencias, nada se
+  aplica solo, Enter inserta la elegida en la línea de después, el archivo
+  no cambia, Ctrl-Z, → el EQ, y lo insertado carga) y
+  `script/tests/masking.rs` (con `priority({ "kick" })` cede el bajo, la
+  línea carga y el choque baja; con el sidechain al revés ya puesto, solo
+  el EQ).
+
+### Decisiones
+
+- **Las mismas bandas que el informe** (30 tercios de octava, 25 Hz a
+  20 kHz; el encargo pedía de 24 a 32) y **el mismo criterio de choque**
+  (activa a 30 dB de su máximo, cercanía hasta 9 dB, desde 0,25), no un
+  umbral absoluto nuevo: así el panel y `--analyze-masking` dicen lo mismo
+  y se comprueban uno con otro.
+- **La FFT de `engine::masking`, no `viz::spectrum::Analyzer`**: el encargo
+  sugería la del espectro, pero es de 2048 puntos (bins de 23 Hz: los
+  tercios por debajo de 100 Hz compartirían bin, justo donde chocan bombo y
+  bajo) y daría otros números que el informe. Una sola instancia (las
+  ventanas de las pistas se analizan una tras otra con sus búferes),
+  no una por pista: misma cuenta, menos memoria.
+- **En vivo, lo que se oye** (tras volumen, pan y mute: las colas de las
+  visualizaciones), no la salida antes del volumen: una pista en mute no
+  choca con nada mientras está en mute.
+- **Las colas entran al compás** (`SetViz`, como las de las
+  visualizaciones), no con un atómico como la cola estéreo: reutiliza lo
+  que hay y el coste cerrado es el mismo (nada).
+- **Pista entera o banda en el mismo efecto**: lo multibanda no resultó
+  caro (un cruce de cuatro biquads por canal solo con `band`), así que no
+  hizo falta separarlo.
+- **Un commit para patrón, audio y banda** (el encargo pedía tres): los
+  tres son el mismo efecto con el mismo estado y las mismas pruebas de
+  enrutado; partirlo habría sido hacer commits de código intermedio que
+  nadie había probado. Y **las sugerencias después del sidechain**: sugieren
+  `:sidechain`, que tenía que existir para que la línea cargue.
+- **Profundidad en dB con la envolvente en fracción**: así `depth` se
+  automatiza sin rehacer la envolvente y la vuelta acaba exacta en
+  `release` ms (por audio, `release` es la constante de tiempo de un polo,
+  como en el compresor).
+
+### Coste
+
+Medido en el i7 de desarrollo (x86_64), en release. En ARM64 no se ha
+medido (no había Asahi a mano): `cargo test --release -p engine --test
+duck coste -- --ignored --nocapture` y `scripts/medir-consumo.py` con las
+mismas opciones dan las cifras de allí.
+
+- **Hilo de audio** (`coste` en `engine/tests/duck.rs`: 60 s de un destino
+  que suena siempre y un bombo por negra): sin sidechain, 3,30 ms de CPU por
+  segundo de audio; por patrón, +0,21 ms (0,02 % de un núcleo); por audio
+  con filtro del detector, +0,47 ms (0,05 %); con banda, +1,44 ms por
+  patrón y +1,51 por audio (0,15 %: el cruce son ocho biquads por frame).
+  Sin sidechain no se hace nada nuevo: solo un `bool` por pista y trozo
+  (los golpes) y el `match` de quién escucha a quién. Memoria: 8 trozos de
+  `side_post` (32 KB) creados con el motor; el estado de cada sidechain va
+  en su ranura.
+- **Interfaz, panel cerrado** (`scripts/medir-consumo.py --bin antes,ahora`,
+  3 repeticiones de 10 s): igual que antes, dentro del ruido. 120×40
+  parado 0,6/0,7 % ui y sonando 5,8/5,6 %; 200×50 parado 0,8/0,8 % y
+  sonando 8,2/7,8 %; el hilo de audio, 8,1/8,2 % en los dos; bytes y
+  cuadros, iguales. Las cifras de «Consumo de la interfaz» no cambian.
+- **Panel abierto** (atado a una tecla con `--config` y `--teclas`): 120×40
+  sonando 6,5 % ui y 14,7 kB/s (+0,9 puntos y +1,6 kB/s); 200×50 sonando
+  8,6 % y 18,6 kB/s (+0,8 y +4 kB/s); parado, nada (no llega audio, no
+  se analiza). El audio, igual: el motor solo copia a las colas.
+- **Audio**: `golden.rs` idéntico y `scripts/comparar-audio.sh` con el
+  binario de antes (el commit del inventario): 27 canciones iguales bit a
+  bit (dos recetas con azar sin semilla no se comparan, como siempre).
+
+### Qué probar a mano (con auriculares, en el Asahi)
+
+- Una canción con bombo y bajo en los mismos graves: «Solapes de
+  frecuencia en vivo» marca el choque en rojo y lo pone el primero.
+- Aceptar la sugerencia de sidechain (Enter), Ctrl-S, y oír el bajo ceder
+  con cada bombo; variar `attack` (2, 10, 30 ms) y `release` (80, 180,
+  400 ms) y las curvas; con `band = 150`, que los medios del bajo no se
+  muevan.
+- `mode = "audio"` con `filter = 150` sobre un break entero.
+- El bombo en mute con `tap = "pre"` (sigue bajando) y `"post"` (no).
+- Quitar el `:sidechain` y comprobar que suena como antes.
+
 ## Audio de prueba y problemas conocidos
 
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`

@@ -224,6 +224,7 @@ pub const BINDABLE: &[(&str, Bound, &[&str])] = &[
     ("variante", Bound::Action(Action::ToggleVariant), &[]),
     ("resaltado", Bound::Action(Action::Highlight), &[]),
     ("ocupacion", Bound::Action(Action::Occupancy), &[]),
+    ("solapes", Bound::Action(Action::LiveClashes), &[]),
     ("piano_roll", Bound::Action(Action::PianoRoll), &[]),
     ("editar_roll", Bound::Action(Action::EditRoll), &[]),
     (

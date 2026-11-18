@@ -1872,6 +1872,7 @@ paleta de 256.
 | `variante` | Alternar variante A/B | — |
 | `resaltado` | Resaltado en vivo | — |
 | `ocupacion` | Vista de ocupación | — |
+| `solapes` | Solapes de frecuencia en vivo | — |
 | `piano_roll` | Piano roll | — |
 | `editar_roll` | Editar en el piano roll | — |
 | `ventana_espectro` | Espectro | — |
@@ -2876,6 +2877,64 @@ insertar = ["enter", "n"]
 ```
 
 > **Usado en el tutorial:** [paso 9, Líneas melódicas](PRIMERA-CANCION.md#paso-9-líneas-melódicas).
+
+#### En vivo: la matriz de solapes
+
+El informe de arriba renderiza la canción aparte; para ver **mientras
+suena** dónde se pisan las pistas, F1 «Solapes de frecuencia en vivo»
+(también atable en `[teclas] solapes`) abre la pestaña «choques» con lo de
+los últimos 4 segundos. La misma acción la quita.
+
+```
+┌ choques · en vivo · 4 s ──────────────────────────────────────────┐
+│        25      63      160     400     1k      2.5k    6.3k    16k │
+│kick      ░░  ░░▒▒▓▓██▓▓░░                                          │
+│bajo        ░░▒▒▓▓██▓▓▒▒░░                                          │
+│hats                                                ▒▒▓▓██▓▓▒▒      │
+│▶ kick × bajo: 63-125 Hz · fuerte 0.78 · kick 2 dB más fuerte · cede bajo │
+│  ▸ track("bajo"):sidechain("kick", { mode = "pattern", depth = -9, … })  │
+│    track("bajo"):fx("eq", { freq1 = 89, gain1 = -4, q1 = 1 })            │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+Cómo se lee:
+
+- **Una fila por pista y una columna por banda** (los mismos 30 tercios de
+  octava del informe, de 25 Hz a la izquierda a 20 kHz a la derecha; arriba,
+  el nombre de una banda de cada cuatro). El sombreado es la energía media
+  de la pista en esa banda: `█` desde −15 dBFS, `▓` desde −30, `▒` desde
+  −45, `░` desde −60, vacío por debajo (en ASCII, `#`, `+`, `:` y `.`).
+- **Los choques, en color**: las celdas de las dos pistas en las bandas en
+  que chocan, rojas si es fuerte, amarillas si es medio y del color de
+  acento si es leve. El criterio es exactamente el del informe (activa a
+  30 dB de su máximo, cercanía hasta 9 dB, desde 0,25), sobre lo que ha
+  sonado en los últimos 4 s.
+- **Debajo, la lista por gravedad**: cada choque agrupa las bandas seguidas
+  de una pareja («kick × bajo: 63-125 Hz»), con su fuerza, cuál suena más
+  y cuál cede (la que no manda según `priority()` o, sin ella, la más
+  floja). Es la misma lista, con las mismas líneas, que «por gravedad:» al
+  principio de `--analyze-masking`.
+
+**Elegir y arreglar.** Con la pestaña recién abierta, el cursor está en
+ella: ↑↓ eligen un choque (sus celdas se ven invertidas y la línea de
+estado lo resume), ←→ eligen una de sus dos sugerencias y Enter la inserta
+en el script, tras la definición de la pista que cede, en un paso de
+deshacer y sin guardar ni cargar (como el EQ del informe). Un clic en un
+choque o en una celda lo elige; un clic en una sugerencia la inserta. Esc
+suelta el panel y las flechas vuelven al editor. Las dos sugerencias:
+
+1. **Sidechain**: la que cede baja con cada golpe de la que manda (por
+   patrón; por audio si la que manda está congelada), de 3 a 9 dB según lo
+   fuerte del choque y, si el choque está por debajo de 300 Hz, solo en los
+   graves (`band`). No se propone si cerraría un círculo.
+2. **Recorte de EQ** en el rango, como los del informe.
+
+Qué mira: lo que se oye de cada pista (tras su volumen, pan y mute: una
+pista en mute no choca) en una ventana de 50 ms por cuadro (a
+`[interfaz] visuales_hz`). Solo cuesta mientras la pestaña se ve: cerrada,
+o con otra pestaña delante, el motor no copia nada para ella. Las colas
+entran al compás, como las de las visualizaciones, así que tarda hasta un
+compás en empezar. Sin nada cargado, o parado, dice que espera audio.
 
 ### Vista del sidechain
 
@@ -6039,6 +6098,60 @@ solo empuja). Una pista no puede escucharse a sí misma por sidechain (sin
 Para ver cuánto baja y cuándo, F1 «Vista del sidechain» (sección 2).
 
 > **Usado en el tutorial:** [paso 11, Un bajo que no choque con el bombo](PRIMERA-CANCION.md#paso-11-un-bajo-que-no-choque-con-el-bombo).
+
+### Un bajo que cede con cada bombo (sidechain)
+
+El caso típico: el bombo y el bajo en los mismos graves. Paso a paso:
+
+1. Carga la canción y ponla en marcha; F1 «Solapes de frecuencia en vivo».
+   Si chocan, sale «kick × bajo: 63-125 Hz» arriba de la lista y sus
+   celdas en rojo.
+2. Si el que cede no es el bajo, di quién manda: `priority({ "kick" })`.
+3. Con el choque elegido, Enter inserta la sugerencia de sidechain (o
+   escríbela): el bajo baja con cada golpe del bombo y vuelve solo.
+4. Ctrl-S guarda y carga; entra al compás. La matriz se aclara en esas
+   bandas y la «Vista del sidechain» enseña la reducción con cada golpe.
+
+```lua
+bpm(170)
+priority({ "kick" })
+local amen = sample("amen.wav"):slice(8)
+
+track("kick", amen:slice_at(1))
+  :steps("x . . .  . . x .  x . . .  . . . .")
+
+track("bajo", amen:slice_at(3))
+  :steps("1 _ _ _  1 _ _ _  1 _ _ _  1 _ _ _")
+  :gain(0.6)
+  -- Por patrón: −9 dB con cada golpe del bombo, en 5 ms, y vuelta en
+  -- 180 ms; solo por debajo de 150 Hz.
+  :sidechain("kick", { depth = -9, attack = 5, release = 180, band = 150 })
+```
+
+**Qué parámetros usar:**
+
+| Parámetro | Por patrón | Por audio | Para empezar |
+|---|---|---|---|
+| `depth` | lo que baja con cada golpe | lo más que baja | −6 a −12 dB (un bajo bajo un bombo); −3 si solo se quiere aire |
+| `attack` | ms hasta abajo, en línea recta | polo del ataque | 2-10 ms; 0 corta en seco (puede chasquear) |
+| `release` | ms exactos hasta volver | polo de la vuelta | lo que dura el cuerpo del bombo: 120-250 ms; al tempo, una corchea (a 170, 176 ms) |
+| `curve` | `linear`, `exp` (vuelve deprisa), `smooth` (se queda abajo y sube suave) | — | `smooth` para el «bombeo» clásico |
+| `threshold`, `ratio`, `knee` | — | desde qué nivel, cuánto, y lo suave | −30 dB, 4, 6 dB |
+| `filter` | — | paso bajo del detector | 150 Hz: que solo le importe el bombo de un break |
+| `band` | solo por debajo de estos Hz | igual | 120-200 Hz para un bajo; sin `band`, la pista entera (un pad) |
+| `tap` | `post`: en mute no baja | igual | `pre` (por defecto) para un «bombo fantasma» en mute |
+
+**Por patrón o por audio.** Por patrón es exacto y sin retraso: lo dispara
+el golpe del secuenciador del bombo, aunque el bombo suene flojo o esté en
+mute; no ve los golpes que toques a mano ni lo que no sea un golpe (la cola
+de un sample largo). Por audio (`mode = "audio"`) escucha lo que suena de
+verdad (también un break entero, o una pista congelada): con `filter`, solo
+sus graves; tiene la latencia de su detector (RMS de 10 ms) y del ataque.
+
+Un mismo bombo puede empujar a varias pistas. En círculo (el bajo empuja al
+bombo y el bombo al bajo) es un error al cargar, como una pista que no
+existe o, por patrón, un bombo congelado (ya no tiene golpes). Sin ningún
+`:sidechain`, todo suena exactamente igual que antes.
 
 ### Una canción entera con secciones
 
