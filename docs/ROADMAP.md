@@ -1039,3 +1039,16 @@ en «Mejoras sueltas» de [docs/ESTADO.md](ESTADO.md).
     3. ✅ **Sugerencias**: sidechain o recorte de EQ por choque, insertados
        con una tecla.
     4. ✅ **Documentación**.
+33. ✅ **Flanger, phaser y formant por corte** (pedida por el usuario):
+    efectos de modulación y el formante de un corte, por paso y en la
+    pista. Inventario en [docs/EFECTOS-ESTADO.md](EFECTOS-ESTADO.md);
+    detalle en «Flanger, phaser y formant por corte» de
+    [docs/ESTADO.md](ESTADO.md).
+    1. ✅ **Flanger**: línea con realimentación y Hermite, LFO con `rate`
+       o `sync` en fase con la canción, en la pista y el grupo.
+    2. ✅ **Phaser**: de 2 a 12 paso-todos, también por corte y por paso.
+    3. ✅ **Automatizable** con lanes, macros, mandos y el ratón; medido
+       por voz (el flanger y el chorus no van por voz).
+    4. ✅ **Formant**: ya existía por corte y por paso; la pista sigue ahora
+       la misma regla (también en golpes sin pitch).
+    5. ✅ **Chorus** (opcional), con la línea del flanger.

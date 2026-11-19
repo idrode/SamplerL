@@ -86,7 +86,9 @@ la sección 4 (con sus parámetros, rangos y un ejemplo cada una).
 **Sonido**
 - Efectos de pista (`pista:fx`): filtros, bitcrusher, compresor,
   distorsión, volumen (`gain`), EQ de 4 bandas y EQ dinámico con
-  sidechain; y los mismos por corte (`cortes:fx`).
+  sidechain, y de modulación: flanger, phaser y chorus (ver
+  [Barridos](#barridos-flanger-phaser-y-chorus)); y los mismos por corte
+  (`cortes:fx`), salvo el flanger y el chorus.
 - Moverlos en el tiempo con `ramp()` y `lfo()`, o por paso con `~`.
 - Macros (`macro`): un control de 0 a 1 que mueve a la vez varios
   parámetros de varias pistas, en vivo desde la paleta («Macros») o con
@@ -96,8 +98,8 @@ la sección 4 (con sus parámetros, rangos y un ejemplo cada una).
 - Grupos de pistas (`group`): se suman y pasan juntas por sus efectos (un
   compresor que pega la batería), su volumen, su pan y sus envíos.
 - Instrumentos con polifonía y ADSR (`sample:instrument`), transponer sin
-  cambiar la duración (`%`, `keep`) y conservar los formantes
-  (`pista:formant`).
+  cambiar la duración (`%`, `keep`), conservar los formantes o moverlos
+  sin cambiar la nota (`pista:formant`, `formant` en un corte o un paso).
 - Sintetizadores sin sample (`synth`): el bajo ácido del 303
   (`synth("acid", {...})`) y un subgrave limpio (`synth("sub", {...})`),
   con accent (`!`) y slide (`/`) por paso, y en cualquiera de ellos un sub
@@ -3096,11 +3098,16 @@ notas.
 caja) se mueve con el tono: una voz subida suena a ardilla y una caja
 bajada, de juguete. `pista:formant(0)` los deja donde estaban en los
 pasos con `%`, y `pista:formant(n)` los desplaza `n` semitonos por su
-cuenta (también con `%0`: otro timbre, la misma nota). En un instrumento
-va en su tabla: `sample:instrument({ keep = true, formant = 0 })`. Cada
-grano se analiza con LPC y se le cambia la envolvente; cuesta otro 2 % de
-un núcleo por voz. Con `^` no actúa (el sampler clásico lo mueve todo), y
-si la pista no tiene pasos con `%`, la carga avisa.
+cuenta, también en los pasos sin pitch (otro timbre, la misma nota y la
+misma duración: el golpe pasa por los granos como un `%0`). Es la misma
+regla que `formant` en un corte (`cortes:set(3, { formant = 4 })`) o en
+un paso (`3{formant=4}`), que mandan sobre el de la pista. En un
+instrumento va en su tabla: `sample:instrument({ keep = true, formant = 0
+})`. Cada grano se analiza con LPC y se le cambia la envolvente; cuesta
+otro 2 % de un núcleo por voz. Con `^` no actúa (el sampler clásico lo
+mueve todo), y si no hay ningún paso en el que actúe, la carga avisa. Va
+mejor en voz, bajo y sintes, entre -12 y 12 semitonos: en percusión o
+ruido suena artificial, y más allá de una octava aparecen artefactos.
 
 **Efectos por paso (`{...}`).** Cualquier efecto de `:fx`, solo en ese
 golpe: `3{lp=800}` lo filtra, `3{crush=4,downsample=3}{drive=8}` lo
@@ -3643,6 +3650,9 @@ track("drums", amen)
 | `fx("eq")` | `freq1` (continuo), `gain1` (continuo), `q1` (continuo), `freq2` (continuo), `gain2` (continuo), `q2` (continuo), `freq3` (continuo), `gain3` (continuo), `q3` (continuo), `freq4` (continuo), `gain4` (continuo), `q4` (continuo) |
 | `fx("dyneq")` | `freq` (continuo), `q` (continuo), `threshold` (continuo), `ratio` (continuo), `range` (continuo), `attack` (continuo), `release` (continuo) |
 | `fx("duck")` | `depth` (continuo), `attack` (continuo), `release` (continuo), `threshold` (continuo), `ratio` (continuo), `knee` (continuo) |
+| `fx("flanger")` | `mix` (continuo), `rate` (continuo), `depth` (continuo), `delay` (continuo), `feedback` (continuo), `phase` (continuo) |
+| `fx("phaser")` | `mix` (continuo), `rate` (continuo), `depth` (continuo), `center` (continuo), `feedback` (continuo), `phase` (continuo) |
+| `fx("chorus")` | `mix` (continuo), `rate` (continuo), `depth` (continuo), `delay` (continuo), `phase` (continuo) |
 | `bus("delay")` | `feedback` (continuo), `level` (continuo) |
 | `bus("reverb")` | `size` (continuo), `damp` (continuo), `level` (continuo) |
 | `cortes:set` | `attack` (por golpe), `release` (por golpe), `pan` (por golpe), `length` (por golpe), `crossfade` (por golpe), `bend` (por golpe), `bend_time` (por golpe), `formant` (por golpe) |
@@ -3662,6 +3672,14 @@ track("drums", amen)
 | `fx("duck")` | `source` | es una pista, no un número |
 | `fx("duck")` | `mode`, `curve`, `tap` | elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer |
 | `fx("duck")` | `filter`, `band` | es un filtro que se calcula al cargar y entra con el patrón al compás |
+| `fx("flanger")` | `sync` | es una figura o compases ("1/4", "2 compases"), no un número que se recorra; para mover la velocidad, `rate` sin `sync` |
+| `fx("flanger")` | `wave`, `invert` | elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer |
+| `fx("phaser")` | `sync` | es una figura o compases ("1/4", "2 compases"), no un número que se recorra; para mover la velocidad, `rate` sin `sync` |
+| `fx("phaser")` | `stages` | es un número de filtros: entre 4 y 6 etapas no hay nada que recorrer |
+| `fx("phaser")` | `wave` | elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer |
+| `fx("chorus")` | `sync` | es una figura o compases ("1/4", "2 compases"), no un número que se recorra; para mover la velocidad, `rate` sin `sync` |
+| `fx("chorus")` | `voices` | cambia cuántas voces suenan, no cómo suenan: entra con el patrón al compás |
+| `fx("chorus")` | `wave` | elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer |
 | `bus("delay")` | `time` | es una figura ("1/8"), no un número; además, mover el retardo de una línea con repeticiones dentro suena a cambio de pitch |
 | `slice` | `zero_cross` | se aplica al cargar, en el hilo de control (el sample o el bucle se preparan una vez): no suena en el tiempo |
 | `cortes:set` | `play`, `fit`, `rev` | elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer |
@@ -4120,7 +4138,7 @@ Forma de un corte (o de todos, sin i): ataque, cola, pan, parte que suena y bucl
 | `bend` | curva de tono dentro del golpe, en semitonos: negativo cae (un bombo que baja), positivo sube; llega en bend_time ms y se queda ahí. Cambia también la velocidad de lectura, como `^` (no va con `%` ni con fit = "stretch") | `0` | -36–36 |
 | `bend_time` | lo que tarda bend en llegar, en ms desde el golpe | `100` | 1–10000 |
 | `rev` | el corte suena al revés en todas sus pistas y pads (como `'` en un paso) | `false` | `true` o `false` (en las llaves, `rev=1` o `rev=0`) |
-| `formant` | mueve el timbre del corte sin cambiar su nota, en semitonos (la corrección de formantes de `%`, en tiempo real): vale en los golpes con `%` y en los que no llevan pitch; con `^`, los formantes se mueven con el tono (error). Manda sobre `pista:formant()`. Mejor en material tonal (voz, bajo, sintes) | obligatorio | -24–24 |
+| `formant` | mueve el timbre del corte sin cambiar su nota, en semitonos (la corrección de formantes de `%`, en tiempo real): vale en los golpes con `%` y en los que no llevan pitch; con `^`, los formantes se mueven con el tono (error). Manda sobre `pista:formant()`. Mejor en material tonal (voz, bajo, sintes) y entre -12 y 12 | obligatorio | -24–24 |
 | `warp` | curva de tiempo dentro del corte, sin cambiar su duración ni su tono: un número es lo que suena en la mitad del tiempo (0.3: empieza despacio y acelera; 0.7, al revés) o puntos `{ {x, y}, ... }` (en la fracción x del tiempo suena la y del corte; hasta 6, crecientes). Se calcula al cargar (los granos alineados de `%`), con caché | obligatorio | un número entre 0 y 1 (sin llegar) o de 1 a 6 puntos `{x, y}` crecientes |
 | `smear` | difumina el corte con granos suaves que recorren el corte con su posición al azar, mezclados con el original en esta proporción (0 nada, 1 todo granos); dura lo mismo. Se calcula al cargar, con caché. Mejor en material tonal | `0` | 0–1 |
 
@@ -4460,6 +4478,32 @@ El filtro es un biquad de 12 dB/octava; `q = 0.707` es la respuesta más plana y
 |  | `filter` | por audio, paso bajo del detector en Hz (que solo le importen los graves) | `sin filtro` | 20–20000 |
 |  | `tap` | de dónde escucha a la pista que dispara: antes de su volumen (sigue en mute) o lo que se oye | `"pre"` | `"pre"` o `"post"` |
 |  | `band` | solo baja lo que queda por debajo de estos Hz (cruce de 24 dB/octava) | `la pista entera` | 20–2000 |
+| `"flanger"` | `mix` | parte mojada (0 = solo la seca, bit a bit; 0.5, los huecos más hondos; 1 = solo la mojada) | `0.5` | 0–1 |
+|  | `rate` | velocidad del LFO, en Hz (sin `sync`) | `0.25` | 0.01–20 |
+|  | `sync` | ata el LFO al compás: lo que dura un ciclo ("1/4", "3/16", "2 compases", "8 pasos") o un número n, n ciclos por compás; en fase con la canción y manda sobre `rate` | `libre, a `rate`` | de 1/64 de compás a 64 compases |
+|  | `depth` | lo que barre el LFO por encima del retardo base, en ms | `2` | 0–10 |
+|  | `delay` | retardo base, en ms (corto, metálico; largo, más cerca del chorus) | `1` | 0.1–15 |
+|  | `feedback` | cuánto de la salida vuelve a la línea (negativo, con la polaridad invertida: más hueco) | `0.5` | -0.95–0.95 |
+|  | `wave` | forma del LFO | `"sine"` | `"sine"` o `"tri"` |
+|  | `phase` | desfase del LFO del canal derecho, en grados (0, mono; 90 o 180, más ancho) | `90` | 0–180 |
+|  | `invert` | la copia retardada sale invertida (los huecos van donde estaban los picos) | `false` | `true` o `false` |
+| `"phaser"` | `mix` | parte mojada (0 = solo la seca, bit a bit; 0.5, los huecos más hondos; 1 = solo la mojada) | `0.5` | 0–1 |
+|  | `rate` | velocidad del LFO, en Hz (sin `sync`) | `0.5` | 0.01–20 |
+|  | `sync` | ata el LFO al compás: lo que dura un ciclo ("1/4", "3/16", "2 compases", "8 pasos") o un número n, n ciclos por compás; en fase con la canción y manda sobre `rate` | `libre, a `rate`` | de 1/64 de compás a 64 compases |
+|  | `depth` | octavas que barre el LFO a cada lado de `center` | `2` | 0–4 |
+|  | `center` | centro del barrido en Hz | `800` | 50–10000 |
+|  | `feedback` | cuánto de la salida vuelve a la entrada (más, huecos más marcados; negativo, en otros sitios) | `0.3` | -0.95–0.95 |
+|  | `stages` | filtros paso-todo en serie: cada dos, un hueco más | `4` | 2, 4, 6, 8 o 12 |
+|  | `wave` | forma del LFO | `"sine"` | `"sine"` o `"tri"` |
+|  | `phase` | desfase del LFO del canal derecho, en grados (0, mono; 90 o 180, más ancho) | `90` | 0–180 |
+| `"chorus"` | `mix` | parte mojada (0 = solo la seca, bit a bit; 0.5, los huecos más hondos; 1 = solo la mojada) | `0.5` | 0–1 |
+|  | `rate` | velocidad del LFO, en Hz (sin `sync`) | `0.8` | 0.01–20 |
+|  | `sync` | ata el LFO al compás: lo que dura un ciclo ("1/4", "3/16", "2 compases", "8 pasos") o un número n, n ciclos por compás; en fase con la canción y manda sobre `rate` | `libre, a `rate`` | de 1/64 de compás a 64 compases |
+|  | `depth` | lo que barre el LFO por encima del retardo base, en ms | `3` | 0–10 |
+|  | `delay` | retardo base, en ms | `15` | 10–30 |
+|  | `voices` | copias, cada una con su LFO desfasado | `2` | entero de 1 a 4 |
+|  | `wave` | forma del LFO | `"sine"` | `"sine"` o `"tri"` |
+|  | `phase` | desfase del LFO del canal derecho, en grados (0, mono; 90 o 180, más ancho) | `90` | 0–180 |
 
 ```lua
 local amen = sample("amen.wav"):slice(8)
@@ -4618,9 +4662,9 @@ track("sube", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 ."):pitch(ramp(0, 12
 
 Devuelve: pista.
 
-Formantes de los pasos con % (pitch sin cambiar la duración): 0 los deja donde estaban, n los desplaza n semitonos. Al transponer, la envolvente del sonido sube o baja con el tono: una voz subida suena a ardilla y una caja bajada, a bombo de juguete. Con `formant(0)`, los pasos con `%` cambian de tono pero su envolvente se queda donde estaba (cada grano se analiza con LPC y se blanquea y se vuelve a colorear con la del original); con `formant(n)` se desplaza `n` semitonos por su cuenta, también con `%0` (cambiar el timbre sin cambiar la nota). Solo actúa en los pasos con `%` (si no hay ninguno, avisa); con `^` el sonido se lee más deprisa o más despacio entero, como un sampler clásico. Cuesta otro 2 % de un núcleo por voz. En un instrumento va en su tabla: `sample:instrument({ keep = true, formant = 0 })`. Admite `ramp()` y `lfo()`, por golpe.
+Formantes de la pista: en los pasos con % (pitch sin cambiar la duración) 0 los deja donde estaban y n los desplaza n semitonos; en los pasos sin pitch, n cambia el timbre sin cambiar la nota. Al transponer, la envolvente del sonido sube o baja con el tono: una voz subida suena a ardilla y una caja bajada, a bombo de juguete. Con `formant(0)`, los pasos con `%` cambian de tono pero su envolvente se queda donde estaba (cada grano se analiza con LPC y se blanquea y se vuelve a colorear con la del original); con `formant(n)` se desplaza `n` semitonos por su cuenta, también en los pasos sin pitch (cambiar el timbre sin cambiar la nota ni la duración: el golpe pasa por los granos como un `%0`), con la misma regla que `formant` en `cortes:set` (que manda sobre este). Con `^` no actúa: el sonido se lee más deprisa o más despacio entero, como un sampler clásico (si no hay ningún paso en el que actúe, avisa). Recomendado entre -12 y 12: más allá aparecen artefactos; mejor en voz, bajo y sintes que en percusión o ruido. Cuesta otro 2 % de un núcleo por voz. En un instrumento va en su tabla: `sample:instrument({ keep = true, formant = 0 })`. Admite `ramp()` y `lfo()`, por golpe.
 
-- `semitonos`: -24 a 24 (0 deja los formantes donde estaban), `ramp()` o `lfo()`
+- `semitonos`: -24 a 24 (0 deja los formantes donde estaban; mejor entre -12 y 12), `ramp()` o `lfo()`
 
 ```lua
 local amen = sample("amen.wav"):slice(8)
@@ -5961,6 +6005,56 @@ sácala a su pista con `amen:slice_at(3)`, que se lleva sus efectos.
 
 > **Usado en el tutorial:** [paso 6, Efectos en un solo corte](PRIMERA-CANCION.md#paso-6-efectos-en-un-solo-corte).
 
+### Barridos: flanger, phaser y chorus
+
+Tres efectos de pista que mueve un LFO. El **flanger** mezcla la señal
+con una copia retardada unos ms (`delay`) cuyo retardo barre el LFO
+(`depth`): el peine que se mueve, el «avión»; con `feedback` (de -0.95 a
+0.95) silba más, y `invert = true` lo vuelve hueco. El **phaser** pasa la
+señal por 2 a 12 filtros paso-todo (`stages`) cuya frecuencia barre el LFO
+alrededor de `center` (`depth` octavas a cada lado): huecos más suaves que
+el flanger. El **chorus** suma de 1 a 4 copias con retardos largos (10 a
+30 ms) y su LFO desfasado, sin realimentación: ensancha y desafina un
+poco.
+
+El LFO va a `rate` Hz o, con `sync`, atado al compás (`"1/4"`, `"3/16"`,
+`"2 compases"`, `"8 pasos"`, o un número `n`: n ciclos por compás), en
+fase con la canción. `wave` es `"sine"` o `"tri"` y `phase` el desfase
+del canal derecho en grados (0, mono; 90, ancho). `mix` 0 deja la señal
+bit a bit como sin el efecto; 0.5 da los huecos más hondos. Todo lo
+continuo admite `ramp()`, `lfo()`, `macro()`, lanes y MIDI learn.
+
+```lua
+-- 27-modulacion.lua
+bpm(170)
+local amen = sample("amen.wav"):slice(8)
+amen:name(3, "snare")
+-- El phaser también va en un corte: solo la caja barre.
+amen:fx("snare", "phaser", { stages = 6, center = 1200, feedback = 0.5, mix = 0.5 })
+track("drums", amen)
+  :steps("1 . 2 .  snare . 4 .  5 6 2{phaser=0.7,stages=12} .  7 . snare .")
+  -- Un barrido por compás, en fase con la canción.
+  :fx("flanger", { sync = "1 compás", depth = 3, delay = 1, feedback = 0.6, mix = 0.5 })
+  :gain(0.8)
+track("pad", amen:slice_at(7))
+  :steps("x _ _ _  _ _ _ _  x _ _ _  _ _ _ _")
+  :fx("chorus", { voices = 3, depth = 4, rate = 0.5, mix = 0.5 })
+  :gain(0.5)
+```
+
+Límites:
+
+- **El flanger y el chorus van en la pista o en un grupo**, no en un corte
+  ni en un paso: su línea de retardo ocupa 64 KB y no cabe en cada voz
+  (error con la línea). El phaser sí va en `cortes:fx` y en las llaves
+  (`2{phaser=0.7}`: el número es `mix`).
+- La cola sigue sonando cuando acaba el golpe (con mucho `feedback`, más
+  de un segundo) y se apaga sola; el pánico (F12) la corta en 5 ms.
+- Cambiar `sync`, `wave`, `stages` o `voices` entra al compás sin
+  suavizado; lo demás se desliza (~10 ms).
+- Cada uno cuesta poco (de 0,2 a 0,8 % de un núcleo por pista en el i7 de
+  desarrollo); el chorus de 4 voces es el más caro.
+
 ### Editar un corte: duraciones, notas y deformaciones
 
 Un corte se puede alargar, acortar, tocar como instrumento y deformar sin
@@ -6031,7 +6125,8 @@ lista de puntos `{ {x, y}, ... }` da la curva entera. `smear` lo difumina
 con granos (0 nada, 1 todo granos). Los dos se calculan al guardar (unos
 20 ms por segundo de corte), una vez: mientras, suena lo de antes, y la
 pista los guarda para la carga siguiente. `formant` mueve el timbre sin
-cambiar la nota (en tiempo real, en los golpes con `%` o sin pitch).
+cambiar la nota (en tiempo real, en los golpes con `%` o sin pitch; el de
+la pista, `pista:formant(n)`, hace lo mismo con todos sus golpes).
 
 ```lua
 -- 20-corte-warp.lua

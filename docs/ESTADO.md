@@ -5466,6 +5466,270 @@ mismas opciones dan las cifras de allí.
 - El bombo en mute con `tap = "pre"` (sigue bajando) y `"post"` (no).
 - Quitar el `:sidechain` y comprobar que suena como antes.
 
+## Flanger, phaser y formant por corte
+
+Pedido por el usuario, sin fase propia: flanger y phaser como efectos
+(y el chorus opcional), y `formant` para un corte concreto, por paso y en
+la pista. El inventario de antes de empezar está en
+[docs/EFECTOS-ESTADO.md](EFECTOS-ESTADO.md): no había flanger, phaser,
+chorus ni tremolo; `formant` por corte y por paso ya existía (LPC en
+tiempo real), así que no se rehace: se unifica la regla de la pista.
+
+### Motor (`engine/src/modfx.rs`)
+
+- **Flanger** (`Fx::Flanger(FlangerParams)`): línea de retardo estéreo con
+  realimentación; retardo = `delay` + `depth` · LFO (de 0 a 1), en ms.
+  Lectura con **Hermite de 4 puntos** (3.er orden): un hueco de un retardo
+  fraccionario (48,5 frames) baja a menos de −40 dB, que con lectura lineal
+  no se consigue. El retardo mínimo se lleva a 3 frames (los vecinos de la
+  interpolación nunca leen el frame que se escribe). Realimentación con
+  recorte suave (`soft`: lineal hasta 1 y luego tiende a 2 con la misma
+  pendiente), `flush` de lo menor de 1e-25 (sin denormales), y la salida
+  `x + mix · (mojada − x)` solo si `mix ≠ 0` (con 0, bit a bit). `invert`
+  invierte la copia retardada.
+- **Phaser** (`Fx::Phaser(PhaserParams)`): 2, 4, 6, 8 o 12 paso-todos de
+  primer orden en serie (`y = a·x + z; z = x − a·y`), el mismo coeficiente
+  `a = (tan(πf/fs) − 1)/(tan(πf/fs) + 1)` en todas, con `f = center ·
+  2^(depth·(2·LFO − 1))` acotada entre 10 Hz y 0,45·fs (la tangente nunca
+  llega a su polo, ni con 192 kHz ni con 22 kHz); realimentación de la
+  salida a la entrada con el mismo recorte suave.
+- **Chorus** (`Fx::Chorus(ChorusParams)`): la línea del flanger con
+  retardos de 10 a 30 ms (más `depth`), de 1 a 4 voces con su LFO
+  desfasado `v/voces` de ciclo, promediadas, sin realimentación.
+- **LFO** (`Lfo`: `rate_hz`, `sync`, `wave` seno o triángulo, `phase_deg`
+  del canal derecho): se calcula en los extremos de trozos de 16 frames y
+  se interpola en línea recta (a 20 Hz, una parte en 10⁵; el phaser hace
+  lo mismo con sus coeficientes: una tangente por canal cada 16 frames).
+  **Los trozos siguen de un bloque de audio al siguiente**: el resultado
+  es bit a bit el mismo con bloques de 1, 37, 300 o 512 frames (test). Con
+  `rate`, la fase sale de los segundos de la canción la primera vez y
+  luego avanza (así `rate` se automatiza sin saltos). Con `sync`
+  (`Sync { num, den }`: un ciclo dura `num/den` compases de 16 pasos), la
+  fase sale de la posición en pasos con **aritmética entera** sobre los
+  pasos enteros (`(pasos mod 16·num) · den mod 16·num`, más la fracción): no
+  deriva por larga que sea la canción; se vuelve a tomar solo si la que
+  lleva se aparta más de 10⁻⁴ ciclos (un salto del transporte, el cue o
+  `start_at`), no por el redondeo; con el transporte parado sigue sola.
+- **Suavizado**: cada parámetro continuo va hacia su destino con un polo
+  de 10 ms por muestra (además del de ~5 ms de la automatización), así que
+  recargar con otros valores o mover un mando no hace clic. Un patrón nuevo
+  con el mismo efecto en la ranura conserva la línea, la fase y la memoria
+  (`take_over`).
+- **Dónde vive la memoria**: el estado de los efectos (`FxState`) es un
+  enum de tamaño fijo que se copia en cada voz con efectos de corte. El del
+  phaser (248 bytes: dos números por etapa y canal) cabe sin hacerlo crecer
+  (sigue en 264 bytes, lo que marca el EQ). La línea del flanger y del
+  chorus no: 8192 frames estéreo (64 KiB, 40 ms a 192 kHz, la frecuencia
+  más alta que se lista; `LINE_FRAMES` y una comprobación en compilación)
+  por ranura. Va aparte, en `modfx::Lines`, una por ranura de cada pista
+  (`Track::lines`) y de cada grupo (`Engine::group_lines`), reservadas al
+  crear el motor: 48 ranuras, 3 MiB (la memoria a cero se pide con
+  `calloc` y el sistema no la toca hasta que se escribe). `run_fx`,
+  `rest_fx` y `modulate_chain` llevan las líneas y el reloj del LFO
+  (`LfoAt`); un NaN o un infinito vacía también la línea (`reset_chain`).
+- **Cola**: el estado sabe si le queda cola (`FxState::ringing`: lleva
+  menos de lo que dura su línea, o 50 ms el phaser, en silencio por debajo
+  de −120 dB). Una pista sin voz ni notas no pasa a reposo mientras le
+  quede, ni un grupo se duerme; la cola de un golpe con mucho `feedback`
+  sigue sonando y se apaga sola (test: baja ventana a ventana de 100 ms y
+  acaba por debajo de 10⁻⁷). En una voz, la cola de los efectos de corte
+  dura lo que dure la del phaser si es más que los 100 ms de siempre. El
+  pánico (F12) baja la parte mojada a cero en 5 ms y vacía la memoria: el
+  golpe siguiente vuelve a sonar con su efecto.
+
+### Lua y registro
+
+- `pista:fx("flanger", { mix, rate, sync, depth, delay, feedback, wave,
+  phase, invert })`, `"phaser"` (`mix`, `rate`, `sync`, `depth` en
+  octavas, `center`, `feedback`, `stages`, `wave`, `phase`) y `"chorus"`
+  (`mix`, `rate`, `sync`, `depth`, `delay`, `voices`, `wave`, `phase`), en
+  la pista y en `grupo:fx`. Todo en `api::EFFECTS` (de ahí el
+  autocompletado, la ayuda, la guía, el linter y el ajuste con el ratón);
+  el LFO común sale de una macro (`mod_lfo_params!`) para no repetirlo.
+- `sync`: un número `n` (n ciclos por compás, como `lfo_sync` del sh101),
+  una figura (`"1/4"`, `"3/16"`: fracción de compás), `"N compases"` o
+  `"N pasos"`; de 1/64 de compás a 64 compases, enteros; manda sobre
+  `rate`. Booleanos de verdad en las tablas (`invert = true`; antes un
+  booleano era siempre un error de tipo) y `1`/`0` o `true`/`false` en las
+  llaves de un paso.
+- **Automatizable** (`Auto::Smooth`, y por eso con lanes, macros, mandos
+  MIDI y el ratón): `rate`, `depth`, `delay`, `center`, `feedback`, `mix` y
+  `phase`. No, con su motivo en el registro: `sync` (una figura), `wave` e
+  `invert` (valores con nombre), `stages` (un número de filtros) y
+  `voices` (cuántas cosas suenan). Mover `rate` con `sync` puesto no hace
+  nada (manda `sync`).
+- **Errores** con la línea, y sigue sonando lo anterior: fuera de rango
+  (con el rango), NaN e infinitos (no pasan los rangos), parámetros que no
+  existen, `stages` que no es 2, 4, 6, 8 ni 12, `voices` con decimales,
+  `sync` que no se entiende o con curva, y flanger o chorus en un corte o
+  en un paso.
+
+### Por corte y por paso: medido
+
+`cargo test -p engine --release --test modulation -- --ignored
+--nocapture coste`: ocho pistas con un golpe en cada paso a 170 BPM (la
+voz siempre suena), 20 s, en el i7-7500U de desarrollo:
+
+| Caso (en las 8 pistas) | % de un núcleo | por instancia |
+| --- | --- | --- |
+| sin efectos | 1,63 | |
+| flanger | 3,84 | 0,28 |
+| flanger con `sync` | 3,83 | 0,28 |
+| phaser, 4 etapas | 3,24 | 0,20 |
+| phaser, 12 etapas | 4,68 | 0,38 |
+| chorus, 2 voces | 5,21 | 0,45 |
+| chorus, 4 voces | 7,98 | 0,79 |
+| lowpass (para comparar) | 1,77 | 0,02 |
+| los cuatro en cada pista (32 instancias) | 13,24 | 0,36 |
+| phaser 4 etapas por corte (en la voz) | 4,82 | 0,40 por pista |
+| phaser 12 etapas por corte | 7,74 | 0,76 por pista |
+| lowpass por corte (para comparar) | 4,61 | 0,37 por pista |
+
+- **Decisión**: el **phaser va por voz** (`cortes:fx(i, "phaser", ...)` y
+  `3{phaser=0.7}`, donde el número es `mix`): su estado cabe en
+  `FxState` sin hacerlo crecer y por voz cuesta lo que un filtro de corte
+  más 0,03 (4 etapas) a 0,4 (12 etapas) puntos por pista. Con las 64 voces
+  del límite por defecto y 12 etapas en todas, unos 13 % de un núcleo: el
+  caso extremo cabe. El **flanger y el chorus no van por voz**: su línea
+  ocupa 64 KiB y cada voz con efectos copia su cadena (cuatro líneas por
+  voz serían 256 KiB por voz y hasta 64 MiB con 256 voces); error claro en
+  `cortes:fx` y en las llaves.
+- **Cuántas caben**: como mucho hay 48 ranuras (8 pistas y 4 grupos con 4
+  efectos cada uno). Todas con chorus de 4 voces, unos 38 % de un núcleo; a
+  un bloque de 512 frames a 48 kHz (10,7 ms), el callback tiene sitio. Con
+  la carga típica (un par de instancias) no se nota.
+- **Sin los efectos nuevos**: `golden.rs` idéntico (las nueve huellas de
+  antes), y `scripts/comparar-audio.sh` con el binario del commit del
+  inventario: 27 canciones iguales bit a bit (las dos recetas con azar sin
+  semilla no se comparan, como siempre). Lo único que se añade al camino
+  de siempre es mirar si la cadena tiene cola al decidir si una pista está
+  en reposo y saltar las ranuras vacías. Medido: el motor solo (8 pistas
+  con un golpe por paso, 60 s, mejor de 5, con y sin filtro y bitcrusher,
+  en bloques de 64 y de 512 frames, compilado en los dos árboles) da lo
+  mismo dentro del ruido (1,05 a 1,18 s, alternando cuál gana), y la carga
+  del script también (29 ms). El render completo con `tui --render` de la
+  receta 08 a 512 compases sale, en cambio, entre un 2 y un 4 % más lento
+  de forma repetida (10,5 s frente a 10,8 a 11,1), y el de la 15, igual; el
+  motor no lo explica y sin `perf` en esta máquina no se ha localizado:
+  queda anotado para mirarlo en el Asahi.
+- **ARM64**: sin medir (no hay Asahi a mano y en esta máquina no está la
+  librería estándar de aarch64); el mismo banco y `scripts/comparar-audio.sh`
+  dan las cifras allí. Todo es Rust puro, sin intrínsecos ni dependencias
+  nuevas.
+
+### Formant: unificado
+
+- Ya había un solo `formant` (LPC por grano sobre el desplazador de `%`,
+  en tiempo real, fase K): `cortes:set(i, { formant = n })` y
+  `3{formant=n}` mueven el timbre del corte también en golpes sin pitch;
+  `pista:formant(n)`, en cambio, solo actuaba en los pasos con `%`. Ahora
+  la pista sigue la misma regla: con `n ≠ 0`, un golpe sin pitch pasa por
+  los granos como un `%0` (otro timbre, la misma nota y la misma duración),
+  y suena **bit a bit** como el mismo formante puesto en el corte (test).
+  El del corte manda sobre el de la pista; con 0, nada cambia (bit a bit);
+  con `^`, la pista no actúa (los formantes se mueven con el tono; el del
+  corte da error, como antes).
+- **Compatibilidad**: ningún script deja de cargar. Lo que cambia es el
+  sonido de los golpes sin pitch de una pista con `:formant(n)` y `n ≠ 0`,
+  donde antes no hacía nada (y la carga avisaba de que no actuaba). El
+  aviso queda para cuando no hay ningún paso en el que actúe:
+  `formant(0)` sin pasos con `%`, o `formant(n)` con todos los pasos con
+  `^`. Ninguna receta ni ninguna huella usaba `:formant` en pasos sin `%`.
+- **Método**: no hace falta otro. El (a) del encargo (remuestrear y
+  corregir el tono con el desplazador) es lo que hace `Shift` con `%`; el
+  (b), con envolvente espectral, es el LPC que ya corrige cada grano
+  (medido en la fase K: una vocal a +7 queda a 1,3 dB de su envolvente
+  frente a 13,7 dB sin corrección). En tiempo real, sin precálculo ni
+  caché.
+- **Rango**: sigue de −24 a 24 (los scripts que lo usan no cambian); la
+  guía y el registro recomiendan de −12 a 12. **Limitaciones**: con
+  material percusivo o con mucho ruido suena artificial (los granos
+  buscan un periodo que un golpe no tiene) y emborrona el ataque; va
+  mejor en voz, bajo y sintes; más allá de una octava aparecen artefactos;
+  cuesta otro 2 % de un núcleo por voz.
+- No se añade `cortes[3]:formant(3)`: sería otro nombre para
+  `cortes:set(3, { formant = 3 })` y el encargo pide no duplicar.
+
+### Decisiones
+
+- **Nombres en inglés** (`wave`, `phase`, `invert`), no `forma`, `fase`,
+  `invertir`: todos los parámetros del registro van en inglés y el sh101 ya
+  usa `lfo_wave`; los valores de `wave` son los suyos (`"sine"`, `"tri"`).
+- **`mix` es el parámetro principal** (el primero de la tabla): en las
+  llaves de un paso, `{phaser=0.7}` es su mezcla, como `{lp=800}` es el
+  corte.
+- **`phase` por defecto 90°** en los tres: más ancho; con 0, los dos
+  canales son iguales (test).
+- **Hermite y no Lagrange de más orden**: el de 4 puntos ya deja el hueco
+  de un retardo fraccionario por debajo de −40 dB y cuesta cuatro lecturas
+  por canal y voz.
+- **Calidad del phaser sin oversampling**: el motor no sobremuestrea los
+  efectos; los paso-todos de primer orden no crean armónicos, así que no
+  hace falta (solo el recorte suave de la realimentación, con
+  `feedback` alto y señales al máximo, añade algo).
+- **Al quitar el efecto** (o cambiarlo por otro tipo) en el compás, su
+  ranura se vacía como la de cualquier efecto: la cola de ese momento se
+  pierde. Un golpe que suena con efectos de corte sigue con su copia de la
+  cadena hasta acabar (como siempre).
+- **Contador de `no_alloc.rs` por hilo**: era global y
+  `the_counter_sees_allocations` reserva a propósito mientras cuenta; con
+  los tests en paralelo, si coincidían en el tiempo, los demás veían esas
+  dos reservas. El test nuevo cambió los tiempos y lo destapó; ahora cada
+  hilo cuenta las suyas.
+
+### Tests
+
+- `engine/tests/modulation.rs`: `mix = 0` bit a bit en los tres (también
+  con la realimentación al máximo y `sync`); el flanger quieto es un peine
+  (hueco en 500 Hz con 1 ms, pico en 1000; invertido, al revés) y el
+  retardo fraccionario deja su hueco; el phaser quieto de dos etapas tiene
+  el hueco en `center` y solo la mojada con 12 etapas no cambia el nivel;
+  valores extremos (realimentación ±0,95, ruido y graves al máximo,
+  12 etapas, 4 voces, 20 Hz) finitos y acotados, y el silencio da ceros;
+  la cola sigue y se apaga sin corte; el pánico la apaga en 5 ms y el
+  golpe siguiente suena mojado; `sync` determinista y el desfase estéreo;
+  los rangos; flanger y chorus fuera de un corte; el resultado no depende
+  del tamaño de bloque; y el banco `coste`, ignorado.
+- `engine/tests/no_alloc.rs`: los tres en una pista con su ritmo, centro
+  y mezcla automatizados (un LFO, una rampa y una macro que se mueve), el
+  phaser por corte, un grupo con flanger y phaser, cambiarlos al compás
+  sonando (otro flanger, sin efectos, una pista que se calla) y el pánico.
+- `engine/tests/deform.rs`: el formante de la pista en un golpe sin pitch
+  mueve el timbre y no la fundamental, suena como el del corte, el del
+  corte manda, con 0 y con `^` no cambia nada.
+- `script/tests/modulation.rs`: las tablas hacen los efectos del motor,
+  las cinco formas de `sync`, curvas en todo lo continuo, el phaser por
+  corte y por paso (con `mix = 0`, bit a bit; con mezcla, solo cambian sus
+  golpes) y quince errores con su línea mientras sigue sonando lo
+  anterior. `script/tests/formant.rs`: la pista mueve los pasos sin pitch
+  como el corte y el aviso nuevo. `golden.rs`: una huella nueva,
+  «modulación» (flanger con `sync` en la pista, phaser por corte, por
+  paso y en la pista con su `rate` en un `lfo` y su `mix` en una macro,
+  chorus y flanger invertido en un grupo); las de antes, sin tocar. `registry.rs`,
+  `slice_fx.rs`, el autocompletado y el diagnóstico, con los tres nombres.
+- Receta `scripts/ejemplos/27-modulacion.lua` y «Barridos: flanger,
+  phaser y chorus» en la guía (renderizada: pico de −0,3 dBFS por el
+  limitador, como las demás).
+
+### Chorus
+
+Hecho (era opcional): reutiliza la línea y el LFO del flanger; va en la
+pista y en el grupo, no por voz, por lo mismo que el flanger.
+
+### Qué probar a mano (con auriculares)
+
+- `:fx("flanger", { sync = "1 compás", feedback = 0.8 })` sobre el break:
+  el «avión» sube y baja una vez por compás, en fase con la canción, sin
+  zumbido en el barrido; con `feedback = -0.8` e `invert = true`, más
+  hueco.
+- Mover `depth`, `delay` y `mix` con un mando (MIDI learn) o con Ctrl y la
+  rueda: sin clics.
+- El phaser de 12 etapas con `feedback = 0.9`: los huecos marcados y la
+  resonancia; por corte en la caja.
+- El chorus de 4 voces en un pad: ancho sin desafinar demasiado.
+- `pista:formant(4)` en una voz sin `%`: otro timbre, la misma nota.
+- ARM64: `scripts/comparar-audio.sh` y el banco `coste`.
+
 ## Audio de prueba y problemas conocidos
 
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`

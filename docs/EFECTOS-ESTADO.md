@@ -1,8 +1,10 @@
 # Efectos: inventario antes de flanger, phaser y formant por corte
 
 Estado del código el 2026-11-19 (commit `7560512`), antes de añadir
-flanger, phaser y chorus. Lo que se decide y se hace después va en
-«Flanger, phaser y formant por corte» de [ESTADO.md](ESTADO.md).
+flanger, phaser y chorus. Lo que se decidió y se hizo después está en
+«Flanger, phaser y formant por corte» de [ESTADO.md](ESTADO.md): los
+tres efectos existen ya, el phaser también por corte y por paso, y
+`pista:formant` sigue la regla del corte.
 
 ## Lo que hay
 
