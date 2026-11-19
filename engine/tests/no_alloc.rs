@@ -2714,7 +2714,45 @@ fn busy_mod_set(sustain: f32) -> engine::modulation::ModSet {
                 }))
             })
             .unwrap();
+        chain = chain
+            .with_device(Device {
+                op: Some(Op::Mul),
+                ..Device::new(DeviceKind::Stepper(Stepper {
+                    id: domain as u8,
+                    first: (domain * 5) as u16,
+                    len: 5,
+                    advance: 3,
+                    random: domain % 2 == 1,
+                    seed: 7,
+                    reset: (domain % 2) as u16,
+                }))
+            })
+            .unwrap();
+        // El octavo dispositivo (el máximo): velocidad o nota.
+        let track = if domain % 2 == 0 {
+            DeviceKind::Velocity(VelocityTrack {
+                min: 0.5,
+                max: 1.0,
+                clamp: domain == 0,
+            })
+        } else {
+            DeviceKind::Key(KeyTrack {
+                min: 0.8,
+                max: 1.2,
+                low: 36.0,
+                high: 96.0,
+            })
+        };
+        chain = chain
+            .with_device(Device {
+                op: Some(Op::Mul),
+                ..Device::new(track)
+            })
+            .unwrap();
         set.chains[domain] = Some(chain);
+    }
+    for (i, v) in set.steps.iter_mut().enumerate().take(20) {
+        *v = 0.5 + (i % 5) as f32 / 10.0;
     }
     let pts = |v: f32| {
         [

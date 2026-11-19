@@ -1907,6 +1907,9 @@ pub struct Engine {
     staged_mods: Option<Box<crate::modulation::ModTable>>,
     /// Golpes con modulación que han nacido (siembra su azar).
     mod_born: u64,
+    /// El cursor de cada stepper de cada set (por set, no por voz).
+    mod_cursors: [[crate::modulation::StepperCursor; crate::modulation::MAX_STEPPERS];
+        crate::modulation::MAX_MOD_SETS],
     /// Se han publicado lanes (para borrarlas al quitarlas).
     lanes_published: bool,
     /// Mandos MIDI: su tabla y su estado (ver [`crate::knob`]).
@@ -2140,6 +2143,7 @@ pub fn new_engine(sample_rate: u32) -> (Controller, Engine) {
             pending_mods: None,
             staged_mods: None,
             mod_born: 0,
+            mod_cursors: Default::default(),
             lanes_published: false,
             knobs: crate::knob::KnobState::default(),
             hushed: false,
@@ -3020,7 +3024,8 @@ impl Engine {
                     .and_then(|p| slice.and_then(|i| p.slice_mod(i)));
                 let key = 60.0 + 12.0 * playback.rate.log2() as f32;
                 let off = dur.map(|d| d.min(u32::MAX as usize) as u32);
-                let modu = self.mod_voice(slot, playback.gain, key, off);
+                let steps = self.mod_steps(slot);
+                let modu = self.mod_voice(slot, playback.gain, key, off, steps);
                 let mut voice = Voice::lasting(sample, start, end, playback, dur).with_fx(fx);
                 if let Some(m) = modu {
                     voice = voice.with_mod(m);
@@ -3281,8 +3286,9 @@ impl Engine {
                     .pattern
                     .as_ref()
                     .and_then(|p| p.slice_mod(usize::MAX));
+                let steps = self.mod_steps(slot);
                 let modu = self
-                    .mod_voice(slot, gain, patch.root + semitones, None)
+                    .mod_voice(slot, gain, patch.root + semitones, None, steps)
                     .map(|(m, _)| m);
                 let t = &mut self.tracks[track];
                 let ev = NoteEvent {
@@ -3453,6 +3459,13 @@ impl Engine {
         if step == 0
             && let Some(table) = self.pending_mods.take()
         {
+            // Los steppers de un set que cambia vuelven a empezar.
+            let (_, current) = self.mods.current();
+            for (i, cursors) in self.mod_cursors.iter_mut().enumerate() {
+                if current.and_then(|t| t.get(i)) != table.get(i) {
+                    *cursors = Default::default();
+                }
+            }
             let table = if table.is_empty() {
                 self.discard_mods(table);
                 None
@@ -3607,7 +3620,8 @@ impl Engine {
         // `_`), o su `dur`.
         let key = 60.0 + 12.0 * playback.rate.log2() as f32;
         let off = dur.unwrap_or(gate).min(u32::MAX as usize) as u32;
-        if let Some(m) = self.mod_voice(slot, playback.gain, key, Some(off)) {
+        let steps = self.mod_steps(slot);
+        if let Some(m) = self.mod_voice(slot, playback.gain, key, Some(off), steps) {
             voice = voice.with_mod(m);
         }
         let Some(pattern) = &self.tracks[t].pattern else {
@@ -3644,12 +3658,28 @@ impl Engine {
     /// la tabla que suena (con su volumen como velocidad, su nota y el
     /// note-off a los `off` frames), y qué dominios lleva su set. Sin set
     /// (o si la tabla no lo tiene), ninguna.
+    /// Los valores de los steppers del set `slot` para un golpe que nace
+    /// ahora (avanzan sus cursores: una vez por golpe, también con
+    /// acordes).
+    fn mod_steps(&mut self, slot: Option<u8>) -> [f32; crate::modulation::MAX_STEPPERS] {
+        let Some(slot) = slot else {
+            return [0.0; crate::modulation::MAX_STEPPERS];
+        };
+        let bar = (self.song_position().0.max(0.0) / crate::sequencer::STEPS as f64) as u64;
+        let (_, table) = self.mods.current();
+        let Some(set) = table.and_then(|t| t.get(slot as usize)) else {
+            return [0.0; crate::modulation::MAX_STEPPERS];
+        };
+        set.take_steps(&mut self.mod_cursors[slot as usize], bar)
+    }
+
     fn mod_voice(
         &mut self,
         slot: Option<u8>,
         velocity: f32,
         key: f32,
         off: Option<u32>,
+        stepper: [f32; crate::modulation::MAX_STEPPERS],
     ) -> Option<(crate::modulation::ModVoice, [bool; 4])> {
         let slot = slot?;
         let (generation, table) = self.mods.current();
@@ -3677,6 +3707,7 @@ impl Engine {
             },
             key,
             born: self.mod_born,
+            steps: stepper,
         };
         let m = crate::modulation::ModVoice::new(
             set,
@@ -3799,13 +3830,16 @@ impl Engine {
             .pattern
             .as_ref()
             .and_then(|p| p.hit_mod(&hit));
+        let steps = self.mod_steps(slot);
         let rates = std::iter::once(hit.playback.rate).chain(hit.chord.iter().flatten().copied());
         for rate in rates {
             let semitones = 12.0 * rate.log2();
             let pitch = patch.root + semitones as f32;
             // Accent: velocidad 1. El note-off lo da la voz (su gate).
             let velocity = if hit.accent { 1.0 } else { hit.playback.gain };
-            let modu = self.mod_voice(slot, velocity, pitch, None).map(|(m, _)| m);
+            let modu = self
+                .mod_voice(slot, velocity, pitch, None, steps)
+                .map(|(m, _)| m);
             let ev = NoteEvent {
                 pitch,
                 gain: hit.playback.gain,

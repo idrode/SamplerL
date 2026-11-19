@@ -605,6 +605,50 @@ impl PointEnv {
     }
 }
 
+/// Steppers de un set, como mucho.
+pub const MAX_STEPPERS: usize = 4;
+/// Valores de los steppers de un set, entre todos.
+pub const MAX_STEPPER_VALUES: usize = 256;
+/// Lo más que avanza un stepper con cada golpe.
+pub const MAX_STEPPER_ADVANCE: u8 = 16;
+
+/// Stepper: una tabla de valores (de 1 a 256) cuyo cursor, uno por set y
+/// stepper (no por voz), avanza `advance` pasos con cada golpe (0, se
+/// queda), o va a uno al azar (determinista, de `seed`); con `reset` > 0,
+/// vuelve al primero cada `reset` compases. Cada golpe toma el valor de
+/// donde está el cursor al nacer.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Stepper {
+    /// Cuál de los steppers del set es (de 0 a [`MAX_STEPPERS`]).
+    pub id: u8,
+    /// Sus valores: `ModSet::steps[first..first + len]`.
+    pub first: u16,
+    pub len: u16,
+    pub advance: u8,
+    pub random: bool,
+    pub seed: u64,
+    pub reset: u16,
+}
+
+/// Seguimiento de la velocidad del golpe (de 0 a 1): de `min` a `max`
+/// escalado, o la velocidad recortada a `min..max` (`clamp`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VelocityTrack {
+    pub min: f32,
+    pub max: f32,
+    pub clamp: bool,
+}
+
+/// Seguimiento de la nota: de `min` en la nota `low` a `max` en la `high`
+/// (fuera, recortado).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct KeyTrack {
+    pub min: f32,
+    pub max: f32,
+    pub low: f32,
+    pub high: f32,
+}
+
 /// Qué es un dispositivo, con sus parámetros.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DeviceKind {
@@ -614,6 +658,9 @@ pub enum DeviceKind {
     /// Un valor fijo (o una curva de la canción).
     Operand(ModValue),
     Points(PointEnv),
+    Stepper(Stepper),
+    Velocity(VelocityTrack),
+    Key(KeyTrack),
 }
 
 impl DeviceKind {
@@ -625,6 +672,9 @@ impl DeviceKind {
             DeviceKind::Fader(_) => "fader",
             DeviceKind::Operand(_) => "value",
             DeviceKind::Points(_) => "env",
+            DeviceKind::Stepper(_) => "stepper",
+            DeviceKind::Velocity(_) => "velocity",
+            DeviceKind::Key(_) => "keytrack",
         }
     }
 }
@@ -666,8 +716,39 @@ impl Device {
             DeviceKind::Operand(v) => {
                 v.check((-MAX_AMOUNT, MAX_AMOUNT), "value fuera de rango (-64 a 64)")
             }
-            // Sus puntos los comprueba el set.
+            // Sus puntos (y los valores del stepper) los comprueba el set.
             DeviceKind::Points(_) => Ok(()),
+            DeviceKind::Stepper(st) => {
+                if st.id as usize >= MAX_STEPPERS {
+                    return Err("demasiados steppers (máximo 4 por set)");
+                }
+                if st.len == 0 || st.first as usize + st.len as usize > MAX_STEPPER_VALUES {
+                    return Err("un stepper lleva de 1 a 256 valores");
+                }
+                if st.advance > MAX_STEPPER_ADVANCE {
+                    return Err("step fuera de rango (0 a 16)");
+                }
+                Ok(())
+            }
+            DeviceKind::Velocity(v) => {
+                let ok = |x: f32| x.is_finite() && x.abs() <= MAX_AMOUNT;
+                if ok(v.min) && ok(v.max) {
+                    Ok(())
+                } else {
+                    Err("min y max van de -64 a 64")
+                }
+            }
+            DeviceKind::Key(k) => {
+                let ok = |x: f32| x.is_finite() && x.abs() <= MAX_AMOUNT;
+                let note = |x: f32| x.is_finite() && (0.0..=127.0).contains(&x);
+                if !(ok(k.min) && ok(k.max)) {
+                    Err("min y max van de -64 a 64")
+                } else if !(note(k.low) && note(k.high) && k.low < k.high) {
+                    Err("low y high son notas (0 a 127), low por debajo de high")
+                } else {
+                    Ok(())
+                }
+            }
         }
     }
 }
@@ -683,6 +764,8 @@ pub struct HitInfo {
     pub key: f32,
     /// Número del golpe (siembra el azar de los LFO aleatorios).
     pub born: u64,
+    /// El valor de cada stepper del set al nacer el golpe.
+    pub steps: [f32; MAX_STEPPERS],
 }
 
 impl HitInfo {
@@ -690,7 +773,71 @@ impl HitInfo {
         velocity: 1.0,
         key: 60.0,
         born: 0,
+        steps: [0.0; MAX_STEPPERS],
     };
+}
+
+/// El cursor de un stepper (en el motor, uno por set y stepper).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct StepperCursor {
+    pub pos: u16,
+    pub rng: u64,
+    /// El tramo de `reset` compases en que tocó la última vez (+1; 0,
+    /// ninguno).
+    pub block: u64,
+}
+
+impl StepperCursor {
+    /// El valor de este golpe (en el compás `bar` de la canción) y avanza.
+    pub fn take(&mut self, st: &Stepper, values: &[f32; MAX_STEPPER_VALUES], bar: u64) -> f32 {
+        let len = st.len.max(1);
+        if st.reset > 0 {
+            let block = bar / st.reset as u64 + 1;
+            if block != self.block {
+                self.block = block;
+                self.pos = 0;
+                self.rng = 0;
+            }
+        }
+        if self.rng == 0 {
+            self.rng = st.seed ^ 0x9e37_79b9_7f4a_7c15;
+        }
+        if st.random {
+            // xorshift64*: el mismo orden en cada render.
+            let mut x = self.rng;
+            x ^= x >> 12;
+            x ^= x << 25;
+            x ^= x >> 27;
+            self.rng = x;
+            self.pos = (x.wrapping_mul(0x2545_f491_4f6c_dd1d) >> 33) as u16 % len;
+        }
+        let value = values[(st.first + self.pos.min(len - 1)) as usize];
+        if !st.random {
+            self.pos = ((self.pos as u32 + st.advance as u32) % len as u32) as u16;
+        }
+        value
+    }
+}
+
+impl ModSet {
+    /// Los valores de sus steppers para un golpe que nace en el compás
+    /// `bar`, avanzando sus cursores (`cursors[id]`).
+    pub fn take_steps(
+        &self,
+        cursors: &mut [StepperCursor; MAX_STEPPERS],
+        bar: u64,
+    ) -> [f32; MAX_STEPPERS] {
+        let mut out = [0.0; MAX_STEPPERS];
+        for chain in self.chains.iter().flatten() {
+            for device in chain.devices.iter().flatten() {
+                if let DeviceKind::Stepper(st) = &device.kind {
+                    let id = st.id as usize;
+                    out[id] = cursors[id].take(st, &self.steps, bar);
+                }
+            }
+        }
+        out
+    }
 }
 
 /// La cadena de un dominio: el valor inicial y los dispositivos en orden.
@@ -737,6 +884,8 @@ pub struct ModSet {
     /// Los puntos de sus envolventes de puntos (cada una, una lane de
     /// duración 1).
     pub envs: [Option<crate::lane::Lane>; MAX_POINT_ENVS],
+    /// Los valores de sus steppers, uno tras otro.
+    pub steps: [f32; MAX_STEPPER_VALUES],
 }
 
 impl Default for ModSet {
@@ -745,6 +894,7 @@ impl Default for ModSet {
             chains: [None; DOMAINS],
             pitch_range: 12.0,
             envs: [None; MAX_POINT_ENVS],
+            steps: [0.0; MAX_STEPPER_VALUES],
         }
     }
 }
@@ -753,6 +903,13 @@ impl ModSet {
     pub fn validate(&self) -> Result<(), &'static str> {
         if !(self.pitch_range.is_finite() && (0.0..=MAX_PITCH_RANGE).contains(&self.pitch_range)) {
             return Err("range del pitch fuera de rango (0 a 48 semitonos)");
+        }
+        if self
+            .steps
+            .iter()
+            .any(|v| !v.is_finite() || v.abs() > MAX_AMOUNT)
+        {
+            return Err("los valores de un stepper van de -64 a 64");
         }
         for chain in self.chains.iter().flatten() {
             if !chain.input.is_finite() || chain.input.abs() > MAX_AMOUNT {
@@ -815,6 +972,18 @@ impl ModSet {
                     Some(lane) => polar(p.value(lane, t_ms, off_ms, at, sample_rate)),
                     None => 0.0,
                 },
+                DeviceKind::Stepper(st) => polar(hit.steps[st.id as usize]),
+                DeviceKind::Velocity(v) => {
+                    if v.clamp {
+                        hit.velocity.clamp(v.min.min(v.max), v.max.max(v.min))
+                    } else {
+                        v.min + (v.max - v.min) * hit.velocity
+                    }
+                }
+                DeviceKind::Key(k) => {
+                    let u = ((hit.key - k.low) / (k.high - k.low)).clamp(0.0, 1.0);
+                    k.min + (k.max - k.min) * u
+                }
             };
             let x = raw * device.amount.at(at);
             acc = device.op.unwrap_or(Op::default_for(domain)).apply(acc, x);

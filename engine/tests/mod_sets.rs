@@ -5,8 +5,9 @@
 use std::sync::Arc;
 
 use engine::modulation::{
-    Ahdsr, CUTOFF, Chain, Device, DeviceKind, EnvLength, EnvLoop, Fader, FaderScale, ModLfo,
-    ModSet, ModTable, ModValue, ModWave, Op, PAN, PITCH, PointEnv, VOL,
+    Ahdsr, CUTOFF, Chain, Device, DeviceKind, EnvLength, EnvLoop, Fader, FaderScale, KeyTrack,
+    ModLfo, ModSet, ModTable, ModValue, ModWave, Op, PAN, PITCH, PointEnv, Stepper, VOL,
+    VelocityTrack,
 };
 use engine::notation::parse_steps;
 use engine::{Batch, Pattern, Sample, Slices, Step, detect_mono, new_engine, offline};
@@ -777,4 +778,149 @@ fn point_envelopes_are_validated() {
     let mut missing = points_set(&pts, EnvLength::Ms(400.0), EnvLoop::Off, None);
     missing.envs[0] = None;
     assert!(missing.validate().is_err());
+}
+
+fn stepper_set(values: &[f32], f: impl FnOnce(&mut Stepper)) -> ModSet {
+    let mut st = Stepper {
+        id: 0,
+        first: 0,
+        len: values.len() as u16,
+        advance: 1,
+        random: false,
+        seed: 1,
+        reset: 0,
+    };
+    f(&mut st);
+    let mut set = set_with(VOL, &[Device::new(DeviceKind::Stepper(st))]);
+    set.steps[..values.len()].copy_from_slice(values);
+    set
+}
+
+/// El volumen de cada golpe de una pista con un golpe en cada paso.
+fn levels_per_step(set: ModSet, steps: &str, bars: usize) -> Vec<f32> {
+    let (sample, slices) = dc(0.5, RATE as usize);
+    let p = Pattern::from_steps(sample, &slices, parse_steps(steps).unwrap())
+        .unwrap()
+        .with_mod_sets(Some(0), &[])
+        .unwrap();
+    let out = left(&render(vec![(0, p)], Some(table(&[set])), bars * 16 * STEP));
+    (0..bars * 16)
+        .map(|k| out[k * STEP + ms(50.0)] / 0.5)
+        .collect()
+}
+
+const EVERY: &str = "1 1 1 1  1 1 1 1  1 1 1 1  1 1 1 1";
+
+#[test]
+fn the_stepper_advances_with_each_hit_and_wraps() {
+    let close = |got: &[f32], want: &[f32]| {
+        for (k, (g, w)) in got.iter().zip(want).enumerate() {
+            assert!((g - w).abs() < 1e-4, "golpe {k}: {g} (quería {w})");
+        }
+    };
+    let v = [1.0, 0.5, 0.25];
+    close(
+        &levels_per_step(stepper_set(&v, |_| {}), EVERY, 1),
+        &[1.0, 0.5, 0.25, 1.0, 0.5, 0.25, 1.0],
+    );
+    // De dos en dos sobre tres (no divide): 0, 2, 1, 0...
+    close(
+        &levels_per_step(stepper_set(&v, |s| s.advance = 2), EVERY, 1),
+        &[1.0, 0.25, 0.5, 1.0, 0.25, 0.5],
+    );
+    // Con 0, se queda.
+    close(
+        &levels_per_step(stepper_set(&v, |s| s.advance = 0), EVERY, 1),
+        &[1.0, 1.0, 1.0],
+    );
+    // Vuelve al principio cada compás (16 golpes no es múltiplo de 3).
+    let reset = levels_per_step(stepper_set(&v, |s| s.reset = 1), EVERY, 2);
+    close(&reset[16..19], &[1.0, 0.5, 0.25]);
+    let no_reset = levels_per_step(stepper_set(&v, |_| {}), EVERY, 2);
+    close(&no_reset[16..17], &[0.5]);
+    // El cursor es del set: dos pistas que lo comparten se lo reparten
+    // (con un sample más corto que un paso, para oír cada golpe solo).
+    let (sample, slices) = dc(0.5, 4000);
+    let make = |steps: &str| {
+        Pattern::from_steps(sample.clone(), &slices, parse_steps(steps).unwrap())
+            .unwrap()
+            .with_mod_sets(Some(0), &[])
+            .unwrap()
+    };
+    let out = render(
+        vec![
+            (0, make("1 . 1 .  . . . .  . . . .  . . . .")),
+            (1, make(". 1 . 1  . . . .  . . . .  . . . .")),
+        ],
+        Some(table(&[stepper_set(&v, |_| {})])),
+        4 * STEP,
+    );
+    let l = left(&out);
+    let got: Vec<f32> = (0..4).map(|k| l[k * STEP + ms(50.0)] / 0.5).collect();
+    close(&got, &[1.0, 0.5, 0.25, 1.0]);
+}
+
+#[test]
+fn the_random_stepper_repeats_with_its_seed() {
+    let v: Vec<f32> = (0..8).map(|i| i as f32 / 8.0).collect();
+    let a = levels_per_step(stepper_set(&v, |s| s.random = true), EVERY, 1);
+    let b = levels_per_step(stepper_set(&v, |s| s.random = true), EVERY, 1);
+    assert_eq!(a, b);
+    assert!(a.iter().all(|x| v.iter().any(|y| (x - y).abs() < 1e-4)));
+    assert!(a.windows(2).any(|w| w[0] != w[1]));
+    let other = levels_per_step(
+        stepper_set(&v, |s| {
+            s.random = true;
+            s.seed = 99
+        }),
+        EVERY,
+        1,
+    );
+    assert_ne!(a, other);
+}
+
+#[test]
+fn velocity_and_key_tracking() {
+    let vel = |clamp| {
+        set_with(
+            VOL,
+            &[Device::new(DeviceKind::Velocity(VelocityTrack {
+                min: 0.2,
+                max: 1.0,
+                clamp,
+            }))],
+        )
+    };
+    // `@0.5`: la velocidad es el volumen del golpe (y la voz suena a 0,5).
+    let steps = "1@0.5 1 . .  . . . .  . . . .  . . . .";
+    let scaled = levels_per_step(vel(false), steps, 1);
+    assert!((scaled[0] - 0.5 * 0.6).abs() < 1e-4, "{}", scaled[0]);
+    assert!((scaled[1] - 1.0).abs() < 1e-4);
+    let clamped = levels_per_step(vel(true), "1@0.1 . . .  . . . .  . . . .  . . . .", 1);
+    assert!((clamped[0] - 0.1 * 0.2).abs() < 1e-4, "{}", clamped[0]);
+    // La nota: de 0,2 en do 4 (60) a 1 en do 5 (72).
+    let key = set_with(
+        VOL,
+        &[Device::new(DeviceKind::Key(KeyTrack {
+            min: 0.2,
+            max: 1.0,
+            low: 60.0,
+            high: 72.0,
+        }))],
+    );
+    let (sample, slices) = dc(0.5, RATE as usize);
+    let p = Pattern::from_steps(
+        sample,
+        &slices,
+        parse_steps("1 . 1^6 .  1^12 . 1^-3 .  . . . .  . . . .").unwrap(),
+    )
+    .unwrap()
+    .with_mod_sets(Some(0), &[])
+    .unwrap();
+    let out = left(&render(vec![(0, p)], Some(table(&[key])), 8 * STEP));
+    let at = |k: usize| out[k * STEP + ms(50.0)] / 0.5;
+    assert!((at(0) - 0.2).abs() < 1e-3);
+    assert!((at(2) - 0.6).abs() < 1e-3);
+    assert!((at(4) - 1.0).abs() < 1e-3);
+    assert!((at(6) - 0.2).abs() < 1e-3);
 }
