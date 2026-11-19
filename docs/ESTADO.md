@@ -5730,6 +5730,86 @@ pista y en el grupo, no por voz, por lo mismo que el flanger.
 - `pista:formant(4)` en una voz sin `%`: otro timbre, la misma nota.
 - ARM64: `scripts/comparar-audio.sh` y el banco `coste`.
 
+## Modulación por golpe
+
+Sin fase propia. Inventario previo en
+[MODULACION-ESTADO.md](MODULACION-ESTADO.md). Hasta aquí todo lo que se
+movía seguía el reloj de la canción (`Curve`, lanes, macros); un **mod
+set** sigue el golpe: cada golpe o nota arranca desde cero sus
+envolventes, LFO y faders, con su propio estado.
+
+### Motor (`engine/src/modulation.rs`)
+
+- Un `ModSet` es una cadena por dominio (`vol`, `pan`, `pitch`, `cutoff`)
+  con un valor de entrada y hasta 8 dispositivos (`Device`) que se
+  combinan con su operador (`add`, `sub`, `mul`, `div`), con `bypass`,
+  `bipolar` y `amount` (que admite curvas de la canción: `ramp`, `lfo`,
+  macros, lanes). `range` son los semitonos del pitch en 1.
+- Dispositivos: AHDSR de forma cerrada (tiempo desde el golpe y desde el
+  note-off, con curvas); envolvente de puntos (reutiliza `Lane` con
+  posiciones de 0 a 1 de una duración en ms o al tempo; bucle adelante,
+  atrás o ida y vuelta, o un punto de sustain); LFO por golpe (cinco
+  formas, la aleatoria sembrada por golpe; `rate` o `sync` desde la
+  cuenta de frames, sin deriva; fase, retardo y `free`); stepper (hasta
+  256 valores entre los 4 de un set, cursor por set y no por voz, al azar
+  con semilla, `reset` cada n compases); fader; operando (`value`);
+  seguimiento de velocidad y de nota.
+- `ModTable`: hasta 16 sets, entra con el lote al compás
+  (`Batch::set_mod_sets`, en `Box`: ocupa unos 190 KB y pasada por valor
+  desbordaba la pila de un hilo de test en debug). Cada voz guarda el
+  número de su tabla: un golpe que suena sigue con la suya; las viejas
+  vuelven por la cola de basura cuando nadie las usa.
+- Se evalúa cada 32 frames desde el golpe (no depende del bloque) y en
+  línea recta entre medias.
+- En un corte: volumen, pan, pitch (lectura acumulada; no en granos, `%`
+  ni `bend`) y un paso bajo por voz; el note-off es el final del paso y
+  sus `_` o su `dur`. En un sintetizador, por el enganche de la expresión
+  por nota (altura, volumen, corte y balance); el legato sigue con el set
+  de la nota que sonaba.
+- Prioridad: el set del paso, el del corte, el de la pista.
+
+### Lua y registro (`script/src/modsets.rs`)
+
+- `mod(nombre, cadenas)` devuelve el set; `pista:mod(set)` /
+  `mod_clear()`, `cortes:mod(cuál, set)` / `mod_clear([cuál])` y
+  `{mod=nombre}` en las llaves de un paso (`StepBraces::Mod`, que se
+  combina con las demás llaves). El set se nombra por lo que devolvió
+  `mod()` o por su nombre.
+- Las tablas se leen con el registro (`api::MOD_DOMAINS`, `MOD_COMMON`,
+  `MOD_DEVICES`): de ahí salen los errores con su línea (y sigue sonando
+  lo anterior), las plantillas, la guía y la tabla «Qué se puede
+  automatizar» (solo `amount` y los niveles y tiempos que se leen en
+  cada bloque admiten curva; lo demás dice por qué no).
+- La guía ya no envuelve en código un valor por defecto que trae su
+  propio código (`default_cell` en `api.rs`; `op` y el `sync` de los LFO
+  salían mal formados).
+
+### Tests
+
+- `engine/tests/mod_sets.rs` (23): niveles y tiempos de la AHDSR, curvas,
+  envolventes de puntos y sus bucles, LFO, fader, stepper, velocidad y
+  nota, el filtro sin NaN, prioridad, tablas que cambian en vivo.
+- `engine/tests/no_alloc.rs`: sets sonando, cambiando y quitándose en
+  vivo, cadenas de ocho dispositivos, sintetizador polifónico y pads.
+- `script/tests/mod_sets.rs`: la tabla hace el set del motor, prioridad
+  pista/corte/paso y `mod_clear`, sin `mod` bit a bit igual, cada
+  plantilla del registro carga, sintetizadores, y errores con su línea.
+- `golden.rs`: huella nueva «mod por golpe» (todos los dispositivos, el
+  LFO aleatorio y el stepper al azar, un set por corte y por paso, y un
+  sintetizador con una macro en un operando); las de antes, sin tocar.
+- Receta `scripts/ejemplos/28-mod-por-golpe.lua` y «Modulación por
+  golpe» en la guía (renderizada: 4 compases, pico de −1,4 dBFS).
+
+### Qué probar a mano (con auriculares)
+
+- La receta 28: el `pluck` cierra cada golpe y acentúa uno de cada tres;
+  la caja cae una quinta; el último paso tiembla con el filtro.
+- El bajo `acid` con `bark`: el filtro se abre con cada nota y más con
+  `!`; con `/`, sin volver a empezar.
+- Un set con LFO en `pan` y `wave = "random"` sobre los charles: cada
+  golpe a un lado, igual en cada render.
+- ARM64: `scripts/comparar-audio.sh` (la huella solo corre en x86_64).
+
 ## Audio de prueba y problemas conocidos
 
 - **Audio de prueba repetible**: `scripts/render-demo.sh [entrada.wav]` renderiza `renders/demo.wav` sin usar la salida de audio. Sin argumento genera antes `renders/synth_break.wav` con `cargo run -p engine --example synth_break` (break sintético determinista: 8 golpes en corcheas a 140 BPM, 44,1 kHz). Variables: `PATTERN`, `SLICES`, `BPM`, `BARS`, `MIN_GAP` (ms), `DETECTOR` (`flux`|`energy`). `renders/` está en `.gitignore`. Para escucharlo: `scp <laptop>:~/sampler/renders/demo.wav .`

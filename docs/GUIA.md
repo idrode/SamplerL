@@ -6177,6 +6177,65 @@ Límites:
 - Cada uno cuesta poco (de 0,2 a 0,8 % de un núcleo por pista en el i7 de
   desarrollo); el chorus de 4 voces es el más caro.
 
+### Modulación por golpe
+
+`ramp()`, `lfo()`, las macros y las lanes siguen el reloj de la canción.
+Un **mod set** (`mod(nombre, {...})`) sigue el golpe: cada golpe o nota
+que lo usa arranca desde cero sus envolventes, sus LFO y sus faders, y su
+release empieza con el note-off (el final del paso y sus `_`). Lleva una
+cadena por dominio, `vol`, `pan`, `pitch` y `cutoff` (un paso bajo por
+voz), y cada cadena es una lista de dispositivos que se combinan en orden
+(por defecto multiplican en `vol` y `cutoff` y suman en `pan` y `pitch`).
+Se pone en la pista (`:mod`), en un corte (`cortes:mod`) o en un paso
+(`8{mod=wobble}`): el paso manda sobre el corte y el corte sobre la
+pista. En un sintetizador mueve el corte de su propio filtro (1 es su
+corte; cada 0.1 menos, una octava abajo). Los dispositivos y sus
+parámetros están en [`mod(nombre, cadenas)`](#modnombre-cadenas).
+
+```lua
+-- 28-mod-por-golpe.lua
+bpm(170)
+local amen = sample("amen.wav"):slice(8)
+amen:name(3, "snare")
+-- Cada golpe se cierra solo y el tercero de cada tres suena más.
+mod("pluck", {
+  vol = { { "ahdsr", a = 2, d = 180, s = 0.2, r = 60 },
+          { "stepper", values = { 0.6, 0.6, 1 } } },
+  cutoff = { input = 0.7, { "velocity", min = 0.7, max = 1 } },
+})
+-- La caja cae una quinta al sonar.
+mod("drop", { pitch = { "fader", from = 0, to = -1, time = 120 }, range = 7 })
+-- Un trino del filtro, solo en un paso.
+mod("wobble", { cutoff = { input = 0.6, { "lfo", sync = "1/16", amount = 0.3, op = "add" } } })
+amen:mod("snare", "drop")
+track("drums", amen)
+  :steps("1 . 2 .  snare . 4 .  5 6 2 .  7 . snare 8{mod=wobble}")
+  :mod("pluck")
+  :gain(0.8)
+-- En un sintetizador, el mismo set abre y cierra su filtro con cada nota.
+mod("bark", { cutoff = { { "ahdsr", a = 1, d = 150, s = 0.2 },
+                         { "velocity", min = 0.6, max = 1 } } })
+track("bajo", synth("acid"))
+  :melody("c . c! .  eb . c .  g . c! .  bb . c .")
+  :mod("bark")
+  :gain(0.6)
+```
+
+Límites:
+
+- **El cursor de un stepper es del set**, no de la pista: dos pistas con
+  el mismo set lo avanzan entre las dos (un set para cada una si se
+  quiere un cursor propio).
+- Hasta 16 sets por canción, 8 dispositivos por cadena, 4 envolventes de
+  puntos y 4 steppers (256 valores entre todos) por set.
+- Se calcula cada 32 frames desde el golpe, en línea recta entre medias
+  (el LFO llega a 50 Hz: es un movimiento, no un oscilador de audio).
+- `pitch` no se mueve en los pasos con `%` (pitch sin cambiar la
+  duración) ni con `bend`.
+- Un set cambiado entra al compás; un golpe que ya suena sigue con el
+  set con el que nació. Sin ningún `mod`, la canción suena bit a bit
+  igual que antes.
+
 ### Editar un corte: duraciones, notas y deformaciones
 
 Un corte se puede alargar, acortar, tocar como instrumento y deformar sin

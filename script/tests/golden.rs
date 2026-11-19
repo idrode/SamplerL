@@ -265,6 +265,36 @@ group("bateria", { "kick", "caja" })
 "#,
         0x0a63_3be4_b4c4_b462,
     ),
+    (
+        "mod por golpe",
+        r#"bpm(170)
+local amen = sample("amen.wav"):slice(8)
+mod("pluck", {
+  vol = { { "ahdsr", a = 2, h = 10, d = 180, s = 0.2, r = 60, curve_d = 0.7 },
+          { "stepper", values = { 0.6, 0.8, 1 }, step = 2, reset = 2 } },
+  pan = { { "lfo", wave = "random", sync = "1/8", amount = 0.6 } },
+  cutoff = { input = 0.7, { "velocity", min = 0.7, max = 1 } },
+})
+mod("drop", {
+  pitch = { { "fader", from = 0, to = -1, time = 120, scale = "exp" },
+            { "keytrack", min = 0.5, max = 1, low = 48, high = 72, op = "mul" } },
+  range = 7,
+})
+mod("wob", {
+  cutoff = { input = 0.6, { "lfo", sync = "1/16", amount = 0.3, op = "add" } },
+  vol = { { "env", points = { {0, 0}, {0.1, 1, "exp"}, {0.5, 0.4}, {1, 0} }, len = "1/4", loop = "pingpong" },
+          { "stepper", values = { 1, 0.5, 0.75 }, random = true, seed = 7 } },
+})
+amen:mod(3, "drop")
+track("drums", amen)
+  :steps("1 . 2 .  3 . 4 .  5 6@0.5 2 .  7 . 3 8{mod=wob}")
+  :mod("pluck")
+mod("bark", { cutoff = { { "ahdsr", a = 1, d = 150, s = 0.2 }, { "velocity", min = 0.6, max = 1 } },
+              vol = { "value", value = macro("m", 0.5, 1) } })
+track("bajo", synth("acid")):melody("c . c! .  eb . c/ .  g . c! .  bb . c ."):mod("bark"):gain(0.5)
+"#,
+        0x1a44_b2ff_db08_f7d0,
+    ),
 ];
 
 #[test]
