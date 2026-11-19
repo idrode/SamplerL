@@ -90,6 +90,9 @@ pub struct Step {
     pub sub: Option<SubNote>,
     /// Lo que cambia de la forma de su corte (`3{dur=1/8,fit=loop}`).
     pub hit: HitShape,
+    /// Su mod set (`3{mod=pluck}`): el índice en la tabla del motor; manda
+    /// sobre el de su corte y el de la pista.
+    pub modset: Option<u8>,
 }
 
 impl Step {
@@ -121,7 +124,13 @@ impl Step {
                 warp: None,
                 smear: None,
             },
+            modset: None,
         }
+    }
+
+    /// Con su mod set (ver [`crate::modulation`]).
+    pub fn with_mod(self, modset: Option<u8>) -> Self {
+        Step { modset, ..self }
     }
 
     /// Con lo que cambia de la forma de su corte.
@@ -246,6 +255,8 @@ pub(crate) struct Trigger {
     /// Suena de un buffer precalculado (`warp`, `smear`): su índice en
     /// `Pattern::rendered` (su rango ya es el de ese buffer).
     pub variant: Option<u16>,
+    /// El mod set del paso (si no, el de su corte o el de la pista).
+    pub modset: Option<u8>,
 }
 
 /// Patrón de una pista. Los pasos se resuelven a rangos de frames y
@@ -302,6 +313,10 @@ pub struct Pattern {
     /// Efectos de cada corte (`slice_fx[i]`, los del corte `i`); vacío si
     /// ninguno tiene.
     slice_fx: Vec<Option<SliceFx>>,
+    /// Mod set de la pista y el de cada corte (índices en la tabla del
+    /// motor; ver [`crate::modulation`]).
+    mod_track: Option<u8>,
+    mod_slices: Vec<Option<u8>>,
     /// Las cadenas distintas de los efectos de paso (`Trigger::fx` es el
     /// índice); vacío si ningún paso tiene.
     step_fx: Vec<SliceFx>,
@@ -392,6 +407,8 @@ impl Pattern {
             pitch_curve: None,
             formant_curve: None,
             slice_fx: Vec::new(),
+            mod_track: None,
+            mod_slices: Vec::new(),
             step_fx,
             tag: 0,
             raw: false,
@@ -808,6 +825,67 @@ impl Pattern {
         Ok(self)
     }
 
+    /// Modulación por golpe (ver [`crate::modulation`]): el mod set de la
+    /// pista y el de cada corte (`slices[i]`, del corte `i`), índices en la
+    /// tabla del motor. El de un paso manda sobre el de su corte, y este
+    /// sobre el de la pista. Va en cortes y sintetizadores (no en un
+    /// instrumento de samples ni con granos).
+    pub fn with_mod_sets(
+        mut self,
+        track: Option<u8>,
+        slices: &[Option<u8>],
+    ) -> Result<Self, SendError> {
+        let max = crate::modulation::MAX_MOD_SETS as u8;
+        let steps = self.steps.iter().flatten().filter_map(|h| h.modset);
+        if track
+            .into_iter()
+            .chain(slices.iter().flatten().copied())
+            .chain(steps)
+            .any(|i| i >= max)
+        {
+            return Err(SendError::InvalidMod("ese mod set no existe"));
+        }
+        let any = track.is_some()
+            || slices.iter().any(Option::is_some)
+            || self.steps.iter().flatten().any(|h| h.modset.is_some());
+        if any && (self.instrument.is_some() || self.granular.is_some()) {
+            return Err(SendError::InvalidMod(
+                "la modulación por golpe va en cortes y sintetizadores (no en un instrumento de samples ni con granos)",
+            ));
+        }
+        self.mod_track = track;
+        self.mod_slices = if slices.iter().any(Option::is_some) {
+            slices.to_vec()
+        } else {
+            Vec::new()
+        };
+        Ok(self)
+    }
+
+    /// El mod set con el que suena `hit`: el de su paso, el de su corte o
+    /// el de la pista.
+    pub(crate) fn hit_mod(&self, hit: &Trigger) -> Option<u8> {
+        hit.modset
+            .or_else(|| self.mod_slices.get(hit.slice).copied().flatten())
+            .or(self.mod_track)
+    }
+
+    /// El mod set de los pads del corte `slice` (sin paso).
+    pub(crate) fn slice_mod(&self, slice: usize) -> Option<u8> {
+        self.mod_slices
+            .get(slice)
+            .copied()
+            .flatten()
+            .or(self.mod_track)
+    }
+
+    /// Lleva algún mod set.
+    pub fn has_mod(&self) -> bool {
+        self.mod_track.is_some()
+            || !self.mod_slices.is_empty()
+            || self.steps.iter().flatten().any(|h| h.modset.is_some())
+    }
+
     /// Efectos del corte `slice`, si tiene.
     pub(crate) fn slice_fx(&self, slice: usize) -> Option<SliceFx> {
         self.slice_fx.get(slice).copied().flatten()
@@ -1050,6 +1128,7 @@ fn resolve_bar(
             sub: step.sub,
             hit: step.hit,
             variant: None,
+            modset: step.modset,
         }));
     }
     Ok(())

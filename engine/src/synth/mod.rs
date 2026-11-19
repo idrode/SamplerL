@@ -964,6 +964,9 @@ pub struct NoteEvent {
     pub key: Option<u8>,
     /// Lo que el paso cambia del sub.
     pub sub: SubNote,
+    /// Su modulación por golpe (ver [`crate::modulation`]): empieza con la
+    /// nota; ligada (legato), sigue la de la nota que ya sonaba.
+    pub modu: Option<crate::modulation::ModVoice>,
 }
 
 impl NoteEvent {
@@ -976,6 +979,7 @@ impl NoteEvent {
             gate,
             key: None,
             sub: SubNote::default(),
+            modu: None,
         }
     }
 }
@@ -1063,6 +1067,8 @@ struct Voice {
     /// [`Synth::set_expr`]); las demás (el patrón, los pads del teclado)
     /// suenan sin ella, aunque el patch asigne ejes.
     expressive: bool,
+    /// Su modulación por golpe.
+    modu: Option<crate::modulation::ModVoice>,
 }
 
 impl Default for Voice {
@@ -1114,6 +1120,7 @@ impl Default for Voice {
             expr_goal: [0.0; AXES],
             expr_fresh: false,
             expressive: false,
+            modu: None,
         }
     }
 }
@@ -1183,6 +1190,7 @@ impl Voice {
         self.expr_goal = [0.0; AXES];
         self.expr_fresh = true;
         self.expressive = false;
+        self.modu = ev.modu;
         self.amp.trigger();
         self.fenv.trigger();
         // Las capas suenan con la nota y su compás virtual empieza aquí.
@@ -1203,6 +1211,11 @@ impl Voice {
         self.expr_goal = [0.0; AXES];
         self.expr_fresh = false;
         self.expressive = false;
+        // Legato: la modulación de la nota que sonaba sigue (sin volver a
+        // empezar); si no tenía, la de esta.
+        if self.modu.is_none() {
+            self.modu = ev.modu;
+        }
         self.target = ev.pitch;
         self.gain = ev.gain;
         self.accent = if ev.accent { 1.0 } else { 0.0 };
@@ -1218,6 +1231,9 @@ impl Voice {
     /// Empieza el release. La envolvente de filtro sin sustain sigue su
     /// decay hasta 0 sin mirar el gate (`free_filter`).
     fn release(&mut self, free_filter: bool) {
+        if let Some(m) = &mut self.modu {
+            m.release();
+        }
         self.amp.release();
         if !(free_filter && self.fenv.stage == Stage::Decay) {
             self.fenv.release();
@@ -1269,6 +1285,9 @@ struct Block<'a> {
     expr: bool,
     bend: (f32, f32),
     gain: (f32, f32),
+    /// Con modulación por golpe, el balance de la voz (de -1 a 1) al
+    /// principio y al final del bloque.
+    balance: (f32, f32),
 }
 
 /// Coeficiente de un polo de `ms` (99 % del camino en ese tiempo); con 0,
@@ -1609,6 +1628,11 @@ impl Voice {
             }
             yl *= patch.level;
             yr *= patch.level;
+            if b.expr && (b.balance.0 != 0.0 || b.balance.1 != 0.0) {
+                let pan = (b.balance.0 + (b.balance.1 - b.balance.0) * t).clamp(-1.0, 1.0);
+                yl *= (1.0 - pan).min(1.0);
+                yr *= (1.0 + pan).min(1.0);
+            }
             if let Some(left) = &mut self.killed {
                 let k = *left as f32 / b.fade as f32;
                 yl *= k;
@@ -1836,6 +1860,11 @@ impl Voice {
                 let post = 1.0 / soft(pre);
                 yl = soft(pre * yl) * post;
                 yr = soft(pre * yr) * post;
+            }
+            if b.expr && (b.balance.0 != 0.0 || b.balance.1 != 0.0) {
+                let pan = (b.balance.0 + (b.balance.1 - b.balance.0) * t).clamp(-1.0, 1.0);
+                yl *= (1.0 - pan).min(1.0);
+                yr *= (1.0 + pan).min(1.0);
             }
             if let Some(left) = &mut self.killed {
                 let k = *left as f32 / b.fade as f32;
@@ -2187,6 +2216,19 @@ impl Synth {
         curves: &SynthCurves,
         clock: &SongClock,
     ) {
+        self.mix_into_with_mods(out, patch, curves, clock, &crate::modulation::NO_MODS);
+    }
+
+    /// Como [`Synth::mix_into`], con las tablas de mod sets del motor (las
+    /// voces con modulación por golpe buscan la suya).
+    pub fn mix_into_with_mods(
+        &mut self,
+        out: &mut [f32],
+        patch: &Patch,
+        curves: &SynthCurves,
+        clock: &SongClock,
+        mods: &crate::modulation::ModTables,
+    ) {
         let block = crate::engine::MOD_BLOCK;
         let sr = self.sample_rate;
         if !self.is_active() {
@@ -2277,9 +2319,24 @@ impl Synth {
                 expr: false,
                 bend: (0.0, 0.0),
                 gain: (1.0, 1.0),
+                balance: (0.0, 0.0),
             };
             let expressive = patch.expr.iter().any(Option::is_some);
+            let base = k * block;
+            let len = (sub.len() / 2) as u32;
             for voice in self.voices.iter_mut().filter(|v| v.active) {
+                // La modulación por golpe de la voz en este bloque.
+                let modded = voice.modu.as_mut().map(|m| {
+                    let set = mods.get(m.generation).and_then(|t| t.get(m.slot as usize));
+                    let before = m.current();
+                    let after = m.advance(set, len, |i| crate::modulation::ModAt {
+                        steps: clock.steps + (base + i as usize) as f64 / clock.frames_per_step,
+                        seconds: clock.seconds + (base + i as usize) as f64 / sr as f64,
+                        frames_per_step: clock.frames_per_step,
+                        env: &clock.env,
+                    });
+                    (before, after, m.range)
+                });
                 if expressive && voice.expressive {
                     // Cada voz con su expresión: sus parámetros movidos.
                     let from = voice.expr;
@@ -2290,12 +2347,28 @@ impl Synth {
                     own.expr = true;
                     (own.from, own.bend.0, own.gain.0) = expressed(patch, &b.from, &from);
                     (own.to, own.bend.1, own.gain.1) = expressed(patch, &b.to, &voice.expr);
+                    if let Some(m) = modded {
+                        modulated(&mut own, m);
+                    }
+                    voice.render(sub, &own);
+                } else if let Some(m) = modded {
+                    let mut own = b;
+                    own.expr = true;
+                    modulated(&mut own, m);
                     voice.render(sub, &own);
                 } else {
                     voice.render(sub, &b);
                 }
             }
         }
+    }
+
+    /// Alguna de sus voces lleva modulación de la tabla número
+    /// `generation`.
+    pub fn uses_mods(&self, generation: u32) -> bool {
+        self.voices
+            .iter()
+            .any(|v| v.active && v.modu.is_some_and(|m| m.generation == generation))
     }
 
     /// Algún estado de algún filtro no es finito (para los tests).
@@ -2342,6 +2415,33 @@ fn expressed(
         }
     }
     (params, bend, gain)
+}
+
+/// La modulación por golpe de una voz (los dominios al principio y al
+/// final del bloque, y los semitonos del pitch) sobre su bloque: la altura
+/// se suma al bend, el volumen lo multiplica, el corte se mueve en octavas
+/// (1 es el suyo; cada 0,1 menos, una octava abajo, como `1000^(v−1)`) y
+/// el pan es el balance de la voz.
+fn modulated(
+    own: &mut Block,
+    (before, after, range): (
+        [f32; crate::modulation::DOMAINS],
+        [f32; crate::modulation::DOMAINS],
+        f32,
+    ),
+) {
+    use crate::modulation::{CUTOFF as MOD_CUTOFF, PAN, PITCH, VOL};
+    own.bend.0 += before[PITCH] * range;
+    own.bend.1 += after[PITCH] * range;
+    own.gain.0 *= before[VOL];
+    own.gain.1 *= after[VOL];
+    let c = &PARAMS[CUTOFF];
+    let shift = |hz: f32, v: f32| (hz * 1000f32.powf(v - 1.0)).clamp(c.min, c.max);
+    if before[MOD_CUTOFF] != 1.0 || after[MOD_CUTOFF] != 1.0 {
+        own.from[CUTOFF] = shift(own.from[CUTOFF], before[MOD_CUTOFF]);
+        own.to[CUTOFF] = shift(own.to[CUTOFF], after[MOD_CUTOFF]);
+    }
+    own.balance = (before[PAN], after[PAN]);
 }
 
 /// Renderiza notas sin el motor: `notes` son (frame de inicio, nota),

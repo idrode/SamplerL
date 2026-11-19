@@ -140,6 +140,9 @@ enum Command {
     /// Tabla de lanes de automatización desde el siguiente compás (al
     /// cargar; en caja: la tabla es grande).
     SetLanes(Box<crate::lane::Lanes>),
+    /// Tabla de mod sets desde el siguiente compás (ver
+    /// [`crate::modulation`]).
+    SetModSets(Box<crate::modulation::ModTable>),
     /// Qué fuentes copian sus muestras para las visualizaciones, desde el
     /// siguiente compás.
     SetViz([bool; crate::viz::VIZ_SOURCES]),
@@ -753,6 +756,54 @@ struct Voice {
     /// Sin rampas de entrada ni de salida (una pista congelada); el
     /// fundido de interrumpirla, sí.
     raw: bool,
+    /// Su modulación por golpe (sin ella, ninguna).
+    modu: Option<VoiceMod>,
+}
+
+/// La modulación por golpe de una voz de corte (ver
+/// [`crate::modulation`]): volumen, pan, pitch (leyendo el corte a la
+/// velocidad que toca en cada frame) y el corte de un filtro paso bajo de
+/// la voz.
+#[derive(Clone, Copy)]
+struct VoiceMod {
+    m: crate::modulation::ModVoice,
+    /// Lleva pitch (solo sin granos ni `bend`): lo leído del corte desde
+    /// su inicio y la velocidad de ahora.
+    pitched: bool,
+    pos: f64,
+    speed: f64,
+    /// Lleva filtro: la memoria de cada canal (SVF) y su coeficiente al
+    /// principio y al final del trozo de control.
+    filtered: bool,
+    svf: [[f32; 2]; 2],
+    g: (f32, f32),
+}
+
+/// El coeficiente `tan(π·f/fs)` del filtro de una voz para el corte
+/// normalizado `v`, con la frecuencia por debajo de Nyquist.
+fn voice_filter_g(v: f32, sample_rate: f32) -> f32 {
+    let hz = crate::modulation::cutoff_hz(v).min(0.45 * sample_rate);
+    (std::f32::consts::PI * hz / sample_rate).tan()
+}
+
+/// Un paso del filtro paso bajo de una voz (SVF de dos polos, q 0,707):
+/// estable con cualquier `g` positivo, aunque cambie en cada muestra.
+#[inline]
+fn voice_svf(z: &mut [f32; 2], x: f32, g: f32) -> f32 {
+    let k = std::f32::consts::SQRT_2;
+    let a1 = 1.0 / (1.0 + g * (g + k));
+    let a2 = g * a1;
+    let a3 = g * a2;
+    let v3 = x - z[1];
+    let v1 = a1 * z[0] + a2 * v3;
+    let v2 = z[1] + a2 * z[0] + a3 * v3;
+    z[0] = 2.0 * v1 - z[0];
+    z[1] = 2.0 * v2 - z[1];
+    if !(z[0].is_finite() && z[1].is_finite()) {
+        *z = [0.0; 2];
+        return 0.0;
+    }
+    v2
 }
 
 /// El tramo que repite un corte con `fit = Loop`, como desplazamientos
@@ -964,7 +1015,40 @@ impl Voice {
             sustain,
             bend,
             raw: false,
+            modu: None,
         }
+    }
+
+    /// Con su modulación por golpe. El pitch solo se mueve sin granos ni
+    /// `bend`; con él, la voz lee el corte a la velocidad de cada frame y
+    /// acaba al llegar al final (si no lleva `dur` ni bucle).
+    fn with_mod(mut self, (m, has): (crate::modulation::ModVoice, [bool; 4])) -> Self {
+        use crate::modulation::{CUTOFF, PITCH};
+        let pitched = has[PITCH] && self.shift.is_none() && self.bend.is_none();
+        if pitched
+            && self.playback.shape.play == PlayMode::Once
+            && self.sustain.is_none()
+            && self.length != 0
+        {
+            // La duración la da la lectura; con `dur`, la que se pidió
+            // (y como mucho, hasta el final del corte).
+            self.length = usize::MAX;
+        }
+        self.modu = Some(VoiceMod {
+            m,
+            pitched,
+            pos: 0.0,
+            speed: self.playback.rate,
+            filtered: has[CUTOFF],
+            svf: [[0.0; 2]; 2],
+            g: (0.0, 0.0),
+        });
+        self
+    }
+
+    /// Su modulación es de la tabla de mod sets número `generation`.
+    fn uses_mods(&self, generation: u32) -> bool {
+        self.modu.is_some_and(|m| m.m.generation == generation)
     }
 
     /// Sin rampas de entrada ni de salida (ver [`Pattern::with_raw`]).
@@ -989,7 +1073,7 @@ impl Voice {
     /// posición de la canción al empezar `out`.
     fn mix_with_fx(&mut self, out: &mut [f32], scratch: &mut [f32], clock: &Clock) {
         if self.fx.is_none() {
-            self.mix_into(out);
+            self.mix_into(out, clock);
             return;
         }
         if !self.is_active() && !self.ringing() {
@@ -997,7 +1081,7 @@ impl Voice {
         }
         let scratch = &mut scratch[..out.len()];
         scratch.fill(0.0);
-        self.mix_into(scratch);
+        self.mix_into(scratch, clock);
         let ended = !self.is_active();
         let Some(fx) = &mut self.fx else { return };
         fx.process(scratch, clock);
@@ -1064,10 +1148,13 @@ impl Voice {
         let (start, end, playback, seam) = (self.start, self.end, self.playback, self.seam);
         let sustain = self.sustain;
         let sample = &self.sample;
+        // Con la modulación de pitch, lo leído y la velocidad de ahora.
+        let pitched = self.modu.filter(|m| m.pitched).map(|m| (m.pos, m.speed));
         // Con `bend`, la velocidad de ahora (para el filtro antialias).
-        let speed = match self.bend {
-            None => playback.rate,
-            Some(b) => b.rate_at(self.rendered as f64),
+        let speed = match (pitched, self.bend) {
+            (Some((_, speed)), _) => speed,
+            (None, None) => playback.rate,
+            (None, Some(b)) => b.rate_at(self.rendered as f64),
         };
         let plain = |offset: f64| {
             let pos = voice_position(start, end, &playback, offset);
@@ -1092,9 +1179,10 @@ impl Voice {
             Some(s) => s.fold(offset).0,
         };
         let Some(shift) = self.shift.as_mut() else {
-            return match self.bend {
-                None => read_at(self.rendered as f64 * playback.rate),
-                Some(b) => read_at(b.offset(self.rendered as f64)),
+            return match (pitched, self.bend) {
+                (Some((pos, _)), _) => read_at(pos),
+                (None, None) => read_at(self.rendered as f64 * playback.rate),
+                (None, Some(b)) => read_at(b.offset(self.rendered as f64)),
             };
         };
         let span = (end - start) as f64;
@@ -1121,8 +1209,13 @@ impl Voice {
         shift.correct((l, r))
     }
 
-    /// Suma la voz en `out` (estéreo entrelazado).
-    fn mix_into(&mut self, out: &mut [f32]) {
+    /// Suma la voz en `out` (estéreo entrelazado). `clock`: la canción al
+    /// empezar `out` (para los parámetros con curva de la modulación).
+    fn mix_into(&mut self, out: &mut [f32], clock: &Clock) {
+        if self.modu.is_some() {
+            self.mix_modulated(out, clock);
+            return;
+        }
         for frame in out.as_chunks_mut::<2>().0 {
             // Modo gate: al cerrarse la puerta empieza la cola.
             if self.gate_at == Some(self.rendered) && self.release.is_none() {
@@ -1138,6 +1231,70 @@ impl Voice {
             frame[0] += (1.0 - pan).min(1.0) * (gain * l);
             frame[1] += (1.0 + pan).min(1.0) * (gain * r);
             self.rendered += 1;
+            if let Some((left, _)) = &mut self.release {
+                *left -= 1;
+            }
+        }
+    }
+
+    /// Como [`Voice::mix_into`], con su modulación por golpe: cada frame,
+    /// el volumen, el pan, la velocidad de lectura y el filtro que dan sus
+    /// cadenas (ver [`crate::modulation`]).
+    fn mix_modulated(&mut self, out: &mut [f32], clock: &Clock) {
+        use crate::modulation::{CUTOFF, ModAt, PAN, PITCH, VOL};
+        let sr = self.sample.sample_rate() as f32;
+        let span = (self.end - self.start) as f64;
+        let ends_reading = self.playback.shape.play == PlayMode::Once && self.sustain.is_none();
+        for (i, frame) in out.as_chunks_mut::<2>().0.iter_mut().enumerate() {
+            if self.gate_at == Some(self.rendered) && self.release.is_none() {
+                self.release = Some((self.fade_out, self.fade_out));
+            }
+            if !self.is_active() {
+                break;
+            }
+            let Some(vm) = &mut self.modu else { break };
+            let set = clock
+                .mods
+                .get(vm.m.generation)
+                .and_then(|t| t.get(vm.m.slot as usize));
+            let v = vm.m.next(set, || ModAt {
+                steps: clock.steps + i as f64 / clock.frames_per_step,
+                seconds: clock.seconds + i as f64 / clock.sample_rate as f64,
+                frames_per_step: clock.frames_per_step,
+                env: &clock.env,
+            });
+            if vm.filtered && vm.m.fresh() {
+                let (a, b, _) = vm.m.segment(CUTOFF);
+                vm.g = (voice_filter_g(a, sr), voice_filter_g(b, sr));
+            }
+            if vm.pitched {
+                let semitones = (v[PITCH] * vm.m.range) as f64;
+                vm.speed = (self.playback.rate * (semitones / 12.0).exp2())
+                    .clamp(1.0 / MAX_BEND_RATE, MAX_BEND_RATE);
+                // Al final del corte: un fundido corto y se acaba.
+                if ends_reading
+                    && self.release.is_none()
+                    && span - 1.0 - vm.pos <= self.fade as f64 * vm.speed
+                {
+                    self.release = Some((self.fade, self.fade));
+                }
+            }
+            let (filtered, g, pitched) = (vm.filtered, vm.g, vm.pitched);
+            let u = vm.m.segment(CUTOFF).2;
+            let gain = self.playback.gain * self.envelope() * v[VOL];
+            let (mut l, mut r) = self.read();
+            if filtered && let Some(vm) = &mut self.modu {
+                let g = g.0 + (g.1 - g.0) * u;
+                l = voice_svf(&mut vm.svf[0], l, g);
+                r = voice_svf(&mut vm.svf[1], r, g);
+            }
+            let pan = (self.playback.shape.pan + v[PAN]).clamp(-1.0, 1.0);
+            frame[0] += (1.0 - pan).min(1.0) * (gain * l);
+            frame[1] += (1.0 + pan).min(1.0) * (gain * r);
+            self.rendered += 1;
+            if pitched && let Some(vm) = &mut self.modu {
+                vm.pos += vm.speed;
+            }
             if let Some((left, _)) = &mut self.release {
                 *left -= 1;
             }
@@ -1253,6 +1410,8 @@ pub enum SendError {
     InvalidMacro(&'static str),
     /// Límite de voces fuera de 1 a [`MAX_VOICE_LIMIT`].
     InvalidVoiceLimit(usize),
+    /// Modulación por golpe no válida (ver [`crate::modulation`]).
+    InvalidMod(&'static str),
 }
 
 impl fmt::Display for SendError {
@@ -1270,6 +1429,7 @@ impl fmt::Display for SendError {
             SendError::InvalidArrangement(reason) => write!(f, "arreglo: {reason}"),
             SendError::InvalidGroup(reason) => write!(f, "grupo: {reason}"),
             SendError::InvalidMacro(reason) => write!(f, "macro: {reason}"),
+            SendError::InvalidMod(reason) => write!(f, "modulación: {reason}"),
             SendError::InvalidVoiceLimit(n) => {
                 write!(
                     f,
@@ -1369,6 +1529,7 @@ pub struct Batch {
     knobs: Option<crate::knob::Knobs>,
     release_gesture: bool,
     lanes: Option<Box<crate::lane::Lanes>>,
+    mod_sets: Option<Box<crate::modulation::ModTable>>,
     viz: Option<[bool; crate::viz::VIZ_SOURCES]>,
     patterns: Vec<(usize, Option<Pattern>)>,
     arrangement: Option<Option<Arrangement>>,
@@ -1436,6 +1597,14 @@ impl Batch {
         self
     }
 
+    /// Mod sets (ver [`crate::modulation`]): la tabla entera entra con el
+    /// lote, en el mismo compás que los patrones que apuntan a ellos. Los
+    /// golpes que ya suenan siguen con la tabla con la que nacieron.
+    pub fn set_mod_sets(&mut self, table: crate::modulation::ModTable) -> &mut Self {
+        self.mod_sets = Some(Box::new(table));
+        self
+    }
+
     /// Qué fuentes (cada pista del motor y, la última, el master) copian
     /// sus muestras para las visualizaciones (ver [`crate::viz`]).
     pub fn set_viz(&mut self, on: [bool; crate::viz::VIZ_SOURCES]) -> &mut Self {
@@ -1471,6 +1640,8 @@ enum Garbage {
     Arrangement(Arrangement),
     /// Una tabla de lanes.
     Lanes(Box<crate::lane::Lanes>),
+    /// Una tabla de mod sets que ya no usa nadie.
+    ModSets(Box<crate::modulation::ModTable>),
 }
 
 /// Lado de control (UI/script). Envía comandos al hilo de audio sin bloquear.
@@ -1729,6 +1900,13 @@ pub struct Engine {
     lanes: Option<Box<crate::lane::Lanes>>,
     pending_lanes: Option<Box<crate::lane::Lanes>>,
     staged_lanes: Option<Box<crate::lane::Lanes>>,
+    /// Los mod sets: la tabla que suena y las anteriores que aún usan las
+    /// voces, y la que entra en el siguiente compás.
+    mods: crate::modulation::ModTables,
+    pending_mods: Option<Box<crate::modulation::ModTable>>,
+    staged_mods: Option<Box<crate::modulation::ModTable>>,
+    /// Golpes con modulación que han nacido (siembra su azar).
+    mod_born: u64,
     /// Se han publicado lanes (para borrarlas al quitarlas).
     lanes_published: bool,
     /// Mandos MIDI: su tabla y su estado (ver [`crate::knob`]).
@@ -1958,6 +2136,10 @@ pub fn new_engine(sample_rate: u32) -> (Controller, Engine) {
             lanes: None,
             pending_lanes: None,
             staged_lanes: None,
+            mods: crate::modulation::ModTables::default(),
+            pending_mods: None,
+            staged_mods: None,
+            mod_born: 0,
             lanes_published: false,
             knobs: crate::knob::KnobState::default(),
             hushed: false,
@@ -2361,6 +2543,7 @@ impl Controller {
             + usize::from(batch.knobs.is_some())
             + usize::from(batch.release_gesture)
             + usize::from(batch.lanes.is_some())
+            + usize::from(batch.mod_sets.is_some())
             + usize::from(batch.viz.is_some())
             + usize::from(batch.arrangement.is_some());
         if self.commands.slots() < needed {
@@ -2397,6 +2580,9 @@ impl Controller {
         }
         if let Some(lanes) = batch.lanes {
             push(Command::SetLanes(lanes));
+        }
+        if let Some(table) = batch.mod_sets {
+            push(Command::SetModSets(table));
         }
         if let Some(viz) = batch.viz {
             push(Command::SetViz(viz));
@@ -2825,7 +3011,20 @@ impl Engine {
                     .and_then(|p| slice.and_then(|i| p.slice_fx(i)))
                     .map(|chain| VoiceFx::new(chain, self.sample_rate, origin));
                 let dur = self.dur_frames(&playback.shape);
-                let voice = Voice::lasting(sample, start, end, playback, dur).with_fx(fx);
+                // Y con su modulación por golpe (sin note-off: el sustain
+                // hasta que acaba el corte, o su `dur`).
+                let slot = self.tracks[track]
+                    .pattern
+                    .as_ref()
+                    .filter(|p| Arc::ptr_eq(&p.sample, &sample) && p.instrument.is_none())
+                    .and_then(|p| slice.and_then(|i| p.slice_mod(i)));
+                let key = 60.0 + 12.0 * playback.rate.log2() as f32;
+                let off = dur.map(|d| d.min(u32::MAX as usize) as u32);
+                let modu = self.mod_voice(slot, playback.gain, key, off);
+                let mut voice = Voice::lasting(sample, start, end, playback, dur).with_fx(fx);
+                if let Some(m) = modu {
+                    voice = voice.with_mod(m);
+                }
                 self.trigger(track, Some(voice));
                 self.choke(track);
             }
@@ -2887,6 +3086,16 @@ impl Engine {
                     self.knobs.staged = Some(knobs);
                 } else {
                     self.knobs.pending = Some(knobs);
+                }
+            }
+            Command::SetModSets(table) => {
+                let slot = if self.batch_open {
+                    &mut self.staged_mods
+                } else {
+                    &mut self.pending_mods
+                };
+                if let Some(old) = slot.replace(table) {
+                    self.discard_mods(old);
                 }
             }
             Command::SetLanes(lanes) => {
@@ -2982,6 +3191,11 @@ impl Engine {
                 {
                     self.discard_lanes(old);
                 }
+                if let Some(table) = self.staged_mods.take()
+                    && let Some(old) = self.pending_mods.replace(table)
+                {
+                    self.discard_mods(old);
+                }
                 if let Some(ramp) = self.staged_ramp.take() {
                     self.transport.pending_ramp = Some(ramp);
                 }
@@ -3062,6 +3276,14 @@ impl Engine {
                 }
                 t.synth_patch = Some(patch);
                 self.make_room_for_synth(track, &patch);
+                // La modulación de la pista (sin note-off: el de la tecla).
+                let slot = self.tracks[track]
+                    .pattern
+                    .as_ref()
+                    .and_then(|p| p.slice_mod(usize::MAX));
+                let modu = self
+                    .mod_voice(slot, gain, patch.root + semitones, None)
+                    .map(|(m, _)| m);
                 let t = &mut self.tracks[track];
                 let ev = NoteEvent {
                     pitch: patch.root + semitones,
@@ -3071,6 +3293,7 @@ impl Engine {
                     gate: crate::synth::HELD,
                     key: Some(key),
                     sub: Default::default(),
+                    modu,
                 };
                 let born = t.synth.note_on(&patch, ev);
                 if let Some(expr) = expr
@@ -3226,6 +3449,20 @@ impl Engine {
                 self.discard_lanes(old);
             }
         }
+        // Los mod sets, igual: los golpes que suenan siguen con la suya.
+        if step == 0
+            && let Some(table) = self.pending_mods.take()
+        {
+            let table = if table.is_empty() {
+                self.discard_mods(table);
+                None
+            } else {
+                Some(table)
+            };
+            if let Some(evicted) = self.mods.install(table) {
+                self.discard_mods(evicted);
+            }
+        }
         if step == 0 {
             self.advance_playlist(bar, global, now);
         }
@@ -3364,7 +3601,18 @@ impl Engine {
             .map(|chain| VoiceFx::new(chain, self.sample_rate, hit.origin));
         let dur = self.dur_frames(&playback.shape);
         let sample = pattern.hit_sample(&hit).clone();
+        let slot = pattern.hit_mod(&hit);
         let mut voice = Voice::lasting(sample, hit.start, hit.end, playback, dur).with_fx(fx);
+        // La modulación del golpe: el note-off al acabar su paso (y sus
+        // `_`), o su `dur`.
+        let key = 60.0 + 12.0 * playback.rate.log2() as f32;
+        let off = dur.unwrap_or(gate).min(u32::MAX as usize) as u32;
+        if let Some(m) = self.mod_voice(slot, playback.gain, key, Some(off)) {
+            voice = voice.with_mod(m);
+        }
+        let Some(pattern) = &self.tracks[t].pattern else {
+            return;
+        };
         if pattern.gate {
             voice = voice.with_gate(gate);
         }
@@ -3392,6 +3640,56 @@ impl Engine {
 
     /// Posición de la canción ahora (pasos y segundos, desde el inicio de
     /// la sección), la que siguen las curvas.
+    /// La modulación de un golpe que nace ahora con el mod set `slot` de
+    /// la tabla que suena (con su volumen como velocidad, su nota y el
+    /// note-off a los `off` frames), y qué dominios lleva su set. Sin set
+    /// (o si la tabla no lo tiene), ninguna.
+    fn mod_voice(
+        &mut self,
+        slot: Option<u8>,
+        velocity: f32,
+        key: f32,
+        off: Option<u32>,
+    ) -> Option<(crate::modulation::ModVoice, [bool; 4])> {
+        let slot = slot?;
+        let (generation, table) = self.mods.current();
+        let set = table?.get(slot as usize)?;
+        self.mod_born += 1;
+        let (steps, seconds) = self.song_position();
+        let env = CurveEnv {
+            macros: &self.macros,
+            lanes: self.lanes.as_deref().unwrap_or(&crate::lane::NO_LANES),
+        };
+        let at = crate::modulation::ModAt {
+            steps,
+            seconds,
+            frames_per_step: crate::sequencer::frames_per_step(
+                self.transport.bpm(),
+                self.sample_rate,
+            ),
+            env: &env,
+        };
+        let hit = crate::modulation::HitInfo {
+            velocity: if velocity.is_finite() {
+                velocity.clamp(0.0, 1.0)
+            } else {
+                1.0
+            },
+            key,
+            born: self.mod_born,
+        };
+        let m = crate::modulation::ModVoice::new(
+            set,
+            slot,
+            generation,
+            hit,
+            off,
+            &at,
+            self.sample_rate,
+        );
+        Some((m, std::array::from_fn(|d| set.has(d))))
+    }
+
     fn song_position(&self) -> (f64, f64) {
         let rate = self.sample_rate;
         let (origin_step, origin_frame) = self
@@ -3497,17 +3795,26 @@ impl Engine {
         track.synth_patch = Some(patch);
         track.lock = hit.lock;
         self.status.set_hit(t, hit.start);
+        let slot = self.tracks[t]
+            .pattern
+            .as_ref()
+            .and_then(|p| p.hit_mod(&hit));
         let rates = std::iter::once(hit.playback.rate).chain(hit.chord.iter().flatten().copied());
         for rate in rates {
             let semitones = 12.0 * rate.log2();
+            let pitch = patch.root + semitones as f32;
+            // Accent: velocidad 1. El note-off lo da la voz (su gate).
+            let velocity = if hit.accent { 1.0 } else { hit.playback.gain };
+            let modu = self.mod_voice(slot, velocity, pitch, None).map(|(m, _)| m);
             let ev = NoteEvent {
-                pitch: patch.root + semitones as f32,
+                pitch,
                 gain: hit.playback.gain,
                 accent: hit.accent,
                 slide: hit.slide,
                 gate: gate.max(1) as u64,
                 key: None,
                 sub: hit.sub.unwrap_or_default(),
+                modu,
             };
             self.make_room_for_synth(t, &patch);
             let born = self.tracks[t].synth.note_on(&patch, ev);
@@ -3920,11 +4227,20 @@ impl Engine {
         // leen desde los relojes) y vuelve al acabar: solo se mueve un
         // puntero.
         let lanes = self.lanes.take();
-        self.mix_with(n, lanes.as_deref().unwrap_or(&crate::lane::NO_LANES));
+        // Los mod sets, igual (solo se mueven punteros).
+        let mods = std::mem::take(&mut self.mods);
+        self.mix_with(n, lanes.as_deref().unwrap_or(&crate::lane::NO_LANES), &mods);
         self.lanes = lanes;
+        self.mods = mods;
+        self.retire_mods();
     }
 
-    fn mix_with(&mut self, n: usize, lanes: &crate::lane::Lanes) {
+    fn mix_with(
+        &mut self,
+        n: usize,
+        lanes: &crate::lane::Lanes,
+        mods: &crate::modulation::ModTables,
+    ) {
         self.master[..2 * n].fill(0.0);
         self.publish_lanes(lanes);
         let smoothing = 1.0 - (-1.0 / (GAIN_SMOOTHING_SECONDS * self.sample_rate as f32)).exp();
@@ -3962,6 +4278,7 @@ impl Engine {
                 lanes,
             },
             knobs: self.knobs.advance(n, rate),
+            mods,
         };
         // Quién escucha a quién por sidechain: las que se escuchan se mezclan
         // antes y guardan su salida en `side_buf`.
@@ -4120,7 +4437,9 @@ impl Engine {
                     knobs: clock.knobs,
                     track: t,
                 };
-                track.synth.mix_into(buf, &patch, &curves, &at);
+                track
+                    .synth
+                    .mix_into_with_mods(buf, &patch, &curves, &at, clock.mods);
             }
             let mut ended = None;
             let born = track.cloud.born;
@@ -4332,10 +4651,10 @@ impl Engine {
         // La preescucha, directa al master.
         let master = &mut self.master[..2 * n];
         if let Some(voice) = &mut self.preview {
-            voice.mix_into(master);
+            voice.mix_into(master, &clock);
         }
         if let Some(voice) = &mut self.preview_fading {
-            voice.mix_into(master);
+            voice.mix_into(master, &clock);
         }
         if self.preview_fading.as_ref().is_some_and(|v| !v.is_active())
             && let Some(done) = self.preview_fading.take()
@@ -4593,6 +4912,41 @@ impl Engine {
         }
     }
 
+    /// Devuelve una tabla de mod sets al hilo de control.
+    fn discard_mods(&mut self, table: Box<crate::modulation::ModTable>) {
+        if let Err(rtrb::PushError::Full(garbage)) = self.garbage.push(Garbage::ModSets(table)) {
+            std::mem::forget(garbage);
+        }
+    }
+
+    /// Las tablas de mod sets anteriores que ya no usa ninguna voz vuelven
+    /// al hilo de control.
+    fn retire_mods(&mut self) {
+        if !self.mods.has_old() {
+            return;
+        }
+        let tracks = &self.tracks;
+        let preview = (&self.preview, &self.preview_fading);
+        let used = |generation: u32| {
+            let voice = |v: &Option<Voice>| v.as_ref().is_some_and(|v| v.uses_mods(generation));
+            tracks
+                .iter()
+                .any(|t| voice(&t.voice) || voice(&t.fading) || t.synth.uses_mods(generation))
+                || voice(preview.0)
+                || voice(preview.1)
+        };
+        let mut out: [Option<Box<crate::modulation::ModTable>>; crate::modulation::OLD_TABLES] =
+            Default::default();
+        let mut n = 0;
+        self.mods.retire(used, |t| {
+            out[n] = Some(t);
+            n += 1;
+        });
+        for table in out.into_iter().flatten() {
+            self.discard_mods(table);
+        }
+    }
+
     /// Devuelve un arreglo entero al hilo de control.
     fn discard_arrangement(&mut self, arrangement: Arrangement) {
         if let Err(rtrb::PushError::Full(garbage)) =
@@ -4799,6 +5153,8 @@ pub(crate) struct Clock<'a> {
     pub env: CurveEnv<'a>,
     /// Lo que mandan los mandos MIDI en este trozo.
     pub knobs: crate::knob::KnobLive,
+    /// Las tablas de mod sets (las voces buscan la suya).
+    pub mods: &'a crate::modulation::ModTables,
 }
 
 /// Pasa `buf` por los efectos de la pista con sus parámetros movidos:

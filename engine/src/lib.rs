@@ -20,6 +20,7 @@ mod limiter;
 pub mod masking;
 pub mod metronome;
 pub mod modfx;
+pub mod modulation;
 pub mod notation;
 pub mod offline;
 mod output;

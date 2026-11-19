@@ -2613,3 +2613,157 @@ fn modulation_effects_never_allocate() {
     assert_eq!(n, 0, "reservas con el pánico");
     assert!(out.iter().all(|x| x.is_finite()));
 }
+
+/// Un mod set con un dispositivo de cada clase en cada dominio (lo que hay
+/// de momento), con parámetros movidos por curvas.
+fn busy_mod_set(sustain: f32) -> engine::modulation::ModSet {
+    use engine::modulation::*;
+    let mut set = ModSet::default();
+    for domain in 0..DOMAINS {
+        let env = Device::new(DeviceKind::Ahdsr(Ahdsr {
+            attack: ModValue::fixed(3.0),
+            hold: ModValue::fixed(2.0),
+            decay: ModValue {
+                value: 40.0,
+                curve: Some(engine::Curve::Macro {
+                    index: 0,
+                    from: 10.0,
+                    to: 200.0,
+                }),
+            },
+            sustain: ModValue::fixed(sustain),
+            release: ModValue::fixed(30.0),
+            curves: [0.2, 0.5, -0.5],
+        }));
+        let mut chain = Chain::new(domain).with_device(env).unwrap();
+        chain = chain
+            .with_device(Device {
+                op: Some(Op::Add),
+                bipolar: true,
+                amount: ModValue {
+                    value: 0.1,
+                    curve: Some(engine::Curve::Lfo {
+                        min: 0.0,
+                        max: 0.2,
+                        rate: engine::LfoRate::Hz(3.0),
+                    }),
+                },
+                ..env
+            })
+            .unwrap();
+        set.chains[domain] = Some(chain);
+    }
+    set
+}
+
+#[test]
+fn per_hit_modulation_never_allocates() {
+    use engine::modulation::ModTable;
+    let mut mono = vec![0.0f32; 24_000];
+    for (i, s) in mono.iter_mut().enumerate() {
+        *s = ((i % 150) as f32 / 150.0 - 0.5) * 0.8;
+    }
+    let sample = Arc::new(Sample::from_interleaved(&mono, 1, RATE, RATE).unwrap());
+    let slices = Slices::from_ranges(vec![0..12_000, 12_000..24_000], 24_000, 48).unwrap();
+    let steps = |set: Option<u8>| {
+        let mut steps = [None; STEPS];
+        for (k, slot) in steps.iter_mut().enumerate() {
+            *slot = Some(
+                Step::new(k % 2)
+                    .with_retrig(if k % 4 == 3 { 2 } else { 1 })
+                    .with_pitch(if k % 3 == 0 { 7.0 } else { 0.0 })
+                    .with_mod(if k % 5 == 0 { set } else { None }),
+            );
+        }
+        steps
+    };
+    let table = |sustain: f32| {
+        let mut t = ModTable::new();
+        t.set(0, Some(busy_mod_set(sustain))).unwrap();
+        t.set(1, Some(busy_mod_set(1.0 - sustain))).unwrap();
+        t
+    };
+    let slices_pattern = |set: u8| {
+        Pattern::from_bars(sample.clone(), &slices, &[steps(Some(1 - set))])
+            .unwrap()
+            .with_mod_sets(Some(set), &[None, Some(1 - set)])
+            .unwrap()
+    };
+    // Un sintetizador polifónico con acordes: todas sus voces modulan.
+    let synth = |set: Option<u8>| {
+        let mut poly = engine::synth::Patch::new();
+        poly.voices = 8;
+        let chord: Vec<Option<Step>> = (0..STEPS)
+            .map(|k| {
+                Some(
+                    Step::new(0)
+                        .with_pitch((k % 5) as f32)
+                        .with_chord(&[3.0, 7.0, 10.0])
+                        .with_hold(1),
+                )
+            })
+            .collect();
+        Pattern::from_steps(sample.clone(), &slices, chord)
+            .unwrap()
+            .with_synth(Some(poly), [None; engine::synth::PARAM_COUNT])
+            .unwrap()
+            .with_mod_sets(set, &[])
+            .unwrap()
+    };
+    let (mut controller, mut engine) = new_engine(RATE);
+    controller.set_bpm(170.0).unwrap();
+    let mut batch = engine::Batch::new();
+    batch
+        .set_pattern(0, Some(slices_pattern(0)))
+        .set_pattern(1, Some(synth(Some(0))))
+        .set_mod_sets(table(0.5));
+    controller.apply(batch).unwrap();
+    controller.start().unwrap();
+    let mut out = vec![0.0f32; 512 * 2];
+    let mut n = 0;
+    for k in 0..20 {
+        controller.set_macro(0, (k % 7) as f32 / 7.0).unwrap();
+        n += counted(|| {
+            for _ in 0..20 {
+                engine.process(&mut out, 2);
+            }
+        });
+    }
+    assert_eq!(n, 0, "reservas con mod sets sonando");
+    // Cambian los sets (tablas nuevas una tras otra, más de las que se
+    // guardan) y se quitan, con golpes sonando: las tablas viejas vuelven
+    // por la cola de basura.
+    for round in 0..6 {
+        let mut batch = engine::Batch::new();
+        match round {
+            4 => {
+                batch
+                    .set_pattern(0, Some(slices_pattern(1)))
+                    .set_pattern(1, Some(synth(None)))
+                    .set_mod_sets(ModTable::new());
+            }
+            _ => {
+                batch
+                    .set_pattern(0, Some(slices_pattern(round as u8 % 2)))
+                    .set_mod_sets(table(round as f32 / 6.0));
+            }
+        }
+        controller.apply(batch).unwrap();
+        let n = counted(|| {
+            for _ in 0..150 {
+                engine.process(&mut out, 2);
+            }
+        });
+        assert_eq!(n, 0, "reservas al cambiar los mod sets (vuelta {round})");
+        controller.collect_garbage();
+    }
+    // Pads y notas en vivo con su modulación, y el pánico.
+    controller.play_slice_on(0, &sample, &slices, 1).unwrap();
+    let n = counted(|| {
+        for _ in 0..100 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas con pads modulados");
+    assert!(out.iter().all(|x| x.is_finite()));
+}
