@@ -1600,8 +1600,8 @@ impl Batch {
     /// Mod sets (ver [`crate::modulation`]): la tabla entera entra con el
     /// lote, en el mismo compás que los patrones que apuntan a ellos. Los
     /// golpes que ya suenan siguen con la tabla con la que nacieron.
-    pub fn set_mod_sets(&mut self, table: crate::modulation::ModTable) -> &mut Self {
-        self.mod_sets = Some(Box::new(table));
+    pub fn set_mod_sets(&mut self, table: Box<crate::modulation::ModTable>) -> &mut Self {
+        self.mod_sets = Some(table);
         self
     }
 

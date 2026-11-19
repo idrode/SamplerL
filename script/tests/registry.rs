@@ -504,6 +504,26 @@ fn every_sound_parameter_takes_a_curve_or_says_why_not() {
                 items.push(format!("{} = {curve}", p.name));
                 format!("t:fx(\"{name}\", {{ {} }})", items.join(", "))
             }
+            "mod (todos)" => format!(
+                "mod(\"x\", {{ vol = {{ \"ahdsr\", {} = {curve} }} }})",
+                p.name
+            ),
+            device if device.starts_with("mod {") => {
+                let name = &device[6..device.len() - 2];
+                let def = api::mod_device(name).unwrap();
+                // Los obligatorios (menos este), con su plantilla.
+                let mut items: Vec<String> = def
+                    .params
+                    .iter()
+                    .filter(|q| q.default.is_none() && q.name != p.name)
+                    .map(|q| expand_template(q.template).0)
+                    .collect();
+                items.push(format!("{} = {curve}", p.name));
+                format!(
+                    "mod(\"x\", {{ vol = {{ \"{name}\", {} }} }})",
+                    items.join(", ")
+                )
+            }
             bus if bus.starts_with("bus(") => {
                 format!("{}, {{ {} = {curve} }})", &bus[..bus.len() - 1], p.name)
             }

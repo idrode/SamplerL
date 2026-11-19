@@ -251,6 +251,9 @@ const LFO_SYNC: &str = "es una figura o compases (\"1/4\", \"2 compases\"), no u
 const STAGES: &str = "es un número de filtros: entre 4 y 6 etapas no hay nada que recorrer";
 const VOICES_COUNT: &str =
     "cambia cuántas voces suenan, no cómo suenan: entra con el patrón al compás";
+const MOD_SHAPE: &str =
+    "es la forma de un tramo o una opción del dispositivo: se lee al nacer cada golpe";
+const MOD_TABLE: &str = "es una lista de valores o de puntos: entra con el set al compás";
 const DELAY_TIME: &str = "es una figura (\"1/8\"), no un número; además, mover el retardo de una línea con repeticiones dentro suena a cambio de pitch";
 
 /// Los parámetros del LFO de los efectos de modulación (flanger, phaser y
@@ -1331,6 +1334,54 @@ pub const FUNCTIONS: &[Function] = &[
         ),
     },
     Function {
+        name: "mod",
+        receiver: Receiver::Global,
+        signature: "mod(nombre, cadenas)",
+        returns: None,
+        summary: "Un conjunto de modulación por golpe (mod set): cada golpe o nota que lo usa arranca desde cero sus envolventes, sus LFO y sus pasos, con su propio estado.",
+        doc: "La modulación de `ramp`, `lfo`, las macros y las lanes sigue el reloj de \
+              la canción; esta sigue el golpe: empieza cuando suena y su release, con \
+              el note-off (el final del paso y sus `_`, o su `dur`; en un sintetizador, \
+              el de la nota, o la tecla MIDI al soltarla; sin note-off, un pad, se queda \
+              en su sustain hasta que acaba el corte). La tabla lleva una cadena por \
+              dominio (`vol`, `pan`, `pitch`, `cutoff`; ver abajo) y `range`. Una \
+              cadena es una lista de dispositivos (ver abajo) en orden, con `input`, el \
+              valor del que parte; cada dispositivo da un valor que su `op` combina \
+              con lo acumulado (por defecto, multiplica en `vol` y `cutoff` y suma en \
+              `pan` y `pitch`). Un dispositivo es una tabla con su tipo primero: `{ \
+              \"ahdsr\", a = 2, d = 180 }`; una cadena de un solo dispositivo puede \
+              ir sin la lista. Se asigna con `pista:mod`, `cortes:mod` o en un paso \
+              (`3{mod=nombre}`), que manda sobre el del corte y este sobre el de la \
+              pista; vale en cortes y sintetizadores. Va por golpe: varios golpes que \
+              suenan a la vez llevan cada uno el suyo; el cursor de un stepper es del \
+              set. Hasta 16 sets por canción, 8 dispositivos por cadena, 4 \
+              envolventes de puntos, 4 steppers y 256 valores de stepper por set. \
+              Entran al compás; un golpe que ya suena sigue con el set con el que \
+              nació. Se evalúa cada 32 frames desde el golpe y en línea recta entre \
+              medias. `pitch` no se mueve en los pasos con `%` ni con `bend`.",
+        params: &[
+            Param {
+                name: "nombre",
+                description: "su nombre (el de `3{mod=nombre}`), único en la canción",
+            },
+            Param {
+                name: "cadenas",
+                description: "tabla con una cadena por dominio y `range` (ver abajo)",
+            },
+        ],
+        template: "mod(\"${pluck}\", { vol = { \"ahdsr\", a = ${2}, d = ${180}, s = ${0}, r = ${60} } })",
+        example: Some(
+            "local amen = sample(\"amen.wav\"):slice(8)\n\
+             -- Cada golpe se cierra solo y el último de cada grupo de tres suena más.\n\
+             mod(\"pluck\", {\n  \
+               vol = { { \"ahdsr\", a = 2, d = 180, s = 0.2, r = 60 },\n          \
+                       { \"stepper\", values = { 0.6, 0.6, 1 } } },\n  \
+               cutoff = { input = 0.6, { \"velocity\", min = 0.6, max = 1 } },\n\
+             })\n\
+             track(\"drums\", amen):steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\"):mod(\"pluck\")\n",
+        ),
+    },
+    Function {
         name: "macro",
         receiver: Receiver::Global,
         signature: "macro(nombre, desde, hasta)",
@@ -1954,6 +2005,42 @@ pub const FUNCTIONS: &[Function] = &[
              amen:set(8, { length = 0.5, play = \"pingpong\" })\n\
              track(\"drums\", amen):steps(\"1 . 3 .  2 . 3 .  1 1 3 .  2 . 3 3\"):mode(\"gate\")\n",
         ),
+    },
+    Function {
+        name: "mod",
+        receiver: Receiver::Slices,
+        signature: "cortes:mod(cuál, set)",
+        returns: Some(Receiver::Slices),
+        summary: "Modulación por golpe solo en un corte (número, etiqueta o lista): manda sobre la de la pista.",
+        doc: "`set` es lo que devuelve `mod()` o su nombre. Lo llevan todas las \
+              pistas que usan la variable y sus pads; el de un paso (`3{mod=otro}`) \
+              manda sobre este.",
+        params: &[
+            Param {
+                name: "cuál",
+                description: "número de corte (desde 1), etiqueta o lista de ellos",
+            },
+            Param {
+                name: "set",
+                description: "un mod set (`mod()`) o su nombre",
+            },
+        ],
+        template: "mod(${3}, \"${pluck}\")",
+        example: None,
+    },
+    Function {
+        name: "mod_clear",
+        receiver: Receiver::Slices,
+        signature: "cortes:mod_clear([cuál])",
+        returns: Some(Receiver::Slices),
+        summary: "Quita la modulación por golpe de un corte (sin argumento, de todos).",
+        doc: "",
+        params: &[Param {
+            name: "cuál",
+            description: "número de corte (desde 1), etiqueta o lista de ellos; sin él, todos",
+        }],
+        template: "mod_clear(${3})",
+        example: None,
     },
     Function {
         name: "fx",
@@ -2712,6 +2799,34 @@ pub const FUNCTIONS: &[Function] = &[
              -- Cada golpe, un poco más agudo que el anterior durante 4 compases.\n\
              track(\"sube\", amen):steps(\"1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 .\"):pitch(ramp(0, 12, \"4 compases\"))\n",
         ),
+    },
+    Function {
+        name: "mod",
+        receiver: Receiver::Track,
+        signature: "pista:mod(set)",
+        returns: Some(Receiver::Track),
+        summary: "Modulación por golpe de la pista: cada golpe (o nota de un sintetizador) arranca el mod set desde cero.",
+        doc: "`set` es lo que devuelve `mod()` o su nombre. En un sintetizador mueve la \
+              altura, el volumen, el balance y el corte de su filtro por nota; legato \
+              (`/` en un mono) sigue con el set de la nota que ya sonaba. No va en un \
+              instrumento de samples ni con granos.",
+        params: &[Param {
+            name: "set",
+            description: "un mod set (`mod()`) o su nombre",
+        }],
+        template: "mod(\"${pluck}\")",
+        example: None,
+    },
+    Function {
+        name: "mod_clear",
+        receiver: Receiver::Track,
+        signature: "pista:mod_clear()",
+        returns: Some(Receiver::Track),
+        summary: "Quita la modulación por golpe de la pista (la de sus cortes y pasos sigue).",
+        doc: "",
+        params: &[],
+        template: "mod_clear()",
+        example: None,
     },
     Function {
         name: "formant",
@@ -5078,6 +5193,492 @@ pub fn track_param(name: &str) -> Option<&'static FxParam> {
 
 /// Buses de envío para `bus(nombre, parámetros)` y `pista:send(nombre,
 /// nivel)`.
+/// Los dominios de un mod set (las claves de `mod()`).
+pub const MOD_DOMAINS: &[FxParam] = &[
+    FxParam {
+        name: "vol",
+        description: "volumen del golpe: multiplica el suyo (1, igual; 0, silencio)",
+        default: Some("1"),
+        valid: "0–4",
+        values: &[],
+        template: "vol = { ${\"ahdsr\", d = 200} }",
+        automate: Auto::No(MOD_TABLE),
+    },
+    FxParam {
+        name: "pan",
+        description: "pan del golpe: se suma al suyo (-1 izquierda, 1 derecha)",
+        default: Some("0"),
+        valid: "-1–1",
+        values: &[],
+        template: "pan = { ${\"lfo\", rate = 2} }",
+        automate: Auto::No(MOD_TABLE),
+    },
+    FxParam {
+        name: "pitch",
+        description: "altura: el valor por `range` semitonos, sumado a la nota",
+        default: Some("0"),
+        valid: "-1–1",
+        values: &[],
+        template: "pitch = { ${\"ahdsr\", a = 0, d = 120, s = 0, amount = 1} }",
+        automate: Auto::No(MOD_TABLE),
+    },
+    FxParam {
+        name: "cutoff",
+        description: "corte del filtro paso bajo del golpe: de 0 (20 Hz) a 1 (20 kHz) en escala logarítmica; `input` también en Hz (más de 1); en un sintetizador, 1 es su propio corte y cada 0.1 menos, una octava abajo",
+        default: Some("1"),
+        valid: "0–1",
+        values: &[],
+        template: "cutoff = { input = ${0.7}, ${\"ahdsr\", d = 200, s = 0.3} }",
+        automate: Auto::No(MOD_TABLE),
+    },
+    FxParam {
+        name: "range",
+        description: "semitonos del pitch con su valor en 1",
+        default: Some("12"),
+        valid: "0–48",
+        values: &[],
+        template: "range = ${12}",
+        automate: Auto::No(MOD_TABLE),
+    },
+];
+
+/// Lo que llevan todos los dispositivos de un mod set.
+pub const MOD_COMMON: &[FxParam] = &[
+    FxParam {
+        name: "op",
+        description: "cómo combina su valor con lo acumulado",
+        default: Some("`\"mul\"` en vol y cutoff, `\"add\"` en pan y pitch"),
+        valid: "`\"add\"`, `\"sub\"`, `\"mul\"` o `\"div\"`",
+        values: &["add", "sub", "mul", "div"],
+        template: "op = \"${add}\"",
+        automate: Auto::No(DISCRETE),
+    },
+    FxParam {
+        name: "amount",
+        description: "lo que se escala su valor (en el LFO, su amplitud)",
+        default: Some("1"),
+        valid: "-64–64",
+        values: &[],
+        template: "amount = ${0.5}",
+        automate: Auto::Smooth,
+    },
+    FxParam {
+        name: "bipolar",
+        description: "lo que da de 0 a 1 pasa a ir de -1 a 1 (el LFO es bipolar por defecto)",
+        default: Some("false"),
+        valid: "`true` o `false`",
+        values: &[],
+        template: "bipolar = ${true}",
+        automate: Auto::No(DISCRETE),
+    },
+    FxParam {
+        name: "bypass",
+        description: "apagado: la cadena sigue como si no estuviera",
+        default: Some("false"),
+        valid: "`true` o `false`",
+        values: &[],
+        template: "bypass = ${true}",
+        automate: Auto::No(DISCRETE),
+    },
+];
+
+/// Dispositivos de un mod set (el primer elemento de su tabla).
+pub const MOD_DEVICES: &[Effect] = &[
+    Effect {
+        name: "ahdsr",
+        aliases: &[],
+        summary: "Envolvente: sube en a, se queda h, baja hasta s en d y, con el note-off, a 0 en r (de 0 a 1).",
+        params: &[
+            FxParam {
+                name: "a",
+                description: "ataque, en ms",
+                default: Some("5"),
+                valid: "0–60000",
+                values: &[],
+                template: "a = ${2}",
+                automate: Auto::Smooth,
+            },
+            FxParam {
+                name: "h",
+                description: "retención arriba, en ms",
+                default: Some("0"),
+                valid: "0–60000",
+                values: &[],
+                template: "h = ${20}",
+                automate: Auto::Smooth,
+            },
+            FxParam {
+                name: "d",
+                description: "decaimiento hasta el sustain, en ms",
+                default: Some("200"),
+                valid: "0–60000",
+                values: &[],
+                template: "d = ${180}",
+                automate: Auto::Smooth,
+            },
+            FxParam {
+                name: "s",
+                description: "sustain: el nivel hasta el note-off",
+                default: Some("0.5"),
+                valid: "0–1",
+                values: &[],
+                template: "s = ${0}",
+                automate: Auto::Smooth,
+            },
+            FxParam {
+                name: "r",
+                description: "release tras el note-off, en ms",
+                default: Some("150"),
+                valid: "0–60000",
+                values: &[],
+                template: "r = ${60}",
+                automate: Auto::Smooth,
+            },
+            FxParam {
+                name: "curve_a",
+                description: "forma del ataque: 0 recta, positivo deprisa al principio, negativo despacio",
+                default: Some("0"),
+                valid: "-1–1",
+                values: &[],
+                template: "curve_a = ${-0.5}",
+                automate: Auto::No(MOD_SHAPE),
+            },
+            FxParam {
+                name: "curve_d",
+                description: "forma del decaimiento",
+                default: Some("0.5"),
+                valid: "-1–1",
+                values: &[],
+                template: "curve_d = ${0.8}",
+                automate: Auto::No(MOD_SHAPE),
+            },
+            FxParam {
+                name: "curve_r",
+                description: "forma del release",
+                default: Some("0.5"),
+                valid: "-1–1",
+                values: &[],
+                template: "curve_r = ${0.8}",
+                automate: Auto::No(MOD_SHAPE),
+            },
+        ],
+        template: "{ \"ahdsr\", a = ${2}, d = ${180}, s = ${0}, r = ${60} }",
+    },
+    Effect {
+        name: "env",
+        aliases: &[],
+        summary: "Envolvente de puntos (como una lane): `{posición, valor [, curva]}` con la posición de 0 a 1 de `len`, desde el golpe.",
+        params: &[
+            FxParam {
+                name: "points",
+                description: "los puntos: `{ {0, 0}, {0.1, 1, \"exp\"}, {1, 0} }` (curvas `linear`, `exp`, `smooth`, `step`)",
+                default: None,
+                valid: "de 1 a 64 puntos, posiciones de 0 a 1 en orden",
+                values: &[],
+                template: "points = { {0, 0}, {${0.1}, 1}, {1, 0} }",
+                automate: Auto::No(MOD_TABLE),
+            },
+            FxParam {
+                name: "len",
+                description: "lo que dura, en ms o una figura (`\"1/4\"`, `\"2 compases\"`, `\"8 pasos\"`, al tempo que suena)",
+                default: Some("500"),
+                valid: "más de 0, hasta 60000 ms o 64 compases",
+                values: &[],
+                template: "len = ${400}",
+                automate: Auto::No(MOD_SHAPE),
+            },
+            FxParam {
+                name: "loop",
+                description: "qué hace al acabar: quedarse, repetirse adelante, atrás o ida y vuelta",
+                default: Some("\"off\""),
+                valid: "`\"off\"`, `\"forward\"`, `\"backward\"` o `\"pingpong\"`",
+                values: &["off", "forward", "backward", "pingpong"],
+                template: "loop = \"${forward}\"",
+                automate: Auto::No(DISCRETE),
+            },
+            FxParam {
+                name: "sustain",
+                description: "punto (desde 1) en el que se queda hasta el note-off; luego sigue hasta el final (sin bucle)",
+                default: Some("ninguno"),
+                valid: "un punto de la lista",
+                values: &[],
+                template: "sustain = ${2}",
+                automate: Auto::No(MOD_SHAPE),
+            },
+        ],
+        template: "{ \"env\", points = { {0, 0}, {${0.1}, 1}, {1, 0} }, len = ${400} }",
+    },
+    Effect {
+        name: "lfo",
+        aliases: &[],
+        summary: "LFO por golpe: su fase vuelve a empezar con cada golpe (salvo `free`); de -1 a 1 por `amount`.",
+        params: &[
+            FxParam {
+                name: "wave",
+                description: "forma",
+                default: Some("\"sine\""),
+                valid: "`\"sine\"`, `\"tri\"`, `\"saw\"`, `\"square\"` o `\"random\"`",
+                values: &["sine", "tri", "saw", "square", "random"],
+                template: "wave = \"${square}\"",
+                automate: Auto::No(DISCRETE),
+            },
+            FxParam {
+                name: "rate",
+                description: "velocidad, en Hz (sin `sync`)",
+                default: Some("4"),
+                valid: "0.01–50",
+                values: &[],
+                template: "rate = ${5}",
+                automate: Auto::Smooth,
+            },
+            FxParam {
+                name: "sync",
+                description: "atado al compás: lo que dura un ciclo (`\"1/8\"`, `\"1 compás\"`, `\"3 pasos\"`) o un número n, n ciclos por compás",
+                default: Some("libre, a `rate`"),
+                valid: "de 1/64 de compás a 64 compases",
+                values: &[],
+                template: "sync = \"${1/8}\"",
+                automate: Auto::No(MOD_SHAPE),
+            },
+            FxParam {
+                name: "phase",
+                description: "fase al empezar, en grados",
+                default: Some("0"),
+                valid: "0–360",
+                values: &[],
+                template: "phase = ${90}",
+                automate: Auto::No(MOD_SHAPE),
+            },
+            FxParam {
+                name: "delay",
+                description: "ms quieto (en 0) antes de empezar",
+                default: Some("0"),
+                valid: "0–60000",
+                values: &[],
+                template: "delay = ${120}",
+                automate: Auto::No(MOD_SHAPE),
+            },
+            FxParam {
+                name: "free",
+                description: "la fase sigue la canción y no vuelve a empezar con el golpe",
+                default: Some("false"),
+                valid: "`true` o `false`",
+                values: &[],
+                template: "free = ${true}",
+                automate: Auto::No(DISCRETE),
+            },
+        ],
+        template: "{ \"lfo\", rate = ${5}, amount = ${0.3} }",
+    },
+    Effect {
+        name: "stepper",
+        aliases: &[],
+        summary: "Una tabla de valores: cada golpe toma el de donde está el cursor (uno por set) y lo avanza.",
+        params: &[
+            FxParam {
+                name: "values",
+                description: "los valores (de 1 a 256)",
+                default: None,
+                valid: "una lista de números",
+                values: &[],
+                template: "values = { ${1, 0.5, 0.7, 0.5} }",
+                automate: Auto::No(MOD_TABLE),
+            },
+            FxParam {
+                name: "step",
+                description: "pasos que avanza el cursor con cada golpe",
+                default: Some("1"),
+                valid: "entero de 0 a 16",
+                values: &[],
+                template: "step = ${2}",
+                automate: Auto::No(STRUCTURE),
+            },
+            FxParam {
+                name: "random",
+                description: "el cursor salta al azar (el mismo orden en cada render, de `seed`)",
+                default: Some("false"),
+                valid: "`true` o `false`",
+                values: &[],
+                template: "random = ${true}",
+                automate: Auto::No(DISCRETE),
+            },
+            FxParam {
+                name: "seed",
+                description: "semilla del azar",
+                default: Some("1"),
+                valid: "entero",
+                values: &[],
+                template: "seed = ${7}",
+                automate: Auto::No(SEED),
+            },
+            FxParam {
+                name: "reset",
+                description: "vuelve al primer valor cada n compases (0, nunca)",
+                default: Some("0"),
+                valid: "entero de 0 a 64",
+                values: &[],
+                template: "reset = ${1}",
+                automate: Auto::No(STRUCTURE),
+            },
+        ],
+        template: "{ \"stepper\", values = { ${1, 0.5, 0.7, 0.5} } }",
+    },
+    Effect {
+        name: "fader",
+        aliases: &[],
+        summary: "De `from` a `to` en `time` ms, tras `delay` ms.",
+        params: &[
+            FxParam {
+                name: "from",
+                description: "valor al empezar",
+                default: Some("1"),
+                valid: "-64–64",
+                values: &[],
+                template: "from = ${1}",
+                automate: Auto::No(MOD_SHAPE),
+            },
+            FxParam {
+                name: "to",
+                description: "valor al acabar",
+                default: Some("0"),
+                valid: "-64–64",
+                values: &[],
+                template: "to = ${0}",
+                automate: Auto::No(MOD_SHAPE),
+            },
+            FxParam {
+                name: "time",
+                description: "lo que tarda, en ms",
+                default: Some("500"),
+                valid: "0–60000",
+                values: &[],
+                template: "time = ${300}",
+                automate: Auto::No(MOD_SHAPE),
+            },
+            FxParam {
+                name: "delay",
+                description: "ms antes de empezar",
+                default: Some("0"),
+                valid: "0–60000",
+                values: &[],
+                template: "delay = ${100}",
+                automate: Auto::No(MOD_SHAPE),
+            },
+            FxParam {
+                name: "scale",
+                description: "cómo va",
+                default: Some("\"linear\""),
+                valid: "`\"linear\"`, `\"exp\"` (despacio al principio) o `\"log\"` (deprisa)",
+                values: &["linear", "exp", "log"],
+                template: "scale = \"${exp}\"",
+                automate: Auto::No(DISCRETE),
+            },
+        ],
+        template: "{ \"fader\", from = ${1}, to = ${0}, time = ${300} }",
+    },
+    Effect {
+        name: "value",
+        aliases: &["operand"],
+        summary: "Un valor fijo (o una curva de la canción: ramp, lfo, macro).",
+        params: &[FxParam {
+            name: "value",
+            description: "el valor",
+            default: Some("1"),
+            valid: "-64–64",
+            values: &[],
+            template: "value = ${0.5}",
+            automate: Auto::Smooth,
+        }],
+        template: "{ \"value\", value = ${0.5} }",
+    },
+    Effect {
+        name: "velocity",
+        aliases: &[],
+        summary: "La velocidad del golpe (su volumen, `@`, o la de la nota MIDI; accent, 1), de `min` a `max`.",
+        params: &[
+            FxParam {
+                name: "min",
+                description: "valor con velocidad 0",
+                default: Some("0"),
+                valid: "-64–64",
+                values: &[],
+                template: "min = ${0.3}",
+                automate: Auto::No(MOD_SHAPE),
+            },
+            FxParam {
+                name: "max",
+                description: "valor con velocidad 1",
+                default: Some("1"),
+                valid: "-64–64",
+                values: &[],
+                template: "max = ${1}",
+                automate: Auto::No(MOD_SHAPE),
+            },
+            FxParam {
+                name: "clamp",
+                description: "en vez de escalar, la velocidad recortada entre `min` y `max`",
+                default: Some("false"),
+                valid: "`true` o `false`",
+                values: &[],
+                template: "clamp = ${true}",
+                automate: Auto::No(DISCRETE),
+            },
+        ],
+        template: "{ \"velocity\", min = ${0.3}, max = ${1} }",
+    },
+    Effect {
+        name: "keytrack",
+        aliases: &[],
+        summary: "La nota del golpe: `min` en la nota `low` y `max` en la `high` (recortado fuera).",
+        params: &[
+            FxParam {
+                name: "min",
+                description: "valor en `low`",
+                default: Some("0"),
+                valid: "-64–64",
+                values: &[],
+                template: "min = ${0}",
+                automate: Auto::No(MOD_SHAPE),
+            },
+            FxParam {
+                name: "max",
+                description: "valor en `high`",
+                default: Some("1"),
+                valid: "-64–64",
+                values: &[],
+                template: "max = ${1}",
+                automate: Auto::No(MOD_SHAPE),
+            },
+            FxParam {
+                name: "low",
+                description: "nota MIDI (60, el do central; un corte sin pitch es 60)",
+                default: Some("0"),
+                valid: "0–127",
+                values: &[],
+                template: "low = ${36}",
+                automate: Auto::No(MOD_SHAPE),
+            },
+            FxParam {
+                name: "high",
+                description: "nota MIDI, por encima de `low`",
+                default: Some("127"),
+                valid: "0–127",
+                values: &[],
+                template: "high = ${96}",
+                automate: Auto::No(MOD_SHAPE),
+            },
+        ],
+        template: "{ \"keytrack\", low = ${36}, high = ${96} }",
+    },
+];
+
+/// Dispositivo de un mod set por nombre o alias.
+pub fn mod_device(name: &str) -> Option<&'static Effect> {
+    MOD_DEVICES
+        .iter()
+        .find(|e| e.name == name || e.aliases.contains(&name))
+}
+
 pub const BUSES: &[Effect] = &[
     Effect {
         name: "delay",
@@ -5517,6 +6118,17 @@ fn code(text: &str) -> String {
     format!("`{text}`")
 }
 
+/// La celda «Por defecto»: el valor como código, salvo si es un texto que
+/// ya lleva comillas invertidas (como «libre, a `rate`»), que se
+/// envolvería mal.
+fn default_cell(default: Option<&str>) -> String {
+    match default {
+        None => "obligatorio".into(),
+        Some(text) if text.contains('`') => text.into(),
+        Some(text) => code(text),
+    }
+}
+
 /// Alternativas: `"a"` (o `"b"`).
 fn with_aliases(name: &str, aliases: &[&str]) -> String {
     let mut text = code(&format!("\"{name}\""));
@@ -5538,7 +6150,7 @@ fn params_table(what: &str, effects: &[Effect]) -> String {
             } else {
                 String::new()
             };
-            let default = p.default.map_or("obligatorio".into(), code);
+            let default = default_cell(p.default);
             out.push_str(&format!(
                 "| {name} | {} | {} | {default} | {} |\n",
                 code(p.name),
@@ -5577,6 +6189,10 @@ pub fn sound_params() -> Vec<(String, &'static FxParam)> {
         add(format!("synth(\"{}\")", synth.name), synth.params);
     }
     add("sample".into(), SAMPLE_PARAMS);
+    add("mod (todos)".into(), MOD_COMMON);
+    for d in MOD_DEVICES {
+        add(format!("mod {{\"{}\"}}", d.name), d.params);
+    }
     out
 }
 
@@ -5651,6 +6267,22 @@ pub fn guide_markdown() -> String {
         match (f.receiver, f.name) {
             (Receiver::Track, "fx") => out.push_str(&params_table("Efecto", EFFECTS)),
             (Receiver::Global, "bus") => out.push_str(&params_table("Bus", BUSES)),
+            (Receiver::Global, "mod") => {
+                out.push_str(
+                    "| Clave | Qué es | Por defecto | Valores |\n| --- | --- | --- | --- |\n",
+                );
+                for p in MOD_DOMAINS.iter().chain(MOD_COMMON) {
+                    let default = default_cell(p.default);
+                    out.push_str(&format!(
+                        "| {} | {} | {default} | {} |\n",
+                        code(p.name),
+                        p.description,
+                        p.valid
+                    ));
+                }
+                out.push_str("\nLas cuatro últimas las llevan todos los dispositivos:\n\n");
+                out.push_str(&params_table("Dispositivo", MOD_DEVICES));
+            }
             (Receiver::Global, "synth") => out.push_str(&params_table("Tipo", SYNTHS)),
             (Receiver::Global, "subharm") => {
                 out.push_str(&params_table("Tabla", std::slice::from_ref(&LAYER_TABLE)))
@@ -5671,7 +6303,7 @@ pub fn guide_markdown() -> String {
                     _ => SAMPLE_PARAMS,
                 };
                 for p in params {
-                    let default = p.default.map_or("obligatorio".into(), code);
+                    let default = default_cell(p.default);
                     out.push_str(&format!(
                         "| {} | {} | {default} | {} |\n",
                         code(p.name),

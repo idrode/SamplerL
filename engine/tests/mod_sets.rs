@@ -57,7 +57,7 @@ fn set_with(domain: usize, devices: &[Device]) -> ModSet {
     set
 }
 
-fn table(sets: &[ModSet]) -> ModTable {
+fn table(sets: &[ModSet]) -> Box<ModTable> {
     let mut t = ModTable::new();
     for (i, s) in sets.iter().enumerate() {
         t.set(i, Some(*s)).unwrap();
@@ -66,7 +66,7 @@ fn table(sets: &[ModSet]) -> ModTable {
 }
 
 /// Renderiza `frames` con los patrones de cada pista y la tabla `t`.
-fn render(patterns: Vec<(usize, Pattern)>, t: Option<ModTable>, frames: usize) -> Vec<f32> {
+fn render(patterns: Vec<(usize, Pattern)>, t: Option<Box<ModTable>>, frames: usize) -> Vec<f32> {
     let (mut controller, mut engine) = new_engine(RATE);
     controller.set_bpm(120.0).unwrap();
     let mut batch = Batch::new();

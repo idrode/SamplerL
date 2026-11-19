@@ -75,6 +75,7 @@ pub mod learn;
 pub use freeze::FreezeRender;
 use freeze::apply_frozen;
 pub mod masking;
+pub mod modsets;
 pub mod patterns;
 pub mod project;
 pub mod step_fx;
@@ -203,6 +204,8 @@ pub struct Song {
     /// Lanes de automatización (`auto()`, `lane()`): el índice es el de la
     /// tabla del motor; `None`, un hueco libre.
     pub lanes: Vec<Option<LaneDef>>,
+    /// Mod sets (`mod()`): el índice es el de la tabla del motor.
+    pub mod_sets: Vec<modsets::ModSetDef>,
     /// Visualizaciones pedidas (`pista:scope()`, `master():spectrum()`...).
     pub viz: Vec<VizDef>,
     /// Las llamadas que dejaron valores que se mueven en vivo (ver
@@ -383,6 +386,8 @@ pub struct TrackDef {
     pub sidechains: Vec<(usize, String)>,
     /// Efectos de cada corte (`cortes:fx()`), uno por corte (o ninguno).
     pub slice_fx: Vec<SliceFxDef>,
+    /// Mod set de la pista (`:mod()`): su índice en [`Song::mod_sets`].
+    pub modset: Option<u8>,
     /// Etiqueta de esta definición de pista, única entre cargas (de 1 a
     /// [`engine::MAX_TAG`]; 0, sin etiqueta). Va al motor con su patrón y
     /// vuelve con el paso que suena ([`engine::TrackStatus::cursor`]): así
@@ -419,6 +424,8 @@ pub struct FrozenDef {
 pub struct SliceFxDef {
     pub fx: Vec<Fx>,
     pub automation: Vec<engine::Automation>,
+    /// Su mod set (`cortes:mod()`): su índice en [`Song::mod_sets`].
+    pub modset: Option<u8>,
 }
 
 /// `sample:instrument({ ... })`: el sample se toca como notas.
@@ -1471,6 +1478,7 @@ impl ScriptHost {
             key_used: None,
             frozen: Vec::new(),
             lanes: Vec::new(),
+            mod_sets: Vec::new(),
             warnings: warnings.clone(),
             viz: Vec::new(),
             live: Vec::new(),
@@ -1534,6 +1542,7 @@ impl ScriptHost {
         let groups = std::mem::take(&mut state.borrow_mut().groups);
         let macros = std::mem::take(&mut state.borrow_mut().macros);
         let lanes = std::mem::take(&mut state.borrow_mut().lanes);
+        let mod_sets = std::mem::take(&mut state.borrow_mut().mod_sets);
         let viz = std::mem::take(&mut state.borrow_mut().viz);
         let frozen = std::mem::take(&mut state.borrow_mut().frozen);
         let (key, transpose) = {
@@ -1721,6 +1730,7 @@ impl ScriptHost {
                 groups: groups.clone(),
                 macros: macros.clone(),
                 lanes: lanes.clone(),
+                mod_sets: mod_sets.clone(),
                 viz: viz.clone(),
                 key,
                 transpose,
@@ -2728,6 +2738,43 @@ impl ScriptHost {
             })?,
         )?;
 
+        // `mod(nombre, cadenas)`: un mod set (modulación por golpe).
+        let st = state.clone();
+        globals.set(
+            "mod",
+            lua.create_function(move |lua, (name, chains): (String, Value)| {
+                let who = format!("mod(\"{name}\")");
+                let Value::Table(chains) = chains else {
+                    return Err(fail(
+                        lua,
+                        format!("{who}: lleva una tabla con una cadena por dominio (vol, pan, pitch, cutoff)"),
+                    ));
+                };
+                let set = modsets::parse_set(&name, &chains).map_err(|e| fail(lua, e))?;
+                let mut builder = st.borrow_mut();
+                if builder.mod_sets.iter().any(|d| d.name == name) {
+                    return Err(fail(lua, format!("{who}: ya hay un mod set con ese nombre")));
+                }
+                if builder.mod_sets.len() >= engine::modulation::MAX_MOD_SETS {
+                    return Err(fail(
+                        lua,
+                        format!(
+                            "{who}: demasiados mod sets (máximo {})",
+                            engine::modulation::MAX_MOD_SETS
+                        ),
+                    ));
+                }
+                let index = builder.mod_sets.len() as u8;
+                builder.mod_sets.push(modsets::ModSetDef {
+                    name: name.clone(),
+                    set,
+                });
+                let names = builder.mod_sets.iter().map(|d| d.name.clone()).collect();
+                lua.set_app_data(modsets::ModNames(names));
+                Ok(modsets::ModHandle { index, name })
+            })?,
+        )?;
+
         let st = state.clone();
         globals.set(
             "lane",
@@ -2986,6 +3033,16 @@ fn song_batch(
         }
         batch.set_lanes(table);
     }
+    // Los mod sets, enteros (también para quitar los que había).
+    if !song.mod_sets.is_empty() || before.is_some_and(|b| !b.mod_sets.is_empty()) {
+        let mut table = engine::modulation::ModTable::new();
+        for (index, def) in song.mod_sets.iter().enumerate() {
+            table
+                .set(index, Some(def.set))
+                .map_err(|e| ScriptError::new(format!("mod(\"{}\"): {e}", def.name)))?;
+        }
+        batch.set_mod_sets(table);
+    }
     if !song.timeline.is_empty() {
         // Con línea de tiempo, el motor lleva todas las secciones.
         let mut arrangement = engine::Arrangement::new();
@@ -3224,6 +3281,14 @@ fn track_pattern(
             None => Ok(p),
         })
         .and_then(|p| p.with_granular(track.granular))
+        .and_then(|p| {
+            let slices: Vec<Option<u8>> = track.slice_fx.iter().map(|c| c.modset).collect();
+            if track.modset.is_none() && slices.iter().all(Option::is_none) && !p.has_mod() {
+                Ok(p)
+            } else {
+                p.with_mod_sets(track.modset, &slices)
+            }
+        })
         .and_then(|p| p.with_formant(track.formant))
         .and_then(|p| p.with_formant_curve(track.formant_curve))
         // Un pitch fijo es una curva que no se mueve.
@@ -3668,6 +3733,7 @@ fn track_source(lua: &Lua, name: &str, source: &AnyUserData) -> mlua::Result<Tra
         formant: None,
         sidechains: Vec::new(),
         slice_fx: Vec::new(),
+        modset: None,
         tag: 0,
         spans: Vec::new(),
         melody: Vec::new(),
@@ -3824,6 +3890,8 @@ struct Builder {
     /// Lanes de automatización (`auto()`, `lane()`): el índice es el del
     /// motor; un hueco quitado con `auto_clear` se vuelve a usar.
     lanes: Vec<Option<LaneDef>>,
+    /// Mod sets (`mod()`), en orden: su índice es el del motor.
+    mod_sets: Vec<modsets::ModSetDef>,
     /// Los avisos de la carga.
     warnings: Rc<RefCell<Vec<String>>>,
     /// Visualizaciones (`pista:scope()`, `master():spectrum()`...).
@@ -6551,6 +6619,33 @@ impl UserData for SlicedHandle {
             Ok((ms(range.start), ms(range.end)))
         });
 
+        // `:mod(cuál, set)`: la modulación por golpe de un corte.
+        methods.add_method("mod", |lua, this, (which, set): (Value, Value)| {
+            let who = format!("mod({})", which_text(&which));
+            let targets = slice_targets(lua, &who, this, &which)?;
+            let index =
+                modsets::set_index(&mod_names(lua), &who, &set).map_err(|e| fail(lua, e))?;
+            let mut chains = this.slice_fx.borrow_mut();
+            for i in targets {
+                chains[i].modset = Some(index);
+            }
+            drop(chains);
+            Ok(this.clone())
+        });
+        // `:mod_clear([cuál])`: la quita (sin cuál, de todos).
+        methods.add_method("mod_clear", |lua, this, which: Option<Value>| {
+            let targets = match &which {
+                Some(w) => slice_targets(lua, &format!("mod_clear({})", which_text(w)), this, w)?,
+                None => (0..this.slices.len()).collect(),
+            };
+            let mut chains = this.slice_fx.borrow_mut();
+            for i in targets {
+                chains[i].modset = None;
+            }
+            drop(chains);
+            Ok(this.clone())
+        });
+
         // `:fx(cuál, nombre, { parámetros })`: un efecto que solo suena en
         // ese corte (número, etiqueta o una lista de ellos).
         methods.add_method(
@@ -6793,7 +6888,10 @@ fn checked_steps(
     plays: Plays,
 ) -> mlua::Result<Bar> {
     let slices = labels.len();
-    let steps = parse_pattern_with(text, length, labels, Some(&step_fx::resolve)).map_err(|e| {
+    let names = mod_names(lua);
+    let resolve =
+        |written: &[engine::notation::WrittenFx]| step_fx::resolve_with_mods(written, &names);
+    let steps = parse_pattern_with(text, length, labels, Some(&resolve)).map_err(|e| {
         // Una etiqueta del proyecto de otro `slice(n)`: decirlo.
         let hint = split_label(&e.token)
             .and_then(|(name, _)| stale.labels.iter().find(|(n, _)| n == name))
@@ -7235,6 +7333,18 @@ fn names(list: impl Iterator<Item = &'static str>) -> String {
 #[derive(Clone, Copy)]
 struct CurveHandle(engine::Curve);
 
+/// Los nombres de los mod sets definidos hasta ahora en esta carga.
+fn mod_names(lua: &Lua) -> Vec<String> {
+    lua.app_data_ref::<modsets::ModNames>()
+        .map(|n| n.0.clone())
+        .unwrap_or_default()
+}
+
+/// La curva de un valor de Lua (`ramp()`, `lfo()`, `macro()`, `lane()`).
+pub(crate) fn curve_of(ud: &mlua::AnyUserData) -> Option<engine::Curve> {
+    ud.borrow::<CurveHandle>().ok().map(|c| c.0)
+}
+
 impl UserData for CurveHandle {}
 
 /// Duración escrita como `"4 compases"`, `"1 compás"`, `"8 pasos"` o `"1
@@ -7296,9 +7406,15 @@ pub(crate) enum FxArg {
 /// figura (`"1/4"`, `"3/16"`: fracción de compás) o `"N compases"` /
 /// `"N pasos"`.
 fn lfo_sync(name: &str, arg: FxArg) -> Result<engine::Sync, String> {
+    lfo_sync_value(&format!("fx(\"{name}\")"), arg)
+}
+
+/// Como [`lfo_sync`], con los errores de `who` (`fx("flanger")`, un
+/// dispositivo de `mod()`...).
+pub(crate) fn lfo_sync_value(who: &str, arg: FxArg) -> Result<engine::Sync, String> {
     let wrong = || {
         format!(
-            "fx(\"{name}\"): sync es un número de ciclos por compás o lo que dura un ciclo (\"1/4\", \"2 compases\", \"8 pasos\")"
+            "{who}: sync es un número de ciclos por compás o lo que dura un ciclo (\"1/4\", \"2 compases\", \"8 pasos\")"
         )
     };
     let small = |v: f64| -> Result<u16, String> {
@@ -7306,7 +7422,7 @@ fn lfo_sync(name: &str, arg: FxArg) -> Result<engine::Sync, String> {
             Ok(v as u16)
         } else {
             Err(format!(
-                "fx(\"{name}\"): sync fuera de rango (de 1/64 de compás a 64 compases, en enteros)"
+                "{who}: sync fuera de rango (de 1/64 de compás a 64 compases, en enteros)"
             ))
         }
     };
@@ -7345,13 +7461,12 @@ fn lfo_sync(name: &str, arg: FxArg) -> Result<engine::Sync, String> {
         }
         FxArg::Curve(_) => {
             return Err(format!(
-                "fx(\"{name}\"): sync no admite ramp() ni lfo(): es lo que dura un ciclo; para mover la velocidad, rate"
+                "{who}: sync no admite ramp() ni lfo(): es lo que dura un ciclo; para mover la velocidad, rate"
             ));
         }
         _ => return Err(wrong()),
     };
-    sync.validate()
-        .map_err(|e| format!("fx(\"{name}\"): {e}"))?;
+    sync.validate().map_err(|e| format!("{who}: {e}"))?;
     Ok(sync)
 }
 
@@ -7824,6 +7939,18 @@ impl UserData for TrackHandle {
                 Ok(this.clone())
             },
         );
+
+        // `:mod(set)`: modulación por golpe de la pista.
+        methods.add_method("mod", |lua, this, set: Value| {
+            let index =
+                modsets::set_index(&mod_names(lua), "mod", &set).map_err(|e| fail(lua, e))?;
+            this.with_track(|t| t.def.modset = Some(index));
+            Ok(this.clone())
+        });
+        methods.add_method("mod_clear", |_, this, ()| {
+            this.with_track(|t| t.def.modset = None);
+            Ok(this.clone())
+        });
 
         // `:formant(n)`: los formantes de los pasos con `%` y, si no es 0,
         // también los de los pasos sin pitch.

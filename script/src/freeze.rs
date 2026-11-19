@@ -330,6 +330,7 @@ fn frozen_track(
         granular: None,
         formant: None,
         slice_fx: vec![SliceFxDef::default()],
+        modset: None,
         spans: Vec::new(),
         frozen: Some(FrozenDef {
             wav: request.wav.clone(),

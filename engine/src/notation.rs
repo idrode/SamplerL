@@ -83,6 +83,27 @@ pub enum StepBraces {
         fx: Option<SliceFx>,
         hit: crate::engine::HitShape,
     },
+    /// El mod set del paso (`{mod=pluck}`, su índice) y, si hay, lo de las
+    /// demás llaves.
+    Mod(u8, Option<Box<StepBraces>>),
+}
+
+/// Pone en `step` lo de sus llaves.
+fn apply_braces(step: &mut Step, braces: StepBraces) {
+    match braces {
+        StepBraces::Fx(chain) => step.fx = Some(chain),
+        StepBraces::Sub(sub) => step.sub = Some(sub),
+        StepBraces::Hit { fx, hit } => {
+            step.fx = fx;
+            step.hit = hit;
+        }
+        StepBraces::Mod(index, rest) => {
+            step.modset = Some(index);
+            if let Some(rest) = rest {
+                apply_braces(step, *rest);
+            }
+        }
+    }
 }
 
 /// Quien sabe convertir lo escrito entre las llaves de un paso (el script,
@@ -484,14 +505,7 @@ pub fn parse_step_with(
         let resolve = fx.ok_or(
             "las llaves ({...}) solo valen en steps(\"...\") de una pista de cortes, en un script",
         )?;
-        match resolve(&written)? {
-            StepBraces::Fx(chain) => step.fx = Some(chain),
-            StepBraces::Sub(sub) => step.sub = Some(sub),
-            StepBraces::Hit { fx, hit } => {
-                step.fx = fx;
-                step.hit = hit;
-            }
-        }
+        apply_braces(&mut step, resolve(&written)?);
     }
     Ok(Some(step))
 }

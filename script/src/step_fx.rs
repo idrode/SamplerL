@@ -11,6 +11,43 @@ use engine::{Automation, Curve, HitShape, SliceFx};
 use crate::api;
 use crate::{FxArg, build_fx};
 
+/// Como [`resolve`], con `{mod=nombre}` (el mod set del paso, de los de
+/// `names`): va solo o con los efectos de las demás llaves.
+pub fn resolve_with_mods(written: &[WrittenFx], names: &[String]) -> Result<StepBraces, String> {
+    let (mods, rest): (Vec<&WrittenFx>, Vec<&WrittenFx>) =
+        written.iter().partition(|w| w.name == "mod");
+    let Some(first) = mods.first() else {
+        return resolve(written);
+    };
+    if mods.len() > 1 {
+        return Err("{mod}: un paso lleva un solo mod set".into());
+    }
+    if !first.params.is_empty() {
+        return Err("{mod}: va solo en sus llaves: {mod=nombre}".into());
+    }
+    let name = match &first.main {
+        Some(FxValue::Word(w)) => w.clone(),
+        _ => return Err("{mod}: lleva el nombre de un mod set: {mod=pluck}".into()),
+    };
+    let index = crate::modsets::index_of(names, &name).ok_or_else(|| {
+        if names.is_empty() {
+            format!("{{mod={name}}}: no hay ningún mod set «{name}» (defínelo antes con mod(\"{name}\", {{ ... }}))")
+        } else {
+            format!(
+                "{{mod={name}}}: no hay ningún mod set «{name}» (hay: {})",
+                names.join(", ")
+            )
+        }
+    })?;
+    let rest: Vec<WrittenFx> = rest.into_iter().cloned().collect();
+    let rest = if rest.is_empty() {
+        None
+    } else {
+        Some(Box::new(resolve(&rest)?))
+    };
+    Ok(StepBraces::Mod(index, rest))
+}
+
 /// Lo de las llaves de un paso, o el error (sin línea: la pone quien lee
 /// el patrón): si todas las claves son del bloque sub (`sub`, `sub_div`,
 /// `sub_wave`, `sub_pan`, `sub_drive`), lo que cambia del sub de su nota

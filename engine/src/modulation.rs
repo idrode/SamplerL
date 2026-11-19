@@ -1028,8 +1028,10 @@ impl Default for ModTable {
 }
 
 impl ModTable {
-    pub fn new() -> Self {
-        Self::default()
+    /// Vacía, ya en el montón: ocupa unos 190 KB y, pasada por valor, cada
+    /// copia en la pila (en debug, varias) llega a desbordar un hilo de 2 MB.
+    pub fn new() -> Box<Self> {
+        Box::default()
     }
 
     pub fn set(&mut self, index: usize, set: Option<ModSet>) -> Result<(), &'static str> {

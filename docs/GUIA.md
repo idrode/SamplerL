@@ -3661,6 +3661,10 @@ track("drums", amen)
 | `synth("sub")` | `tone` (continuo), `drive` (continuo), `glide` (continuo), `sub` (continuo), `sub_pan` (continuo), `sub_drive` (continuo) |
 | `synth("subharm")` | `cutoff` (continuo), `res` (continuo), `envmod` (continuo), `fdecay` (continuo), `glide` (continuo), `drive` (continuo), `attack` (continuo), `decay` (continuo) |
 | `synth("sh101")` | `saw` (continuo), `pulse` (continuo), `pw` (continuo), `pwm_amt` (continuo), `noise` (continuo), `cutoff` (continuo), `res` (continuo), `env_amt` (continuo), `kbd` (continuo), `res_comp` (continuo), `glide` (continuo), `lfo_rate` (continuo), `lfo_pitch` (continuo), `lfo_filter` (continuo), `drift` (continuo), `sub` (continuo), `sub_pan` (continuo), `sub_drive` (continuo) |
+| `mod (todos)` | `amount` (continuo) |
+| `mod {"ahdsr"}` | `a` (continuo), `h` (continuo), `d` (continuo), `s` (continuo), `r` (continuo) |
+| `mod {"lfo"}` | `rate` (continuo) |
+| `mod {"value"}` | `value` (continuo) |
 
 | Dónde | No admiten curva | Por qué |
 | --- | --- | --- |
@@ -3711,6 +3715,93 @@ track("drums", amen)
 | `synth("sh101")` | `a`, `d`, `s`, `r` | la envolvente se fija con el sintetizador al cargar; para mover el volumen en el tiempo, el de la pista (`:gain()` con `ramp()` o `lfo()`) |
 | `synth("sh101")` | `seed` | es la semilla del azar: entre dos semillas no hay nada continuo |
 | `sample` | `trim`, `normalize`, `fade_in`, `fade_out` | se aplica al cargar, en el hilo de control (el sample o el bucle se preparan una vez): no suena en el tiempo |
+| `mod (todos)` | `op`, `bipolar`, `bypass` | elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer |
+| `mod {"ahdsr"}` | `curve_a`, `curve_d`, `curve_r` | es la forma de un tramo o una opción del dispositivo: se lee al nacer cada golpe |
+| `mod {"env"}` | `points` | es una lista de valores o de puntos: entra con el set al compás |
+| `mod {"env"}` | `len`, `sustain` | es la forma de un tramo o una opción del dispositivo: se lee al nacer cada golpe |
+| `mod {"env"}` | `loop` | elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer |
+| `mod {"lfo"}` | `wave`, `free` | elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer |
+| `mod {"lfo"}` | `sync`, `phase`, `delay` | es la forma de un tramo o una opción del dispositivo: se lee al nacer cada golpe |
+| `mod {"stepper"}` | `values` | es una lista de valores o de puntos: entra con el set al compás |
+| `mod {"stepper"}` | `step`, `reset` | cambia cuántas cosas suenan, no cómo suenan: entra con el patrón al compás |
+| `mod {"stepper"}` | `random` | elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer |
+| `mod {"stepper"}` | `seed` | es la semilla del azar: entre dos semillas no hay nada continuo |
+| `mod {"fader"}` | `from`, `to`, `time`, `delay` | es la forma de un tramo o una opción del dispositivo: se lee al nacer cada golpe |
+| `mod {"fader"}` | `scale` | elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer |
+| `mod {"velocity"}` | `min`, `max` | es la forma de un tramo o una opción del dispositivo: se lee al nacer cada golpe |
+| `mod {"velocity"}` | `clamp` | elige entre valores con nombre (o sí/no): no hay nada entre uno y otro que recorrer |
+| `mod {"keytrack"}` | `min`, `max`, `low`, `high` | es la forma de un tramo o una opción del dispositivo: se lee al nacer cada golpe |
+
+### `mod(nombre, cadenas)`
+
+Un conjunto de modulación por golpe (mod set): cada golpe o nota que lo usa arranca desde cero sus envolventes, sus LFO y sus pasos, con su propio estado. La modulación de `ramp`, `lfo`, las macros y las lanes sigue el reloj de la canción; esta sigue el golpe: empieza cuando suena y su release, con el note-off (el final del paso y sus `_`, o su `dur`; en un sintetizador, el de la nota, o la tecla MIDI al soltarla; sin note-off, un pad, se queda en su sustain hasta que acaba el corte). La tabla lleva una cadena por dominio (`vol`, `pan`, `pitch`, `cutoff`; ver abajo) y `range`. Una cadena es una lista de dispositivos (ver abajo) en orden, con `input`, el valor del que parte; cada dispositivo da un valor que su `op` combina con lo acumulado (por defecto, multiplica en `vol` y `cutoff` y suma en `pan` y `pitch`). Un dispositivo es una tabla con su tipo primero: `{ "ahdsr", a = 2, d = 180 }`; una cadena de un solo dispositivo puede ir sin la lista. Se asigna con `pista:mod`, `cortes:mod` o en un paso (`3{mod=nombre}`), que manda sobre el del corte y este sobre el de la pista; vale en cortes y sintetizadores. Va por golpe: varios golpes que suenan a la vez llevan cada uno el suyo; el cursor de un stepper es del set. Hasta 16 sets por canción, 8 dispositivos por cadena, 4 envolventes de puntos, 4 steppers y 256 valores de stepper por set. Entran al compás; un golpe que ya suena sigue con el set con el que nació. Se evalúa cada 32 frames desde el golpe y en línea recta entre medias. `pitch` no se mueve en los pasos con `%` ni con `bend`.
+
+- `nombre`: su nombre (el de `3{mod=nombre}`), único en la canción
+- `cadenas`: tabla con una cadena por dominio y `range` (ver abajo)
+
+| Clave | Qué es | Por defecto | Valores |
+| --- | --- | --- | --- |
+| `vol` | volumen del golpe: multiplica el suyo (1, igual; 0, silencio) | `1` | 0–4 |
+| `pan` | pan del golpe: se suma al suyo (-1 izquierda, 1 derecha) | `0` | -1–1 |
+| `pitch` | altura: el valor por `range` semitonos, sumado a la nota | `0` | -1–1 |
+| `cutoff` | corte del filtro paso bajo del golpe: de 0 (20 Hz) a 1 (20 kHz) en escala logarítmica; `input` también en Hz (más de 1); en un sintetizador, 1 es su propio corte y cada 0.1 menos, una octava abajo | `1` | 0–1 |
+| `range` | semitonos del pitch con su valor en 1 | `12` | 0–48 |
+| `op` | cómo combina su valor con lo acumulado | `"mul"` en vol y cutoff, `"add"` en pan y pitch | `"add"`, `"sub"`, `"mul"` o `"div"` |
+| `amount` | lo que se escala su valor (en el LFO, su amplitud) | `1` | -64–64 |
+| `bipolar` | lo que da de 0 a 1 pasa a ir de -1 a 1 (el LFO es bipolar por defecto) | `false` | `true` o `false` |
+| `bypass` | apagado: la cadena sigue como si no estuviera | `false` | `true` o `false` |
+
+Las cuatro últimas las llevan todos los dispositivos:
+
+| Dispositivo | Parámetro | Qué es | Por defecto | Valores |
+| --- | --- | --- | --- | --- |
+| `"ahdsr"` | `a` | ataque, en ms | `5` | 0–60000 |
+|  | `h` | retención arriba, en ms | `0` | 0–60000 |
+|  | `d` | decaimiento hasta el sustain, en ms | `200` | 0–60000 |
+|  | `s` | sustain: el nivel hasta el note-off | `0.5` | 0–1 |
+|  | `r` | release tras el note-off, en ms | `150` | 0–60000 |
+|  | `curve_a` | forma del ataque: 0 recta, positivo deprisa al principio, negativo despacio | `0` | -1–1 |
+|  | `curve_d` | forma del decaimiento | `0.5` | -1–1 |
+|  | `curve_r` | forma del release | `0.5` | -1–1 |
+| `"env"` | `points` | los puntos: `{ {0, 0}, {0.1, 1, "exp"}, {1, 0} }` (curvas `linear`, `exp`, `smooth`, `step`) | obligatorio | de 1 a 64 puntos, posiciones de 0 a 1 en orden |
+|  | `len` | lo que dura, en ms o una figura (`"1/4"`, `"2 compases"`, `"8 pasos"`, al tempo que suena) | `500` | más de 0, hasta 60000 ms o 64 compases |
+|  | `loop` | qué hace al acabar: quedarse, repetirse adelante, atrás o ida y vuelta | `"off"` | `"off"`, `"forward"`, `"backward"` o `"pingpong"` |
+|  | `sustain` | punto (desde 1) en el que se queda hasta el note-off; luego sigue hasta el final (sin bucle) | `ninguno` | un punto de la lista |
+| `"lfo"` | `wave` | forma | `"sine"` | `"sine"`, `"tri"`, `"saw"`, `"square"` o `"random"` |
+|  | `rate` | velocidad, en Hz (sin `sync`) | `4` | 0.01–50 |
+|  | `sync` | atado al compás: lo que dura un ciclo (`"1/8"`, `"1 compás"`, `"3 pasos"`) o un número n, n ciclos por compás | libre, a `rate` | de 1/64 de compás a 64 compases |
+|  | `phase` | fase al empezar, en grados | `0` | 0–360 |
+|  | `delay` | ms quieto (en 0) antes de empezar | `0` | 0–60000 |
+|  | `free` | la fase sigue la canción y no vuelve a empezar con el golpe | `false` | `true` o `false` |
+| `"stepper"` | `values` | los valores (de 1 a 256) | obligatorio | una lista de números |
+|  | `step` | pasos que avanza el cursor con cada golpe | `1` | entero de 0 a 16 |
+|  | `random` | el cursor salta al azar (el mismo orden en cada render, de `seed`) | `false` | `true` o `false` |
+|  | `seed` | semilla del azar | `1` | entero |
+|  | `reset` | vuelve al primer valor cada n compases (0, nunca) | `0` | entero de 0 a 64 |
+| `"fader"` | `from` | valor al empezar | `1` | -64–64 |
+|  | `to` | valor al acabar | `0` | -64–64 |
+|  | `time` | lo que tarda, en ms | `500` | 0–60000 |
+|  | `delay` | ms antes de empezar | `0` | 0–60000 |
+|  | `scale` | cómo va | `"linear"` | `"linear"`, `"exp"` (despacio al principio) o `"log"` (deprisa) |
+| `"value"` (o `"operand"`) | `value` | el valor | `1` | -64–64 |
+| `"velocity"` | `min` | valor con velocidad 0 | `0` | -64–64 |
+|  | `max` | valor con velocidad 1 | `1` | -64–64 |
+|  | `clamp` | en vez de escalar, la velocidad recortada entre `min` y `max` | `false` | `true` o `false` |
+| `"keytrack"` | `min` | valor en `low` | `0` | -64–64 |
+|  | `max` | valor en `high` | `1` | -64–64 |
+|  | `low` | nota MIDI (60, el do central; un corte sin pitch es 60) | `0` | 0–127 |
+|  | `high` | nota MIDI, por encima de `low` | `127` | 0–127 |
+
+```lua
+local amen = sample("amen.wav"):slice(8)
+-- Cada golpe se cierra solo y el último de cada grupo de tres suena más.
+mod("pluck", {
+  vol = { { "ahdsr", a = 2, d = 180, s = 0.2, r = 60 },
+          { "stepper", values = { 0.6, 0.6, 1 } } },
+  cutoff = { input = 0.6, { "velocity", min = 0.6, max = 1 } },
+})
+track("drums", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 ."):mod("pluck")
+```
 
 ### `macro(nombre, desde, hasta)`
 
@@ -4151,6 +4242,23 @@ amen:set(8, { length = 0.5, play = "pingpong" })
 track("drums", amen):steps("1 . 3 .  2 . 3 .  1 1 3 .  2 . 3 3"):mode("gate")
 ```
 
+### `cortes:mod(cuál, set)`
+
+Devuelve: cortes.
+
+Modulación por golpe solo en un corte (número, etiqueta o lista): manda sobre la de la pista. `set` es lo que devuelve `mod()` o su nombre. Lo llevan todas las pistas que usan la variable y sus pads; el de un paso (`3{mod=otro}`) manda sobre este.
+
+- `cuál`: número de corte (desde 1), etiqueta o lista de ellos
+- `set`: un mod set (`mod()`) o su nombre
+
+### `cortes:mod_clear([cuál])`
+
+Devuelve: cortes.
+
+Quita la modulación por golpe de un corte (sin argumento, de todos).
+
+- `cuál`: número de corte (desde 1), etiqueta o lista de ellos; sin él, todos
+
 ### `cortes:fx(cuál, nombre, parámetros)`
 
 Devuelve: cortes.
@@ -4480,7 +4588,7 @@ El filtro es un biquad de 12 dB/octava; `q = 0.707` es la respuesta más plana y
 |  | `band` | solo baja lo que queda por debajo de estos Hz (cruce de 24 dB/octava) | `la pista entera` | 20–2000 |
 | `"flanger"` | `mix` | parte mojada (0 = solo la seca, bit a bit; 0.5, los huecos más hondos; 1 = solo la mojada) | `0.5` | 0–1 |
 |  | `rate` | velocidad del LFO, en Hz (sin `sync`) | `0.25` | 0.01–20 |
-|  | `sync` | ata el LFO al compás: lo que dura un ciclo ("1/4", "3/16", "2 compases", "8 pasos") o un número n, n ciclos por compás; en fase con la canción y manda sobre `rate` | `libre, a `rate`` | de 1/64 de compás a 64 compases |
+|  | `sync` | ata el LFO al compás: lo que dura un ciclo ("1/4", "3/16", "2 compases", "8 pasos") o un número n, n ciclos por compás; en fase con la canción y manda sobre `rate` | libre, a `rate` | de 1/64 de compás a 64 compases |
 |  | `depth` | lo que barre el LFO por encima del retardo base, en ms | `2` | 0–10 |
 |  | `delay` | retardo base, en ms (corto, metálico; largo, más cerca del chorus) | `1` | 0.1–15 |
 |  | `feedback` | cuánto de la salida vuelve a la línea (negativo, con la polaridad invertida: más hueco) | `0.5` | -0.95–0.95 |
@@ -4489,7 +4597,7 @@ El filtro es un biquad de 12 dB/octava; `q = 0.707` es la respuesta más plana y
 |  | `invert` | la copia retardada sale invertida (los huecos van donde estaban los picos) | `false` | `true` o `false` |
 | `"phaser"` | `mix` | parte mojada (0 = solo la seca, bit a bit; 0.5, los huecos más hondos; 1 = solo la mojada) | `0.5` | 0–1 |
 |  | `rate` | velocidad del LFO, en Hz (sin `sync`) | `0.5` | 0.01–20 |
-|  | `sync` | ata el LFO al compás: lo que dura un ciclo ("1/4", "3/16", "2 compases", "8 pasos") o un número n, n ciclos por compás; en fase con la canción y manda sobre `rate` | `libre, a `rate`` | de 1/64 de compás a 64 compases |
+|  | `sync` | ata el LFO al compás: lo que dura un ciclo ("1/4", "3/16", "2 compases", "8 pasos") o un número n, n ciclos por compás; en fase con la canción y manda sobre `rate` | libre, a `rate` | de 1/64 de compás a 64 compases |
 |  | `depth` | octavas que barre el LFO a cada lado de `center` | `2` | 0–4 |
 |  | `center` | centro del barrido en Hz | `800` | 50–10000 |
 |  | `feedback` | cuánto de la salida vuelve a la entrada (más, huecos más marcados; negativo, en otros sitios) | `0.3` | -0.95–0.95 |
@@ -4498,7 +4606,7 @@ El filtro es un biquad de 12 dB/octava; `q = 0.707` es la respuesta más plana y
 |  | `phase` | desfase del LFO del canal derecho, en grados (0, mono; 90 o 180, más ancho) | `90` | 0–180 |
 | `"chorus"` | `mix` | parte mojada (0 = solo la seca, bit a bit; 0.5, los huecos más hondos; 1 = solo la mojada) | `0.5` | 0–1 |
 |  | `rate` | velocidad del LFO, en Hz (sin `sync`) | `0.8` | 0.01–20 |
-|  | `sync` | ata el LFO al compás: lo que dura un ciclo ("1/4", "3/16", "2 compases", "8 pasos") o un número n, n ciclos por compás; en fase con la canción y manda sobre `rate` | `libre, a `rate`` | de 1/64 de compás a 64 compases |
+|  | `sync` | ata el LFO al compás: lo que dura un ciclo ("1/4", "3/16", "2 compases", "8 pasos") o un número n, n ciclos por compás; en fase con la canción y manda sobre `rate` | libre, a `rate` | de 1/64 de compás a 64 compases |
 |  | `depth` | lo que barre el LFO por encima del retardo base, en ms | `3` | 0–10 |
 |  | `delay` | retardo base, en ms | `15` | 10–30 |
 |  | `voices` | copias, cada una con su LFO desfasado | `2` | entero de 1 a 4 |
@@ -4657,6 +4765,20 @@ local amen = sample("amen.wav"):slice(8)
 -- Cada golpe, un poco más agudo que el anterior durante 4 compases.
 track("sube", amen):steps("1 . 2 .  3 . 4 .  5 6 2 .  7 . 8 ."):pitch(ramp(0, 12, "4 compases"))
 ```
+
+### `pista:mod(set)`
+
+Devuelve: pista.
+
+Modulación por golpe de la pista: cada golpe (o nota de un sintetizador) arranca el mod set desde cero. `set` es lo que devuelve `mod()` o su nombre. En un sintetizador mueve la altura, el volumen, el balance y el corte de su filtro por nota; legato (`/` en un mono) sigue con el set de la nota que ya sonaba. No va en un instrumento de samples ni con granos.
+
+- `set`: un mod set (`mod()`) o su nombre
+
+### `pista:mod_clear()`
+
+Devuelve: pista.
+
+Quita la modulación por golpe de la pista (la de sus cortes y pasos sigue).
 
 ### `pista:formant(semitonos)`
 
