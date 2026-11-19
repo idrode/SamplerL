@@ -17,6 +17,7 @@ use crate::group::{GROUP_TAIL_SECONDS, GroupState, Groups, MAX_GROUPS};
 use crate::instrument::{MAX_VOICES, Note, NoteOn};
 use crate::limiter::{LIMIT_THRESHOLD, soft_limit};
 use crate::metronome::Metronome;
+use crate::modfx::{LfoAt, Lines};
 use crate::sample::Sample;
 use crate::sequencer::{Meter, Pattern, TempoRamp, Transport, Trigger, valid_bpm};
 use crate::shift::Shift;
@@ -869,6 +870,14 @@ impl Voice {
             if !playback.keep && playback.rate == 1.0 {
                 playback.keep = true;
             }
+        } else if playback.formant.is_some_and(|f| f != 0.0)
+            && !playback.keep
+            && playback.rate == 1.0
+        {
+            // El de la pista (`pista:formant`) con la misma regla: en un
+            // golpe sin pitch también mueve el timbre (con 0, nada cambia;
+            // con `^`, los formantes siguen moviéndose con el tono).
+            playback.keep = true;
         }
         let rate = sample.sample_rate() as f32;
         let fade = ((FADE_SECONDS * rate) as usize).max(1);
@@ -1015,7 +1024,7 @@ impl Voice {
     fn hush(&mut self) {
         self.release();
         if let Some(fx) = &mut self.fx {
-            fx.spend_tail(usize::MAX);
+            fx.hush();
         }
     }
 
@@ -1493,6 +1502,8 @@ struct Track {
     pan: f32,
     /// Estado de los efectos del patrón actual.
     fx: [FxState; MAX_FX],
+    /// Las líneas de retardo de sus ranuras (flanger y chorus).
+    lines: Lines,
     /// Subdisparos pendientes del paso actual (retrigger).
     retrig: Option<Retrig>,
     /// Mute y solo en vivo (desde la interfaz).
@@ -1588,6 +1599,7 @@ impl Track {
             gain: 1.0,
             pan: 0.0,
             fx: [FxState::Off; MAX_FX],
+            lines: Lines::new(),
             retrig: None,
             live_mute: false,
             live_solo: false,
@@ -1704,6 +1716,8 @@ pub struct Engine {
     pending_groups: Option<Groups>,
     staged_groups: Option<Groups>,
     group_state: [GroupState; MAX_GROUPS],
+    /// Las líneas de retardo de la cadena de cada grupo.
+    group_lines: [Lines; MAX_GROUPS],
     group_buf: Box<[[f32; 2 * CHUNK]; MAX_GROUPS]>,
     /// Valor de cada macro, y los de un lote (pendiente o abierto).
     macros: Macros,
@@ -1803,25 +1817,61 @@ impl Keys<'_> {
 /// Los efectos de una pista sobre `buf` (los frames `range` del trozo),
 /// cada efecto con sidechain con su trozo de la pista que escucha
 /// (silencio si no ha sonado en este trozo) y sus golpes.
+#[allow(clippy::too_many_arguments)]
 fn run_fx(
     fx: &mut [FxState; MAX_FX],
+    lines: &mut Lines,
     buf: &mut [f32],
     own: usize,
     keys: &Keys,
     range: std::ops::Range<usize>,
+    at: &LfoAt,
 ) {
-    for state in fx.iter_mut() {
-        let (key, hit) = keys.of(state, own, range.clone());
-        state.process_side(buf, key, hit);
+    for (slot, state) in fx.iter_mut().enumerate() {
+        match state {
+            FxState::Off => {}
+            // Los de modulación: su reloj y, el flanger y el chorus, su línea.
+            FxState::Delay(_) | FxState::Phaser(_) => {
+                state.tick(at);
+                state.process_side(buf, None, false, lines.slot(slot));
+            }
+            _ => {
+                let (key, hit) = keys.of(state, own, range.clone());
+                state.process_side(buf, key, hit, &mut []);
+            }
+        }
+    }
+}
+
+/// Dónde está la canción `frames` frames después del principio del trozo
+/// de `clock` (para los LFO de los efectos).
+fn lfo_at(clock: &Clock, frames: usize) -> LfoAt {
+    LfoAt {
+        steps: clock.steps + frames as f64 / clock.frames_per_step,
+        seconds: clock.seconds + frames as f64 / clock.sample_rate as f64,
+        frames_per_step: clock.frames_per_step,
+    }
+}
+
+/// A los efectos de la cadena les queda cola (ver [`FxState::ringing`]).
+fn fx_ringing(fx: &[FxState; MAX_FX]) -> bool {
+    fx.iter().any(FxState::ringing)
+}
+
+/// Los efectos de una cadena sin memoria, con sus líneas (un NaN o un
+/// infinito no se queda en ellas).
+fn reset_chain(fx: &mut [FxState; MAX_FX], lines: &mut Lines) {
+    for (slot, state) in fx.iter_mut().enumerate() {
+        state.reset_line(lines.slot(slot));
     }
 }
 
 /// Los efectos de una pista que no suena en este trozo (`frames`): el
 /// sidechain sigue su envolvente; los demás se vacían.
-fn rest_fx(fx: &mut [FxState; MAX_FX], frames: usize, own: usize, keys: &Keys) {
-    for state in fx.iter_mut() {
+fn rest_fx(fx: &mut [FxState; MAX_FX], lines: &mut Lines, frames: usize, own: usize, keys: &Keys) {
+    for (slot, state) in fx.iter_mut().enumerate() {
         let (key, hit) = keys.of(state, own, 0..2 * frames);
-        state.rest(frames, key, hit);
+        state.rest(frames, key, hit, lines.slot(slot));
     }
 }
 
@@ -1897,6 +1947,7 @@ pub fn new_engine(sample_rate: u32) -> (Controller, Engine) {
             pending_groups: None,
             staged_groups: None,
             group_state: [GroupState::default(); MAX_GROUPS],
+            group_lines: std::array::from_fn(|_| Lines::new()),
             group_buf: vec![[0.0; 2 * CHUNK]; MAX_GROUPS]
                 .into_boxed_slice()
                 .try_into()
@@ -3667,6 +3718,13 @@ impl Engine {
     fn panic(&mut self) {
         for t in 0..MAX_TRACKS {
             self.hush_track(t);
+            // La cola de los efectos (flanger, chorus, phaser), en unos ms.
+            for state in &mut self.tracks[t].fx {
+                state.hush();
+            }
+        }
+        for state in self.group_state.iter_mut().flat_map(|g| &mut g.fx) {
+            state.hush();
         }
         if let Some(old) = self.preview.take() {
             self.fade_preview(old);
@@ -3977,6 +4035,7 @@ impl Engine {
                 && track.fading.is_none()
                 && !track.has_notes()
                 && !track.cloud.is_active()
+                && !fx_ringing(&track.fx)
             {
                 track.audible = audible;
                 // En silencio no hay nada que suavizar: el siguiente golpe
@@ -3994,7 +4053,7 @@ impl Engine {
                     hits: &self.hits,
                     audible: &audible_now,
                 };
-                rest_fx(&mut track.fx, n, t, &keys);
+                rest_fx(&mut track.fx, &mut track.lines, n, t, &keys);
                 // Los parámetros que se movían vuelven a su valor fijo.
                 if track.mods.iter().flatten().any(Option::is_some)
                     && let Some(pattern) = &track.pattern
@@ -4117,7 +4176,15 @@ impl Engine {
             if moving {
                 modulate(track, buf, &clock, fresh, t, &keys);
             } else {
-                run_fx(&mut track.fx, buf, t, &keys, 0..2 * n);
+                run_fx(
+                    &mut track.fx,
+                    &mut track.lines,
+                    buf,
+                    t,
+                    &keys,
+                    0..2 * n,
+                    &lfo_at(&clock, 0),
+                );
             }
             // Un NaN o un infinito (un sample roto, un efecto que diverge)
             // no pasa de aquí: a cero, los efectos sin memoria (el NaN se
@@ -4125,9 +4192,7 @@ impl Engine {
             // acabar el bloque. Lo finito no cambia.
             let bad = scrub(buf);
             if bad > 0 {
-                for state in &mut track.fx {
-                    state.reset();
-                }
+                reset_chain(&mut track.fx, &mut track.lines);
                 poisoned[t] = true;
                 non_finite += bad;
             }
@@ -4361,6 +4426,7 @@ impl Engine {
                     &group.automation,
                     None,
                     &mut state.fx,
+                    &mut self.group_lines[g],
                     &mut state.mods,
                     buf,
                     clock,
@@ -4369,14 +4435,20 @@ impl Engine {
                     &keys,
                 );
             } else {
-                run_fx(&mut state.fx, buf, NO_TRACK, &keys, 0..2 * n);
+                run_fx(
+                    &mut state.fx,
+                    &mut self.group_lines[g],
+                    buf,
+                    NO_TRACK,
+                    &keys,
+                    0..2 * n,
+                    &lfo_at(clock, 0),
+                );
             }
             // Como en las pistas: lo no finito, a cero y sin memoria.
             let bad = scrub(buf);
             if bad > 0 {
-                for fx in &mut state.fx {
-                    fx.reset();
-                }
+                reset_chain(&mut state.fx, &mut self.group_lines[g]);
                 non_finite += bad;
             }
             let base = (group.gain, group.pan, group.sends);
@@ -4421,7 +4493,8 @@ impl Engine {
                 }
             }
             self.status.add_group_peak(g, peak);
-            if state.idle > tail && peak < 1e-6 {
+            if state.idle > tail && peak < 1e-6 && !fx_ringing(&state.fx) {
+                reset_chain(&mut state.fx, &mut self.group_lines[g]);
                 state.sleep(&group, rate);
             }
         }
@@ -4743,7 +4816,15 @@ fn modulate(
     keys: &Keys,
 ) {
     let Some(pattern) = &track.pattern else {
-        run_fx(&mut track.fx, buf, own, keys, 0..buf.len());
+        run_fx(
+            &mut track.fx,
+            &mut track.lines,
+            buf,
+            own,
+            keys,
+            0..buf.len(),
+            &lfo_at(clock, 0),
+        );
         return;
     };
     let first_filter = pattern
@@ -4756,6 +4837,7 @@ fn modulate(
         &pattern.automation,
         lock,
         &mut track.fx,
+        &mut track.lines,
         &mut track.mods,
         buf,
         clock,
@@ -4813,6 +4895,7 @@ fn modulate_chain(
     automation: &[Option<Automation>],
     lock: Option<(usize, f32)>,
     states: &mut [FxState; MAX_FX],
+    lines: &mut Lines,
     mods: &mut [[Option<f32>; MAX_PARAMS]; MAX_FX],
     buf: &mut [f32],
     clock: &Clock,
@@ -4842,7 +4925,15 @@ fn modulate_chain(
         );
         let from = block * 2 * MOD_BLOCK;
         let range = from..from + sub.len();
-        run_fx(states, sub, own, keys, range);
+        run_fx(
+            states,
+            lines,
+            sub,
+            own,
+            keys,
+            range,
+            &lfo_at(clock, block * MOD_BLOCK),
+        );
     }
 }
 

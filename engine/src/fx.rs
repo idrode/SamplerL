@@ -7,6 +7,8 @@
 
 use std::f32::consts::TAU;
 
+use crate::modfx;
+
 /// Efectos por pista como máximo (se aplican en orden).
 pub const MAX_FX: usize = 4;
 
@@ -136,6 +138,14 @@ pub enum Fx {
     /// Sidechain entre pistas (ducking): baja la pista, entera o sus
     /// graves, con los golpes o el audio de otra (ver [`crate::duck`]).
     Duck(DuckParams),
+    /// Flanger: retardo corto con realimentación movido por un LFO (ver
+    /// [`crate::modfx`]). Solo en la pista y el grupo.
+    Flanger(FlangerParams),
+    /// Phaser: paso-todos en serie movidos por un LFO.
+    Phaser(PhaserParams),
+    /// Chorus: varias voces con retardos largos movidos por un LFO. Solo
+    /// en la pista y el grupo.
+    Chorus(ChorusParams),
 }
 
 /// Volumen máximo del efecto `gain` (el de `:gain()` y `@`).
@@ -185,6 +195,8 @@ impl DynEqParams {
 pub const DEFAULT_Q: f32 = std::f32::consts::FRAC_1_SQRT_2;
 
 pub use crate::duck::{DuckCurve, DuckMode, DuckParams, DuckTap};
+pub use crate::modfx::{ChorusParams, FlangerParams, Lfo, LfoWave, PhaserParams, Sync};
+use crate::modfx::{DelayState, LfoAt, PhaserState};
 
 impl Fx {
     pub fn lowpass(cutoff_hz: f32) -> Self {
@@ -257,6 +269,9 @@ impl Fx {
             ],
             Fx::Gain { .. } => &["level"],
             Fx::Duck(_) => &["depth", "attack", "release", "threshold", "ratio", "knee"],
+            Fx::Flanger(_) => &["rate", "depth", "delay", "feedback", "mix", "phase"],
+            Fx::Phaser(_) => &["rate", "depth", "center", "feedback", "mix", "phase"],
+            Fx::Chorus(_) => &["rate", "depth", "delay", "mix", "phase"],
         }
     }
 
@@ -321,6 +336,46 @@ impl Fx {
             (Fx::Duck(_), 3) => (-60.0, 0.0, false),
             (Fx::Duck(_), 4) => (1.0, 20.0, true),
             (Fx::Duck(_), 5) => (0.0, 24.0, false),
+            (Fx::Flanger(_) | Fx::Phaser(_) | Fx::Chorus(_), 0) => {
+                (modfx::RATE_RANGE.0, modfx::RATE_RANGE.1, true)
+            }
+            (Fx::Flanger(_), 1) => (
+                modfx::FLANGER_DEPTH_RANGE.0,
+                modfx::FLANGER_DEPTH_RANGE.1,
+                false,
+            ),
+            (Fx::Flanger(_), 2) => (
+                modfx::FLANGER_DELAY_RANGE.0,
+                modfx::FLANGER_DELAY_RANGE.1,
+                true,
+            ),
+            (Fx::Flanger(_) | Fx::Phaser(_), 3) => {
+                (-modfx::MAX_FEEDBACK, modfx::MAX_FEEDBACK, false)
+            }
+            (Fx::Flanger(_) | Fx::Phaser(_), 4) | (Fx::Chorus(_), 3) => (0.0, 1.0, false),
+            (Fx::Flanger(_) | Fx::Phaser(_), 5) | (Fx::Chorus(_), 4) => {
+                (modfx::PHASE_RANGE.0, modfx::PHASE_RANGE.1, false)
+            }
+            (Fx::Phaser(_), 1) => (
+                modfx::PHASER_DEPTH_RANGE.0,
+                modfx::PHASER_DEPTH_RANGE.1,
+                false,
+            ),
+            (Fx::Phaser(_), 2) => (
+                modfx::PHASER_CENTER_RANGE.0,
+                modfx::PHASER_CENTER_RANGE.1,
+                true,
+            ),
+            (Fx::Chorus(_), 1) => (
+                modfx::CHORUS_DEPTH_RANGE.0,
+                modfx::CHORUS_DEPTH_RANGE.1,
+                false,
+            ),
+            (Fx::Chorus(_), 2) => (
+                modfx::CHORUS_DELAY_RANGE.0,
+                modfx::CHORUS_DELAY_RANGE.1,
+                false,
+            ),
             _ => return None,
         })
     }
@@ -361,8 +416,37 @@ impl Fx {
                 p.ratio,
                 p.knee_db,
             ][i],
+            (Fx::Flanger(p), i) if i < 6 => [
+                p.lfo.rate_hz,
+                p.depth_ms,
+                p.delay_ms,
+                p.feedback,
+                p.mix,
+                p.lfo.phase_deg,
+            ][i],
+            (Fx::Phaser(p), i) if i < 6 => [
+                p.lfo.rate_hz,
+                p.depth_oct,
+                p.center_hz,
+                p.feedback,
+                p.mix,
+                p.lfo.phase_deg,
+            ][i],
+            (Fx::Chorus(p), i) if i < 5 => [
+                p.lfo.rate_hz,
+                p.depth_ms,
+                p.delay_ms,
+                p.mix,
+                p.lfo.phase_deg,
+            ][i],
             _ => return None,
         })
+    }
+
+    /// Usa una línea de retardo (flanger y chorus): va en la pista o el
+    /// grupo, que la tienen reservada, y no en la voz de un corte.
+    pub fn needs_line(&self) -> bool {
+        matches!(self, Fx::Flanger(_) | Fx::Chorus(_))
     }
 
     /// Comprueba los rangos. El corte se limita además por debajo de la
@@ -463,6 +547,9 @@ impl Fx {
                 }
             }
             Fx::Duck(p) => p.validate()?,
+            Fx::Flanger(p) => p.validate()?,
+            Fx::Phaser(p) => p.validate()?,
+            Fx::Chorus(p) => p.validate()?,
         }
         Ok(())
     }
@@ -514,6 +601,9 @@ pub(crate) enum FxState {
         level: f32,
     },
     Duck(crate::duck::DuckState),
+    /// Flanger o chorus (su línea va aparte: [`crate::modfx::Lines`]).
+    Delay(DelayState),
+    Phaser(PhaserState),
 }
 
 /// Estado del EQ dinámico: el detector (paso de banda y envolvente), la
@@ -928,6 +1018,36 @@ impl FxState {
                 }
                 FxState::Duck(state)
             }
+            (Some(Fx::Flanger(p)), previous) => {
+                let next = DelayState::flanger(&p, sample_rate);
+                FxState::Delay(match previous {
+                    FxState::Delay(mut old) if old.same_kind(&next) => {
+                        old.take_over(&next);
+                        old
+                    }
+                    _ => next,
+                })
+            }
+            (Some(Fx::Chorus(p)), previous) => {
+                let next = DelayState::chorus(&p, sample_rate);
+                FxState::Delay(match previous {
+                    FxState::Delay(mut old) if old.same_kind(&next) => {
+                        old.take_over(&next);
+                        old
+                    }
+                    _ => next,
+                })
+            }
+            (Some(Fx::Phaser(p)), previous) => {
+                let next = PhaserState::new(&p, sample_rate);
+                FxState::Phaser(match previous {
+                    FxState::Phaser(mut old) => {
+                        old.take_over(&next);
+                        old
+                    }
+                    _ => next,
+                })
+            }
             (Some(Fx::Bitcrush { bits, downsample }), previous) => {
                 let (counter, held) = match previous {
                     FxState::Crush { counter, held, .. } => (counter % downsample, held),
@@ -998,6 +1118,8 @@ impl FxState {
                 }
             }
             (FxState::Duck(state), i) => state.set_param(i, value),
+            (FxState::Delay(state), i) => state.set_param(i, value, sample_rate),
+            (FxState::Phaser(state), i) => state.set_param(i, value, sample_rate),
             (FxState::Dyn(state), 4) => state.params.ratio = value,
             (FxState::Dyn(state), 5) => {
                 state.params.attack_ms = value;
@@ -1047,6 +1169,9 @@ impl FxState {
                 }
             }
             FxState::Duck(state) => state.reset(),
+            // Sin su línea no se puede vaciar: ver `reset_line`.
+            FxState::Delay(_) => {}
+            FxState::Phaser(state) => state.reset(),
             FxState::Dyn(state) => {
                 state.z = [[0.0; 2]; 2];
                 state.detect_z = [0.0; 2];
@@ -1057,6 +1182,44 @@ impl FxState {
                     state.retune();
                 }
             }
+        }
+    }
+
+    /// Como [`FxState::reset`], también la línea `line` de la ranura (la
+    /// del flanger y el chorus).
+    pub(crate) fn reset_line(&mut self, line: &mut [f32]) {
+        match self {
+            FxState::Delay(state) => state.reset(line),
+            other => other.reset(),
+        }
+    }
+
+    /// Le queda cola por sonar aunque ya no le llegue nada (la línea del
+    /// flanger o del chorus, la realimentación del phaser): la pista sigue
+    /// sonando hasta que se calla.
+    pub(crate) fn ringing(&self) -> bool {
+        match self {
+            FxState::Delay(state) => state.ringing(),
+            FxState::Phaser(state) => state.ringing(),
+            _ => false,
+        }
+    }
+
+    /// Pánico: la cola se apaga en unos ms.
+    pub(crate) fn hush(&mut self) {
+        match self {
+            FxState::Delay(state) => state.hush(),
+            FxState::Phaser(state) => state.hush(),
+            _ => {}
+        }
+    }
+
+    /// Al empezar un trozo de `buf`: los LFO toman su fase de la canción.
+    pub(crate) fn tick(&mut self, at: &LfoAt) {
+        match self {
+            FxState::Delay(state) => state.tick(at),
+            FxState::Phaser(state) => state.tick(at),
+            _ => {}
         }
     }
 
@@ -1081,18 +1244,25 @@ impl FxState {
     /// En silencio (la pista no suena): el ducking sigue su envolvente
     /// (`key` y `hit`, como en [`FxState::process_side`]); los demás se
     /// vacían ([`FxState::reset`]).
-    pub(crate) fn rest(&mut self, frames: usize, key: Option<&[f32]>, hit: bool) {
+    pub(crate) fn rest(&mut self, frames: usize, key: Option<&[f32]>, hit: bool, line: &mut [f32]) {
         match self {
             FxState::Duck(state) => state.rest(frames, key, hit),
-            other => other.reset(),
+            other => other.reset_line(line),
         }
     }
 
     /// Como [`FxState::process_keyed`], con `hit`: si la pista que dispara
     /// el ducking por patrón ha dado un golpe al principio de este trozo.
-    pub(crate) fn process_side(&mut self, buf: &mut [f32], key: Option<&[f32]>, hit: bool) {
+    pub(crate) fn process_side(
+        &mut self,
+        buf: &mut [f32],
+        key: Option<&[f32]>,
+        hit: bool,
+        line: &mut [f32],
+    ) {
         match self {
             FxState::Duck(state) => state.process(buf, key, hit),
+            FxState::Delay(state) => state.process(buf, line),
             other => other.process_keyed(buf, key),
         }
     }
@@ -1116,6 +1286,9 @@ impl FxState {
             FxState::Dyn(state) => state.process(buf, None),
             // Sin la pista que lo dispara: ni golpes ni audio.
             FxState::Duck(state) => state.process(buf, None, false),
+            // Sin línea (en una voz no se admite): pasa tal cual.
+            FxState::Delay(_) => {}
+            FxState::Phaser(state) => state.process(buf),
             FxState::Biquad { coefs, z, .. } => {
                 let c = *coefs;
                 for frame in buf.as_chunks_mut::<2>().0 {

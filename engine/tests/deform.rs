@@ -283,6 +283,64 @@ fn slice_formant_moves_the_timbre_and_not_the_fundamental() {
     );
 }
 
+/// El formante de la pista (`pista:formant`) sigue la misma regla que el
+/// del corte: en un golpe sin pitch mueve el timbre y no la nota; con 0,
+/// nada cambia; con `^`, no actúa (los formantes se mueven con el tono).
+#[test]
+fn track_formant_moves_unpitched_hits_like_the_slice_one() {
+    let mono: Vec<f32> = (0..48_000)
+        .map(|n| {
+            let t = n as f64 / RATE as f64;
+            (1..=30)
+                .map(|k| {
+                    let f = 150.0 * k as f64;
+                    let amp = (-((f - 900.0) / 250.0).powi(2)).exp();
+                    0.1 * amp * (std::f64::consts::TAU * f * t).sin()
+                })
+                .sum::<f64>() as f32
+        })
+        .collect();
+    let sample = Arc::new(Sample::from_interleaved(&mono, 1, RATE, RATE).unwrap());
+    let slices = Slices::grid(&sample, 1);
+    let play = |pitch: f32, formant: Option<f32>, shape: Option<f32>| -> Vec<f32> {
+        let mut steps = vec![None; 64];
+        steps[0] = Some(Step::new(0).with_pitch(pitch));
+        let p = Pattern::from_steps(sample.clone(), &slices, steps)
+            .unwrap()
+            .with_formant(formant)
+            .unwrap()
+            .with_shapes(&[SliceShape {
+                formant: shape,
+                ..SliceShape::DEFAULT
+            }])
+            .unwrap();
+        let (mut controller, mut engine) = new_engine(RATE);
+        controller.set_bpm(120.0).unwrap();
+        controller.set_pattern(p).unwrap();
+        controller.start().unwrap();
+        offline::render(&mut engine, 48_000, 2)
+            .iter()
+            .step_by(2)
+            .copied()
+            .collect()
+    };
+    let plain = play(0.0, None, None);
+    let window = 9600..38_400;
+    let moved = play(0.0, Some(7.0), None);
+    let p = peak(&moved[window.clone()]);
+    assert!((8..=10).contains(&p), "el formante está en el armónico {p}");
+    let f0 = detect_mono(&moved[window.clone()], RATE).unwrap().hz;
+    assert!((f0 / 150.0 - 1.0).abs() < 0.005, "fundamental {f0} Hz");
+    // Suena igual que el mismo formante puesto en el corte.
+    assert_eq!(moved, play(0.0, None, Some(7.0)));
+    // El del corte manda sobre el de la pista.
+    assert_eq!(play(0.0, Some(-5.0), Some(7.0)), moved);
+    // Con 0, bit a bit lo de siempre.
+    assert_eq!(play(0.0, Some(0.0), None), plain);
+    // Con ^, la pista no hace nada (los formantes van con el tono).
+    assert_eq!(play(3.0, Some(7.0), None), play(3.0, None, None));
+}
+
 /// Lo que tarda precalcular un corte de 1 s (`cargo test -p engine
 /// --release --test deform -- --ignored --nocapture coste`): la carga lo
 /// hace en su hilo, así que es lo que tarda de más al guardar.

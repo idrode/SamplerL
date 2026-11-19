@@ -11,38 +11,43 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use engine::{Fx, Pattern, STEPS, Sample, Slices, Step, new_engine};
 
 struct Counting;
 
-static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
-
 thread_local! {
     /// Solo cuenta este hilo y solo mientras está activo (el arnés de tests
     /// reserva memoria en otros hilos).
     static COUNTING: Cell<bool> = const { Cell::new(false) };
+    /// Lo que ha reservado o liberado este hilo contando. Por hilo: los
+    /// tests corren en paralelo y uno (`the_counter_sees_allocations`)
+    /// reserva a propósito mientras cuenta.
+    static ALLOCATIONS: Cell<usize> = const { Cell::new(0) };
+}
+
+fn note_allocation() {
+    ALLOCATIONS.with(|a| a.set(a.get() + 1));
 }
 
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         if COUNTING.with(Cell::get) {
-            ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+            note_allocation();
         }
         unsafe { System.alloc(layout) }
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         if COUNTING.with(Cell::get) {
-            ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+            note_allocation();
         }
         unsafe { System.dealloc(ptr, layout) }
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, size: usize) -> *mut u8 {
         if COUNTING.with(Cell::get) {
-            ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+            note_allocation();
         }
         unsafe { System.realloc(ptr, layout, size) }
     }
@@ -54,11 +59,11 @@ static GLOBAL: Counting = Counting;
 const RATE: u32 = 48_000;
 
 fn counted(f: impl FnOnce()) -> usize {
-    let before = ALLOCATIONS.load(Ordering::Relaxed);
+    let before = ALLOCATIONS.with(Cell::get);
     COUNTING.with(|c| c.set(true));
     f();
     COUNTING.with(|c| c.set(false));
-    ALLOCATIONS.load(Ordering::Relaxed) - before
+    ALLOCATIONS.with(Cell::get) - before
 }
 
 #[test]
@@ -2477,4 +2482,134 @@ fn independent_slices_with_gaps_and_overlaps_never_allocate() {
     });
     assert_eq!(n, 0, "reservas al cambiar los cortes mientras suenan");
     assert!(out.iter().all(|s| s.is_finite()));
+}
+
+#[test]
+fn modulation_effects_never_allocate() {
+    let mut mono = vec![0.0f32; 12_000];
+    for (i, s) in mono.iter_mut().enumerate() {
+        *s = ((i % 220) as f32 / 220.0 - 0.5) * 0.8;
+    }
+    let sample = Arc::new(Sample::from_interleaved(&mono, 1, RATE, RATE).unwrap());
+    let slices = Slices::from_ranges(vec![0..6000, 6000..12_000], 12_000, 48).unwrap();
+    let bar = || {
+        let mut steps = [None; STEPS];
+        for (k, slot) in steps.iter_mut().enumerate().step_by(2) {
+            *slot = Some(Step::new(k / 2 % 2));
+        }
+        steps
+    };
+    let flanger = |feedback: f32, mix: f32| {
+        let mut p = engine::FlangerParams::DEFAULT;
+        p.feedback = feedback;
+        p.mix = mix;
+        Fx::Flanger(p)
+    };
+    let mut synced = engine::PhaserParams::DEFAULT;
+    synced.lfo.sync = Some(engine::Sync { num: 3, den: 16 });
+    synced.stages = 12;
+    synced.feedback = -0.9;
+    let chorus = Fx::Chorus(engine::ChorusParams {
+        voices: 4,
+        ..engine::ChorusParams::DEFAULT
+    });
+    // Los tres en la pista, con el ritmo, la mezcla y el centro movidos.
+    let all = Pattern::from_bars(sample.clone(), &slices, &[bar()])
+        .unwrap()
+        .with_fx(&[flanger(0.9, 0.5), Fx::Phaser(synced), chorus])
+        .unwrap()
+        .with_automation(&[
+            engine::Automation {
+                fx: 0,
+                param: 0,
+                curve: engine::Curve::Lfo {
+                    min: 0.1,
+                    max: 8.0,
+                    rate: engine::LfoRate::Hz(0.5),
+                },
+            },
+            engine::Automation {
+                fx: 1,
+                param: 2,
+                curve: engine::Curve::Ramp {
+                    from: 200.0,
+                    to: 4000.0,
+                    steps: 16.0,
+                },
+            },
+            engine::Automation {
+                fx: 2,
+                param: 3,
+                curve: engine::Curve::Macro {
+                    index: 0,
+                    from: 0.0,
+                    to: 1.0,
+                },
+            },
+        ])
+        .unwrap();
+    // El phaser también por corte (en la voz de cada golpe).
+    let per_slice = Pattern::from_bars(sample.clone(), &slices, &[bar()])
+        .unwrap()
+        .with_slice_fx(&[
+            Some(engine::SliceFx::new(&[Fx::Phaser(engine::PhaserParams::DEFAULT)], &[]).unwrap()),
+            None,
+        ])
+        .unwrap();
+    let plain = Pattern::from_bars(sample.clone(), &slices, &[bar()]).unwrap();
+    let other = || {
+        Pattern::from_bars(sample.clone(), &slices, &[bar()])
+            .unwrap()
+            .with_fx(&[flanger(-0.5, 1.0), Fx::lowpass(2000.0)])
+            .unwrap()
+    };
+
+    let (mut controller, mut engine) = new_engine(RATE);
+    controller.set_bpm(170.0).unwrap();
+    controller.set_track_pattern(0, Some(all)).unwrap();
+    controller.set_track_pattern(1, Some(per_slice)).unwrap();
+    let mut groups = engine::Groups::new();
+    groups.groups[0] = Some(
+        engine::Group::new()
+            .with_fx(&[flanger(0.7, 0.5), Fx::Phaser(engine::PhaserParams::DEFAULT)])
+            .unwrap(),
+    );
+    groups.member[1] = Some(0);
+    let mut batch = engine::Batch::new();
+    batch.set_groups(groups);
+    controller.apply(batch).unwrap();
+    controller.start().unwrap();
+    let mut out = vec![0.0f32; 512 * 2];
+    let mut n = 0;
+    for k in 0..20 {
+        controller.set_macro(0, (k % 7) as f32 / 7.0).unwrap();
+        n += counted(|| {
+            for _ in 0..20 {
+                engine.process(&mut out, 2);
+            }
+        });
+    }
+    assert_eq!(n, 0, "reservas con flanger, phaser y chorus");
+
+    // Entran y salen en pleno sonido (al compás): otro flanger, sin
+    // efectos y vuelta; la pista 1 se calla y su cola sigue.
+    for next in [other(), plain, other()] {
+        controller.set_track_pattern(0, Some(next)).unwrap();
+        controller.set_track_pattern(1, None).unwrap();
+        let n = counted(|| {
+            for _ in 0..300 {
+                engine.process(&mut out, 2);
+            }
+        });
+        assert_eq!(n, 0, "reservas al cambiar los efectos sonando");
+    }
+    // El pánico apaga las colas en unos ms; el transporte sigue.
+    controller.panic(false).unwrap();
+    let n = counted(|| {
+        for _ in 0..200 {
+            engine.process(&mut out, 2);
+        }
+    });
+    assert_eq!(n, 0, "reservas con el pánico");
+    assert!(out.iter().all(|x| x.is_finite()));
 }

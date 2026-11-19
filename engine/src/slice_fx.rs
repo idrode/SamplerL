@@ -20,6 +20,7 @@
 use crate::automation::{Automation, MAX_AUTOMATIONS};
 use crate::engine::{Clock, GAIN_SMOOTHING_SECONDS, MOD_BLOCK, drive_block};
 use crate::fx::{Fx, FxState, MAX_FX, MAX_PARAMS};
+use crate::modfx::LfoAt;
 
 /// Lo que siguen sonando los efectos de un golpe después de acabar su
 /// voz (la resonancia de un filtro o la cola de un EQ), para no cortarlos
@@ -47,6 +48,11 @@ impl SliceFx {
         let mut fx = [None; MAX_FX];
         for (slot, f) in fx.iter_mut().zip(chain) {
             f.validate()?;
+            if f.needs_line() {
+                return Err(
+                    "el flanger y el chorus no van en un corte ni en un paso: van en la pista o el grupo (su línea de retardo no cabe en cada voz)",
+                );
+            }
             if matches!(f, Fx::Duck(_)) {
                 return Err("el sidechain no va en un corte: va en la pista (pista:sidechain)");
             }
@@ -164,7 +170,15 @@ impl VoiceFx {
 
     /// Le queda cola por sonar.
     pub fn ringing(&self) -> bool {
-        self.tail > 0
+        self.tail > 0 || self.state.iter().any(FxState::ringing)
+    }
+
+    /// Pánico: la cola de sus efectos se apaga en unos ms.
+    pub fn hush(&mut self) {
+        self.tail = 0;
+        for state in &mut self.state {
+            state.hush();
+        }
     }
 
     /// La voz ya ha acabado y se han procesado `frames` frames más.
@@ -176,8 +190,14 @@ impl VoiceFx {
     /// es la posición de la canción al empezar `buf` (para las curvas).
     pub fn process(&mut self, buf: &mut [f32], clock: &Clock) {
         let snap = !std::mem::replace(&mut self.started, true);
+        let at = |frames: usize| LfoAt {
+            steps: clock.steps + frames as f64 / clock.frames_per_step,
+            seconds: clock.seconds + frames as f64 / clock.sample_rate as f64,
+            frames_per_step: clock.frames_per_step,
+        };
         if self.chain.automation.iter().all(Option::is_none) {
             for state in &mut self.state {
+                state.tick(&at(0));
                 state.process(buf);
             }
             return;
@@ -203,6 +223,7 @@ impl VoiceFx {
                 rate,
             );
             for state in &mut self.state {
+                state.tick(&at(block * MOD_BLOCK));
                 state.process(sub);
             }
         }

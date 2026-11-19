@@ -19,6 +19,7 @@ pub mod lane;
 mod limiter;
 pub mod masking;
 pub mod metronome;
+pub mod modfx;
 pub mod notation;
 pub mod offline;
 mod output;
@@ -53,9 +54,9 @@ pub use engine::{
     SendError, ShapeCurves, SliceShape, loop_seam_room, new_engine,
 };
 pub use fx::{
-    DEFAULT_Q, DuckCurve, DuckMode, DuckParams, DuckTap, DynEqParams, EQ_BANDS, EQ_DEFAULT_FREQS,
-    EQ_DEFAULT_Q, EQ_FREQ_RANGE, EQ_GAIN_RANGE, EQ_Q_RANGE, EqBand, EqKind, FilterKind, Fx, MAX_FX,
-    MAX_LEVEL, MAX_PARAMS,
+    ChorusParams, DEFAULT_Q, DuckCurve, DuckMode, DuckParams, DuckTap, DynEqParams, EQ_BANDS,
+    EQ_DEFAULT_FREQS, EQ_DEFAULT_Q, EQ_FREQ_RANGE, EQ_GAIN_RANGE, EQ_Q_RANGE, EqBand, EqKind,
+    FilterKind, FlangerParams, Fx, Lfo, LfoWave, MAX_FX, MAX_LEVEL, MAX_PARAMS, PhaserParams, Sync,
 };
 pub use grain::{GRAIN_PARAMS, Granular, Knob, MAX_GRAINS};
 pub use group::{Group, Groups, MAX_GROUPS};
