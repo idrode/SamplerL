@@ -252,7 +252,7 @@ fn unknown_effect_errors_list_the_registry() {
     let dir = samples();
     let mut host = ScriptHost::new(RATE);
     let Err(err) = host.eval(
-        &format!("{PRELUDE}t:fx(\"chorus\", {{}})\n"),
+        &format!("{PRELUDE}t:fx(\"tremolo\", {{}})\n"),
         "registro.lua",
         &dir,
     ) else {
@@ -260,7 +260,7 @@ fn unknown_effect_errors_list_the_registry() {
     };
     assert!(
         err.message.contains(
-            "no existe (filter, lowpass, highpass, bitcrush, compressor, distortion, gain, eq, dyneq, duck)"
+            "no existe (filter, lowpass, highpass, bitcrush, compressor, distortion, gain, eq, dyneq, duck, flanger, phaser, chorus)"
         ),
         "{err}"
     );
@@ -426,6 +426,9 @@ fn engine_fx(name: &str) -> engine::Fx {
         Some("eq") => engine::Fx::eq(&[]),
         Some("dyneq") => engine::Fx::DynEq(engine::DynEqParams::new(100.0)),
         Some("duck") => engine::Fx::Duck(engine::DuckParams::new(0)),
+        Some("flanger") => engine::Fx::Flanger(engine::FlangerParams::DEFAULT),
+        Some("phaser") => engine::Fx::Phaser(engine::PhaserParams::DEFAULT),
+        Some("chorus") => engine::Fx::Chorus(engine::ChorusParams::DEFAULT),
         other => panic!("efecto sin motor: {other:?}"),
     }
 }

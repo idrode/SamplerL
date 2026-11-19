@@ -1258,7 +1258,10 @@ fn completion_follows_the_context() {
             "gain",
             "eq",
             "dyneq",
-            "duck"
+            "duck",
+            "flanger",
+            "phaser",
+            "chorus"
         ]
     );
     type_text(&mut app, "filter\", { ");
@@ -1458,7 +1461,10 @@ fn choosing_another_effect_with_the_arrows_replaces_the_rest_of_the_name() {
             "gain",
             "eq",
             "dyneq",
-            "duck"
+            "duck",
+            "flanger",
+            "phaser",
+            "chorus"
         ]
     );
     app.handle(special(Key::Down));

@@ -163,7 +163,8 @@ fn songs_render_like_before_phase_g() {
 /// Huellas de lo que las cinco de [`SONGS`] no tocan (N10 de
 /// `docs/AUDITORIA-2.md`): los sintetizadores (sub con un EQ dinámico en
 /// sidechain, subharm y sh101), los buses con sus efectos, las lanes y los
-/// grupos con macros. Las canciones son copias fijas (basadas en las
+/// grupos con macros, y los efectos de modulación (flanger, phaser y
+/// chorus en la pista, en un corte, en un paso y en un grupo). Las canciones son copias fijas (basadas en las
 /// recetas 10 a 22, que pueden cambiar). Como las de antes, las huellas
 /// solo se comprueban en x86_64 (ver arriba); en ARM64,
 /// `scripts/comparar-audio.sh`. Se imprimen con `HUELLAS=1 cargo test -p
@@ -245,6 +246,24 @@ track("drums", amen)
   :send("delay", 0.2)
 "#,
         0x5af8_f6c5_0fae_ba33,
+    ),
+    (
+        "modulación",
+        r#"bpm(170)
+macro_init("barrido", 0.3)
+local amen = sample("amen.wav"):slice(8)
+amen:fx(3, "phaser", { stages = 6, center = 1200, feedback = 0.5 })
+track("drums", amen)
+  :steps("1 . 2 .  3 . 4{phaser=0.7,stages=12} .  5 6 2 .  7 . 8 .")
+  :fx("flanger", { sync = "1/2", depth = 3, delay = 1.5, feedback = -0.6, mix = 0.5 })
+  :fx("phaser", { rate = lfo("2 compases", 0.2, 2), depth = 1.5, mix = macro("barrido", 0, 0.8) })
+track("kick", amen:slice_at(1)):steps("x . . .  x . . .  x . . .  x . . ."):gain(0.8)
+track("caja", amen:slice_at(3)):steps(". . . .  x . . .  . . . .  x . . x")
+group("bateria", { "kick", "caja" })
+  :fx("chorus", { voices = 3, depth = 4, rate = 0.6, mix = 0.4 })
+  :fx("flanger", { rate = 0.1, wave = "tri", phase = 180, invert = true, mix = 0.3 })
+"#,
+        0x0a63_3be4_b4c4_b462,
     ),
 ];
 

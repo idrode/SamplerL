@@ -234,8 +234,16 @@ fn errors_say_the_line_and_the_old_song_keeps_playing() {
             &["song.lua:4:", "un número, una etiqueta"],
         ),
         (
-            "a:fx(3, \"chorus\", {})",
-            &["song.lua:4:", "\"chorus\"", "no existe"],
+            "a:fx(3, \"tremolo\", {})",
+            &["song.lua:4:", "\"tremolo\"", "no existe"],
+        ),
+        (
+            "a:fx(3, \"flanger\", {})",
+            &["song.lua:4:", "flanger", "van en la pista o el grupo"],
+        ),
+        (
+            "a:fx(1, \"chorus\", { mix = 0.3 })",
+            &["song.lua:4:", "chorus", "van en la pista o el grupo"],
         ),
         (
             "a:fx(3, \"bitcrush\", { bits = 20 })",

@@ -260,6 +260,12 @@ pub fn effects(written: &[WrittenFx]) -> Result<SliceFx, String> {
             )
         })?;
         let who = format!("{{{}}}", w.name);
+        if matches!(effect.name, "flanger" | "chorus") {
+            return Err(format!(
+                "{who}: el {} no va en un paso: va en la pista o el grupo (pista:fx(\"{}\", ...)); su línea de retardo no cabe en cada voz",
+                effect.name, effect.name
+            ));
+        }
         if effect.name == "duck" {
             return Err(format!(
                 "{who}: el sidechain no va en un paso: va en la pista (pista:sidechain)"

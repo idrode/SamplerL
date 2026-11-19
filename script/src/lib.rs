@@ -5495,15 +5495,29 @@ fn set_granular(
     Ok(())
 }
 
-/// Aviso si una pista tiene `:formant()` pero ningún paso con `%`: los
-/// formantes solo se corrigen ahí.
+/// Aviso si una pista tiene `:formant()` y ningún paso en el que actúe:
+/// los pasos con `%` y, si no es 0 (o es una curva), los que no llevan
+/// pitch (con `^`, los formantes se mueven con el tono).
 fn idle_formant(track: &TrackDef) -> Option<String> {
-    let used = track.bars.iter().flatten().flatten().any(|step| step.keep);
+    let moves = track.formant_curve.is_some() || track.formant.is_some_and(|f| f != 0.0);
+    let used = track
+        .bars
+        .iter()
+        .flatten()
+        .flatten()
+        .any(|step| step.keep || (moves && step.semitones == 0.0));
     (track.formant.is_some() && !used).then(|| {
-        format!(
-            "pista \"{}\": formant solo actúa en los pasos con % (pitch sin cambiar la duración) y no hay ninguno",
-            track.name
-        )
+        if moves {
+            format!(
+                "pista \"{}\": formant solo actúa en los pasos con % o sin pitch (con ^, los formantes se mueven con el tono) y no hay ninguno",
+                track.name
+            )
+        } else {
+            format!(
+                "pista \"{}\": formant(0) solo actúa en los pasos con % (pitch sin cambiar la duración) y no hay ninguno",
+                track.name
+            )
+        }
     })
 }
 
@@ -7261,6 +7275,7 @@ fn parse_fx(
             Value::Integer(i) => Some(FxArg::Number(i as f32)),
             Value::Number(n) => Some(FxArg::Number(n as f32)),
             Value::String(s) => Some(FxArg::Text(s.to_string_lossy().to_string())),
+            Value::Boolean(b) => Some(FxArg::Bool(b)),
             _ => Some(FxArg::Other),
         })
     };
@@ -7273,7 +7288,71 @@ pub(crate) enum FxArg {
     Number(f32),
     Curve(engine::Curve),
     Text(String),
+    Bool(bool),
     Other,
+}
+
+/// `sync` de un LFO de efecto: un número `n` (n ciclos por compás), una
+/// figura (`"1/4"`, `"3/16"`: fracción de compás) o `"N compases"` /
+/// `"N pasos"`.
+fn lfo_sync(name: &str, arg: FxArg) -> Result<engine::Sync, String> {
+    let wrong = || {
+        format!(
+            "fx(\"{name}\"): sync es un número de ciclos por compás o lo que dura un ciclo (\"1/4\", \"2 compases\", \"8 pasos\")"
+        )
+    };
+    let small = |v: f64| -> Result<u16, String> {
+        if v.fract() == 0.0 && (1.0..=engine::modfx::MAX_SYNC as f64).contains(&v) {
+            Ok(v as u16)
+        } else {
+            Err(format!(
+                "fx(\"{name}\"): sync fuera de rango (de 1/64 de compás a 64 compases, en enteros)"
+            ))
+        }
+    };
+    let sync = match arg {
+        FxArg::Number(n) => engine::Sync::per_bar(small(n as f64)?),
+        FxArg::Text(text) => {
+            let text = text.trim();
+            if let Some((n, d)) = text.split_once('/') {
+                let int = |t: &str| t.trim().parse::<f64>().map_err(|_| wrong());
+                engine::Sync {
+                    num: small(int(n)?)?,
+                    den: small(int(d)?)?,
+                }
+            } else if let Ok(n) = text.parse::<f64>() {
+                engine::Sync::per_bar(small(n)?)
+            } else {
+                let mut words = text.split_whitespace();
+                let n: f64 = words
+                    .next()
+                    .and_then(|w| w.replace(',', ".").parse().ok())
+                    .ok_or_else(wrong)?;
+                match (words.next(), words.next()) {
+                    (Some("compás" | "compas" | "compases" | "bar" | "bars"), None) => {
+                        engine::Sync {
+                            num: small(n)?,
+                            den: 1,
+                        }
+                    }
+                    (Some("paso" | "pasos" | "step" | "steps"), None) => engine::Sync {
+                        num: small(n)?,
+                        den: STEPS as u16,
+                    },
+                    _ => return Err(wrong()),
+                }
+            }
+        }
+        FxArg::Curve(_) => {
+            return Err(format!(
+                "fx(\"{name}\"): sync no admite ramp() ni lfo(): es lo que dura un ciclo; para mover la velocidad, rate"
+            ));
+        }
+        _ => return Err(wrong()),
+    };
+    sync.validate()
+        .map_err(|e| format!("fx(\"{name}\"): {e}"))?;
+    Ok(sync)
 }
 
 /// El efecto `name` (nombre o alias del registro) con los parámetros que da
@@ -7295,7 +7374,7 @@ pub(crate) fn build_fx(
             }
             Some(FxArg::Number(v)) => Ok(Some(v)),
             Some(FxArg::Text(t)) => t.trim().parse().map(Some).map_err(|_| wrong()),
-            Some(FxArg::Other) => Err(wrong()),
+            Some(FxArg::Bool(_) | FxArg::Other) => Err(wrong()),
         }
     };
     // Un parámetro de texto (`type`): `None` si no está.
@@ -7305,6 +7384,47 @@ pub(crate) fn build_fx(
             Some(FxArg::Text(t)) => Ok(Some(t)),
             Some(FxArg::Number(n)) => Ok(Some(n.to_string())),
             Some(_) => Err(wrong),
+        }
+    };
+    // El LFO de los efectos de modulación.
+    let lfo = |default: engine::Lfo| -> Result<engine::Lfo, String> {
+        let wave = text(
+            "wave",
+            format!("fx(\"{name}\"): wave es \"sine\" o \"tri\""),
+        )?;
+        let wave = match wave.as_deref() {
+            None => default.wave,
+            Some(w) => engine::LfoWave::from_name(w)
+                .ok_or_else(|| format!("fx(\"{name}\"): wave \"{w}\" no existe (sine o tri)"))?,
+        };
+        let sync = match arg("sync")? {
+            None => None,
+            Some(a) => Some(lfo_sync(name, a)?),
+        };
+        Ok(engine::Lfo {
+            rate_hz: get("rate")?.unwrap_or(default.rate_hz),
+            sync,
+            wave,
+            phase_deg: get("phase")?.unwrap_or(default.phase_deg),
+        })
+    };
+    // Un sí o no (`invert = true`; en un paso, `invert=1`).
+    let flag = |key: &str| -> Result<Option<bool>, String> {
+        let wrong = || format!("fx(\"{name}\"): {key} es true o false");
+        match arg(key)? {
+            None => Ok(None),
+            Some(FxArg::Bool(b)) => Ok(Some(b)),
+            Some(FxArg::Number(n)) if n == 0.0 || n == 1.0 => Ok(Some(n == 1.0)),
+            Some(FxArg::Text(t)) if t == "true" || t == "false" => Ok(Some(t == "true")),
+            Some(_) => Err(wrong()),
+        }
+    };
+    // Un número entero (etapas, voces).
+    let whole = |key: &str| -> Result<Option<u8>, String> {
+        match get(key)? {
+            None => Ok(None),
+            Some(v) if v.fract() == 0.0 && (0.0..=255.0).contains(&v) => Ok(Some(v as u8)),
+            Some(v) => Err(format!("fx(\"{name}\"): {key} es un número entero, no {v}")),
         }
     };
     let filter = |kind: FilterKind| -> Result<Fx, String> {
@@ -7356,6 +7476,38 @@ pub(crate) fn build_fx(
         "gain" => Fx::Gain {
             level: get("level")?.unwrap_or(1.0),
         },
+        "flanger" => {
+            let d = engine::FlangerParams::DEFAULT;
+            Fx::Flanger(engine::FlangerParams {
+                lfo: lfo(d.lfo)?,
+                depth_ms: get("depth")?.unwrap_or(d.depth_ms),
+                delay_ms: get("delay")?.unwrap_or(d.delay_ms),
+                feedback: get("feedback")?.unwrap_or(d.feedback),
+                mix: get("mix")?.unwrap_or(d.mix),
+                invert: flag("invert")?.unwrap_or(d.invert),
+            })
+        }
+        "phaser" => {
+            let d = engine::PhaserParams::DEFAULT;
+            Fx::Phaser(engine::PhaserParams {
+                lfo: lfo(d.lfo)?,
+                depth_oct: get("depth")?.unwrap_or(d.depth_oct),
+                center_hz: get("center")?.unwrap_or(d.center_hz),
+                feedback: get("feedback")?.unwrap_or(d.feedback),
+                stages: whole("stages")?.unwrap_or(d.stages),
+                mix: get("mix")?.unwrap_or(d.mix),
+            })
+        }
+        "chorus" => {
+            let d = engine::ChorusParams::DEFAULT;
+            Fx::Chorus(engine::ChorusParams {
+                lfo: lfo(d.lfo)?,
+                depth_ms: get("depth")?.unwrap_or(d.depth_ms),
+                delay_ms: get("delay")?.unwrap_or(d.delay_ms),
+                voices: whole("voices")?.unwrap_or(d.voices),
+                mix: get("mix")?.unwrap_or(d.mix),
+            })
+        }
         "dyneq" => {
             let kind = text("type", "fx(\"dyneq\"): type tiene que ser un texto".into())?;
             let kind = match kind.as_deref() {
@@ -7673,7 +7825,8 @@ impl UserData for TrackHandle {
             },
         );
 
-        // `:formant(n)`: los formantes de los pasos con `%`.
+        // `:formant(n)`: los formantes de los pasos con `%` y, si no es 0,
+        // también los de los pasos sin pitch.
         methods.add_method("formant", |lua, this, semitones: Value| {
             let who = format!("formant({})", value_text(&semitones));
             let max = engine::MAX_FORMANT;

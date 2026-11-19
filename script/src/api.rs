@@ -247,7 +247,86 @@ const ENVELOPE: &str = "la envolvente se fija con el sintetizador al cargar; par
 const DUR: &str = "es una duración que puede ser una figura (\"1/8\") o compases, no solo ms; para cambiarla golpe a golpe, en las llaves del paso (`3{dur=1/16}`)";
 const LOOP_POINTS: &str = "son los puntos del tramo que se repite y cada golpe los lee al nacer; para cambiarlos golpe a golpe, en las llaves del paso (`3{loop_start=40}`)";
 const VIEW: &str = "es de cómo se ve, no de cómo suena: se lee al cargar";
+const LFO_SYNC: &str = "es una figura o compases (\"1/4\", \"2 compases\"), no un número que se recorra; para mover la velocidad, `rate` sin `sync`";
+const STAGES: &str = "es un número de filtros: entre 4 y 6 etapas no hay nada que recorrer";
+const VOICES_COUNT: &str =
+    "cambia cuántas voces suenan, no cómo suenan: entra con el patrón al compás";
 const DELAY_TIME: &str = "es una figura (\"1/8\"), no un número; además, mover el retardo de una línea con repeticiones dentro suena a cambio de pitch";
+
+/// Los parámetros del LFO de los efectos de modulación (flanger, phaser y
+/// chorus), con sus valores por defecto.
+macro_rules! mod_lfo_params {
+    ($rate:literal) => {
+        [
+            FxParam {
+                name: "rate",
+                description: "velocidad del LFO, en Hz (sin `sync`)",
+                default: Some($rate),
+                valid: "0.01–20",
+                values: &[],
+                template: concat!("rate = ${", $rate, "}"),
+                automate: Auto::Smooth,
+            },
+            FxParam {
+                name: "sync",
+                description: "ata el LFO al compás: lo que dura un ciclo (\"1/4\", \"3/16\", \"2 compases\", \"8 pasos\") o un número n, n ciclos por compás; en fase con la canción y manda sobre `rate`",
+                default: Some("libre, a `rate`"),
+                valid: "de 1/64 de compás a 64 compases",
+                values: &[],
+                template: "sync = \"${1/4}\"",
+                automate: Auto::No(LFO_SYNC),
+            },
+            FxParam {
+                name: "wave",
+                description: "forma del LFO",
+                default: Some("\"sine\""),
+                valid: "`\"sine\"` o `\"tri\"`",
+                values: &["sine", "tri"],
+                template: "wave = \"${tri}\"",
+                automate: Auto::No(DISCRETE),
+            },
+            FxParam {
+                name: "phase",
+                description: "desfase del LFO del canal derecho, en grados (0, mono; 90 o 180, más ancho)",
+                default: Some("90"),
+                valid: "0–180",
+                values: &[],
+                template: "phase = ${90}",
+                automate: Auto::Smooth,
+            },
+        ]
+    };
+}
+
+const FLANGER_LFO: [FxParam; 4] = mod_lfo_params!("0.25");
+const PHASER_LFO: [FxParam; 4] = mod_lfo_params!("0.5");
+const CHORUS_LFO: [FxParam; 4] = mod_lfo_params!("0.8");
+
+/// Parte mojada de los efectos de modulación (su parámetro principal en
+/// las llaves de un paso).
+const fn mod_mix() -> FxParam {
+    FxParam {
+        name: "mix",
+        description: "parte mojada (0 = solo la seca, bit a bit; 0.5, los huecos más hondos; 1 = solo la mojada)",
+        default: Some("0.5"),
+        valid: "0–1",
+        values: &[],
+        template: "mix = ${0.5}",
+        automate: Auto::Smooth,
+    }
+}
+
+const fn mod_feedback(default: &'static str, what: &'static str) -> FxParam {
+    FxParam {
+        name: "feedback",
+        description: what,
+        default: Some(default),
+        valid: "-0.95–0.95",
+        values: &[],
+        template: "feedback = ${0.5}",
+        automate: Auto::Smooth,
+    }
+}
 
 /// Efecto de pista para `:fx(nombre, parámetros)`.
 #[derive(Debug, Clone, Copy)]
@@ -526,6 +605,9 @@ pub fn effect_name(fx: &engine::Fx) -> &'static str {
         Fx::Eq { .. } => "eq",
         Fx::DynEq(_) => "dyneq",
         Fx::Duck(_) => "duck",
+        Fx::Flanger(_) => "flanger",
+        Fx::Phaser(_) => "phaser",
+        Fx::Chorus(_) => "chorus",
     }
 }
 
@@ -2636,21 +2718,24 @@ pub const FUNCTIONS: &[Function] = &[
         receiver: Receiver::Track,
         signature: "pista:formant(semitonos)",
         returns: Some(Receiver::Track),
-        summary: "Formantes de los pasos con % (pitch sin cambiar la duración): 0 los deja donde estaban, n los desplaza n semitonos.",
+        summary: "Formantes de la pista: en los pasos con % (pitch sin cambiar la duración) 0 los deja donde estaban y n los desplaza n semitonos; en los pasos sin pitch, n cambia el timbre sin cambiar la nota.",
         doc: "Al transponer, la envolvente del sonido sube o baja con el tono: una \
               voz subida suena a ardilla y una caja bajada, a bombo de juguete. Con \
               `formant(0)`, los pasos con `%` cambian de tono pero su envolvente se \
               queda donde estaba (cada grano se analiza con LPC y se blanquea y se \
               vuelve a colorear con la del original); con `formant(n)` se desplaza \
-              `n` semitonos por su cuenta, también con `%0` (cambiar el timbre sin \
-              cambiar la nota). Solo actúa en los pasos con `%` (si no hay \
-              ninguno, avisa); con `^` el sonido se lee más deprisa o más despacio \
-              entero, como un sampler clásico. Cuesta otro 2 % de un núcleo por \
-              voz. En un instrumento va en su tabla: `sample:instrument({ keep = \
+              `n` semitonos por su cuenta, también en los pasos sin pitch (cambiar \
+              el timbre sin cambiar la nota ni la duración: el golpe pasa por los \
+              granos como un `%0`), con la misma regla que `formant` en \
+              `cortes:set` (que manda sobre este). Con `^` no actúa: el sonido se \
+              lee más deprisa o más despacio entero, como un sampler clásico (si no \
+              hay ningún paso en el que actúe, avisa). Recomendado entre -12 y 12: \
+              más allá aparecen artefactos; mejor en voz, bajo y sintes que en \
+              percusión o ruido. Cuesta otro 2 % de un núcleo por voz. En un instrumento va en su tabla: `sample:instrument({ keep = \
               true, formant = 0 })`. Admite `ramp()` y `lfo()`, por golpe.",
         params: &[Param {
             name: "semitonos",
-            description: "-24 a 24 (0 deja los formantes donde estaban), `ramp()` o `lfo()`",
+            description: "-24 a 24 (0 deja los formantes donde estaban; mejor entre -12 y 12), `ramp()` o `lfo()`",
         }],
         template: "formant(${0})",
         example: Some(
@@ -3518,6 +3603,134 @@ pub const EFFECTS: &[Effect] = &[
         ],
         template: "{ source = \"${kick}\", depth = ${-9}, release = ${180} }",
     },
+    Effect {
+        name: "flanger",
+        aliases: &[],
+        summary: "Flanger: una copia retardada unos ms cuyo retardo barre un LFO, con realimentación; solo en la pista o el grupo.",
+        params: &[
+            mod_mix(),
+            FLANGER_LFO[0],
+            FLANGER_LFO[1],
+            FxParam {
+                name: "depth",
+                description: "lo que barre el LFO por encima del retardo base, en ms",
+                default: Some("2"),
+                valid: "0–10",
+                values: &[],
+                template: "depth = ${2}",
+                automate: Auto::Smooth,
+            },
+            FxParam {
+                name: "delay",
+                description: "retardo base, en ms (corto, metálico; largo, más cerca del chorus)",
+                default: Some("1"),
+                valid: "0.1–15",
+                values: &[],
+                template: "delay = ${1}",
+                automate: Auto::Smooth,
+            },
+            mod_feedback(
+                "0.5",
+                "cuánto de la salida vuelve a la línea (negativo, con la polaridad invertida: más hueco)",
+            ),
+            FLANGER_LFO[2],
+            FLANGER_LFO[3],
+            FxParam {
+                name: "invert",
+                description: "la copia retardada sale invertida (los huecos van donde estaban los picos)",
+                default: Some("false"),
+                valid: "`true` o `false`",
+                values: &[],
+                template: "invert = ${true}",
+                automate: Auto::No(DISCRETE),
+            },
+        ],
+        template: "{ rate = ${0.25}, depth = ${2}, feedback = ${0.5}, mix = ${0.5} }",
+    },
+    Effect {
+        name: "phaser",
+        aliases: &[],
+        summary: "Phaser: filtros paso-todo en serie que un LFO barre alrededor de center, con realimentación; también en un corte o un paso.",
+        params: &[
+            mod_mix(),
+            PHASER_LFO[0],
+            PHASER_LFO[1],
+            FxParam {
+                name: "depth",
+                description: "octavas que barre el LFO a cada lado de `center`",
+                default: Some("2"),
+                valid: "0–4",
+                values: &[],
+                template: "depth = ${2}",
+                automate: Auto::Smooth,
+            },
+            FxParam {
+                name: "center",
+                description: "centro del barrido en Hz",
+                default: Some("800"),
+                valid: "50–10000",
+                values: &[],
+                template: "center = ${800}",
+                automate: Auto::Smooth,
+            },
+            mod_feedback(
+                "0.3",
+                "cuánto de la salida vuelve a la entrada (más, huecos más marcados; negativo, en otros sitios)",
+            ),
+            FxParam {
+                name: "stages",
+                description: "filtros paso-todo en serie: cada dos, un hueco más",
+                default: Some("4"),
+                valid: "2, 4, 6, 8 o 12",
+                values: &[],
+                template: "stages = ${6}",
+                automate: Auto::No(STAGES),
+            },
+            PHASER_LFO[2],
+            PHASER_LFO[3],
+        ],
+        template: "{ rate = ${0.5}, depth = ${2}, center = ${800}, mix = ${0.5} }",
+    },
+    Effect {
+        name: "chorus",
+        aliases: &[],
+        summary: "Chorus: de 1 a 4 copias con retardos largos que barre un LFO, sin realimentación; solo en la pista o el grupo.",
+        params: &[
+            mod_mix(),
+            CHORUS_LFO[0],
+            CHORUS_LFO[1],
+            FxParam {
+                name: "depth",
+                description: "lo que barre el LFO por encima del retardo base, en ms",
+                default: Some("3"),
+                valid: "0–10",
+                values: &[],
+                template: "depth = ${3}",
+                automate: Auto::Smooth,
+            },
+            FxParam {
+                name: "delay",
+                description: "retardo base, en ms",
+                default: Some("15"),
+                valid: "10–30",
+                values: &[],
+                template: "delay = ${15}",
+                automate: Auto::Smooth,
+            },
+            FxParam {
+                name: "voices",
+                description: "copias, cada una con su LFO desfasado",
+                default: Some("2"),
+                valid: "entero de 1 a 4",
+                values: &[],
+                template: "voices = ${3}",
+                automate: Auto::No(VOICES_COUNT),
+            },
+            CHORUS_LFO[2],
+            CHORUS_LFO[3],
+        ],
+        template: "{ rate = ${0.8}, depth = ${3}, mix = ${0.5} }",
+    },
 ];
 
 /// Parámetros de `cortes:set([i,] { ... })`: la forma de un corte.
@@ -3641,7 +3854,7 @@ pub const SLICE_PARAMS: &[FxParam] = &[
     },
     FxParam {
         name: "formant",
-        description: "mueve el timbre del corte sin cambiar su nota, en semitonos (la corrección de formantes de `%`, en tiempo real): vale en los golpes con `%` y en los que no llevan pitch; con `^`, los formantes se mueven con el tono (error). Manda sobre `pista:formant()`. Mejor en material tonal (voz, bajo, sintes)",
+        description: "mueve el timbre del corte sin cambiar su nota, en semitonos (la corrección de formantes de `%`, en tiempo real): vale en los golpes con `%` y en los que no llevan pitch; con `^`, los formantes se mueven con el tono (error). Manda sobre `pista:formant()`. Mejor en material tonal (voz, bajo, sintes) y entre -12 y 12",
         default: None,
         valid: "-24–24",
         values: &[],

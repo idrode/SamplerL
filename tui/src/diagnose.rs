@@ -584,8 +584,8 @@ mod tests {
             (r#"amen:fx("snre", "bitcrush", {})"#, vec!["snre"]),
             (r#"amen:fx("snare", "bitcrsh", {})"#, vec!["bitcrsh"]),
             (
-                r#"amen:fx({ "kik", 2, "snare" }, "chorus", {})"#,
-                vec!["kik", "chorus"],
+                r#"amen:fx({ "kik", 2, "snare" }, "tremolo", {})"#,
+                vec!["kik", "tremolo"],
             ),
             (r#"amen:fx(4, "reverb", {})"#, vec!["reverb"]),
             (

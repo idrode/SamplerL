@@ -131,3 +131,30 @@ fn errors_say_the_line() {
         assert!(err.contains(message), "{source}: {err}");
     }
 }
+
+#[test]
+fn track_formant_also_moves_unpitched_steps() {
+    let plain =
+        "track(\"v\", sample(\"voz.wav\"):slice(1)):steps(\"1 . . .  . . . .  . . . .  . . . .\")";
+    let base = song(plain).unwrap();
+    let moved = song(&format!("{plain}:formant(5)")).unwrap();
+    // Sin aviso: el paso sin pitch se mueve.
+    assert!(moved.warnings.is_empty(), "{:?}", moved.warnings);
+    let a = base.render(48_000, 1).unwrap();
+    let b = moved.render(48_000, 1).unwrap();
+    assert_ne!(a, b);
+    // Como el mismo formante en el corte.
+    let slice = song(
+        "local v = sample(\"voz.wav\"):slice(1)\nv:set(1, { formant = 5 })\ntrack(\"v\", v):steps(\"1 . . .  . . . .  . . . .  . . . .\")",
+    )
+    .unwrap();
+    assert_eq!(b, slice.render(48_000, 1).unwrap());
+    // Con 0, en un paso sin pitch no hace nada (y avisa).
+    let zero = song(&format!("{plain}:formant(0)")).unwrap();
+    assert_eq!(a, zero.render(48_000, 1).unwrap());
+    assert!(
+        zero.warnings
+            .iter()
+            .any(|w| w.contains("formant(0) solo actúa"))
+    );
+}

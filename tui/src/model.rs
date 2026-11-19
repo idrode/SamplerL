@@ -789,6 +789,27 @@ pub fn fx_text(fx: &Fx) -> String {
         }
         Fx::Distortion { drive, mix } => format!("drive ×{drive} mix {mix:.2}"),
         Fx::Gain { level } => format!("gain ×{level:.2}"),
+        Fx::Flanger(p) => format!(
+            "flanger {} {:.1} ms fb {:.2} mix {:.2}",
+            lfo_label(&p.lfo),
+            p.depth_ms,
+            p.feedback,
+            p.mix
+        ),
+        Fx::Phaser(p) => format!(
+            "phaser {} {} ×{} mix {:.2}",
+            lfo_label(&p.lfo),
+            hz_label(p.center_hz),
+            p.stages,
+            p.mix
+        ),
+        Fx::Chorus(p) => format!(
+            "chorus {} {:.0} ms ×{} mix {:.2}",
+            lfo_label(&p.lfo),
+            p.delay_ms,
+            p.voices,
+            p.mix
+        ),
         Fx::DynEq(p) => {
             let key = p
                 .sidechain
@@ -835,6 +856,16 @@ fn duck_text(p: &engine::DuckParams) -> String {
         String::new()
     };
     format!("duck{mode} {:.0} {:.0}ms{band}", p.depth_db, p.release_ms)
+}
+
+/// La velocidad del LFO de un efecto de modulación: `0.25 Hz` o, atado
+/// al compás, lo que dura un ciclo (`1/4`, `2 comp`).
+fn lfo_label(lfo: &engine::Lfo) -> String {
+    match lfo.sync {
+        Some(s) if s.den == 1 => format!("{} comp", s.num),
+        Some(s) => format!("{}/{}", s.num, s.den),
+        None => format!("{} Hz", lfo.rate_hz),
+    }
 }
 
 /// Frecuencia corta: `300`, `2.5k`, `12k`.
