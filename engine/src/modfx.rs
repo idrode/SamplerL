@@ -144,7 +144,7 @@ impl Sync {
     /// Fase (en ciclos, de 0 a 1) en la posición `steps` de la canción.
     /// Con aritmética entera sobre los pasos enteros: no deriva por larga
     /// que sea la canción.
-    fn phase_at(&self, steps: f64) -> f64 {
+    pub(crate) fn phase_at(&self, steps: f64) -> f64 {
         let steps = steps.max(0.0);
         let whole = steps.floor();
         let period = crate::sequencer::STEPS as u64 * self.num as u64;

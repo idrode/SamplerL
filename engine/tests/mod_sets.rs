@@ -5,7 +5,8 @@
 use std::sync::Arc;
 
 use engine::modulation::{
-    Ahdsr, CUTOFF, Chain, Device, DeviceKind, ModSet, ModTable, ModValue, Op, PAN, PITCH, VOL,
+    Ahdsr, CUTOFF, Chain, Device, DeviceKind, Fader, FaderScale, ModLfo, ModSet, ModTable,
+    ModValue, ModWave, Op, PAN, PITCH, VOL,
 };
 use engine::notation::parse_steps;
 use engine::{Batch, Pattern, Sample, Slices, Step, detect_mono, new_engine, offline};
@@ -126,13 +127,13 @@ fn ahdsr_reaches_its_levels_on_time_and_releases_at_the_end_of_the_step() {
 }
 
 #[test]
-#[allow(irrefutable_let_patterns)]
 fn curves_bend_the_segments() {
     let (sample, slices) = dc(0.5, RATE as usize);
     let mut a = ahdsr(0.0, 0.0, 100.0, 0.0, 10.0);
-    if let DeviceKind::Ahdsr(e) = &mut a.kind {
-        e.curves[1] = 1.0;
-    }
+    let DeviceKind::Ahdsr(e) = &mut a.kind else {
+        unreachable!()
+    };
+    e.curves[1] = 1.0;
     let out = left(&render(
         vec![(0, one_hit(sample, &slices, Some(0)))],
         Some(table(&[set_with(VOL, &[a])])),
@@ -487,4 +488,169 @@ fn ranges_are_validated() {
     set.pitch_range = 100.0;
     assert!(set.validate().is_err());
     assert!(ModTable::new().set(16, None).is_err());
+}
+
+fn lfo(wave: ModWave, hz: f32, f: impl FnOnce(&mut ModLfo)) -> Device {
+    let mut l = ModLfo {
+        wave,
+        rate: ModValue::fixed(hz),
+        ..ModLfo::DEFAULT
+    };
+    f(&mut l);
+    Device {
+        bipolar: true,
+        ..Device::new(DeviceKind::Lfo(l))
+    }
+}
+
+/// El volumen (de 0 a 1) que da un set de un solo golpe sobre un sample
+/// constante, en cada frame.
+fn vol_curve(set: ModSet, frames: usize) -> Vec<f32> {
+    let (sample, slices) = dc(0.5, 2 * RATE as usize);
+    let out = left(&render(
+        vec![(0, one_hit(sample, &slices, Some(0)))],
+        Some(table(&[set])),
+        frames,
+    ));
+    out.iter().map(|x| x / 0.5).collect()
+}
+
+/// Frames entre los cruces hacia arriba por `level` de `v` desde `from`.
+fn crossings(v: &[f32], level: f32, from: usize) -> Vec<usize> {
+    (from + 1..v.len())
+        .filter(|&i| v[i - 1] < level && v[i] >= level)
+        .collect()
+}
+
+#[test]
+fn the_lfo_has_its_rate_phase_and_delay() {
+    // Unipolar sumado a 0: el volumen es 0,5 + 0,5·sen.
+    let unipolar = |l: Device| Device {
+        bipolar: false,
+        op: Some(Op::Add),
+        ..l
+    };
+    let make = |l: Device| {
+        let mut set = set_with(VOL, &[unipolar(l)]);
+        set.chains[VOL].as_mut().unwrap().input = 0.0;
+        set
+    };
+    let v = vol_curve(make(lfo(ModWave::Sine, 10.0, |_| {})), ms(1000.0));
+    let up = crossings(&v, 0.5, ms(10.0));
+    let period = (up[up.len() - 1] - up[0]) as f32 / (up.len() - 1) as f32;
+    assert!((period - 4800.0).abs() < 2.0, "{period}");
+    // Empieza en su fase: el seno sube desde 0,5; con 90°, arriba.
+    assert!((v[ms(6.0)] - (0.5 + 0.5 * (std::f32::consts::TAU * 0.06).sin())).abs() < 0.01);
+    let top = vol_curve(make(lfo(ModWave::Sine, 10.0, |l| l.phase = 90.0)), ms(10.0));
+    assert!((top[ms(6.0)] - (0.5 + 0.5 * (std::f32::consts::TAU * 0.31).sin())).abs() < 0.01);
+    // Con retardo de 200 ms: quieto en 0,5 hasta entonces.
+    let late = vol_curve(
+        make(lfo(ModWave::Sine, 10.0, |l| l.delay = 200.0)),
+        ms(400.0),
+    );
+    assert!(
+        late[ms(10.0)..ms(199.0)]
+            .iter()
+            .all(|x| (x - 0.5).abs() < 1e-4)
+    );
+    assert!(late[ms(225.0)] > 0.95);
+    // Atado al compás: un ciclo cada negra (4 pasos, 500 ms a 120 BPM).
+    let sync = vol_curve(
+        make(lfo(ModWave::Sine, 1.0, |l| {
+            l.sync = Some(engine::Sync { num: 1, den: 4 })
+        })),
+        ms(1600.0),
+    );
+    let up = crossings(&sync, 0.5, ms(10.0));
+    let period = (up[up.len() - 1] - up[0]) as f32 / (up.len() - 1) as f32;
+    assert!((period - 24_000.0).abs() < 2.0, "{period}");
+}
+
+#[test]
+fn the_lfo_restarts_with_each_hit_unless_free() {
+    let (sample, slices) = dc(0.5, RATE as usize);
+    let steps = parse_steps("1 . . 1  . . . .  . . . .  . . . .").unwrap();
+    let render_with = |l: Device| {
+        let mut set = set_with(PAN, &[l]);
+        set.chains[PAN].as_mut().unwrap().input = 0.0;
+        let p = Pattern::from_steps(sample.clone(), &slices, steps)
+            .unwrap()
+            .with_mod_sets(Some(0), &[])
+            .unwrap();
+        let out = render(vec![(0, p)], Some(table(&[set])), 5 * STEP);
+        // El pan: lo que pesa la derecha.
+        (0..5 * STEP)
+            .map(|i| out[2 * i + 1] - out[2 * i])
+            .collect::<Vec<f32>>()
+    };
+    // 3 Hz: el segundo golpe (a los 375 ms) vuelve a empezar igual.
+    let reset = render_with(lfo(ModWave::Sine, 3.0, |_| {}));
+    for i in ms(6.0)..ms(100.0) {
+        assert!((reset[i] - reset[i + 3 * STEP]).abs() < 1e-4, "frame {i}");
+    }
+    // Libre: sigue la canción (no se repite).
+    let free = render_with(lfo(ModWave::Sine, 3.0, |l| l.free = true));
+    let differs = (ms(6.0)..ms(100.0)).any(|i| (free[i] - free[i + 3 * STEP]).abs() > 0.05);
+    assert!(differs);
+}
+
+#[test]
+fn every_lfo_wave_has_its_shape_and_random_repeats() {
+    let shape_of = |wave| {
+        let mut set = set_with(
+            VOL,
+            &[Device {
+                op: Some(Op::Add),
+                bipolar: false,
+                ..lfo(wave, 2.0, |_| {})
+            }],
+        );
+        set.chains[VOL].as_mut().unwrap().input = 0.0;
+        vol_curve(set, ms(1000.0))
+    };
+    // Sierra: sube de 0 a 1 en cada ciclo (500 ms).
+    let saw = shape_of(ModWave::Saw);
+    assert!((saw[ms(250.0)] - 0.5).abs() < 0.01);
+    assert!(saw[ms(490.0)] > 0.95 && saw[ms(510.0)] < 0.05);
+    // Cuadrada: arriba la primera mitad, abajo la segunda.
+    let square = shape_of(ModWave::Square);
+    assert!((square[ms(100.0)] - 1.0).abs() < 1e-4 && square[ms(350.0)].abs() < 1e-4);
+    // Triángulo: arriba al cuarto.
+    let tri = shape_of(ModWave::Triangle);
+    assert!((tri[ms(125.0)] - 1.0).abs() < 0.01);
+    // Aleatoria: fija en cada ciclo y la misma en cada render.
+    let a = shape_of(ModWave::Random);
+    let b = shape_of(ModWave::Random);
+    assert_eq!(a, b);
+    assert!((a[ms(100.0)] - a[ms(400.0)]).abs() < 1e-5);
+    assert!(a.iter().all(|x| (0.0..=1.0).contains(x)));
+}
+
+#[test]
+fn fader_and_operand() {
+    let fade = Device::new(DeviceKind::Fader(Fader {
+        from: 1.0,
+        to: 0.0,
+        time: 100.0,
+        delay: 50.0,
+        scale: FaderScale::Linear,
+    }));
+    let v = vol_curve(set_with(VOL, &[fade]), ms(300.0));
+    assert!((v[ms(40.0)] - 1.0).abs() < 1e-3);
+    assert!((v[ms(100.0)] - 0.5).abs() < 2e-3);
+    assert!(v[ms(160.0)].abs() < 1e-3);
+    // Exponencial: a mitad, menos camino que la recta.
+    let exp = Device::new(DeviceKind::Fader(Fader {
+        scale: FaderScale::Exp,
+        ..match fade.kind {
+            DeviceKind::Fader(f) => f,
+            _ => unreachable!(),
+        }
+    }));
+    let v = vol_curve(set_with(VOL, &[exp]), ms(300.0));
+    assert!(v[ms(100.0)] > 0.5);
+    // El operando, un valor fijo.
+    let op = Device::new(DeviceKind::Operand(ModValue::fixed(0.3)));
+    let v = vol_curve(set_with(VOL, &[op]), ms(60.0));
+    assert!((v[ms(50.0)] - 0.3).abs() < 1e-4);
 }

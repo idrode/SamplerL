@@ -281,10 +281,214 @@ impl Ahdsr {
     }
 }
 
+/// Forma de un LFO por golpe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModWave {
+    Sine,
+    Triangle,
+    /// Diente de sierra que sube.
+    Saw,
+    Square,
+    /// Un valor al azar en cada ciclo (sample & hold), el mismo en cada
+    /// render.
+    Random,
+}
+
+impl ModWave {
+    pub const ALL: [(ModWave, &'static str); 5] = [
+        (ModWave::Sine, "sine"),
+        (ModWave::Triangle, "tri"),
+        (ModWave::Saw, "saw"),
+        (ModWave::Square, "square"),
+        (ModWave::Random, "random"),
+    ];
+
+    pub fn from_name(name: &str) -> Option<ModWave> {
+        Self::ALL.iter().find(|(_, n)| *n == name).map(|(w, _)| *w)
+    }
+
+    pub fn name(self) -> &'static str {
+        Self::ALL
+            .iter()
+            .find(|(w, _)| *w == self)
+            .map_or("sine", |(_, n)| n)
+    }
+
+    /// De -1 a 1 en la fase `phase` (ciclos); `seed`, el azar del golpe.
+    fn at(self, phase: f64, seed: u64) -> f32 {
+        let p = phase.rem_euclid(1.0) as f32;
+        match self {
+            ModWave::Sine => (std::f32::consts::TAU * p).sin(),
+            ModWave::Triangle => 1.0 - 4.0 * (p - 0.25 - (p - 0.25).round()).abs(),
+            ModWave::Saw => 2.0 * p - 1.0,
+            ModWave::Square => {
+                if p < 0.5 {
+                    1.0
+                } else {
+                    -1.0
+                }
+            }
+            ModWave::Random => {
+                let cycle = phase.floor() as i64 as u64;
+                let mut x = seed ^ cycle.wrapping_mul(0x9e37_79b9_7f4a_7c15);
+                x ^= x >> 33;
+                x = x.wrapping_mul(0xff51_afd7_ed55_8ccd);
+                x ^= x >> 33;
+                (x >> 40) as f32 / (1u64 << 23) as f32 - 1.0
+            }
+        }
+    }
+}
+
+/// LFO por golpe: su fase vuelve a empezar en cada golpe (salvo `free`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ModLfo {
+    pub wave: ModWave,
+    /// Ciclos por segundo (sin `sync`).
+    pub rate: ModValue,
+    /// Atado al compás: un ciclo dura lo que dice (manda sobre `rate`).
+    pub sync: Option<crate::modfx::Sync>,
+    /// Fase al empezar, en grados.
+    pub phase: f32,
+    /// Ms en silencio (en 0) antes de empezar.
+    pub delay: f32,
+    /// Libre: la fase sigue la canción (no vuelve a empezar con el golpe).
+    pub free: bool,
+}
+
+impl ModLfo {
+    pub const DEFAULT: ModLfo = ModLfo {
+        wave: ModWave::Sine,
+        rate: ModValue::fixed(4.0),
+        sync: None,
+        phase: 0.0,
+        delay: 0.0,
+        free: false,
+    };
+
+    fn validate(&self) -> Result<(), &'static str> {
+        self.rate
+            .check((0.01, 50.0), "rate fuera de rango (0.01 a 50 Hz)")?;
+        if let Some(s) = self.sync {
+            s.validate()?;
+        }
+        if !(self.phase.is_finite() && (0.0..=360.0).contains(&self.phase)) {
+            return Err("phase fuera de rango (0 a 360 grados)");
+        }
+        if !(self.delay.is_finite() && (0.0..=MAX_ENV_MS).contains(&self.delay)) {
+            return Err("delay fuera de rango (0 a 60000 ms)");
+        }
+        Ok(())
+    }
+
+    /// De -1 a 1 en el punto de control `t` (frames desde el golpe; se
+    /// llama con `t` = 0, 32, 64...). `state.phase` lleva la fase.
+    fn value(&self, t: u32, state: &mut DevState, seed: u64, at: &ModAt, sr: u32) -> f32 {
+        let start = self.phase as f64 / 360.0;
+        if self.free {
+            let phase = match self.sync {
+                Some(sync) => sync.phase_at(at.steps),
+                None => at.seconds.max(0.0) * self.rate.at(at) as f64,
+            };
+            return self.wave.at(start + phase, seed);
+        }
+        let delay = (self.delay as f64 / 1000.0 * sr as f64) as u32;
+        if t < delay {
+            return 0.0;
+        }
+        let since = (t - delay) as f64;
+        let phase = match (self.sync, self.rate.curve) {
+            // Atado al compás: de la cuenta de frames, sin acumular.
+            (Some(sync), _) => since / (sync.steps() * at.frames_per_step.max(1e-9)),
+            // A una velocidad fija, igual.
+            (None, None) => since * self.rate.value as f64 / sr as f64,
+            // Con la velocidad moviéndose, acumulada punto a punto.
+            (None, Some(_)) => {
+                if !state.started {
+                    state.started = true;
+                    state.phase = 0.0;
+                } else {
+                    state.phase += self.rate.at(at) as f64 * CONTROL_FRAMES as f64 / sr as f64;
+                }
+                state.phase
+            }
+        };
+        self.wave.at(start + phase, seed)
+    }
+}
+
+/// Cómo va un fader de un valor a otro.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FaderScale {
+    Linear,
+    /// Despacio al principio.
+    Exp,
+    /// Deprisa al principio.
+    Log,
+}
+
+impl FaderScale {
+    pub const ALL: [(FaderScale, &'static str); 3] = [
+        (FaderScale::Linear, "linear"),
+        (FaderScale::Exp, "exp"),
+        (FaderScale::Log, "log"),
+    ];
+
+    pub fn from_name(name: &str) -> Option<FaderScale> {
+        Self::ALL.iter().find(|(_, n)| *n == name).map(|(s, _)| *s)
+    }
+
+    fn shape(self, u: f32) -> f32 {
+        match self {
+            FaderScale::Linear => u,
+            FaderScale::Exp => shape(u, -0.7),
+            FaderScale::Log => shape(u, 0.7),
+        }
+    }
+}
+
+/// Fader: de `from` a `to` en `time` ms, tras `delay` ms.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Fader {
+    pub from: f32,
+    pub to: f32,
+    pub time: f32,
+    pub delay: f32,
+    pub scale: FaderScale,
+}
+
+impl Fader {
+    fn validate(&self) -> Result<(), &'static str> {
+        let ok = |v: f32, (lo, hi): (f32, f32)| v.is_finite() && (lo..=hi).contains(&v);
+        if !ok(self.from, (-MAX_AMOUNT, MAX_AMOUNT)) || !ok(self.to, (-MAX_AMOUNT, MAX_AMOUNT)) {
+            return Err("from y to van de -64 a 64");
+        }
+        if !ok(self.time, (0.0, MAX_ENV_MS)) || !ok(self.delay, (0.0, MAX_ENV_MS)) {
+            return Err("time y delay van de 0 a 60000 ms");
+        }
+        Ok(())
+    }
+
+    fn value(&self, t_ms: f32) -> f32 {
+        let u = if t_ms <= self.delay {
+            0.0
+        } else if self.time <= 0.0 {
+            1.0
+        } else {
+            ((t_ms - self.delay) / self.time).min(1.0)
+        };
+        self.from + (self.to - self.from) * self.scale.shape(u)
+    }
+}
+
 /// Qué es un dispositivo, con sus parámetros.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DeviceKind {
     Ahdsr(Ahdsr),
+    Lfo(ModLfo),
+    Fader(Fader),
+    /// Un valor fijo (o una curva de la canción).
+    Operand(ModValue),
 }
 
 impl DeviceKind {
@@ -292,13 +496,10 @@ impl DeviceKind {
     pub fn name(&self) -> &'static str {
         match self {
             DeviceKind::Ahdsr(_) => "ahdsr",
+            DeviceKind::Lfo(_) => "lfo",
+            DeviceKind::Fader(_) => "fader",
+            DeviceKind::Operand(_) => "value",
         }
-    }
-
-    /// Lo que da de natural es de 0 a 1 (la polaridad bipolar lo pasa a
-    /// -1 a 1).
-    fn unipolar_native(&self) -> bool {
-        true
     }
 }
 
@@ -334,6 +535,11 @@ impl Device {
         )?;
         match &self.kind {
             DeviceKind::Ahdsr(a) => a.validate(),
+            DeviceKind::Lfo(l) => l.validate(),
+            DeviceKind::Fader(f) => f.validate(),
+            DeviceKind::Operand(v) => {
+                v.check((-MAX_AMOUNT, MAX_AMOUNT), "value fuera de rango (-64 a 64)")
+            }
         }
     }
 }
@@ -452,20 +658,24 @@ impl ModSet {
         };
         let ms = |frames: u32| frames as f32 * 1000.0 / sample_rate as f32;
         let (t_ms, off_ms) = (ms(t), off.map(ms));
-        let _ = hit;
         let mut acc = chain.input;
-        for (device, _state) in chain.devices.iter().zip(state.iter_mut()) {
+        for (i, (device, state)) in chain.devices.iter().zip(state.iter_mut()).enumerate() {
             let Some(device) = device else { continue };
             if device.bypass {
                 continue;
             }
+            // De 0 a 1 (bipolar, de -1 a 1); el LFO, al revés; el fader y
+            // el operando, sus valores tal cual.
+            let polar = |r: f32| if device.bipolar { 2.0 * r - 1.0 } else { r };
             let raw = match &device.kind {
-                DeviceKind::Ahdsr(a) => a.level(t_ms, off_ms, at),
-            };
-            let raw = if device.bipolar && device.kind.unipolar_native() {
-                2.0 * raw - 1.0
-            } else {
-                raw
+                DeviceKind::Ahdsr(a) => polar(a.level(t_ms, off_ms, at)),
+                DeviceKind::Lfo(l) => {
+                    let seed = hit.born ^ ((domain * MAX_DEVICES + i) as u64) << 56;
+                    let x = l.value(t, state, seed, at, sample_rate);
+                    if device.bipolar { x } else { 0.5 * (x + 1.0) }
+                }
+                DeviceKind::Fader(f) => f.value(t_ms),
+                DeviceKind::Operand(v) => v.at(at),
             };
             let x = raw * device.amount.at(at);
             acc = device.op.unwrap_or(Op::default_for(domain)).apply(acc, x);
@@ -492,6 +702,7 @@ fn clamp_domain(domain: usize, v: f32) -> f32 {
 pub struct DevState {
     pub phase: f64,
     pub held: f32,
+    pub started: bool,
 }
 
 /// La tabla de sets de la canción.

@@ -2651,6 +2651,50 @@ fn busy_mod_set(sustain: f32) -> engine::modulation::ModSet {
                 ..env
             })
             .unwrap();
+        let waves = [
+            ModWave::Sine,
+            ModWave::Random,
+            ModWave::Square,
+            ModWave::Saw,
+        ];
+        chain = chain
+            .with_device(Device {
+                op: Some(Op::Add),
+                bipolar: true,
+                amount: ModValue::fixed(0.1),
+                ..Device::new(DeviceKind::Lfo(ModLfo {
+                    wave: waves[domain],
+                    rate: ModValue {
+                        value: 2.0,
+                        curve: (domain == 0).then_some(engine::Curve::Macro {
+                            index: 0,
+                            from: 1.0,
+                            to: 9.0,
+                        }),
+                    },
+                    sync: (domain == 1).then_some(engine::Sync { num: 3, den: 16 }),
+                    phase: 45.0,
+                    delay: 20.0,
+                    free: domain == 2,
+                }))
+            })
+            .unwrap()
+            .with_device(Device {
+                op: Some(Op::Mul),
+                ..Device::new(DeviceKind::Fader(Fader {
+                    from: 1.0,
+                    to: 0.5,
+                    time: 80.0,
+                    delay: 10.0,
+                    scale: FaderScale::Exp,
+                }))
+            })
+            .unwrap()
+            .with_device(Device {
+                op: Some(Op::Div),
+                ..Device::new(DeviceKind::Operand(ModValue::fixed(1.25)))
+            })
+            .unwrap();
         set.chains[domain] = Some(chain);
     }
     set
