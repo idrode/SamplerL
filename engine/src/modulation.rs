@@ -481,6 +481,130 @@ impl Fader {
     }
 }
 
+/// Envolventes de puntos de un set, como mucho (sus puntos van en la
+/// tabla del set, no en el dispositivo).
+pub const MAX_POINT_ENVS: usize = 4;
+
+/// Lo que dura una envolvente de puntos.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum EnvLength {
+    Ms(f32),
+    /// Pasos (semicorcheas) del tempo que suena: «1/4» son 4.
+    Steps(f64),
+}
+
+/// Qué hace una envolvente de puntos al llegar a su final.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnvLoop {
+    /// Se queda en su último valor.
+    Off,
+    Forward,
+    Backward,
+    PingPong,
+}
+
+impl EnvLoop {
+    pub const ALL: [(EnvLoop, &'static str); 4] = [
+        (EnvLoop::Off, "off"),
+        (EnvLoop::Forward, "forward"),
+        (EnvLoop::Backward, "backward"),
+        (EnvLoop::PingPong, "pingpong"),
+    ];
+
+    pub fn from_name(name: &str) -> Option<EnvLoop> {
+        Self::ALL.iter().find(|(_, n)| *n == name).map(|(l, _)| *l)
+    }
+}
+
+/// Envolvente de puntos por golpe: los puntos de una lane
+/// ([`crate::lane::Lane`], con sus curvas `linear`, `exp`, `smooth` y
+/// `step`) con las posiciones de 0 a 1 de su duración, que empieza con el
+/// golpe. Con `sustain` (un punto), se queda en él hasta el note-off y
+/// luego sigue hasta el final (su release); sin él, puede repetirse.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PointEnv {
+    /// Su lane en [`ModSet::envs`].
+    pub lane: u8,
+    pub length: EnvLength,
+    pub looping: EnvLoop,
+    /// Índice (desde 0) del punto de sustain.
+    pub sustain: Option<u8>,
+}
+
+impl PointEnv {
+    fn validate(
+        &self,
+        envs: &[Option<crate::lane::Lane>; MAX_POINT_ENVS],
+    ) -> Result<(), &'static str> {
+        let lane = envs
+            .get(self.lane as usize)
+            .and_then(Option::as_ref)
+            .ok_or("la envolvente de puntos no tiene sus puntos")?;
+        match self.length {
+            EnvLength::Ms(ms) if !(ms.is_finite() && ms > 0.0 && ms <= MAX_ENV_MS) => {
+                return Err("len fuera de rango (más de 0 y hasta 60000 ms)");
+            }
+            EnvLength::Steps(s)
+                if !(s.is_finite() && s > 0.0 && s <= crate::lane::MAX_LANE_STEPS) =>
+            {
+                return Err("len fuera de rango (hasta 64 compases)");
+            }
+            _ => {}
+        }
+        if let Some(s) = self.sustain {
+            if s as usize >= lane.points().len() {
+                return Err("el punto de sustain no existe");
+            }
+            if self.looping != EnvLoop::Off {
+                return Err("una envolvente con sustain no va en bucle");
+            }
+        }
+        Ok(())
+    }
+
+    /// Su valor a los `t` ms del golpe (note-off a los `off` ms).
+    fn value(
+        &self,
+        lane: &crate::lane::Lane,
+        t: f32,
+        off: Option<f32>,
+        at: &ModAt,
+        sr: u32,
+    ) -> f32 {
+        let len = match self.length {
+            EnvLength::Ms(ms) => ms as f64,
+            EnvLength::Steps(s) => s * at.frames_per_step * 1000.0 / sr as f64,
+        }
+        .max(1e-6);
+        let mut u = t as f64 / len;
+        if let Some(s) = self.sustain {
+            let hold = lane.points()[s as usize].at;
+            u = match off {
+                // Ha llegado antes del note-off: sigue desde el sustain.
+                Some(off) if off as f64 / len >= hold => {
+                    if t < off {
+                        u.min(hold)
+                    } else {
+                        hold + (t - off) as f64 / len
+                    }
+                }
+                Some(_) => u,
+                None => u.min(hold),
+            };
+        }
+        let u = match self.looping {
+            EnvLoop::Off => u.min(1.0),
+            EnvLoop::Forward => u.rem_euclid(1.0),
+            EnvLoop::Backward => 1.0 - u.rem_euclid(1.0),
+            EnvLoop::PingPong => {
+                let w = u.rem_euclid(2.0);
+                if w <= 1.0 { w } else { 2.0 - w }
+            }
+        };
+        lane.at(u)
+    }
+}
+
 /// Qué es un dispositivo, con sus parámetros.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DeviceKind {
@@ -489,6 +613,7 @@ pub enum DeviceKind {
     Fader(Fader),
     /// Un valor fijo (o una curva de la canción).
     Operand(ModValue),
+    Points(PointEnv),
 }
 
 impl DeviceKind {
@@ -499,6 +624,7 @@ impl DeviceKind {
             DeviceKind::Lfo(_) => "lfo",
             DeviceKind::Fader(_) => "fader",
             DeviceKind::Operand(_) => "value",
+            DeviceKind::Points(_) => "env",
         }
     }
 }
@@ -540,6 +666,8 @@ impl Device {
             DeviceKind::Operand(v) => {
                 v.check((-MAX_AMOUNT, MAX_AMOUNT), "value fuera de rango (-64 a 64)")
             }
+            // Sus puntos los comprueba el set.
+            DeviceKind::Points(_) => Ok(()),
         }
     }
 }
@@ -606,6 +734,9 @@ pub struct ModSet {
     pub chains: [Option<Chain>; DOMAINS],
     /// Semitonos del pitch con su valor en 1.
     pub pitch_range: f32,
+    /// Los puntos de sus envolventes de puntos (cada una, una lane de
+    /// duración 1).
+    pub envs: [Option<crate::lane::Lane>; MAX_POINT_ENVS],
 }
 
 impl Default for ModSet {
@@ -613,6 +744,7 @@ impl Default for ModSet {
         ModSet {
             chains: [None; DOMAINS],
             pitch_range: 12.0,
+            envs: [None; MAX_POINT_ENVS],
         }
     }
 }
@@ -628,6 +760,9 @@ impl ModSet {
             }
             for device in chain.devices.iter().flatten() {
                 device.validate()?;
+                if let DeviceKind::Points(p) = &device.kind {
+                    p.validate(&self.envs)?;
+                }
             }
         }
         Ok(())
@@ -676,6 +811,10 @@ impl ModSet {
                 }
                 DeviceKind::Fader(f) => f.value(t_ms),
                 DeviceKind::Operand(v) => v.at(at),
+                DeviceKind::Points(p) => match &self.envs[p.lane as usize] {
+                    Some(lane) => polar(p.value(lane, t_ms, off_ms, at, sample_rate)),
+                    None => 0.0,
+                },
             };
             let x = raw * device.amount.at(at);
             acc = device.op.unwrap_or(Op::default_for(domain)).apply(acc, x);
@@ -725,6 +864,11 @@ impl ModTable {
     }
 
     pub fn set(&mut self, index: usize, set: Option<ModSet>) -> Result<(), &'static str> {
+        if let Some(s) = &set
+            && s.envs.iter().flatten().any(|l| l.length() != 1.0)
+        {
+            return Err("las lanes de una envolvente de puntos duran 1");
+        }
         if index >= MAX_MOD_SETS {
             return Err("demasiados mod sets (máximo 16)");
         }

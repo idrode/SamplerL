@@ -2695,8 +2695,48 @@ fn busy_mod_set(sustain: f32) -> engine::modulation::ModSet {
                 ..Device::new(DeviceKind::Operand(ModValue::fixed(1.25)))
             })
             .unwrap();
+        chain = chain
+            .with_device(Device {
+                op: Some(Op::Mul),
+                ..Device::new(DeviceKind::Points(PointEnv {
+                    lane: (domain % 2) as u8,
+                    length: if domain % 2 == 0 {
+                        EnvLength::Ms(120.0)
+                    } else {
+                        EnvLength::Steps(3.0)
+                    },
+                    looping: if domain % 2 == 0 {
+                        EnvLoop::Off
+                    } else {
+                        EnvLoop::PingPong
+                    },
+                    sustain: (domain % 2 == 0).then_some(1),
+                }))
+            })
+            .unwrap();
         set.chains[domain] = Some(chain);
     }
+    let pts = |v: f32| {
+        [
+            engine::LanePoint {
+                at: 0.0,
+                value: 1.0,
+                curve: engine::LaneCurve::Exp,
+            },
+            engine::LanePoint {
+                at: 0.3,
+                value: v,
+                curve: engine::LaneCurve::Smooth,
+            },
+            engine::LanePoint {
+                at: 1.0,
+                value: 1.0,
+                curve: engine::LaneCurve::Step,
+            },
+        ]
+    };
+    set.envs[0] = Some(engine::Lane::new(&pts(0.4), 1.0, false).unwrap());
+    set.envs[1] = Some(engine::Lane::new(&pts(0.8), 1.0, false).unwrap());
     set
 }
 

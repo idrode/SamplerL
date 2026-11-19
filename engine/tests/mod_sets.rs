@@ -5,8 +5,8 @@
 use std::sync::Arc;
 
 use engine::modulation::{
-    Ahdsr, CUTOFF, Chain, Device, DeviceKind, Fader, FaderScale, ModLfo, ModSet, ModTable,
-    ModValue, ModWave, Op, PAN, PITCH, VOL,
+    Ahdsr, CUTOFF, Chain, Device, DeviceKind, EnvLength, EnvLoop, Fader, FaderScale, ModLfo,
+    ModSet, ModTable, ModValue, ModWave, Op, PAN, PITCH, PointEnv, VOL,
 };
 use engine::notation::parse_steps;
 use engine::{Batch, Pattern, Sample, Slices, Step, detect_mono, new_engine, offline};
@@ -653,4 +653,128 @@ fn fader_and_operand() {
     let op = Device::new(DeviceKind::Operand(ModValue::fixed(0.3)));
     let v = vol_curve(set_with(VOL, &[op]), ms(60.0));
     assert!((v[ms(50.0)] - 0.3).abs() < 1e-4);
+}
+
+/// Un set de volumen con una envolvente de puntos `(posición, valor,
+/// curva)`.
+fn points_set(
+    points: &[(f64, f32, engine::LaneCurve)],
+    length: EnvLength,
+    looping: EnvLoop,
+    sustain: Option<u8>,
+) -> ModSet {
+    let points: Vec<engine::LanePoint> = points
+        .iter()
+        .map(|&(at, value, curve)| engine::LanePoint { at, value, curve })
+        .collect();
+    let mut set = set_with(
+        VOL,
+        &[Device::new(DeviceKind::Points(PointEnv {
+            lane: 0,
+            length,
+            looping,
+            sustain,
+        }))],
+    );
+    set.envs[0] = Some(engine::Lane::new(&points, 1.0, false).unwrap());
+    set
+}
+
+#[test]
+fn the_point_envelope_follows_its_points_and_loops() {
+    use engine::LaneCurve::{Linear, Step as Hold};
+    let pts = [(0.0, 0.0, Linear), (0.25, 1.0, Linear), (1.0, 0.0, Linear)];
+    let v = vol_curve(
+        points_set(&pts, EnvLength::Ms(400.0), EnvLoop::Off, None),
+        ms(600.0),
+    );
+    let close = |v: &[f32], t: f32, want: f32| {
+        assert!(
+            (v[ms(t)] - want).abs() < 2e-3,
+            "{t} ms: {} (quería {want})",
+            v[ms(t)]
+        );
+    };
+    close(&v, 50.0, 0.5);
+    close(&v, 101.0, 1.0 - 1.0 / 300.0);
+    close(&v, 250.0, 0.5);
+    close(&v, 500.0, 0.0);
+    // En bucle, adelante: a los 450 ms, como a los 50.
+    let fwd = vol_curve(
+        points_set(&pts, EnvLength::Ms(400.0), EnvLoop::Forward, None),
+        ms(600.0),
+    );
+    close(&fwd, 450.0, 0.5);
+    // Atrás: a los 50 ms, como en la posición 0,875.
+    let back = vol_curve(
+        points_set(&pts, EnvLength::Ms(400.0), EnvLoop::Backward, None),
+        ms(600.0),
+    );
+    close(&back, 50.0, 1.0 / 6.0);
+    // Ida y vuelta: a los 450 ms (posición 1,125), la 0,875.
+    let ping = vol_curve(
+        points_set(&pts, EnvLength::Ms(400.0), EnvLoop::PingPong, None),
+        ms(600.0),
+    );
+    close(&ping, 450.0, 1.0 / 6.0);
+    // Escalón: se queda en el valor de su punto.
+    let step = vol_curve(
+        points_set(
+            &[(0.0, 0.3, Hold), (0.5, 0.9, Linear), (1.0, 0.9, Linear)],
+            EnvLength::Ms(200.0),
+            EnvLoop::Off,
+            None,
+        ),
+        ms(300.0),
+    );
+    close(&step, 90.0, 0.3);
+    close(&step, 110.0, 0.9);
+    // Con la duración en figuras: una negra a 120 BPM son 500 ms.
+    let beat = vol_curve(
+        points_set(&pts, EnvLength::Steps(4.0), EnvLoop::Off, None),
+        ms(600.0),
+    );
+    close(&beat, 125.0, 1.0);
+}
+
+#[test]
+fn the_point_envelope_holds_its_sustain_until_the_note_off() {
+    use engine::LaneCurve::Linear;
+    // Sube en 50 ms, se queda en el sustain (punto 1) hasta el note-off
+    // (el final del paso, 125 ms) y luego baja lo que le queda (150 ms).
+    let pts = [(0.0, 0.0, Linear), (0.25, 1.0, Linear), (1.0, 0.0, Linear)];
+    let v = vol_curve(
+        points_set(&pts, EnvLength::Ms(200.0), EnvLoop::Off, Some(1)),
+        ms(400.0),
+    );
+    assert!((v[ms(110.0)] - 1.0).abs() < 2e-3, "{}", v[ms(110.0)]);
+    assert!((v[ms(200.0)] - 0.5).abs() < 2e-3, "{}", v[ms(200.0)]);
+    assert!(v[ms(280.0)].abs() < 2e-3);
+    // Si el note-off llega antes del sustain, sigue sin pararse.
+    let slow = vol_curve(
+        points_set(&pts, EnvLength::Ms(1000.0), EnvLoop::Off, Some(1)),
+        ms(600.0),
+    );
+    assert!(
+        (slow[ms(500.0)] - (1.0 - 0.25 / 0.75)).abs() < 3e-3,
+        "{}",
+        slow[ms(500.0)]
+    );
+}
+
+#[test]
+fn point_envelopes_are_validated() {
+    use engine::LaneCurve::Linear;
+    let pts = [(0.0, 0.0, Linear), (1.0, 1.0, Linear)];
+    let bad = [
+        points_set(&pts, EnvLength::Ms(0.0), EnvLoop::Off, None),
+        points_set(&pts, EnvLength::Ms(400.0), EnvLoop::Forward, Some(1)),
+        points_set(&pts, EnvLength::Ms(400.0), EnvLoop::Off, Some(5)),
+    ];
+    for set in bad {
+        assert!(set.validate().is_err());
+    }
+    let mut missing = points_set(&pts, EnvLength::Ms(400.0), EnvLoop::Off, None);
+    missing.envs[0] = None;
+    assert!(missing.validate().is_err());
 }
